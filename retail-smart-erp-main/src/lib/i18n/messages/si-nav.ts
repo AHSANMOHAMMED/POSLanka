@@ -1,0 +1,35 @@
+/** Sinhala UI strings for POSLanka (UTF-8) */
+export const siMessages = {
+  appName: 'POSLanka',
+  nav: {
+    dashboard: 'උපකරණ පුවරුව',
+    pos: 'විකුණුම් තිරය',
+    items: 'භාණ්ඩ',
+    customers: 'පාරිභෝගිකයන්',
+    sales: 'විකුණුම්',
+    purchases: 'මිලදී ගැනීම්',
+    quotations: 'මිල ගණන්',
+    creditNotes: 'ණය සටහන්',
+    accounting: 'ගිණුම්කරණය',
+    reports: 'වාර්තා',
+    settings: 'සැකසුම්',
+    grn: 'භාණ්ඩ ලැබීමේ සටහන',
+  },
+  pos: {
+    checkout: 'ගෙවීම සම්පූර්ණ කරන්න',
+    holdBill: 'බිල්පත රඳවන්න',
+    recallBill: 'බිල්පත නැවත ගන්න',
+    openShift: 'මුරය විවෘත කරන්න',
+    closeShift: 'මුරය වසන්න',
+    splitPayment: 'ගෙවීම බෙදන්න',
+    offline: 'නොබැඳි ප්‍රකාරය',
+    syncPending: 'සමමුහුර්ත කිරීමට ඇති විකුණුම්',
+  },
+  common: {
+    save: 'සුරකින්න',
+    cancel: 'අවලංගු කරන්න',
+    search: 'සොයන්න',
+    loading: 'පූරණය වෙමින්…',
+    error: 'දෝෂයක් ඇතිවිය',
+  },
+} as const

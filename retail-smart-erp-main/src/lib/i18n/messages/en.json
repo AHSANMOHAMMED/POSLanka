@@ -1,0 +1,34 @@
+{
+  "appName": "POSLanka",
+  "nav": {
+    "dashboard": "Dashboard",
+    "pos": "POS",
+    "items": "Items",
+    "customers": "Customers",
+    "sales": "Sales",
+    "purchases": "Purchases",
+    "quotations": "Quotations",
+    "creditNotes": "Credit Notes",
+    "accounting": "Accounting",
+    "reports": "Reports",
+    "settings": "Settings",
+    "grn": "GRN"
+  },
+  "pos": {
+    "checkout": "Checkout",
+    "holdBill": "Hold bill",
+    "recallBill": "Recall bill",
+    "openShift": "Open shift",
+    "closeShift": "Close shift",
+    "splitPayment": "Split payment",
+    "offline": "Offline mode",
+    "syncPending": "Sales waiting to sync"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "search": "Search",
+    "loading": "Loading…",
+    "error": "Something went wrong"
+  }
+}
