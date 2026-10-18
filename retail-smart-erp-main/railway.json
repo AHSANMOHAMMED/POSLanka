@@ -1,0 +1,23 @@
+{
+  "build": {
+    "builder": "nixpacks",
+    "buildCommand": "npm run build"
+  },
+  "deploy": {
+    "startCommand": "npm start",
+    "healthcheckPath": "/api/health",
+    "postdeploy": "npm run db:migrate",
+    "variables": {
+      "SKIP_MIGRATIONS": "true",
+      "NODE_ENV": "production",
+      "NEXTAUTH_URL": "https://app.retailsmarterp.com",
+      "NEXTAUTH_URL_INTERNAL": "https://retail-smart-pos-web-production.up.railway.app",
+      "NEXTAUTH_SECRET": "k8x2mP9vL4nQ7wR3jF6hY1sB5tC0aE8dG2iU4oZ9xN3mV7pJ",
+      "DATABASE_URL_ADMIN": "postgresql://postgres:GscoHkXwSOTswMQdTxxUFjanduCKHaDV@gondola.proxy.rlwy.net:31245/railway",
+      "NEXT_PUBLIC_BASE_DOMAIN": "retailsmarterp.com",
+      "NEXT_PUBLIC_LANDING_DOMAIN": "www.retailsmarterp.com",
+      "NEXT_PUBLIC_APP_DOMAIN": "app.retailsmarterp.com",
+      "ALLOWED_HOSTS": "www.retailsmarterp.com,app.retailsmarterp.com,*.retailsmarterp.com,retail-smart-pos-web-production.up.railway.app,localhost"
+    }
+  }
+}

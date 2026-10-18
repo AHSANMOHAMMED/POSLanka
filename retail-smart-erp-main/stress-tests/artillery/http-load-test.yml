@@ -1,0 +1,179 @@
+####################################################################
+# Artillery HTTP Load Test Configuration
+# Tests all major API endpoints for your POS system
+#
+# Usage:
+#   npx artillery run stress-tests/artillery/http-load-test.yml
+#
+# With environment variables:
+#   BASE_URL=http://localhost:3000 AUTH_TOKEN=your-token npx artillery run stress-tests/artillery/http-load-test.yml
+####################################################################
+
+config:
+  target: "{{ $processEnvironment.BASE_URL || 'http://localhost:3000' }}"
+
+  phases:
+    # Warm-up phase
+    - name: "Warm up"
+      duration: 30
+      arrivalRate: 5
+      rampTo: 10
+
+    # Ramp-up phase
+    - name: "Ramp up load"
+      duration: 60
+      arrivalRate: 10
+      rampTo: 50
+
+    # Sustained load
+    - name: "Sustained load"
+      duration: 120
+      arrivalRate: 50
+
+    # Peak load
+    - name: "Peak load"
+      duration: 60
+      arrivalRate: 100
+
+    # Cool down
+    - name: "Cool down"
+      duration: 30
+      arrivalRate: 100
+      rampTo: 10
+
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      Cookie: "authjs.session-token={{ $processEnvironment.AUTH_TOKEN }}"
+
+  plugins:
+    expect: {}
+
+  # Performance thresholds
+  ensure:
+    p95: 500        # 95th percentile under 500ms
+    maxErrorRate: 5 # Max 5% error rate
+
+scenarios:
+  ##################################
+  # Read-Heavy Scenarios (70% weight)
+  ##################################
+
+  - name: "Browse Items"
+    weight: 20
+    flow:
+      - get:
+          url: "/api/items"
+          expect:
+            - statusCode: 200
+      - think: 1
+
+  - name: "Search Items"
+    weight: 10
+    flow:
+      - get:
+          url: "/api/items?search=test"
+          expect:
+            - statusCode: 200
+      - think: 0.5
+
+  - name: "Browse Categories"
+    weight: 10
+    flow:
+      - get:
+          url: "/api/categories"
+          expect:
+            - statusCode: 200
+      - think: 1
+
+  - name: "Browse Customers"
+    weight: 15
+    flow:
+      - get:
+          url: "/api/customers"
+          expect:
+            - statusCode: 200
+      - think: 1
+
+  - name: "Search Customers"
+    weight: 5
+    flow:
+      - get:
+          url: "/api/customers?search=john"
+          expect:
+            - statusCode: 200
+      - think: 0.5
+
+  - name: "Browse Work Orders"
+    weight: 10
+    flow:
+      - get:
+          url: "/api/work-orders"
+          expect:
+            - statusCode: 200
+      - think: 1
+
+  ##################################
+  # Write Scenarios (30% weight)
+  ##################################
+
+  - name: "Quick Sale Flow"
+    weight: 15
+    flow:
+      # Get items first
+      - get:
+          url: "/api/items"
+          capture:
+            - json: "$[0].id"
+              as: "itemId"
+            - json: "$[0].sellingPrice"
+              as: "itemPrice"
+      - think: 0.5
+
+      # Create sale (only if we got an item)
+      - post:
+          url: "/api/sales"
+          json:
+            customerId: null
+            items:
+              - itemId: "{{ itemId }}"
+                quantity: 1
+                unitPrice: "{{ itemPrice }}"
+            payments:
+              - method: "cash"
+                amount: "{{ itemPrice }}"
+          ifTrue: "itemId"
+      - think: 1
+
+  - name: "Create Customer"
+    weight: 5
+    flow:
+      - post:
+          url: "/api/customers"
+          json:
+            name: "Test Customer {{ $randomNumber(1000, 9999) }}"
+            phone: "+1{{ $randomNumber(1000000000, 9999999999) }}"
+            email: "test{{ $randomNumber(1000, 9999) }}@example.com"
+          expect:
+            - statusCode:
+                - 200
+                - 201
+      - think: 1
+
+  - name: "Browse Appointments"
+    weight: 5
+    flow:
+      - get:
+          url: "/api/appointments"
+          expect:
+            - statusCode: 200
+      - think: 1
+
+  - name: "Browse Service Types"
+    weight: 5
+    flow:
+      - get:
+          url: "/api/service-types"
+          expect:
+            - statusCode: 200
+      - think: 1

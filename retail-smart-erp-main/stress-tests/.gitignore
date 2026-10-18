@@ -1,0 +1,9 @@
+# Ignore test results (can be large)
+results/*.json
+results/*.html
+
+# Keep the directory
+!results/.gitkeep
+
+# Config file contains auth token - never commit!
+config.json

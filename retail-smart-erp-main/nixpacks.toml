@@ -1,0 +1,24 @@
+[phases.setup]
+# Specify Node.js 20 instead of 18
+# Nixpacks configuration for Railway deployment
+# Ensures Node.js 20 is used for Next.js compatibility
+nixPkgs = [
+    "nodejs_20",
+    "npm-9_x",
+    "openssl",
+    "postgresql_16"
+]
+
+[phases.install]
+cmds = [
+    "npm ci --include=dev",
+    "npm run postinstall"
+]
+
+[phases.build]
+cmds = [
+    "npm run build"
+]
+
+[start]
+cmd = "npm start"

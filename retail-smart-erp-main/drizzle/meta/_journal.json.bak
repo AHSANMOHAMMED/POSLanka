@@ -1,0 +1,433 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1769426866656,
+      "tag": "0000_naive_warpath",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1769446235367,
+      "tag": "0001_blue_carmella_unuscione",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1769458385598,
+      "tag": "0002_first_natasha_romanoff",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1769490797541,
+      "tag": "0003_hesitant_ultimo",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1769492873988,
+      "tag": "0004_oval_domino",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1769570760000,
+      "tag": "0005_new_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1769578620000,
+      "tag": "0006_bundle_parts_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1769628000000,
+      "tag": "0007_hold_stock_for_estimates",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1769659536182,
+      "tag": "0008_lucky_power_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1769786602256,
+      "tag": "0009_tough_micromacro",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1769794326412,
+      "tag": "0010_real_magneto",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1769796116470,
+      "tag": "0011_tricky_hitman",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1769900000000,
+      "tag": "0012_pending_companies",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1770099582380,
+      "tag": "0013_thin_hedge_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1770101405742,
+      "tag": "0014_mixed_captain_universe",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1770106725733,
+      "tag": "0015_low_firelord",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1770150000000,
+      "tag": "0016_remove_bundles",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1770200000000,
+      "tag": "0017_row_level_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1770250000000,
+      "tag": "0018_add_restaurant_order_id_to_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1770300000000,
+      "tag": "0019_purchase_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0020_tenant_usage_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0021_comprehensive_bug_fixes",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0022_notification_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0023_sms_generic_params",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0024_pos_profiles_enhanced",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0025_purchase_draft_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0026_unified_file_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0027_workspace_configs",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0028_storage_pricing",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0029_seed_super_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0030_phone_required_trial_storage",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0031_audit_fixes",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0032_stock_reservation_refunds_timezone",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0033_held_sales_expiration",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0034_supplier_balance_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0035_purchase_order_receiving",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0036_sales_orders",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0037_billing_overhaul",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0038_business_type_fields",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0039_missing_rls_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0040_fix_trigger_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0041_fix_storage_calculation",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0042_restaurant_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0043_recipes_and_waste",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0044_import_activity_action",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0045_accounting_module",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0046_accounting_phase4_6",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0047_setup_wizard",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0048_cancellation_reasons",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0049_payment_module",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0050_ai_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0051_hr_payroll_module",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0052_commission_payout_salary_slip_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0053_error_logging_enhancements",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0054_cost_center_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0055_proration_upgrade",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "0056_wip_account_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "rls_comprehensive",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1770622548063,
+      "tag": "triggers",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1770664374182,
+      "tag": "0057_fix_ai_error_logs_rls",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1770664374182,
+      "tag": "0058_fix_ai_error_logs_rls_policy",
+      "breakpoints": true
+    }
+  ]
+}

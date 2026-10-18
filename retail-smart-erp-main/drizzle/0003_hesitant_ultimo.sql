@@ -1,0 +1,1 @@
+ALTER TABLE "insurance_estimates" ADD COLUMN "odometer_in" integer;

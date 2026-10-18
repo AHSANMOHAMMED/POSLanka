@@ -1,0 +1,152 @@
+####################################################################
+# Artillery WebSocket Load Test Configuration
+# Tests WebSocket connections and real-time event handling
+#
+# Usage:
+#   npx artillery run stress-tests/artillery/websocket-load-test.yml
+#
+# With environment variables:
+#   WS_URL=ws://localhost:3000 TENANT_ID=your-tenant-id npx artillery run stress-tests/artillery/websocket-load-test.yml
+####################################################################
+
+config:
+  target: "{{ $processEnvironment.WS_URL || 'ws://localhost:3000' }}"
+
+  phases:
+    # Gradual connection ramp-up
+    - name: "Initial connections"
+      duration: 30
+      arrivalRate: 5
+
+    # More connections
+    - name: "Ramp up connections"
+      duration: 60
+      arrivalRate: 10
+      rampTo: 30
+
+    # Sustained connections
+    - name: "Sustained connections"
+      duration: 120
+      arrivalRate: 30
+
+    # Peak connections
+    - name: "Peak connections"
+      duration: 60
+      arrivalRate: 50
+
+    # Maintain some connections
+    - name: "Cool down"
+      duration: 30
+      arrivalRate: 10
+
+  # Performance thresholds
+  ensure:
+    maxErrorRate: 5
+
+  variables:
+    tenantId:
+      - "{{ $processEnvironment.TENANT_ID || 'test-tenant-id' }}"
+
+scenarios:
+  ##################################
+  # WebSocket Connection Scenarios
+  ##################################
+
+  - name: "Basic WebSocket Connection"
+    weight: 40
+    engine: ws
+    flow:
+      - connect:
+          target: "/ws"
+
+      # Send subscribe message
+      - send:
+          payload:
+            type: "subscribe"
+            tenantId: "{{ tenantId }}"
+
+      # Wait and listen for messages
+      - think: 30
+
+      # Unsubscribe before closing
+      - send:
+          payload:
+            type: "unsubscribe"
+            tenantId: "{{ tenantId }}"
+
+  - name: "Long-lived Connection"
+    weight: 30
+    engine: ws
+    flow:
+      - connect:
+          target: "/ws"
+
+      # Subscribe to tenant
+      - send:
+          payload:
+            type: "subscribe"
+            tenantId: "{{ tenantId }}"
+
+      # Simulate real user - stay connected for extended period
+      - think: 60
+
+      # Send ping to keep alive
+      - send:
+          payload:
+            type: "ping"
+
+      - think: 60
+
+      # Unsubscribe
+      - send:
+          payload:
+            type: "unsubscribe"
+            tenantId: "{{ tenantId }}"
+
+  - name: "Document Watch Simulation"
+    weight: 20
+    engine: ws
+    flow:
+      - connect:
+          target: "/ws"
+
+      # Subscribe to tenant
+      - send:
+          payload:
+            type: "subscribe"
+            tenantId: "{{ tenantId }}"
+
+      # Watch a work order document
+      - send:
+          payload:
+            type: "watch-document"
+            documentType: "work-order"
+            documentId: "test-work-order-id"
+
+      # Stay on document
+      - think: 45
+
+      # Leave document
+      - send:
+          payload:
+            type: "leave-document"
+            documentType: "work-order"
+            documentId: "test-work-order-id"
+
+      - think: 5
+
+  - name: "Rapid Connect/Disconnect"
+    weight: 10
+    engine: ws
+    flow:
+      - connect:
+          target: "/ws"
+
+      - send:
+          payload:
+            type: "subscribe"
+            tenantId: "{{ tenantId }}"
+
+      - think: 5
+
+      # Quick disconnect (simulates page navigation)
