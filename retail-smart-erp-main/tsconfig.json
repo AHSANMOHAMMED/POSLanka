@@ -35,5 +35,12 @@
     "**/__tests__/**/*.ts",
     "**/__tests__/**/*.tsx"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules",
+    "apps/mobile",
+    "apps/**",
+    "stress-tests",
+    "e2e",
+    ".next"
+  ]
 }

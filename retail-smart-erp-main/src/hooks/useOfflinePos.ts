@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   enqueuePendingSale,
   listPendingSales,
@@ -9,11 +9,27 @@ import {
   type PendingSale,
 } from '@/lib/offline/pos-queue'
 
+function subscribeOnline(onChange: () => void) {
+  window.addEventListener('online', onChange)
+  window.addEventListener('offline', onChange)
+  return () => {
+    window.removeEventListener('online', onChange)
+    window.removeEventListener('offline', onChange)
+  }
+}
+
+function getOnlineSnapshot() {
+  return typeof navigator !== 'undefined' ? navigator.onLine : true
+}
+
+function getOnlineServerSnapshot() {
+  return true
+}
+
 export function useOfflinePos() {
-  const [online, setOnline] = useState(
-    typeof navigator !== 'undefined' ? navigator.onLine : true
-  )
+  const online = useSyncExternalStore(subscribeOnline, getOnlineSnapshot, getOnlineServerSnapshot)
   const [pendingCount, setPendingCount] = useState(0)
+  const mounted = useRef(false)
 
   const refreshPending = useCallback(async () => {
     try {
@@ -25,23 +41,28 @@ export function useOfflinePos() {
   }, [])
 
   useEffect(() => {
+    mounted.current = true
+    const id = window.setTimeout(() => {
+      if (mounted.current) void refreshPending()
+    }, 0)
+
     const onOnline = () => {
-      setOnline(true)
-      syncPendingSales((payload) =>
+      void syncPendingSales((payload) =>
         fetch('/api/sales', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         })
-      ).then(() => refreshPending())
+      ).then(() => {
+        if (mounted.current) void refreshPending()
+      })
     }
-    const onOffline = () => setOnline(false)
+
     window.addEventListener('online', onOnline)
-    window.addEventListener('offline', onOffline)
-    refreshPending()
     return () => {
+      mounted.current = false
+      window.clearTimeout(id)
       window.removeEventListener('online', onOnline)
-      window.removeEventListener('offline', onOffline)
     }
   }, [refreshPending])
 

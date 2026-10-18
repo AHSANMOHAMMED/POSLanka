@@ -1,22 +1,37 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { getMessages, resolveLocale, t, type Locale } from '@/lib/i18n'
 
 const STORAGE_KEY = 'poslanka_locale'
 
-export function useI18n() {
-  const [locale, setLocaleState] = useState<Locale>('en')
+function subscribe(onStoreChange: () => void) {
+  window.addEventListener('storage', onStoreChange)
+  window.addEventListener('poslanka-locale-change', onStoreChange)
+  return () => {
+    window.removeEventListener('storage', onStoreChange)
+    window.removeEventListener('poslanka-locale-change', onStoreChange)
+  }
+}
 
-  useEffect(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null
-    setLocaleState(resolveLocale(saved))
-  }, [])
+function getSnapshot(): Locale {
+  if (typeof window === 'undefined') return 'en'
+  return resolveLocale(localStorage.getItem(STORAGE_KEY))
+}
+
+function getServerSnapshot(): Locale {
+  return 'en'
+}
+
+export function useI18n() {
+  const locale = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+  const [, bump] = useState(0)
 
   const setLocale = useCallback((next: Locale) => {
-    setLocaleState(next)
     localStorage.setItem(STORAGE_KEY, next)
     document.documentElement.lang = next === 'si' ? 'si' : 'en'
+    window.dispatchEvent(new Event('poslanka-locale-change'))
+    bump((n) => n + 1)
   }, [])
 
   const translate = useCallback(

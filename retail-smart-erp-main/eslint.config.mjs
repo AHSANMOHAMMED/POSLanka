@@ -42,7 +42,14 @@ const eslintConfig = defineConfig([
     // Legacy CJS scripts (run with node, not ESM)
     "dark-mode-fix.js",
     "dark-mode-scan.js",
-    "scripts/clone-production.js",
+    "scripts/**",
+    "update-drizzle-migrations.js",
+    "fix-migration-numbers.js",
+    "create-first-company.ts",
+    "stress-tests/**",
+    "apps/mobile/**",
+    "e2e/**",
+    "drizzle/**",
   ]),
 ]);
 
