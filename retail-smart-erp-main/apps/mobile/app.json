@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "POSLanka",
+    "slug": "poslanka",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "poslanka",
+    "userInterfaceStyle": "light",
+    "android": {
+      "package": "lk.poslanka.app",
+      "permissions": ["CAMERA", "BLUETOOTH", "BLUETOOTH_CONNECT", "BLUETOOTH_SCAN"]
+    },
+    "ios": {
+      "bundleIdentifier": "lk.poslanka.app",
+      "supportsTablet": true
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow POSLanka to scan barcodes"
+        }
+      ]
+    ],
+    "extra": {
+      "apiBaseUrl": "https://app.poslanka.lk"
+    }
+  }
+}
