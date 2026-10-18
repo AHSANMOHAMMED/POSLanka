@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { eq, desc, sql } from 'drizzle-orm'
 import { withAuthTenant } from '@/lib/db/with-auth-tenant'
 import { creditNotes, creditNoteItems } from '@/lib/db/schema'
+import { requireTenantFeature } from '@/lib/features/check'
 import { z } from 'zod'
 
 const itemSchema = z.object({
@@ -27,6 +28,10 @@ const createSchema = z.object({
 
 export async function GET() {
   const result = await withAuthTenant(async (session, db) => {
+    const feature = await requireTenantFeature(session.user.tenantId, 'quotation')
+    if (!feature.ok) {
+      return { error: 'Credit notes disabled', status: 403 as const, rows: [] as never[] }
+    }
     const rows = await db.query.creditNotes.findMany({
       where: eq(creditNotes.tenantId, session.user.tenantId),
       orderBy: [desc(creditNotes.createdAt)],
@@ -37,11 +42,18 @@ export async function GET() {
   })
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if ('error' in result && result.status === 403) {
+    return NextResponse.json({ error: result.error }, { status: 403 })
+  }
   return NextResponse.json({ creditNotes: result.rows })
 }
 
 export async function POST(request: NextRequest) {
   const result = await withAuthTenant(async (session, db) => {
+    const feature = await requireTenantFeature(session.user.tenantId, 'quotation')
+    if (!feature.ok) {
+      return { error: 'Credit notes disabled', status: 403 as const }
+    }
     const body = await request.json()
     const parsed = createSchema.safeParse(body)
     if (!parsed.success) {

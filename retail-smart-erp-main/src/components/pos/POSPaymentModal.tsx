@@ -56,6 +56,14 @@ interface POSPaymentModalProps {
   giftCardInfo: GiftCardInfo | null
   giftCardLookupLoading: boolean
   onLookupGiftCard: () => void
+
+  /** Split tender (cash + second method) */
+  splitEnabled?: boolean
+  setSplitEnabled?: (value: boolean) => void
+  splitSecondMethod?: string
+  setSplitSecondMethod?: (method: string) => void
+  splitSecondAmount?: string
+  setSplitSecondAmount?: (value: string) => void
 }
 
 export function POSPaymentModal({
@@ -92,15 +100,29 @@ export function POSPaymentModal({
   giftCardInfo,
   giftCardLookupLoading,
   onLookupGiftCard,
+  splitEnabled = false,
+  setSplitEnabled,
+  splitSecondMethod = 'card',
+  setSplitSecondMethod,
+  splitSecondAmount = '',
+  setSplitSecondAmount,
 }: POSPaymentModalProps) {
   const { currency: currencyCode } = useCurrency()
   const payableTotal = Math.max(0, total - loyaltyRedeemValue + (tipAmount || 0))
   const creditUsed = parseFloat(creditAmount) || 0
   const remainingAfterCredit = Math.max(0, payableTotal - creditUsed)
   const cashCardPaid = parseFloat(amountPaid) || 0
+  const secondSplit = parseFloat(splitSecondAmount) || 0
   const effectiveCashCardPaid = paymentMethod === 'cash' ? cashCardPaid : Math.min(cashCardPaid, remainingAfterCredit)
-  const totalPaid = effectiveCashCardPaid + creditUsed
-  const change = paymentMethod === 'cash' ? Math.max(0, totalPaid - payableTotal) : 0
+  const totalPaid = splitEnabled
+    ? Math.min(remainingAfterCredit, effectiveCashCardPaid + secondSplit) + creditUsed
+    : effectiveCashCardPaid + creditUsed
+  const change =
+    paymentMethod === 'cash' && !splitEnabled
+      ? Math.max(0, totalPaid - payableTotal)
+      : splitEnabled && paymentMethod === 'cash'
+        ? Math.max(0, effectiveCashCardPaid + secondSplit + creditUsed - payableTotal)
+        : 0
   const balanceDue = Math.max(0, payableTotal - totalPaid)
 
   const loyaltyConversionFactor = loyaltyProgram ? parseFloat(loyaltyProgram.conversionFactor) : 0
@@ -332,7 +354,33 @@ export function POSPaymentModal({
           {/* Payment Method */}
           {!isReturnMode && (
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-3">Payment Method</label>
+              <div className="flex items-center justify-between mb-3">
+                <label className="block text-sm font-semibold text-gray-700">Payment Method</label>
+                {setSplitEnabled && enabledPaymentMethods.length > 1 && (
+                  <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={splitEnabled}
+                      onChange={(e) => {
+                        setSplitEnabled(e.target.checked)
+                        if (e.target.checked) {
+                          const half = (remainingAfterCredit / 2).toFixed(2)
+                          setAmountPaid(half)
+                          setSplitSecondAmount?.(half)
+                          const second =
+                            enabledPaymentMethods.find((m) => m.paymentMethod !== paymentMethod)?.paymentMethod ||
+                            'card'
+                          setSplitSecondMethod?.(second)
+                        } else {
+                          setSplitSecondAmount?.('')
+                          setAmountPaid(remainingAfterCredit.toFixed(2))
+                        }
+                      }}
+                    />
+                    Split payment
+                  </label>
+                )}
+              </div>
               <div className={`grid gap-3 ${enabledPaymentMethods.length <= 3 ? 'grid-cols-3' : enabledPaymentMethods.length <= 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
                 {enabledPaymentMethods.map(pm => {
                   const meta = PAYMENT_METHOD_META[pm.paymentMethod] || { icon: Banknote, label: pm.paymentMethod }
@@ -360,6 +408,38 @@ export function POSPaymentModal({
                   )
                 })}
               </div>
+              {splitEnabled && setSplitSecondMethod && setSplitSecondAmount && (
+                <div className="mt-3 space-y-2 border rounded-xl p-3 bg-slate-50">
+                  <p className="text-xs font-medium text-gray-600">Second tender</p>
+                  <select
+                    value={splitSecondMethod}
+                    onChange={(e) => setSplitSecondMethod(e.target.value)}
+                    className="w-full border rounded-md px-2 py-2 text-sm"
+                  >
+                    {enabledPaymentMethods
+                      .filter((m) => m.paymentMethod !== paymentMethod && m.paymentMethod !== 'credit' && m.paymentMethod !== 'gift_card')
+                      .map((m) => (
+                        <option key={m.paymentMethod} value={m.paymentMethod}>
+                          {PAYMENT_METHOD_META[m.paymentMethod]?.label || m.paymentMethod}
+                        </option>
+                      ))}
+                  </select>
+                  <FormInput
+                    type="number"
+                    inputSize="md"
+                    step="0.01"
+                    min={0}
+                    value={splitSecondAmount}
+                    onChange={(e) => {
+                      const val = Math.max(0, parseFloat(e.target.value) || 0)
+                      setSplitSecondAmount(val > 0 ? String(val) : '0')
+                      const first = Math.max(0, remainingAfterCredit - val)
+                      setAmountPaid(first.toFixed(2))
+                    }}
+                    placeholder="Second amount"
+                  />
+                </div>
+              )}
             </div>
           )}
 

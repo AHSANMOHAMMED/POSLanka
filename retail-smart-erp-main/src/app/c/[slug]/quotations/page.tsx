@@ -9,6 +9,7 @@ type Quotation = {
   id: string
   quotationNo: string
   customerName: string | null
+  customerPhone?: string | null
   status: string
   total: string
   validUntil: string | null
@@ -102,6 +103,8 @@ export default function QuotationsPage() {
                       documentType="quotation"
                       documentId={q.id}
                       label={q.quotationNo}
+                      phone={q.customerPhone || undefined}
+                      amount={`${Number(q.total).toFixed(2)} LKR`}
                     />
                   </td>
                 </tr>

@@ -73,11 +73,22 @@ export async function POST(request: NextRequest) {
 
   let html: string | undefined
   if (parsed.data.document) {
+    const doc = parsed.data.document
     const payload: DocumentPayload = {
       type: parsed.data.documentType,
       number: parsed.data.label,
-      shopName: parsed.data.document.shopName || session.user.tenantName,
-      ...parsed.data.document,
+      shopName: doc.shopName || session.user.tenantName,
+      shopAddress: doc.shopAddress,
+      shopPhone: doc.shopPhone,
+      customerName: doc.customerName,
+      customerPhone: doc.customerPhone,
+      lines: doc.lines,
+      subtotal: doc.subtotal,
+      tax: doc.tax,
+      total: doc.total,
+      currency: doc.currency,
+      notes: doc.notes,
+      locale: doc.locale,
     }
     html = renderDocumentHtml(payload)
   }

@@ -686,6 +686,7 @@ export interface CompanySession {
     isSuperAdmin: boolean
     isOwner: boolean
     mode: 'company'
+    impersonating?: boolean
   }
 }
 
@@ -729,11 +730,30 @@ export async function authWithCompany(): Promise<CompanySession | null> {
         tenantId: string
         tenantSlug: string
         tenantName: string
+        businessType?: string
+        aiEnabled?: boolean
+        accountId?: string | null
+        customRoleId?: string | null
         role: string
         email: string
         name?: string
       }
       if (payload.type !== 'mobile' || !payload.tenantId) return null
+
+      // Prefer live tenant fields when available
+      let businessType = payload.businessType || 'retail'
+      let aiEnabled = Boolean(payload.aiEnabled)
+      try {
+        const tenant = await db.query.tenants.findFirst({
+          where: eq(tenants.id, payload.tenantId),
+          columns: { businessType: true, aiEnabled: true, status: true },
+        })
+        if (!tenant || tenant.status !== 'active') return null
+        businessType = tenant.businessType
+        aiEnabled = tenant.aiEnabled
+      } catch {
+        // keep token claims
+      }
 
       try {
         const cache = await import('./permission-cache')
@@ -751,15 +771,16 @@ export async function authWithCompany(): Promise<CompanySession | null> {
       return {
         user: {
           id: payload.sub,
-          accountId: null,
+          accountId: payload.accountId || null,
           email: payload.email,
           name: payload.name || payload.email,
           role: payload.role,
+          customRoleId: payload.customRoleId || null,
           tenantId: payload.tenantId,
           tenantSlug: payload.tenantSlug,
           tenantName: payload.tenantName,
-          businessType: 'retail',
-          aiEnabled: false,
+          businessType,
+          aiEnabled,
           isSuperAdmin: false,
           isOwner: payload.role === 'owner',
           mode: 'company',

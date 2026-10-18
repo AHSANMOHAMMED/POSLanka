@@ -7,6 +7,8 @@ import { useCompanyOptional } from '@/components/providers/CompanyContextProvide
 import { useSidebar } from './Sidebar'
 import { getModuleFromPathname, getModuleSidebar, isDetailPage } from '@/lib/navigation/module-sidebar'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
+import { useFeatureFlags } from '@/hooks/useFeatureFlag'
+import { isHrefAllowedByFeatures, isModuleAllowedByFeatures } from '@/lib/features/nav-gate'
 import { ICON_MAP } from '@/components/workspace/icon-map'
 import { X } from 'lucide-react'
 
@@ -20,6 +22,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
   const company = useCompanyOptional()
   const { mobileOpen, setMobileOpen } = useSidebar()
   const { isModuleEnabled } = useModuleAccess()
+  const { flags } = useFeatureFlags()
 
   const businessType = company?.businessType || session?.user?.businessType
   const userRole = session?.user?.role
@@ -33,8 +36,17 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
     return null
   }
 
-  // Get sidebar sections for this module, filtered by role and module access
+  if (!isModuleAllowedByFeatures(currentModule, flags)) {
+    return null
+  }
+
+  // Get sidebar sections for this module, filtered by role, module access, and feature flags
   const sections = getModuleSidebar(currentModule, businessType, userRole, isModuleEnabled)
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => isHrefAllowedByFeatures(item.href, flags)),
+    }))
+    .filter((section) => section.items.length > 0)
 
   if (sections.length === 0) {
     return null

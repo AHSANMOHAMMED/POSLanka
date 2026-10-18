@@ -50,6 +50,7 @@ import { roundCurrency } from '@/lib/utils/currency'
 import { calculateItemTax, aggregateTaxBreakdown, type ResolvedTaxTemplate, type TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { POS_ITEMS_LIMIT } from '@/components/pos/types'
 import { usePOSBusinessConfig } from '@/hooks/usePOSBusinessConfig'
+import { useOfflinePos } from '@/hooks/useOfflinePos'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel } from '@/lib/utils/item-display'
 
@@ -66,6 +67,55 @@ export default function POSPage() {
       router.replace(`/c/${params.slug}/dealership/sales`)
     }
   }, [config.redirectToDealPipeline, router, params.slug])
+
+  // Load cart from converted quotation (sessionStorage)
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('poslanka_quote_cart')
+      if (!raw) return
+      const data = JSON.parse(raw) as {
+        customerId?: string | null
+        customerName?: string | null
+        cartItems?: Array<{
+          itemId?: string | null
+          name: string
+          quantity: number
+          unitPrice: number
+          discount?: number
+          tax?: number
+        }>
+      }
+      sessionStorage.removeItem('poslanka_quote_cart')
+      if (data.cartItems?.length) {
+        setCart(
+          data.cartItems.map((line, idx) => {
+            const qty = line.quantity || 1
+            const price = line.unitPrice || 0
+            return {
+              cartLineId: `quote-${idx}-${line.itemId || idx}`,
+              itemId: line.itemId || '',
+              name: line.name,
+              quantity: qty,
+              unitPrice: price,
+              total: qty * price - (line.discount || 0),
+              taxAmount: line.tax || 0,
+            } satisfies CartItem
+          })
+        )
+        if (data.customerName) {
+          setSelectedCustomer({
+            id: data.customerId || '',
+            name: data.customerName,
+            phone: null,
+            loyaltyPoints: 0,
+          } as Customer)
+        }
+        toast.success('Quotation loaded into cart')
+      }
+    } catch {
+      // ignore bad session payload
+    }
+  }, [])
 
   // Core state
   const [items, setItems] = useState<Item[]>([])
@@ -92,6 +142,10 @@ export default function POSPage() {
   const [creditAmount, setCreditAmount] = useState('')
   const [customerCredit, setCustomerCredit] = useState(0)
   const [processing, setProcessing] = useState(false)
+  const [splitEnabled, setSplitEnabled] = useState(false)
+  const [splitSecondMethod, setSplitSecondMethod] = useState('card')
+  const [splitSecondAmount, setSplitSecondAmount] = useState('')
+  const { online, queueSale, cacheCatalog } = useOfflinePos()
   // Gift card state
   const [giftCardNumber, setGiftCardNumber] = useState('')
   const [giftCardInfo, setGiftCardInfo] = useState<GiftCardInfo | null>(null)
@@ -242,6 +296,7 @@ export default function POSPage() {
         const pagination = response.pagination
         setItems(data)
         setHasMoreItems(pagination && pagination.total > POS_ITEMS_LIMIT)
+        void cacheCatalog(Array.isArray(data) ? data : [])
       } else {
         toast.error('Failed to load items')
       }
@@ -251,7 +306,7 @@ export default function POSPage() {
     } finally {
       setSearchingItems(false)
     }
-  }, [])
+  }, [cacheCatalog])
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -1264,38 +1319,68 @@ export default function POSPage() {
     // Credit payment = sell on credit (no money received now), so amountPaid must be 0
     const effectiveCashCardPaid = paymentMethod === 'credit' ? 0 : (paymentMethod === 'cash' ? cashCardPaid : Math.min(cashCardPaid, remainingAfterCredit))
 
+    const saleTotal = Math.max(0, total - loyaltyRedeemValue + tip)
+    const secondAmt = splitEnabled ? (parseFloat(splitSecondAmount) || 0) : 0
+    const firstAmt = splitEnabled
+      ? Math.max(0, saleTotal - creditUsed - secondAmt)
+      : effectiveCashCardPaid
+    const paymentSplits =
+      splitEnabled && secondAmt > 0
+        ? [
+            { method: paymentMethod, amount: firstAmt },
+            { method: splitSecondMethod, amount: secondAmt },
+          ].filter((s) => s.amount > 0)
+        : undefined
+
+    const salePayload = {
+      customerId: selectedCustomer?.id,
+      vehicleId: selectedVehicle?.id,
+      warehouseId: posWarehouse?.id,
+      costCenterId: posProfile?.costCenterId || null,
+      posOpeningEntryId: activeShift?.id,
+      customerName: selectedCustomer?.name,
+      vehiclePlate: selectedVehicle?.licensePlate,
+      vehicleDescription: selectedVehicle
+        ? `${selectedVehicle.year ? `${selectedVehicle.year} ` : ''}${selectedVehicle.make} ${selectedVehicle.model}`
+        : undefined,
+      cartItems: cartWithTax,
+      paymentMethod,
+      paymentSplits,
+      subtotal,
+      discount: discountAmount,
+      discountType: saleDiscount.value > 0 ? saleDiscount.type : undefined,
+      discountReason: saleDiscount.value > 0 ? saleDiscount.reason : undefined,
+      tax,
+      taxBreakdown: saleTaxBreakdown.length > 0 ? saleTaxBreakdown : undefined,
+      total: saleTotal,
+      amountPaid: splitEnabled ? firstAmt + secondAmt : effectiveCashCardPaid,
+      creditAmount: creditUsed,
+      addOverpaymentToCredit: false,
+      loyaltyPointsRedeemed: loyaltyRedeemPoints > 0 ? loyaltyRedeemPoints : undefined,
+      loyaltyRedeemValue: loyaltyRedeemValue > 0 ? loyaltyRedeemValue : undefined,
+      restaurantOrderId: restaurantOrderId || undefined,
+      tipAmount: tip > 0 ? tip : undefined,
+      giftCardId: paymentMethod === 'gift_card' && giftCardInfo ? giftCardInfo.id : undefined,
+    }
+
     setProcessing(true)
     try {
+      if (!online) {
+        await queueSale(salePayload as Record<string, unknown>)
+        clearCart()
+        setShowPayment(false)
+        setAmountPaid('')
+        setCreditAmount('')
+        setSplitEnabled(false)
+        setSplitSecondAmount('')
+        toast.success('Sale queued offline — will sync when online')
+        return
+      }
+
       const res = await fetch('/api/sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerId: selectedCustomer?.id,
-          vehicleId: selectedVehicle?.id,
-          warehouseId: posWarehouse?.id,
-          costCenterId: posProfile?.costCenterId || null,
-          posOpeningEntryId: activeShift?.id,
-          customerName: selectedCustomer?.name,
-          vehiclePlate: selectedVehicle?.licensePlate,
-          vehicleDescription: selectedVehicle ? `${selectedVehicle.year ? `${selectedVehicle.year} ` : ''}${selectedVehicle.make} ${selectedVehicle.model}` : undefined,
-          cartItems: cartWithTax,
-          paymentMethod,
-          subtotal,
-          discount: discountAmount,
-          discountType: saleDiscount.value > 0 ? saleDiscount.type : undefined,
-          discountReason: saleDiscount.value > 0 ? saleDiscount.reason : undefined,
-          tax,
-          taxBreakdown: saleTaxBreakdown.length > 0 ? saleTaxBreakdown : undefined,
-          total: Math.max(0, total - loyaltyRedeemValue + tip),
-          amountPaid: effectiveCashCardPaid,
-          creditAmount: creditUsed,
-          addOverpaymentToCredit: false,
-          loyaltyPointsRedeemed: loyaltyRedeemPoints > 0 ? loyaltyRedeemPoints : undefined,
-          loyaltyRedeemValue: loyaltyRedeemValue > 0 ? loyaltyRedeemValue : undefined,
-          restaurantOrderId: restaurantOrderId || undefined,
-          tipAmount: tip > 0 ? tip : undefined,
-          giftCardId: paymentMethod === 'gift_card' && giftCardInfo ? giftCardInfo.id : undefined,
-        }),
+        body: JSON.stringify(salePayload),
       })
 
       if (res.ok) {
@@ -1323,11 +1408,12 @@ export default function POSPage() {
           fetchCustomers()
         }
 
-        const saleTotal = Math.max(0, total - loyaltyRedeemValue + tip)
         clearCart()
         setShowPayment(false)
         setAmountPaid('')
         setCreditAmount('')
+        setSplitEnabled(false)
+        setSplitSecondAmount('')
         fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
         setLastSale({ invoiceNo: sale.invoiceNo, total: saleTotal, isReturn: false })
         setLastSaleId(sale.id)
@@ -1344,7 +1430,18 @@ export default function POSPage() {
       }
     } catch (error) {
       console.error('Error completing sale:', error)
-      toast.error('Error completing sale')
+      try {
+        await queueSale(salePayload as Record<string, unknown>)
+        clearCart()
+        setShowPayment(false)
+        setAmountPaid('')
+        setCreditAmount('')
+        setSplitEnabled(false)
+        setSplitSecondAmount('')
+        toast.success('Network error — sale queued offline')
+      } catch {
+        toast.error('Error completing sale')
+      }
     } finally {
       setProcessing(false)
     }
@@ -1602,6 +1699,12 @@ export default function POSPage() {
         onClose={() => setShowPayment(false)}
         onCompleteSale={completeSale}
         isReturnMode={isReturnMode}
+        splitEnabled={splitEnabled}
+        setSplitEnabled={setSplitEnabled}
+        splitSecondMethod={splitSecondMethod}
+        setSplitSecondMethod={setSplitSecondMethod}
+        splitSecondAmount={splitSecondAmount}
+        setSplitSecondAmount={setSplitSecondAmount}
         total={total}
         loyaltyRedeemValue={loyaltyRedeemValue}
         selectedCustomer={selectedCustomer}

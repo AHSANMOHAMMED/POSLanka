@@ -58,6 +58,10 @@ export async function POST(request: NextRequest) {
       tenantId: tenant.id,
       tenantSlug: tenant.slug,
       tenantName: tenant.name,
+      businessType: tenant.businessType,
+      aiEnabled: tenant.aiEnabled,
+      accountId: user.accountId || null,
+      customRoleId: user.customRoleId || null,
       role: user.role,
       email: user.email,
       name: user.fullName,
@@ -75,6 +79,7 @@ export async function POST(request: NextRequest) {
       role: user.role,
       tenantSlug: tenant.slug,
       tenantName: tenant.name,
+      businessType: tenant.businessType,
     },
   })
 }

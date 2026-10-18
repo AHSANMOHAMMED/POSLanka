@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useParams } from 'next/navigation'
 import { ShareDocumentButtons } from '@/components/shared/ShareDocumentButtons'
 
 type CreditNote = {
@@ -14,6 +16,8 @@ type CreditNote = {
 }
 
 export default function CreditNotesPage() {
+  const params = useParams()
+  const slug = params.slug as string
   const [rows, setRows] = useState<CreditNote[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -28,9 +32,17 @@ export default function CreditNotesPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold">Credit notes</h1>
-        <p className="text-sm text-gray-500">Issue credit notes against sales / returns</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">Credit notes</h1>
+          <p className="text-sm text-gray-500">Issue credit notes against sales / returns</p>
+        </div>
+        <Link
+          href={`/c/${slug}/credit-notes/new`}
+          className="px-3 py-2 rounded-md bg-teal-700 text-white text-sm"
+        >
+          New credit note
+        </Link>
       </div>
       {loading ? (
         <p className="text-gray-500">Loading…</p>

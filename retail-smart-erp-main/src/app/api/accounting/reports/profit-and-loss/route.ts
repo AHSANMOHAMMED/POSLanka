@@ -6,12 +6,18 @@ import { getProfitAndLoss } from '@/lib/accounting/reports'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { profitAndLossQuerySchema } from '@/lib/validation/schemas/accounting'
+import { requireTenantFeature } from '@/lib/features/check'
 
 export async function GET(request: NextRequest) {
   try {
     const session = await authWithCompany()
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const feature = await requireTenantFeature(session.user.tenantId, 'accounting')
+    if (!feature.ok) {
+      return NextResponse.json({ error: 'Accounting module disabled' }, { status: 403 })
     }
 
     const permError = requirePermission(session, 'viewAccounting')

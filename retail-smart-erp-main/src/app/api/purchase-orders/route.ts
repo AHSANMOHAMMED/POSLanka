@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchaseOrdersListSchema, createPurchaseOrderSchema } from '@/lib/validation/schemas/purchases'
+import { requireTenantFeature } from '@/lib/features/check'
 
 // Generate order number with transaction lock
 async function generateOrderNo(tx: TenantDb): Promise<string> {
@@ -44,6 +45,11 @@ export async function GET(request: NextRequest) {
     const { page, pageSize, search, all, status, supplierId: filterSupplierId, warehouseId: filterWarehouseId, sortBy, sortOrder: sortOrderParam } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
+      const feature = await requireTenantFeature(session.user.tenantId, 'purchase')
+      if (!feature.ok) {
+        return { disabled: true as const }
+      }
+
       // Build where conditions - RLS handles tenant filtering
       const conditions: ReturnType<typeof eq>[] = []
 
@@ -170,6 +176,10 @@ export async function GET(request: NextRequest) {
 
     if (!result) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    if ('disabled' in result && result.disabled) {
+      return NextResponse.json({ error: 'Purchase module disabled' }, { status: 403 })
     }
 
     if ('isAll' in result && result.isAll) {
