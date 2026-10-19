@@ -121,17 +121,12 @@ async function main() {
   console.log('Updating drizzle.__drizzle_migrations table');
   console.log(`Mode: ${dryRun ? 'DRY RUN (add --apply to execute)' : 'APPLY CHANGES'}`);
 
-  // Update local
-  await updateMigrations(
-    'postgresql://postgres:postgres@localhost:5432/retail_smart_pos',
-    'Local Database',
-    dryRun
-  );
+  const dbUrl = process.env.DATABASE_URL_ADMIN || process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/poslanka';
+  const label = process.env.DATABASE_URL_ADMIN ? 'Admin Database' : 'Default Database';
 
-  // Update Railway
   await updateMigrations(
-    'postgresql://postgres:GscoHkXwSOTswMQdTxxUFjanduCKHaDV@gondola.proxy.rlwy.net:31245/railway',
-    'Railway Database',
+    dbUrl,
+    label,
     dryRun
   );
 

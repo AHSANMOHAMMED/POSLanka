@@ -2082,6 +2082,7 @@ export const insuranceEstimateAttachments = pgTable('insurance_estimate_attachme
 export const sales = pgTable('sales', {
   id: uuid('id').primaryKey().defaultRandom(),
   tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  clientSaleId: uuid('client_sale_id'),
   invoiceNo: varchar('invoice_no', { length: 50 }).notNull(),
   workOrderId: uuid('work_order_id').references(() => workOrders.id),
   customerId: uuid('customer_id').references(() => customers.id),

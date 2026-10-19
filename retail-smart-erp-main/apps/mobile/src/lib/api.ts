@@ -1,6 +1,16 @@
 import * as SecureStore from 'expo-secure-store'
 
-let apiBase = 'http://localhost:3000'
+declare const process: {
+  env?: {
+    EXPO_PUBLIC_API_URL?: string
+    [key: string]: string | undefined
+  }
+}
+
+let apiBase = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_URL
+  ? process.env.EXPO_PUBLIC_API_URL
+  : 'http://localhost:3000'
+).replace(/\/$/, '')
 
 export function setApiBase(url: string) {
   apiBase = url.replace(/\/$/, '')

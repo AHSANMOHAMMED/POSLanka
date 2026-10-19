@@ -1,13 +1,20 @@
 const { Client } = require('pg');
 
 async function run() {
+  const prodUrl = process.env.SOURCE_DATABASE_URL || process.env.DATABASE_URL_ADMIN;
+  if (!prodUrl) {
+    console.error('❌ Error: SOURCE_DATABASE_URL or DATABASE_URL_ADMIN environment variable is required.');
+    process.exit(1);
+  }
+
   const prod = new Client({
-    connectionString: 'postgresql://postgres:GscoHkXwSOTswMQdTxxUFjanduCKHaDV@gondola.proxy.rlwy.net:31245/railway',
-    ssl: { rejectUnauthorized: false }
+    connectionString: prodUrl,
+    ssl: prodUrl.includes('localhost') ? undefined : { rejectUnauthorized: false }
   });
 
+  const localUrl = process.env.TARGET_DATABASE_URL || process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/poslanka';
   const local = new Client({
-    connectionString: 'postgresql://postgres:postgres@localhost:5432/retail_smart_pos'
+    connectionString: localUrl
   });
 
   await prod.connect();

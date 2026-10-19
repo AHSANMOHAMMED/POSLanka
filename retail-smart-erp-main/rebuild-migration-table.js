@@ -76,17 +76,10 @@ async function main() {
   console.log('This will DELETE and REINSERT all migration records.');
   console.log('Make sure all migrations have been applied successfully.');
 
-  // Rebuild local
-  await rebuildMigrations(
-    'postgresql://postgres:postgres@localhost:5432/retail_smart_pos',
-    'Local Database'
-  );
+  const dbUrl = process.env.DATABASE_URL_ADMIN || process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/poslanka';
+  const label = process.env.DATABASE_URL_ADMIN ? 'Admin Database' : 'Default Database';
 
-  // Rebuild Railway
-  await rebuildMigrations(
-    'postgresql://postgres:GscoHkXwSOTswMQdTxxUFjanduCKHaDV@gondola.proxy.rlwy.net:31245/railway',
-    'Railway Database'
-  );
+  await rebuildMigrations(dbUrl, label);
 
   console.log('\n✅ All migration tables rebuilt successfully.');
   console.log('\nNext steps:');

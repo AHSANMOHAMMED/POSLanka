@@ -1,226 +1,127 @@
-# Retail Smart ERP
+# POSLanka — Retail Smart ERP & Cloud POS
 
-[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-red)](https://github.com/sponsors/ravindu2012) [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/ravindu2012)
+A high-performance multi-tenant SaaS Point of Sale (POS) and Enterprise Resource Planning (ERP) platform built with **Next.js 16 (App Router)**, **React 19**, and **PostgreSQL 15+**. Specially designed and localized for Sri Lankan businesses across five industry verticals.
 
-A multi-tenant SaaS Point of Sale and ERP system built with **Next.js 16**, **React 19**, and **PostgreSQL**. Supports five business types: Retail, Restaurant, Supermarket, Auto Service, and Dealership.
+📖 **For complete production setup, see the [Production Deployment Guide](docs/PRODUCTION_DEPLOYMENT.md).**
 
-**Live Demo:** [retailsmarterp.com](https://www.retailsmarterp.com)
-## Screenshots
+---
 
-### Landing Page
-![Landing Page](docs/screenshots/landing-page.png)
+## 🌟 Key Features
 
-### Authentication
-| Login | Register |
-|-------|----------|
-| ![Login](docs/screenshots/login-page.png) | ![Register](docs/screenshots/register-page.png) |
+### Core POS & Retail
+- **High-Speed Point of Sale**: Barcode scanning, item variants, unit conversions, and item-level discounts.
+- **Sri Lanka Currency & Taxes**: Native LKR formatting, VAT/NBT tax templates, and Sri Lankan banking lists.
+- **Multi-Payment Methods**: Cash, Card, Bank Transfer, Cheque, Credit Customer Balance, and Gift Cards with split-tender support.
+- **Cashier Session Management**: Cash drawer opening balance, cash reconciliation, and closing entries.
+- **PWA Offline Mode**: Automatic IndexedDB queueing with catalog snapshot caching and duplicate-safe server synchronization.
+- **Print & Digital Receipts**: ESC/POS thermal printer receipts, PDF downloads, and 1-click WhatsApp document dispatch (`wa.me` & Cloud API).
 
-### Company Login
-![Company Login](docs/screenshots/company-login.png)
+### Business Verticals Supported
+1. **Retail & Supermarket**: Stock takes, batch & expiry tracking, serial numbers, PLU codes, customer loyalty points, and layaway.
+2. **Restaurant & Cafe**: Floor plans, table reservations, Kitchen Display System (KDS), modifiers, recipe cost tracking, and waste logs.
+3. **Auto Service & Workshop**: Work orders, mechanic assignment, vehicle profiles, inspection checklists, and insurance estimates.
+4. **Dealership**: Vehicle inventory, allocations, test drives, financing plans, and warranty tracking.
+5. **Backoffice & Accounting**: Double-entry General Ledger, Chart of Accounts, Journal entries, Bank reconciliation, Budgets, and HR/Payroll (EPF/ETF salary slips).
 
-### Dashboard
-![Dashboard](docs/screenshots/dashboard.png)
+### Multi-Tenant Architecture & Security
+- **Subdomain-based Tenant Isolation**: `https://[company-slug].poslanka.lk` rewritten dynamically.
+- **PostgreSQL Row-Level Security (RLS)**: Enforces strict data isolation across all companies.
+- **Role-Based Access Control (RBAC)**: 15+ roles including a strict **Cashier POS-Only** mode restricting cashiers to billing.
+- **Cross-Platform**: Web, Tablet, PWA, and Expo React Native mobile client (`apps/mobile`).
 
-### Point of Sale
-![POS](docs/screenshots/pos.png)
+---
 
-### Account Management
-![Account Management](docs/screenshots/account-management.png)
-
-### Storage Management
-![Storage Breakdown](docs/screenshots/storage-breakdown.png)
-
-### Settings
-![Settings](docs/screenshots/settings.png)
-
-## Features
-
-### Core POS
-- Real-time Point of Sale with barcode scanning
-- Multi-payment method support (cash, card, bank transfer, cheque)
-- Receipt printing and thermal printer integration
-- Shift management with cash reconciliation
-- Layaway and gift card support
-- Loyalty program with points tracking
-
-### Multi-Tenant Architecture
-- Subdomain-based tenant isolation (`company.retailsmarterp.com`)
-- Row Level Security (RLS) at the database level
-- Per-tenant settings, currency, and branding
-- Role-based access control with 15+ roles
-- Per-company storage quota tracking
-
-### Business Type Modules
-
-| Module | Business Types |
-|--------|---------------|
-| **Inventory & Items** | All |
-| **Customers & Suppliers** | All |
-| **Sales & Purchases** | All |
-| **Accounting** | All (Chart of accounts, journal entries, bank reconciliation, budgets) |
-| **HR & Payroll** | All (Employees, salary structures, payroll runs, advances) |
-| **Work Orders** | Auto Service |
-| **Vehicle Management** | Auto Service, Dealership |
-| **Appointments** | Auto Service |
-| **Insurance Estimates** | Auto Service |
-| **Kitchen Display & Floor Plan** | Restaurant |
-| **Table Reservations** | Restaurant |
-| **Recipe Management** | Restaurant |
-| **Dealership Sales** | Dealership |
-| **Test Drives** | Dealership |
-
-### Real-Time Updates
-- WebSocket-powered live data sync across all connected clients
-- Document presence awareness (see who else is editing)
-- Instant POS updates across terminals
-
-### AI Intelligence
-- Smart warnings and anomaly detection
-- AI-powered error logging and analysis
-- Content analysis for file uploads
-
-### Account Management
-- Multi-company support from a single account
-- Database and file storage usage tracking per company
-- Wallet system with billing and payments
-- Team management across companies
-
-## Tech Stack
+## 🛠 Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
-| **Framework** | Next.js 16 (App Router) |
-| **UI** | React 19, Tailwind CSS 4, Lucide Icons |
-| **Database** | PostgreSQL with Drizzle ORM |
-| **Auth** | NextAuth v5 (JWT strategy) |
-| **Real-Time** | Custom WebSocket server |
-| **State** | Zustand |
-| **File Storage** | Cloudflare R2 |
-| **AI** | DeepSeek (primary), Google Gemini (fallback) |
-| **Email** | Resend |
-| **Deployment** | Railway |
+|---|---|
+| **Framework** | Next.js 16 (App Router, Node.js 20+) |
+| **UI & Styling** | React 19, Tailwind CSS 4, Lucide Icons, Framer Motion |
+| **Database** | PostgreSQL 15+ with Drizzle ORM |
+| **Authentication** | NextAuth v5 (JWT strategy) & Bearer Token for Mobile |
+| **Real-Time** | Custom WebSocket Server (`ws`) with SSE Fallback |
+| **State Management**| Zustand |
+| **File Storage** | Cloudflare R2 / AWS S3 |
+| **Payment Gateways**| PayHere (Sri Lanka) & WebXPay |
+| **Email Delivery** | Resend |
+| **Mobile App** | Expo React Native (`apps/mobile`) |
 
-## Getting Started
+---
+
+## 🚀 Quick Start (Development)
 
 ### Prerequisites
 - Node.js 20+
 - PostgreSQL 15+
 - npm
 
-### Installation
+### 1. Setup Environment
+```bash
+cp .env.example .env
+```
+Edit `.env` and fill in your local database credentials and app secret.
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/ravindu2012/retail-smart-erp.git
-   cd retail-smart-erp
-   ```
+### 2. Install Dependencies
+```bash
+npm install
+```
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+### 3. Database Initialization
+```bash
+# Run pending database migrations (123 migrations)
+npm run db:migrate
 
-3. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` with your database credentials and API keys.
+# Create your super admin account for /sys-control
+npm run db:seed-admin
 
-4. **Set up the database**
-   ```bash
-   # Run migrations
-   npm run db:migrate
+# Apply query performance indexes
+npm run db:indexes
+```
 
-   # Create super admin user
-   npm run db:seed-admin
-   ```
+### 4. Start Development Server
+```bash
+npm run dev
+```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-5. **Start the development server**
-   ```bash
-   npm run dev
-   ```
-   Open [http://localhost:3000](http://localhost:3000).
+---
 
-### Available Scripts
+## 📱 Mobile POS Client (Expo)
+
+Located in `apps/mobile`:
+```bash
+cd apps/mobile
+npm install
+npx expo start
+```
+For production build instructions via EAS, see [apps/mobile/README.md](apps/mobile/README.md).
+
+---
+
+## 🔒 Production Deployment
+
+For full production deployment instructions on **Railway**, **VPS/Docker**, or **PM2**, including PostgreSQL RLS setup and DNS configuration, consult:
+👉 **[Production Deployment & Operations Guide](docs/PRODUCTION_DEPLOYMENT.md)**
+
+---
+
+## 📜 Available Scripts
 
 ```bash
 npm run dev              # Start dev server with WebSocket support
-npm run dev:next         # Start Next.js only (no WebSocket)
 npm run build            # Production build
 npm run start            # Run production server
-npm run lint             # ESLint
+npm run lint             # ESLint code style checks
+npm run validate:migrations # Validate migration sequencing
 npx tsc --noEmit         # TypeScript type checking
-npm run db:generate      # Generate migration files from schema changes
-npm run db:migrate       # Run pending migrations
-npm run db:studio        # Open Drizzle Studio GUI
-npx jest                 # Run tests
+npm run db:migrate       # Apply database migrations
+npm run db:seed-admin    # Create initial system super admin
+npm run db:indexes       # Create performance database indexes
+npm run stress:pos       # Run k6 POS load test (5 parallel cashiers)
 ```
 
-## Project Structure
+---
 
-```
-src/
-├── app/
-│   ├── (auth)/           # Login, register (no auth required)
-│   ├── c/[slug]/         # Tenant-scoped pages
-│   │   ├── dashboard/    # Dashboard
-│   │   ├── pos/          # Point of Sale
-│   │   ├── items/        # Inventory management
-│   │   ├── customers/    # Customer management
-│   │   ├── sales/        # Sales history
-│   │   ├── work-orders/  # Auto service work orders
-│   │   ├── accounting/   # Chart of accounts, journals, budgets
-│   │   ├── hr/           # Employees, payroll
-│   │   ├── restaurant/   # Kitchen, tables, orders, recipes
-│   │   └── settings/     # Tenant settings
-│   ├── account/          # Cross-tenant account management
-│   ├── api/              # RESTful API routes
-│   └── sys-control/      # System admin panel
-├── components/
-│   ├── layout/           # Sidebar, Navbar
-│   ├── modals/           # 30+ modal components
-│   └── ui/               # Reusable UI components
-├── hooks/                # Custom React hooks
-└── lib/
-    ├── auth/             # NextAuth config, roles, permissions
-    ├── ai/               # AI integrations
-    ├── db/               # Drizzle ORM, schema, RLS helpers
-    └── websocket/        # WebSocket server & client
-```
-
-## Contributing
-
-We welcome contributions! Here's how to get started:
-
-1. **Fork** this repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
-
-### Guidelines
-- Follow the existing code style and patterns
-- All API routes must use `validateBody()` for request validation
-- Include tenant filtering in all database queries
-- Use real-time hooks (`useRealtimeData`) for data-displaying components
-- Use server-side pagination (`usePaginatedData`) for list pages
-- Test your changes locally before submitting
-
-## Support This Project
-
-If this project saves you time or helps your business, consider supporting its development:
-
-[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor_on_GitHub-%E2%9D%A4-red?style=for-the-badge)](https://github.com/sponsors/ravindu2012)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?style=for-the-badge&logo=buy-me-a-coffee&logoColor=black)](https://buymeacoffee.com/ravindu2012)
-
-Your support helps keep this project actively maintained and free for everyone.
-
-## License
+## 📄 License
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
-
-## Contact
-
-- **Author:** Ravindu Gajanayaka
-- **Website:** [retailsmarterp.com](https://www.retailsmarterp.com)
-- **Issues:** [GitHub Issues](https://github.com/ravindu2012/retail-smart-erp/issues)

@@ -228,7 +228,7 @@ export async function POST(request: NextRequest) {
     const parsed = await validateBody(request, createSaleSchema)
     if (!parsed.success) return parsed.response
 
-    const { customerId, vehicleId, customerName, vehiclePlate, vehicleDescription, cartItems, paymentMethod, paymentSplits, subtotal, discount, discountType, discountReason, tax, taxRate: _bodyTaxRate, taxInclusive: _bodyTaxInclusive, taxBreakdown: bodyTaxBreakdown, total, amountPaid, creditAmount, addOverpaymentToCredit, isReturn, returnAgainst, refundAmount, refundMethod, warehouseId: providedWarehouseId, posOpeningEntryId, loyaltyPointsRedeemed, costCenterId: providedCostCenterId, workOrderId, restaurantOrderId, tipAmount: _tipAmount, giftCardId } = parsed.data
+    const { clientSaleId, customerId, vehicleId, customerName, vehiclePlate, vehicleDescription, cartItems, paymentMethod, paymentSplits, subtotal, discount, discountType, discountReason, tax, taxRate: _bodyTaxRate, taxInclusive: _bodyTaxInclusive, taxBreakdown: bodyTaxBreakdown, total, amountPaid, creditAmount, addOverpaymentToCredit, isReturn, returnAgainst, refundAmount, refundMethod, warehouseId: providedWarehouseId, posOpeningEntryId, loyaltyPointsRedeemed, costCenterId: providedCostCenterId, workOrderId, restaurantOrderId, tipAmount: _tipAmount, giftCardId } = parsed.data
 
     // Check permission: createSales for regular sales, processReturns for returns
     if (isReturn) {
@@ -252,6 +252,28 @@ export async function POST(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // Idempotency check for offline POS queue retries
+      if (clientSaleId) {
+        const existingSale = await db.query.sales.findFirst({
+          where: and(
+            eq(sales.tenantId, session.user.tenantId),
+            eq(sales.clientSaleId, clientSaleId)
+          ),
+          with: {
+            customer: true,
+            user: true,
+            items: {
+              with: {
+                item: true,
+              },
+            },
+          },
+        })
+        if (existingSale) {
+          return NextResponse.json(existingSale, { status: 200 })
+        }
+      }
+
       // Get warehouse ID - use provided or default warehouse (RLS scopes the query)
       let warehouseId = providedWarehouseId
 
@@ -721,6 +743,7 @@ export async function POST(request: NextRequest) {
       // Create sale
       const saleResult = await tx.insert(sales).values({
         tenantId: session.user.tenantId,
+        clientSaleId: clientSaleId || null,
         createdBy: userId,
         customerId: customerId || null,
         vehicleId: vehicleId || null,

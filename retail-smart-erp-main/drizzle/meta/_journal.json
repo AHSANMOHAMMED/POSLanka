@@ -855,6 +855,13 @@
       "when": 1771446337006,
       "tag": "0121_poslanka_quotations_credit_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1771446337007,
+      "tag": "0122_sales_client_sale_id",
+      "breakpoints": true
     }
   ]
 }
