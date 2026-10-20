@@ -17,6 +17,7 @@ import { parseSerialNumberInput, checkDuplicateSerials, allocateSerials } from '
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { recordItemChange } from '@/lib/inventory/item-audit'
 
 // GET single purchase with items
 export async function GET(
@@ -281,9 +282,26 @@ export async function PUT(
               ? Math.max(0, Math.round(((currentCost * stockBefore) - (purchasePrice * qty)) / stockAfter * 100) / 100)
               : currentCost
 
-            await tx.update(itemsTable)
-              .set({ costPrice: reversedCost.toString() })
-              .where(eq(itemsTable.id, itemId))
+            if (reversedCost !== currentCost) {
+              await tx.update(itemsTable)
+                .set({
+                  costPrice: reversedCost.toString(),
+                  updatedBy: session.user.id,
+                  version: sql`${itemsTable.version} + 1`,
+                  updatedAt: new Date(),
+                })
+                .where(eq(itemsTable.id, itemId))
+              await recordItemChange(tx, {
+                tenantId: session.user.tenantId,
+                itemId,
+                userId: session.user.id,
+                source: 'purchase_cancellation',
+                action: 'update',
+                before: { costPrice: currentCost },
+                after: { costPrice: reversedCost },
+                notes: `Cost reversed on cancelling ${currentPurchase.purchaseNo}`,
+              })
+            }
 
             // Log cost reversal history
             await tx.insert(itemCostHistory).values({

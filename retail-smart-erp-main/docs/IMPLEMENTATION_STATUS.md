@@ -76,6 +76,27 @@ Fixed from this pass:
 - Escape did not close 13 POS dialogs (discount, held sales, returns, weight, serials, modifiers, printer, camera, supervisor, cash float, vehicle mismatch, success, held drawer), which blocked every keyboard shortcut after opening one. New `useEscapeKey` hook; the success screen also accepts Enter for the next sale.
 - Vendors created from the super-admin console had no billing account, membership, subscription or usage row, so every vendor page raised an error and billing/trial/storage enforcement skipped them. Creation now mirrors self-registration; migration 0126 backfills existing ones.
 
+## Round 5 — vendor operations (2026-10-21)
+Delivered in three waves, each verified on a fresh database (migrations 0127–0142) before commit.
+
+| Area | What vendors get |
+|---|---|
+| Staff | Owner/manager creates admins and cashiers with password, PIN, branches and counters (web + mobile); invites keep assignments |
+| Item identity | Auto item code `ITM-000001`, unique barcode per vendor, unique PLU; duplicates rejected with a clear 409 |
+| History | Every stock change records who, when, before → after; field and price changes logged; History tab per item |
+| Stock intake | Mobile/web staging batches (works offline), Sync adds stock or creates items without duplicates; failed lines fixable and re-syncable |
+| Import/export | Validate-then-apply, no lost rows, upsert, blank cells keep values, opening stock per branch, resumable jobs, error CSV, unlimited export |
+| Alerts | Low/out-of-stock from any stock change, expiry, daily digest, large refund, void, manual return, shift variance, intake, offline-sale issues, subscription expiry; per-user types, quiet hours, digest hour; web + mobile inbox |
+| Offline (power cut) | Phone keeps a local catalog per branch; search, scan (incl. scale/GS1 labels), sell, print with an `OFF-` receipt code; syncs later without duplicates |
+| Receipts | Editable business profile (logo, legal name, VAT/TIN, BRN, website), per-counter settings, invoice barcode/QR on every receipt path, Z-report with the same header |
+| Printers & labels | Multiple printers per terminal (receipt/label/kitchen); TSPL, ZPL, EPL and raster labels on web and mobile; kitchen tickets |
+| Returns | Locked, server-priced refunds with tax reversal; partial returns; exchange; line removal as a recorded return; scan receipt barcode to return (web + mobile) |
+| Purchases | Receive/return/cancel keep ledger and stock in agreement; weighted-average cost across branches |
+| Isolation & security | RLS on every vendor table (checker in CI); several cross-vendor leaks closed; password/PIN hashes no longer returned by any API |
+| Scale | Per-vendor invoice numbering (no global lock); 105 concurrent checkouts pass with exact stock and invoices |
+
+Verification on the final build: 18 test suites (1,757 checks), API smoke 100/100, concurrency 105/105, browser 41/41, lint 0/0, web + mobile typecheck 0, Android bundle OK. CI runs all suites on a fresh PostgreSQL.
+
 ## Still open
 - Not exercised on physical hardware: a real Android phone, Bluetooth/USB/network thermal printers, cash drawers, USB/Bluetooth scanners, weighing scales. These need an EAS build (`apps/mobile/README.md`) and an on-site test.
 - Push needs `npx eas init` (EAS project id) before notifications are delivered.

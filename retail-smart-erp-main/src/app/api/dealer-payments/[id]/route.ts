@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { updateDealerPaymentSchema } from '@/lib/validation/schemas/dealership'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET single dealer payment
 export async function GET(
@@ -34,7 +35,7 @@ export async function GET(
           dealerAllocation: true,
           sale: true,
           journalEntry: true,
-          createdByUser: true,
+          createdByUser: SAFE_USER,
           confirmedByUser: true,
         },
       })

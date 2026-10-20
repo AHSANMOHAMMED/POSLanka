@@ -10,6 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { vehicleDocumentsListSchema, createVehicleDocumentSchema } from '@/lib/validation/schemas/vehicles'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET all vehicle documents for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest) {
           vehicleInventory: true,
           vehicleImport: true,
           dealer: true,
-          uploadedByUser: true,
+          uploadedByUser: SAFE_USER,
         },
         orderBy: [desc(vehicleDocuments.createdAt)],
         limit,

@@ -8,7 +8,7 @@ import { escapeLikePattern } from '@/lib/utils/sql'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { sendPushToPermission } from '@/lib/notifications/push'
+import { notifyReturnAlerts } from '@/lib/notifications/sales-alerts'
 import { roundCurrency, compareCurrency, parseCurrency } from '@/lib/utils/currency'
 import { postSaleToGL, postGiftCardSaleToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
@@ -27,8 +27,11 @@ import { toApiError } from '@/lib/db/errors'
 import { applyStockChanges, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
 import { createReturnInTx, returnStatusOf } from '@/lib/sales/returns'
 import { saleFlowErrorResponse } from '@/lib/sales/route-helpers'
+import { notify } from '@/lib/notifications/notify'
+import type { SaleFlags } from '@/lib/db/schema'
 import type { CompanySession } from '@/lib/auth'
 import type { z } from 'zod'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET all sales for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -85,7 +88,7 @@ export async function GET(request: NextRequest) {
         where: whereClause,
         with: {
           customer: true,
-          user: true,
+          user: SAFE_USER,
           items: {
             with: {
               item: true,
@@ -111,7 +114,7 @@ export async function GET(request: NextRequest) {
           ),
           with: {
             customer: true,
-            user: true,
+            user: SAFE_USER,
             items: {
               with: {
                 item: true,
@@ -275,8 +278,15 @@ export async function POST(request: NextRequest) {
       return await handleReturnPost(session, userId, parsed.data)
     }
 
+    // W6: a sale made offline (offlineRef) is a done deal — the customer paid and left. Catalog
+    // price changes, tax rounding against cached templates and stock shortfalls are ACCEPTED and
+    // recorded in sales.flags; managers are notified after commit.
+    const isOfflineSale = !!offlineRef
+    const saleFlags: SaleFlags = isOfflineSale ? { offline: true } : {}
+    let offlineNotice: { saleId: string; invoiceNo: string } | null = null
+
     // Execute with RLS tenant context
-    return await withTenant(session.user.tenantId, async (db) => {
+    const response = await withTenant(session.user.tenantId, async (db) => {
       // Idempotency check for offline POS queue retries
       if (clientSaleId) {
         const existingSale = await db.query.sales.findFirst({
@@ -286,7 +296,7 @@ export async function POST(request: NextRequest) {
           ),
           with: {
             customer: true,
-            user: true,
+            user: SAFE_USER,
             items: {
               with: {
                 item: true,
@@ -295,7 +305,34 @@ export async function POST(request: NextRequest) {
           },
         })
         if (existingSale) {
+          // First attempt reached the server but its reply was lost, and the phone then queued the
+          // sale with an offline receipt number: record that number so the printed OFF- code
+          // can be scanned for returns. Never overwrite an existing reference.
+          if (offlineRef && !existingSale.offlineRef) {
+            try {
+              await db.update(sales).set({ offlineRef })
+                .where(and(eq(sales.id, existingSale.id), sql`${sales.offlineRef} IS NULL`))
+              existingSale.offlineRef = offlineRef
+            } catch (refError) {
+              // unique (tenant, offline_ref) clash: keep the sale as is
+              logError('api/sales offlineRef backfill', refError)
+            }
+          }
           return NextResponse.json(existingSale, { status: 200 })
+        }
+      }
+      // Same offline receipt replayed (e.g. from another queue entry): return the existing sale
+      if (offlineRef) {
+        const existingOffline = await db.query.sales.findFirst({
+          where: and(eq(sales.tenantId, session.user.tenantId), eq(sales.offlineRef, offlineRef)),
+          with: { customer: true, user: SAFE_USER, items: { with: { item: true } } },
+        })
+        if (existingOffline) {
+          // Two devices printed the same ref (device-code collision): never merge different sales
+          if (clientSaleId && existingOffline.clientSaleId && existingOffline.clientSaleId !== clientSaleId) {
+            return NextResponse.json({ error: `Offline receipt number ${offlineRef} is already used by another sale`, code: 'OFFLINE_REF_CONFLICT' }, { status: 409 })
+          }
+          return NextResponse.json(existingOffline, { status: 200 })
         }
       }
 
@@ -441,6 +478,14 @@ export async function POST(request: NextRequest) {
         costPrice: item ? roundCurrency(parseFloat(item.costPrice)) : 0,
         serialNumberIds: cartItem.serialNumberIds || undefined,
       })
+
+      // W6: offline sale sold at a (cached) price that differs from today's catalog price
+      if (isOfflineSale) {
+        const catalog = roundCurrency(parseFloat(item.sellingPrice) || 0)
+        if (compareCurrency(unitPrice, catalog) !== 0) {
+          (saleFlags.priceDifferences ||= []).push({ itemId: item.id, name: item.name, sold: unitPrice, catalog })
+        }
+      }
     }
 
     const finalSubtotal = subtotal
@@ -471,10 +516,21 @@ export async function POST(request: NextRequest) {
       if (bodyTaxBreakdown && bodyTaxBreakdown.length > 0) {
         // Template-based tax from client: validate total matches finalTax
         const breakdownTotal = roundCurrency(bodyTaxBreakdown.reduce((s, b) => s + b.amount, 0))
-        if (Math.abs(breakdownTotal - finalTax) > 0.50) {
+        // Offline sales tolerate up to 1.00 of rounding (an inconsistent payload beyond that is a bug)
+        if (Math.abs(breakdownTotal - finalTax) > (isOfflineSale ? 1.0 : 0.50)) {
           return NextResponse.json({
             error: 'Tax breakdown total does not match tax amount. Please refresh and try again.',
           }, { status: 400 })
+        }
+        if (isOfflineSale) {
+          // Computed on the device from cached templates: accept it, record any difference
+          // against today's templates (≤ 1.00 = rounding; more = templates changed meanwhile).
+          const check = await recalculateDocumentTax(db, session.user.tenantId,
+            expandedCartItems.map(ci => ({ itemId: ci.itemId || null, lineTotal: ci.total })), { type: 'sales' })
+          const difference = roundCurrency(finalTax - check.totalTax)
+          if (Math.abs(difference) >= 0.01) {
+            saleFlags.taxDifference = { client: finalTax, server: check.totalTax, difference, withinTolerance: Math.abs(difference) <= 1.0 }
+          }
         }
       } else {
         // No client breakdown: compute server-side using tax templates
@@ -485,7 +541,13 @@ export async function POST(request: NextRequest) {
         serverTaxResult = await recalculateDocumentTax(db, session.user.tenantId, saleLineItems, { type: 'sales' })
         if (serverTaxResult.taxBreakdown && serverTaxResult.taxBreakdown.length > 0) {
           // Validate server-computed tax vs client tax (allow small rounding diff)
-          if (Math.abs(serverTaxResult.totalTax - finalTax) > 0.50) {
+          if (isOfflineSale && Math.abs(serverTaxResult.totalTax - finalTax) >= 0.01) {
+            // Offline sale without a breakdown (older app): the tax the customer paid stands;
+            // drop the server breakdown so the GL posts the client's tax total.
+            const difference = roundCurrency(finalTax - serverTaxResult.totalTax)
+            saleFlags.taxDifference = { client: finalTax, server: serverTaxResult.totalTax, difference, withinTolerance: Math.abs(difference) <= 1.0 }
+            serverTaxResult = null
+          } else if (Math.abs(serverTaxResult.totalTax - finalTax) > 0.50) {
             return NextResponse.json({
               error: 'Tax calculation mismatch. Please refresh and try again.',
             }, { status: 400 })
@@ -589,7 +651,7 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      if (insufficientStockItems.length > 0) {
+      if (insufficientStockItems.length > 0 && !isOfflineSale) {
         return NextResponse.json({
           error: `Insufficient stock for: ${insufficientStockItems.join(', ')}`,
           insufficientStockItems,
@@ -666,6 +728,7 @@ export async function POST(request: NextRequest) {
         discountReason: discountReason || null,
         taxAmount: String(finalTax),
         taxBreakdown: bodyTaxBreakdown || serverTaxResult?.taxBreakdown || null,
+        flags: saleFlags,
         total: String(finalTotal),
         paidAmount: String(actualPaidAmount),
         paymentMethod: creditUsed > 0 && cashCardAmount === 0 ? 'credit' : (paymentMethod || 'cash'),
@@ -899,20 +962,31 @@ export async function POST(request: NextRequest) {
               source: 'pos',
               costCenterId: costCenterId || null,
               idempotencyKey: `sale:${newSale.id}:${saleItemRow.id}`,
+              // W6: goods already left the shop during the outage; record the shortfall instead
+              allowNegative: isOfflineSale,
             })
             stockLineQty.push(cartItem.quantity)
           }
         }
 
         const stockResults = stockInputs.length > 0 ? await applyStockChanges(tx, stockInputs) : []
+        const shortfalls: NonNullable<SaleFlags['stockShortfall']> = []
         stockResults.forEach((r, i) => {
           const reserved = reservedMap.get(stockInputs[i].itemId) || 0
           const availableStock = Math.round((r.before - reserved) * 1000) / 1000
           if (stockLineQty[i] > 0 && availableStock < stockLineQty[i]) {
-            throw new Error(`INSUFFICIENT_STOCK:${r.itemName} (need: ${stockLineQty[i]}, have: ${availableStock})`)
+            if (!isOfflineSale) {
+              throw new Error(`INSUFFICIENT_STOCK:${r.itemName} (need: ${stockLineQty[i]}, have: ${availableStock})`)
+            }
+            shortfalls.push({ itemId: stockInputs[i].itemId, name: r.itemName, quantity: stockLineQty[i], available: availableStock })
           }
         })
         saleStockChanges = stockResults.map((result, i) => ({ result, input: stockInputs[i] }))
+        if (shortfalls.length > 0) {
+          saleFlags.stockShortfall = shortfalls
+          await tx.update(sales).set({ flags: saleFlags }).where(eq(sales.id, newSale.id))
+          newSale.flags = saleFlags
+        }
 
         // Auto-create gift cards for gift card items sold
         const generatedGiftCards: { cardNumber: string; balance: number }[] = []
@@ -1097,29 +1171,7 @@ export async function POST(request: NextRequest) {
       // WS-3: Broadcast specific item stock updates (not 'all')
       const affectedItemIds = [...new Set(expandedCartItems.map(i => i.itemId))]
 
-      // Low-stock alert → stock managers (only when a minimum is configured for the branch)
-      if (warehouseId && affectedItemIds.length > 0) {
-        try {
-          const low = await db.select({ name: items.name, current: warehouseStock.currentStock, min: warehouseStock.minStock })
-            .from(warehouseStock)
-            .innerJoin(items, eq(items.id, warehouseStock.itemId))
-            .where(and(
-              eq(warehouseStock.warehouseId, warehouseId),
-              inArray(warehouseStock.itemId, affectedItemIds.filter((id): id is string => !!id)),
-              sql`${warehouseStock.minStock} > 0`,
-              sql`${warehouseStock.currentStock} <= ${warehouseStock.minStock}`,
-            ))
-          if (low.length > 0) {
-            void sendPushToPermission(session.user.tenantId, 'manageInventory', {
-              title: low.length === 1 ? `Low stock: ${low[0].name}` : `${low.length} items at or below minimum stock`,
-              body: low.slice(0, 3).map(l => `${l.name}: ${Number(l.current)} left (min ${Number(l.min)})`).join(' · '),
-              data: { screen: 'inventory', type: 'low_stock', warehouseId },
-            })
-          }
-        } catch (lowStockError) {
-          logError('api/sales', lowStockError, { stage: 'low-stock-alert' })
-        }
-      }
+      // Low / out-of-stock alerts: stock-alerts listener via notifyStockDecreased (W5)
       for (const itemId of affectedItemIds) {
         logAndBroadcast(session.user.tenantId, 'item', 'updated', itemId)
       }
@@ -1202,8 +1254,32 @@ export async function POST(request: NextRequest) {
         })
       }
 
+      if (isOfflineSale && (saleFlags.priceDifferences?.length || saleFlags.taxDifference || saleFlags.stockShortfall?.length)) {
+        offlineNotice = { saleId: result.id, invoiceNo: result.invoiceNo }
+      }
+
       return NextResponse.json(result)
     })
+
+    // W6: tell managers about offline sales that differ from the catalog (after commit)
+    if (offlineNotice) {
+      const notice = offlineNotice as { saleId: string; invoiceNo: string }
+      const parts: string[] = []
+      for (const d of (saleFlags.priceDifferences || []).slice(0, 3)) {
+        parts.push(`${d.name || 'Item'} sold ${d.sold.toFixed(2)} (catalog ${d.catalog.toFixed(2)})`)
+      }
+      if ((saleFlags.priceDifferences?.length || 0) > 3) parts.push(`+${saleFlags.priceDifferences!.length - 3} more`)
+      if (saleFlags.taxDifference) parts.push(`tax differs by ${saleFlags.taxDifference.difference.toFixed(2)}`)
+      if (saleFlags.stockShortfall?.length) parts.push(`${saleFlags.stockShortfall.length} item(s) sold beyond recorded stock`)
+      void notify(session.user.tenantId, 'offline_price_difference', {
+        title: `Offline sale ${offlineRef} (${notice.invoiceNo}) needs review`,
+        body: parts.join(' · ') || 'Offline sale differs from the current catalog',
+        data: { screen: 'sales', saleId: notice.saleId, invoiceNo: notice.invoiceNo, offlineRef },
+        dedupeKey: `offline_price_difference:${notice.saleId}`,
+        permission: 'manageSales',
+      })
+    }
+    return response
   } catch (error) {
     // Racing retries of the same clientSaleId: the unique index (tenant_id, client_sale_id)
     // rejected the loser → return the sale the winner created instead of a 500.
@@ -1218,9 +1294,12 @@ export async function POST(request: NextRequest) {
         const existing = await withTenant(tenantId, async (db) =>
           db.query.sales.findFirst({
             where: and(eq(sales.tenantId, tenantId), eq(sales.offlineRef, ref)),
-            with: { customer: true, user: true, items: { with: { item: true } } },
+            with: { customer: true, user: SAFE_USER, items: { with: { item: true } } },
           })
         )
+        if (existing && idemClientSaleId && existing.clientSaleId && existing.clientSaleId !== idemClientSaleId) {
+          return NextResponse.json({ error: `Offline receipt number ${ref} is already used by another sale`, code: 'OFFLINE_REF_CONFLICT' }, { status: 409 })
+        }
         if (existing) return NextResponse.json(existing, { status: 200 })
       } catch (lookupError) {
         logError('api/sales', lookupError, { method: 'POST', path: '/api/sales', stage: 'offline-ref-recovery' })
@@ -1233,7 +1312,7 @@ export async function POST(request: NextRequest) {
         const existing = await withTenant(tenantId, async (db) =>
           db.query.sales.findFirst({
             where: and(eq(sales.tenantId, tenantId), eq(sales.clientSaleId, key)),
-            with: { customer: true, user: true, items: { with: { item: true } } },
+            with: { customer: true, user: SAFE_USER, items: { with: { item: true } } },
           })
         )
         if (existing) return NextResponse.json(existing, { status: 200 })
@@ -1302,7 +1381,7 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
       if (body.clientSaleId) {
         const existing = await db.query.sales.findFirst({
           where: and(eq(sales.tenantId, tenantId), eq(sales.clientSaleId, body.clientSaleId)),
-          with: { customer: true, user: true, items: { with: { item: true } } },
+          with: { customer: true, user: SAFE_USER, items: { with: { item: true } } },
         })
         if (existing) return NextResponse.json(existing, { status: 200 })
       }
@@ -1362,6 +1441,10 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
       if (result.originalSale) logAndBroadcast(tenantId, 'sale', 'updated', result.originalSale.id)
       for (const itemId of result.affectedItemIds) logAndBroadcast(tenantId, 'item', 'updated', itemId)
       logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.warehouseId)
+      notifyReturnAlerts(tenantId, {
+        returnId: ret.id, returnNo: ret.invoiceNo, originalInvoiceNo: result.originalSale?.invoiceNo,
+        manual: !result.originalSale, refundTotal: result.refundTotal, actorUserId: userId, actorName: session.user.name,
+      })
 
       if (result.refundPaidOut > 0 && result.originalSale) {
         checkRefundAnomalies(tenantId, {
@@ -1394,7 +1477,7 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
     if (pgCode === '23505' && body.clientSaleId && constraint.includes('client_sale')) {
       const existing = await withTenant(tenantId, (db) => db.query.sales.findFirst({
         where: and(eq(sales.tenantId, tenantId), eq(sales.clientSaleId, body.clientSaleId!)),
-        with: { customer: true, user: true, items: { with: { item: true } } },
+        with: { customer: true, user: SAFE_USER, items: { with: { item: true } } },
       }))
       if (existing) return NextResponse.json(existing, { status: 200 })
     }

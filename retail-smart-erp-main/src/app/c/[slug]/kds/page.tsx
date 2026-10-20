@@ -13,8 +13,10 @@ import {
   RefreshCw,
   Wifi,
   WifiOff,
+  Printer,
 } from 'lucide-react'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { printKitchenTicket } from '@/hooks/usePrinter'
 
 type KitchenStatus = 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled'
 type OrderType = 'dine_in' | 'takeaway' | 'delivery'
@@ -39,6 +41,7 @@ interface KitchenOrder {
   orderType: OrderType
   tableName: string | null
   tableArea: string | null
+  serverName?: string | null
   items: KitchenOrderItem[]
   totalItems: number
   pendingItems: number
@@ -260,6 +263,35 @@ export default function KitchenDisplaySystemPage() {
     } finally {
       markBusy(item.id, false)
       refresh()
+    }
+  }
+
+  const handleReprint = async (order: KitchenOrder) => {
+    const key = `reprint:${order.id}`
+    if (busyIds.has(key)) return
+    markBusy(key, true)
+    try {
+      const result = await printKitchenTicket({
+        orderNo: order.orderNo,
+        orderType: order.orderType,
+        table: order.tableName,
+        tableArea: order.tableArea,
+        server: order.serverName ?? null,
+        time: order.createdAt,
+        reprint: true,
+        items: order.items
+          .filter((i) => i.status !== 'cancelled')
+          .map((i) => ({
+            name: i.itemName,
+            quantity: Number(i.quantity) || 0,
+            modifiers: modifierLabels(i.modifiers),
+            notes: i.notes,
+          })),
+      })
+      if (result === 'skipped') setError('No kitchen printer is configured on this terminal (Printer settings).')
+      else if (result === 'failed') setError('Kitchen ticket could not be printed. Check the kitchen printer.')
+    } finally {
+      markBusy(key, false)
     }
   }
 
@@ -602,6 +634,21 @@ export default function KitchenDisplaySystemPage() {
                   >
                     {isBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                     <span>{BUMP_LABEL[ticket.status]}</span>
+                  </button>
+                  <button
+                    type="button"
+                    title="Reprint kitchen ticket (KOT)"
+                    aria-label="Reprint KOT"
+                    disabled={busyIds.has(`reprint:${ticket.id}`)}
+                    onClick={() => handleReprint(ticket)}
+                    className="px-3 py-2.5 rounded-xl bg-slate-800 border border-slate-700 text-slate-300 hover:bg-slate-700 font-mono text-xs font-bold uppercase flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    {busyIds.has(`reprint:${ticket.id}`) ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Printer className="w-4 h-4" />
+                    )}
+                    <span className="hidden xl:inline">KOT</span>
                   </button>
                 </div>
               </div>

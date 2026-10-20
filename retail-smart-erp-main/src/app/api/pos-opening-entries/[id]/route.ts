@@ -10,6 +10,7 @@ import type { PaymentMethod } from '@/lib/db/schema'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePosOpeningEntrySchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET a single opening entry
 export async function GET(
@@ -38,7 +39,7 @@ export async function GET(
           },
           warehouse: true,
           balances: true,
-          user: true,
+          user: SAFE_USER,
           closingEntry: true,
           sales: {
             orderBy: (sales, { desc }) => [desc(sales.createdAt)],
@@ -259,7 +260,7 @@ export async function PUT(
           posProfile: true,
           warehouse: true,
           balances: true,
-          user: true,
+          user: SAFE_USER,
         },
       })
 

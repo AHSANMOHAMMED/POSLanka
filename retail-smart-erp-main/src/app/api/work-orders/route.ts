@@ -13,6 +13,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { workOrdersListSchema, createWorkOrderSchema } from '@/lib/validation/schemas/work-orders'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // Helper function to get available stock (current - reserved from draft work orders)
 // Requires RLS-aware db connection to be passed in
@@ -111,7 +112,7 @@ export async function GET(request: NextRequest) {
               vehicleType: true,
             },
           },
-          assignedUser: true,
+          assignedUser: SAFE_USER,
           services: {
             with: {
               serviceType: true,

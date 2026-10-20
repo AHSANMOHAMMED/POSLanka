@@ -1,4 +1,5 @@
-import { apiGet, type ApiResult } from './api'
+import { apiGet, isNetworkError, type ApiResult } from './api'
+import { getBundle, patchBundle } from './localdb'
 
 export type PaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card'
 
@@ -71,9 +72,37 @@ export interface CurrentShiftResponse {
   hasOpenShift: boolean
 }
 
-/** GET /api/pos-opening-entries?current=true */
-export function fetchCurrentShift(): Promise<ApiResult<CurrentShiftResponse>> {
-  return apiGet<CurrentShiftResponse>('/api/pos-opening-entries?current=true')
+/** GET /api/pos-opening-entries?current=true (the answer is cached for offline cold starts). */
+export async function fetchCurrentShift(): Promise<ApiResult<CurrentShiftResponse>> {
+  const res = await apiGet<CurrentShiftResponse>('/api/pos-opening-entries?current=true')
+  if (res.ok) {
+    patchBundle({ shift: res.data?.shift || null, posProfile: res.data?.shift?.posProfile || null }).catch(() => undefined)
+  }
+  return res
+}
+
+export interface ShiftLoadResult {
+  shift: Shift | null
+  /** true when the server could not be reached and `shift` came from the device cache */
+  offline: boolean
+  error: string | null
+  status: number
+}
+
+/**
+ * Current shift, falling back to the cached open shift when the server is unreachable
+ * (power cut / no internet): the cashier can keep selling and the sales sync later.
+ */
+export async function loadShiftOfflineAware(): Promise<ShiftLoadResult> {
+  const res = await fetchCurrentShift()
+  if (res.ok) return { shift: res.data.shift, offline: false, error: null, status: res.status }
+  if (isNetworkError(res)) {
+    const bundle = await getBundle()
+    const cached = bundle?.shift as Shift | null | undefined
+    if (cached && cached.status === 'open') return { shift: cached, offline: true, error: null, status: 0 }
+    return { shift: null, offline: true, error: res.error, status: 0 }
+  }
+  return { shift: null, offline: false, error: res.error, status: res.status }
 }
 
 /** GET /api/pos-profiles — array when assigned, `{ profiles: [] , needsSetup }` otherwise. */

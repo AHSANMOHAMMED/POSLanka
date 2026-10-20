@@ -3,7 +3,8 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { items } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
+import { recordItemChange } from '@/lib/inventory/item-audit'
 import { uploadToR2, deleteFromR2, keyFromUrl } from '@/lib/files'
 import { requireQuota, adjustFileStorage } from '@/lib/db/storage-quota'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -72,8 +73,24 @@ export async function POST(
 
       // Update item imageUrl
       await db.update(items)
-        .set({ imageUrl, imageSize: buffer.length, updatedAt: new Date() })
+        .set({
+          imageUrl,
+          imageSize: buffer.length,
+          updatedBy: session!.user.id,
+          version: sql`${items.version} + 1`,
+          updatedAt: new Date(),
+        })
         .where(eq(items.id, itemId))
+      await recordItemChange(db, {
+        tenantId: session!.user.tenantId,
+        itemId,
+        userId: session!.user.id,
+        source: 'manual',
+        action: 'update',
+        before: { imageUrl: item.imageUrl },
+        after: { imageUrl },
+        notes: 'Image uploaded',
+      })
 
       // Track file storage change (item images bypass files table)
       adjustFileStorage(session!.user.tenantId, buffer.length - oldSize).catch(() => {})
@@ -119,8 +136,24 @@ export async function DELETE(
       }
 
       await db.update(items)
-        .set({ imageUrl: null, imageSize: null, updatedAt: new Date() })
+        .set({
+          imageUrl: null,
+          imageSize: null,
+          updatedBy: session!.user.id,
+          version: sql`${items.version} + 1`,
+          updatedAt: new Date(),
+        })
         .where(eq(items.id, itemId))
+      await recordItemChange(db, {
+        tenantId: session!.user.tenantId,
+        itemId,
+        userId: session!.user.id,
+        source: 'manual',
+        action: 'update',
+        before: { imageUrl: item.imageUrl },
+        after: { imageUrl: null },
+        notes: 'Image removed',
+      })
 
       // Subtract file storage (item images bypass files table)
       if (item.imageSize) {

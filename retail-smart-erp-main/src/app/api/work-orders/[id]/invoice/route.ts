@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { workOrders, workOrderParts, sales, saleItems, stockMovements, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, payments, customers, customerCreditTransactions, appointments, itemSerialNumbers } from '@/lib/db/schema'
+import { workOrders, workOrderParts, sales, saleItems, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, payments, customers, customerCreditTransactions, appointments, itemSerialNumbers } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -17,6 +17,8 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createWorkOrderInvoiceSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
+import { applyStockChange, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
+import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
 
 // POST convert work order to invoice
 export async function POST(
@@ -242,6 +244,7 @@ export async function POST(
       }
 
       // Create sale and items in transaction
+      const stockChanges: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
       const result = await db.transaction(async (tx) => {
         // Lock work order row to prevent double invoicing race condition
         const [lockedWO] = await tx
@@ -351,45 +354,27 @@ export async function POST(
           // Update warehouse stock (safe now because row is locked)
           if (item.trackStock && workOrder.warehouseId) {
             const requiredQty = parseFloat(part.quantity)
-
-            // Lock and verify stock inside transaction to prevent race conditions
-            const [lockedStock] = await tx
-              .select()
-              .from(warehouseStock)
-              .where(and(
-                eq(warehouseStock.itemId, part.itemId),
-                eq(warehouseStock.warehouseId, workOrder.warehouseId)
-              ))
-              .for('update')
-
-            const currentStock = lockedStock ? parseFloat(lockedStock.currentStock) : 0
-
-            // Issue 4: Prevent negative stock - final check with row lock
-            if (currentStock < requiredQty) {
-              throw new Error(`INSUFFICIENT_STOCK:${item.name} (need: ${requiredQty}, have: ${currentStock})`)
+            if (requiredQty > 0) {
+              // Single stock writer: locks the row, refuses negative stock
+              // (INSUFFICIENT_STOCK) and writes the signed ledger row.
+              const input: StockChangeInput = {
+                tenantId: session.user.tenantId,
+                warehouseId: workOrder.warehouseId,
+                itemId: part.itemId,
+                mode: 'delta',
+                qty: -requiredQty,
+                type: 'out',
+                referenceType: 'work_order',
+                referenceId: workOrderId,
+                notes: `Work Order ${workOrder.orderNo}`,
+                userId,
+                source: 'work_order',
+                costCenterId: workOrder.costCenterId || null,
+                idempotencyKey: `wo-invoice:${workOrderId}:${part.id}`,
+              }
+              const change = await applyStockChange(tx, input)
+              stockChanges.push({ result: change, input })
             }
-
-            if (lockedStock) {
-              await tx.update(warehouseStock)
-                .set({
-                  currentStock: sql`${warehouseStock.currentStock} - ${part.quantity}`,
-                  updatedAt: new Date(),
-                })
-                .where(eq(warehouseStock.id, lockedStock.id))
-            }
-
-            // Create stock movement
-            await tx.insert(stockMovements).values({
-              tenantId: session.user.tenantId,
-              warehouseId: workOrder.warehouseId,
-              itemId: part.itemId,
-              type: 'out',
-              quantity: part.quantity,
-              referenceType: 'work_order',
-              referenceId: workOrderId,
-              notes: `Work Order ${workOrder.orderNo}`,
-              createdBy: userId,
-            })
           }
         }
 
@@ -539,6 +524,9 @@ export async function POST(
         return newSale
       })
 
+      notifyStockDecreased(stockChanges)
+      logAndBroadcast(session.user.tenantId, 'warehouse-stock', 'updated', 'bulk', { userId })
+
       // Broadcast changes to connected clients
       logAndBroadcast(session.user.tenantId, 'work-order', 'updated', workOrderId)
       logAndBroadcast(session.user.tenantId, 'sale', 'created', result.id)
@@ -554,14 +542,16 @@ export async function POST(
     if (message === 'USER_NOT_FOUND') {
       return NextResponse.json({ error: 'User not found for this tenant. Please log out and log in again.' }, { status: 400 })
     }
-    logError('api/work-orders/[id]/invoice', error)
-
     // Handle insufficient stock error from inside transaction
     if (message.startsWith('INSUFFICIENT_STOCK:')) {
       return NextResponse.json({
         error: `Insufficient stock: ${message.replace('INSUFFICIENT_STOCK:', '')}`,
+        code: 'INSUFFICIENT_STOCK',
       }, { status: 400 })
     }
+    const stockError = stockErrorResponse(error)
+    if (stockError) return stockError
+    logError('api/work-orders/[id]/invoice', error)
 
     if (message === 'ALREADY_INVOICED') {
       return NextResponse.json({ error: 'Work order already invoiced' }, { status: 400 })

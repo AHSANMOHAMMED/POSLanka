@@ -8,7 +8,7 @@ import { Modal } from '@/components/ui/modal'
 import { VariablePicker } from './VariablePicker'
 import { previewTemplate } from '@/lib/notifications/templates/preview'
 import { sanitizeHtml } from '@/lib/utils/sanitize-html'
-import type { NotificationChannel, TriggerEvent } from '@/lib/notifications/types'
+import { normalizeTriggerEvent, TRIGGER_EVENT_LABELS, type NotificationChannel, type TriggerEvent } from '@/lib/notifications/types'
 
 interface Template {
   id?: string
@@ -29,20 +29,9 @@ interface TemplateEditorProps {
   onSave: (template: Template) => Promise<void>
 }
 
-const TRIGGER_EVENTS: { value: TriggerEvent; label: string }[] = [
-  { value: 'work_order.created', label: 'Work Order Created' },
-  { value: 'work_order.completed', label: 'Work Order Completed' },
-  { value: 'work_order.invoice_created', label: 'Work Order Invoice Created' },
-  { value: 'appointment.created', label: 'Appointment Scheduled' },
-  { value: 'appointment.confirmed', label: 'Appointment Confirmed' },
-  { value: 'appointment.reminder', label: 'Appointment Reminder (24h)' },
-  { value: 'appointment.reminder_1h', label: 'Appointment Reminder (1h)' },
-  { value: 'sale.completed', label: 'Sale Completed' },
-  { value: 'vehicle.service_due', label: 'Vehicle Service Due' },
-  { value: 'customer.birthday', label: 'Customer Birthday' },
-  { value: 'estimate.approved', label: 'Estimate Approved' },
-  { value: 'estimate.rejected', label: 'Estimate Rejected' },
-]
+// Canonical (underscore) names — exactly what triggerNotification() fires.
+const TRIGGER_EVENTS: { value: TriggerEvent; label: string }[] = (Object.keys(TRIGGER_EVENT_LABELS) as TriggerEvent[])
+  .map((value) => ({ value, label: TRIGGER_EVENT_LABELS[value] }))
 
 export function TemplateEditor({ isOpen, onClose, template, onSave }: TemplateEditorProps) {
   const [formData, setFormData] = useState<Template>({
@@ -58,7 +47,8 @@ export function TemplateEditor({ isOpen, onClose, template, onSave }: TemplateEd
 
   useEffect(() => {
     if (template) {
-      setFormData(template)
+      // legacy templates may carry dotted names ('work_order.completed')
+      setFormData({ ...template, triggerEvent: normalizeTriggerEvent(template.triggerEvent) })
     } else {
       setFormData({
         name: '',
@@ -74,7 +64,7 @@ export function TemplateEditor({ isOpen, onClose, template, onSave }: TemplateEd
 
     setSaving(true)
     try {
-      await onSave(formData)
+      await onSave({ ...formData, triggerEvent: normalizeTriggerEvent(formData.triggerEvent) })
       onClose()
     } catch (error) {
       console.error('Failed to save template:', error)

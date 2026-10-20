@@ -30,6 +30,8 @@ export default function RootLayout() {
         <Stack.Screen name="admin" />
         <Stack.Screen name="staff" />
         <Stack.Screen name="intake" />
+        <Stack.Screen name="alerts" />
+        <Stack.Screen name="labels" />
       </Stack>
     </>
   )

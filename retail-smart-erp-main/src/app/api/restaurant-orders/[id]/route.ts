@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { restaurantOrders, restaurantOrderItems, kitchenOrders, kitchenOrderItems, restaurantTables, sales, saleItems, payments, recipes, warehouseStock, stockMovements } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
+import { restaurantOrders, restaurantOrderItems, kitchenOrders, kitchenOrderItems, restaurantTables, sales, saleItems, payments, recipes, warehouseStock, warehouses } from '@/lib/db/schema'
+import { eq, and, desc } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { triggerNotification } from '@/lib/notifications/auto-trigger'
 import { logError } from '@/lib/ai/error-logger'
@@ -13,6 +13,9 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateRestaurantOrderSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
+import { applyStockChanges, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
+import { withSavepoint, type DbTx } from '@/lib/inventory/db-types'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // Status workflow: open -> closed -> completed OR cancelled
 const validStatusTransitions: Record<string, string[]> = {
@@ -43,7 +46,7 @@ export async function GET(
         with: {
           table: true,
           customer: true,
-          createdByUser: true,
+          createdByUser: SAFE_USER,
           items: {
             with: {
               item: true,
@@ -105,6 +108,7 @@ export async function PUT(
       skipSaleCreation, saleId: providedSaleId } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      const ingredientChanges: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
       const result = await db.transaction(async (tx) => {
         // Lock and get current order
         const [currentOrder] = await tx
@@ -295,8 +299,28 @@ export async function PUT(
               logAndBroadcast(session.user.tenantId, 'table', 'updated', currentOrder.tableId)
             }
 
-            // Deduct recipe ingredient stock for completed order
+            // Deduct recipe ingredient stock for completed order. Runs in a
+            // savepoint so a stock failure never aborts the order completion.
             try {
+              // Resolve the warehouse: the POS sale's warehouse, else the default one.
+              let orderWarehouseId: string | null = null
+              const linkedSaleId = (updateData.saleId as string | undefined) || providedSaleId
+              if (linkedSaleId) {
+                const [linked] = await tx.select({ warehouseId: sales.warehouseId })
+                  .from(sales).where(eq(sales.id, linkedSaleId))
+                orderWarehouseId = linked?.warehouseId || null
+              }
+              if (!orderWarehouseId) {
+                const [def] = await tx.select({ id: warehouses.id })
+                  .from(warehouses)
+                  .where(eq(warehouses.isActive, true))
+                  .orderBy(desc(warehouses.isDefault))
+                  .limit(1)
+                orderWarehouseId = def?.id || null
+              }
+
+              // Aggregate per ingredient so each ledger row has a stable key.
+              const deductions = new Map<string, { qty: number; recipes: Set<string> }>()
               for (const orderItem of orderItems) {
                 if (!orderItem.itemId) continue
 
@@ -312,36 +336,49 @@ export async function PUT(
 
                 for (const ingredient of recipe.ingredients) {
                   const deductQty = parseFloat(String(ingredient.quantity)) * orderItem.quantity
-
-                  // Find warehouse stock record for this ingredient with FOR UPDATE lock
-                  const [stockRecord] = await tx
-                    .select()
-                    .from(warehouseStock)
-                    .where(eq(warehouseStock.itemId, ingredient.ingredientItemId))
-                    .for('update')
-
-                  if (stockRecord) {
-                    const newStock = Math.max(0, parseFloat(String(stockRecord.currentStock)) - deductQty)
-                    await tx.update(warehouseStock)
-                      .set({ currentStock: String(newStock), updatedAt: new Date() })
-                      .where(eq(warehouseStock.id, stockRecord.id))
-
-                    // Create stock movement record
-                    await tx.insert(stockMovements).values({
-                      tenantId: session.user.tenantId,
-                      warehouseId: stockRecord.warehouseId,
-                      itemId: ingredient.ingredientItemId,
-                      type: 'out',
-                      quantity: String(deductQty),
-                      referenceType: 'restaurant_order',
-                      referenceId: id,
-                      notes: `Auto-deducted for order ${currentOrder.orderNo} (recipe: ${recipe.name})`,
-                      createdBy: userId,
-                    })
-
-                    logAndBroadcast(session.user.tenantId, 'item', 'updated', ingredient.ingredientItemId)
-                  }
+                  if (!Number.isFinite(deductQty) || deductQty <= 0) continue
+                  const entry = deductions.get(ingredient.ingredientItemId) || { qty: 0, recipes: new Set<string>() }
+                  entry.qty += deductQty
+                  entry.recipes.add(recipe.name)
+                  deductions.set(ingredient.ingredientItemId, entry)
                 }
+              }
+
+              if (deductions.size > 0) {
+                const inputs: StockChangeInput[] = []
+                for (const [ingredientId, d] of deductions) {
+                  let warehouseId = orderWarehouseId
+                  if (!warehouseId) {
+                    const [anyStock] = await tx.select({ warehouseId: warehouseStock.warehouseId })
+                      .from(warehouseStock)
+                      .where(eq(warehouseStock.itemId, ingredientId))
+                      .limit(1)
+                    warehouseId = anyStock?.warehouseId || null
+                  }
+                  if (!warehouseId) continue
+                  inputs.push({
+                    tenantId: session.user.tenantId,
+                    warehouseId,
+                    itemId: ingredientId,
+                    mode: 'delta',
+                    qty: -Math.round(d.qty * 1000) / 1000,
+                    type: 'out',
+                    referenceType: 'restaurant_order',
+                    referenceId: id,
+                    notes: `Auto-deducted for order ${currentOrder.orderNo} (recipe: ${[...d.recipes].join(', ')})`,
+                    userId,
+                    source: 'restaurant',
+                    idempotencyKey: `restaurant-order:${id}:${ingredientId}`,
+                    // Consumption must never block completing the order; a negative
+                    // balance surfaces the discrepancy instead of hiding it.
+                    allowNegative: true,
+                  })
+                }
+                const results = await withSavepoint(tx as unknown as DbTx, (sp) => applyStockChanges(sp, inputs))
+                results.forEach((r, i) => {
+                  ingredientChanges.push({ result: r, input: inputs[i] })
+                  logAndBroadcast(session.user.tenantId, 'item', 'updated', inputs[i].itemId, { userId })
+                })
               }
             } catch (stockError) {
               logError('api/restaurant-orders/[id]', stockError)
@@ -358,6 +395,8 @@ export async function PUT(
 
         return updated
       })
+
+      notifyStockDecreased(ingredientChanges)
 
       // Broadcast the change
       logAndBroadcast(session.user.tenantId, 'restaurant-order', 'updated', id)

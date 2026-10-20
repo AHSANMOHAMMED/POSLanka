@@ -11,6 +11,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation'
 import { exchangeSaleSchema } from '@/lib/validation/schemas/sales'
 import { notifyStockDecreased } from '@/lib/inventory/apply-stock-change'
+import { notifyReturnAlerts } from '@/lib/notifications/sales-alerts'
 import { createExchangeInTx } from '@/lib/sales/exchange'
 import { saleFlowErrorResponse } from '@/lib/sales/route-helpers'
 
@@ -82,6 +83,10 @@ export async function POST(request: NextRequest) {
       if (result.returnResult.originalSale) logAndBroadcast(tenantId, 'sale', 'updated', result.returnResult.originalSale.id)
       for (const itemId of result.affectedItemIds) logAndBroadcast(tenantId, 'item', 'updated', itemId)
       logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.returnResult.warehouseId)
+      notifyReturnAlerts(tenantId, {
+        returnId: rtn.id, returnNo: rtn.invoiceNo, originalInvoiceNo: result.returnResult.originalSale?.invoiceNo,
+        manual: !result.returnResult.originalSale, refundTotal: result.returnResult.refundTotal, actorUserId: userId, actorName: session.user.name,
+      })
 
       return NextResponse.json({
         returnSale: { ...rtn, lines: result.returnResult.lines, returnStatus: result.returnResult.returnStatus },

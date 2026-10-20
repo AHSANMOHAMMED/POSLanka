@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSalarySlipSchema } from '@/lib/validation/schemas/hr'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 export async function GET(
   request: NextRequest,
@@ -31,7 +32,7 @@ export async function GET(
         where: eq(salarySlips.id, id),
         with: {
           components: { orderBy: (c, { asc }) => [asc(c.sortOrder)] },
-          employeeProfile: { with: { user: true } },
+          employeeProfile: { with: { user: SAFE_USER } },
         },
       })
 

@@ -5,7 +5,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { purchaseRequisitions, purchaseRequisitionItems } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { sendPushToPermission } from '@/lib/notifications/push'
+import { notify } from '@/lib/notifications/notify'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 
@@ -51,15 +51,18 @@ export async function POST(
       .returning()
 
     logAndBroadcast(session.user.tenantId, 'purchase-requisition', 'updated', id)
-    void sendPushToPermission(session.user.tenantId, 'approveRequisitions', {
-      title: 'Purchase requisition awaiting approval',
-      body: `${session.user.name || 'A colleague'} submitted a requisition for approval`,
-      data: { screen: 'approvals', type: 'purchase_requisition', id },
-    }, session.user.id)
-    return { data: updated }
+    return { data: updated, tenantId: session.user.tenantId, actor: { id: session.user.id, name: session.user.name } }
   })
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if ('error' in result) return result.error
+  // after commit
+  void notify(result.tenantId, 'requisition_submitted', {
+    title: 'Purchase requisition awaiting approval',
+    body: `${result.actor.name || 'A colleague'} submitted ${result.data.requisitionNo || 'a requisition'} for approval`,
+    data: { screen: 'approvals', kind: 'purchase_requisition', id },
+    permission: 'approveRequisitions',
+    excludeUserId: result.actor.id,
+  })
   return NextResponse.json(result.data)
 }

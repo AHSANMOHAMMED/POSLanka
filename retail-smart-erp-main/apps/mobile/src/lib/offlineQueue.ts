@@ -1,10 +1,18 @@
-// Offline sale queue: when POST /api/sales fails because the network is down
-// (not a 4xx/5xx), the payload is persisted to a JSON file and retried FIFO as
-// soon as connectivity returns. The server is idempotent on `clientSaleId`, so a
-// sale that actually reached the server is simply returned again on retry.
+// Offline sale queue: when POST /api/sales cannot reach the server (or the device already knows it
+// is offline), the payload is persisted to a JSON file and replayed as soon as connectivity
+// returns. The server is idempotent on `clientSaleId` and on `offlineRef` (OFF-<device>-<seq>,
+// printed on the customer's receipt), so a sale that actually reached the server is returned again.
+//
+// W6:
+// - entries carry the tenant they were sold for and are only replayed while that tenant is signed in;
+// - 4xx rejections are kept with the server's error ("Needs attention": Retry / Discard) and are
+//   reported once to POST /api/sales/offline-rejected so managers are alerted;
+// - 5xx / timeouts back off exponentially (5 s → 10 min) instead of hammering the server;
+// - successful replays are kept in a short "Synced sales" history mapping the offline receipt
+//   number to the real invoice number.
 import * as FileSystem from 'expo-file-system'
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo'
-import { apiPost, isNetworkError } from './api'
+import { apiPost, getUser, isNetworkError } from './api'
 
 export interface QueuedSale {
   clientSaleId: string
@@ -12,8 +20,28 @@ export interface QueuedSale {
   queuedAt: string
   attempts: number
   lastError?: string | null
-  /** Set once the server has rejected the sale (4xx/5xx); it is no longer retried automatically. */
+  lastStatus?: number | null
+  /** Set once the server has rejected the sale (4xx); it is no longer retried automatically. */
   rejected?: boolean
+  /** Tenant the sale belongs to (only replayed while that tenant is signed in). */
+  tenantSlug?: string | null
+  /** OFF-<device>-<seq> printed on the receipt */
+  offlineRef?: string | null
+  /** epoch ms before which a transient failure is not retried */
+  nextAttemptAt?: number | null
+  /** the rejection was reported to the server (manager alert) */
+  reported?: boolean
+}
+
+export interface SyncedSale {
+  clientSaleId: string
+  offlineRef: string | null
+  invoiceNo: string
+  saleId: string | null
+  total: number
+  queuedAt: string
+  syncedAt: string
+  tenantSlug?: string | null
 }
 
 export interface QueueState {
@@ -23,12 +51,19 @@ export interface QueueState {
   online: boolean
   lastSyncAt: string | null
   lastError: string | null
+  /** recently synced offline sales (newest first) */
+  synced: number
 }
 
 const FILE = `${FileSystem.documentDirectory || ''}poslanka-sales-queue.json`
+const SYNCED_FILE = `${FileSystem.documentDirectory || ''}poslanka-sales-synced.json`
 const MAX_AUTO_ATTEMPTS = 20
+const MAX_SYNCED_HISTORY = 100
+const BACKOFF_BASE_MS = 5_000
+const BACKOFF_MAX_MS = 10 * 60_000
 
 let queue: QueuedSale[] | null = null
+let synced: SyncedSale[] = []
 let loading: Promise<QueuedSale[]> | null = null
 let syncing = false
 let online = true
@@ -36,6 +71,7 @@ let lastSyncAt: string | null = null
 let lastError: string | null = null
 let autoSyncStarted = false
 let unsubscribeNetInfo: (() => void) | null = null
+let retryTimer: ReturnType<typeof setTimeout> | null = null
 const listeners = new Set<(state: QueueState) => void>()
 
 function snapshot(): QueueState {
@@ -47,6 +83,7 @@ function snapshot(): QueueState {
     online,
     lastSyncAt,
     lastError,
+    synced: synced.length,
   }
 }
 
@@ -61,22 +98,25 @@ function notify() {
   })
 }
 
+async function readJson<T>(file: string, fallback: T): Promise<T> {
+  try {
+    const info = await FileSystem.getInfoAsync(file)
+    if (!info.exists) return fallback
+    const parsed = JSON.parse(await FileSystem.readAsStringAsync(file))
+    return (parsed ?? fallback) as T
+  } catch {
+    return fallback
+  }
+}
+
 async function load(): Promise<QueuedSale[]> {
   if (queue) return queue
   if (loading) return loading
   loading = (async () => {
-    try {
-      const info = await FileSystem.getInfoAsync(FILE)
-      if (!info.exists) {
-        queue = []
-      } else {
-        const raw = await FileSystem.readAsStringAsync(FILE)
-        const parsed = JSON.parse(raw)
-        queue = Array.isArray(parsed) ? parsed : []
-      }
-    } catch {
-      queue = []
-    }
+    const parsed = await readJson<unknown>(FILE, [])
+    queue = Array.isArray(parsed) ? (parsed as QueuedSale[]) : []
+    const hist = await readJson<unknown>(SYNCED_FILE, [])
+    synced = Array.isArray(hist) ? (hist as SyncedSale[]) : []
     loading = null
     return queue!
   })()
@@ -90,6 +130,14 @@ async function persist() {
     lastError = e instanceof Error ? e.message : 'Failed to persist offline queue'
   }
   notify()
+}
+
+async function persistSynced() {
+  try {
+    await FileSystem.writeAsStringAsync(SYNCED_FILE, JSON.stringify(synced))
+  } catch {
+    // history is informational only
+  }
 }
 
 export function subscribe(cb: (state: QueueState) => void): () => void {
@@ -106,6 +154,11 @@ export function getQueueState(): QueueState {
 
 export async function getQueuedSales(): Promise<QueuedSale[]> {
   return [...(await load())]
+}
+
+export async function getSyncedSales(): Promise<SyncedSale[]> {
+  await load()
+  return [...synced]
 }
 
 /** Methods that are safe to complete later. Credit / gift card / loyalty sales must never be queued. */
@@ -126,7 +179,16 @@ export async function enqueueSale(payload: Record<string, unknown>): Promise<Que
   const clientSaleId = String(payload.clientSaleId)
   const existing = q.find((s) => s.clientSaleId === clientSaleId)
   if (existing) return existing
-  const entry: QueuedSale = { clientSaleId, payload, queuedAt: new Date().toISOString(), attempts: 0, lastError: null }
+  const user = await getUser()
+  const entry: QueuedSale = {
+    clientSaleId,
+    payload,
+    queuedAt: new Date().toISOString(),
+    attempts: 0,
+    lastError: null,
+    tenantSlug: user?.tenantSlug || null,
+    offlineRef: typeof payload.offlineRef === 'string' ? payload.offlineRef : null,
+  }
   q.push(entry)
   await persist()
   return entry
@@ -141,12 +203,29 @@ export async function removeQueuedSale(clientSaleId: string) {
   }
 }
 
+/** Manager action: drop a rejected sale from this device (it is NOT recorded on the server). */
+export const discardRejected = removeQueuedSale
+
+/** Retry one rejected sale (e.g. after fixing stock / the item on the server). */
+export async function retryOne(clientSaleId: string): Promise<SyncResult> {
+  const q = await load()
+  const entry = q.find((s) => s.clientSaleId === clientSaleId)
+  if (entry) {
+    entry.rejected = false
+    entry.attempts = 0
+    entry.nextAttemptAt = null
+    await persist()
+  }
+  return syncNow()
+}
+
 export async function retryRejected() {
   const q = await load()
   for (const s of q) {
     if (s.rejected) {
       s.rejected = false
       s.attempts = 0
+      s.nextAttemptAt = null
     }
   }
   await persist()
@@ -160,6 +239,56 @@ export interface SyncResult {
   stoppedOffline: boolean
 }
 
+function backoffMs(attempts: number): number {
+  return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * Math.pow(2, Math.max(0, attempts - 1)))
+}
+
+function scheduleRetry() {
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = null
+  const q = queue || []
+  const next = q.filter((s) => !s.rejected && s.nextAttemptAt).map((s) => s.nextAttemptAt as number)
+  if (next.length === 0) return
+  const wait = Math.max(1_000, Math.min(...next) - Date.now())
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    if (online) syncNow().catch(() => undefined)
+  }, wait)
+}
+
+async function reportRejection(entry: QueuedSale) {
+  const p = entry.payload
+  const items = Array.isArray(p.cartItems) ? (p.cartItems as unknown[]) : []
+  const res = await apiPost('/api/sales/offline-rejected', {
+    clientSaleId: entry.clientSaleId,
+    offlineRef: entry.offlineRef || undefined,
+    error: (entry.lastError || 'Rejected').slice(0, 1000),
+    status: entry.lastStatus ?? undefined,
+    summary: {
+      total: Number(p.total) || 0,
+      itemCount: items.length,
+      paymentMethod: typeof p.paymentMethod === 'string' ? p.paymentMethod : undefined,
+      queuedAt: entry.queuedAt,
+      warehouseId: typeof p.warehouseId === 'string' ? p.warehouseId : undefined,
+    },
+  })
+  if (res.ok) entry.reported = true
+}
+
+function recordSynced(entry: QueuedSale, sale: any) {
+  synced.unshift({
+    clientSaleId: entry.clientSaleId,
+    offlineRef: entry.offlineRef || null,
+    invoiceNo: String(sale?.invoiceNo || '—'),
+    saleId: sale?.id ? String(sale.id) : null,
+    total: Number(sale?.total ?? entry.payload.total) || 0,
+    queuedAt: entry.queuedAt,
+    syncedAt: new Date().toISOString(),
+    tenantSlug: entry.tenantSlug || null,
+  })
+  if (synced.length > MAX_SYNCED_HISTORY) synced = synced.slice(0, MAX_SYNCED_HISTORY)
+}
+
 /** Replays the queue FIFO. Stops at the first network failure (still offline). */
 export async function syncNow(): Promise<SyncResult> {
   const q = await load()
@@ -168,24 +297,44 @@ export async function syncNow(): Promise<SyncResult> {
   lastError = null
   notify()
 
-  let synced = 0
+  let syncedCount = 0
   let rejected = 0
   let stoppedOffline = false
+  const tenantSlug = (await getUser())?.tenantSlug || null
 
   try {
     for (const entry of [...q]) {
-      if (entry.rejected) continue
+      // Another tenant's sale (shared phone): wait until that tenant signs in again.
+      if (entry.tenantSlug && tenantSlug && entry.tenantSlug !== tenantSlug) continue
+      if (entry.rejected) {
+        if (!entry.reported) await reportRejection(entry).catch(() => undefined)
+        continue
+      }
+      if (entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) continue
       entry.attempts += 1
-      const res = await apiPost('/api/sales', entry.payload)
+      let res = await apiPost<any>('/api/sales', entry.payload)
+
+      // Another device printed the same OFF- number (device-code collision): keep the sale with a
+      // unique reference instead of losing it.
+      if (!res.ok && res.status === 409 && /OFFLINE_REF_CONFLICT|already used/i.test(res.error || '') && entry.offlineRef) {
+        const newRef = `${entry.offlineRef}-${entry.clientSaleId.slice(0, 4).toUpperCase()}`.slice(0, 40)
+        entry.payload = { ...entry.payload, offlineRef: newRef }
+        entry.offlineRef = newRef
+        res = await apiPost<any>('/api/sales', entry.payload)
+      }
+
       if (res.ok) {
         const idx = q.indexOf(entry)
         if (idx >= 0) q.splice(idx, 1)
-        synced += 1
+        recordSynced(entry, res.data)
+        syncedCount += 1
+        await persistSynced()
         await persist()
         continue
       }
+      entry.lastError = res.error
+      entry.lastStatus = res.status
       if (isNetworkError(res)) {
-        entry.lastError = res.error
         stoppedOffline = true
         online = false
         await persist()
@@ -193,17 +342,22 @@ export async function syncNow(): Promise<SyncResult> {
       }
       if (res.status === 401) {
         // Session expired; apiFetch already redirected to login. Keep the entry for after re-login.
-        entry.lastError = res.error
         await persist()
         break
       }
-      entry.lastError = res.error
-      if (res.status >= 400 && res.status < 500) {
+      const transient = res.status >= 500 || res.status === 408 || res.status === 429
+      if (!transient) {
         entry.rejected = true
+        entry.nextAttemptAt = null
         rejected += 1
+        await reportRejection(entry).catch(() => undefined)
       } else if (entry.attempts >= MAX_AUTO_ATTEMPTS) {
         entry.rejected = true
+        entry.nextAttemptAt = null
         rejected += 1
+        await reportRejection(entry).catch(() => undefined)
+      } else {
+        entry.nextAttemptAt = Date.now() + backoffMs(entry.attempts)
       }
       await persist()
     }
@@ -212,9 +366,10 @@ export async function syncNow(): Promise<SyncResult> {
   } finally {
     syncing = false
     notify()
+    scheduleRetry()
   }
 
-  return { synced, rejected, remaining: q.filter((s) => !s.rejected).length, stoppedOffline }
+  return { synced: syncedCount, rejected, remaining: q.filter((s) => !s.rejected).length, stoppedOffline }
 }
 
 function isReachable(state: NetInfoState): boolean {
@@ -231,11 +386,13 @@ export function startAutoSync() {
     online = reachable
     notify()
     if (reachable && (!wasOnline || snapshot().pending > 0)) {
+      // Back online: transient back-off no longer applies.
+      for (const s of queue || []) if (!wasOnline) s.nextAttemptAt = null
       syncNow().catch(() => undefined)
     }
   })
   load().then((q) => {
-    if (q.some((s) => !s.rejected)) syncNow().catch(() => undefined)
+    if (q.some((s) => !s.rejected || !s.reported)) syncNow().catch(() => undefined)
   })
 }
 
@@ -243,6 +400,8 @@ export function stopAutoSync() {
   unsubscribeNetInfo?.()
   unsubscribeNetInfo = null
   autoSyncStarted = false
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = null
 }
 
 export function isOnline() {

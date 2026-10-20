@@ -1,0 +1,80 @@
+name: Scheduled jobs
+
+# Calls the app's /api/cron/* routes (POST, Authorization: Bearer CRON_SECRET).
+# Repository secrets: CRON_SECRET (same value as the app env var) and APP_URL
+# (public base URL, e.g. https://app.poslanka.lk). Without them every run is skipped.
+# Schedules are UTC (Sri Lanka = UTC+5:30).
+
+on:
+  schedule:
+    - cron: '7 * * * *'      # hourly: stock-alerts
+    - cron: '*/15 * * * *'   # every 15 min: import-maintenance
+    - cron: '17 */6 * * *'   # every 6 h: enforce-subscriptions
+    - cron: '30 21 * * *'    # daily 03:00 LKT: storage, held sales, exchange rates, subscription reminders
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Cron route to run
+        required: true
+        default: stock-alerts
+        type: choice
+        options:
+          - stock-alerts
+          - import-maintenance
+          - enforce-subscriptions
+          - subscription-reminders
+          - calculate-storage
+          - cleanup-held-sales
+          - refresh-exchange-rates
+          - all
+
+concurrency:
+  group: cron-${{ github.event.schedule || inputs.job }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Call cron routes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Call routes
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          APP_URL: ${{ secrets.APP_URL }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_JOB: ${{ inputs.job }}
+        run: |
+          if [ -z "$CRON_SECRET" ] || [ -z "$APP_URL" ]; then
+            echo "::notice::CRON_SECRET or APP_URL secret is not set; skipping scheduled jobs."
+            exit 0
+          fi
+          case "$SCHEDULE" in
+            '7 * * * *')    JOBS="stock-alerts" ;;
+            '*/15 * * * *') JOBS="import-maintenance" ;;
+            '17 */6 * * *') JOBS="enforce-subscriptions" ;;
+            '30 21 * * *')  JOBS="calculate-storage cleanup-held-sales refresh-exchange-rates subscription-reminders" ;;
+            *)
+              if [ "$INPUT_JOB" = "all" ]; then
+                JOBS="stock-alerts import-maintenance enforce-subscriptions subscription-reminders calculate-storage cleanup-held-sales refresh-exchange-rates"
+              else
+                JOBS="$INPUT_JOB"
+              fi
+              ;;
+          esac
+          BASE="${APP_URL%/}"
+          FAILED=0
+          for NAME in $JOBS; do
+            echo "::group::$NAME"
+            if ! curl -fsS --max-time 600 --retry 2 --retry-delay 10 -X POST \
+                 -H "Authorization: Bearer $CRON_SECRET" "$BASE/api/cron/$NAME"; then
+              echo "::error::cron route $NAME failed"
+              FAILED=1
+            fi
+            echo
+            echo "::endgroup::"
+          done
+          exit $FAILED

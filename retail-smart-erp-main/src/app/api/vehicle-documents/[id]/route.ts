@@ -10,6 +10,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleDocumentSchema } from '@/lib/validation/schemas/vehicles'
 import { deleteFromR2, keyFromUrl } from '@/lib/files'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET single vehicle document
 export async function GET(
@@ -33,7 +34,7 @@ export async function GET(
           vehicleInventory: true,
           vehicleImport: true,
           dealer: true,
-          uploadedByUser: true,
+          uploadedByUser: SAFE_USER,
         },
       })
 

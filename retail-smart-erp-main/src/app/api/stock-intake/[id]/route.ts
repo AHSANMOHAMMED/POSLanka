@@ -7,6 +7,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { updateStockIntakeSchema } from '@/lib/validation/schemas/stock-intake'
 import { getIntakeBatchDetail, updateIntakeBatch } from '@/lib/inventory/stock-intake'
 import { intakeErrorResponse } from '@/lib/inventory/stock-intake-http'
+import { notify } from '@/lib/notifications/notify'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -51,14 +52,25 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
         updateCost: body.updateCost,
         supplierId: body.supplierId,
         canPost: hasPermission(u.role, 'postStockIntake', u.tenantId, u.customRoleId || undefined),
+        role: u.role,
       })
       logAndBroadcast(session.user.tenantId, 'stock-intake', 'updated', batch.id, {
         userId: session.user.id, entityName: batch.batchNo,
       })
-      return { data: batch }
+      return { data: batch, tenantId: session.user.tenantId, actor: { id: session.user.id, name: session.user.name } }
     })
     if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     if ('error' in result) return result.error
+    if (body.status === 'submitted' && result.data.status === 'submitted') {
+      void notify(result.tenantId, 'intake_awaiting_approval', {
+        title: `Stock intake ${result.data.batchNo} submitted`,
+        body: `${result.actor.name || 'A colleague'} submitted ${result.data.batchNo} for posting into stock.`,
+        data: { screen: 'intake', batchId: result.data.id },
+        dedupeKey: `intake_submitted:${result.data.id}`,
+        permission: 'postStockIntake',
+        excludeUserId: result.actor.id,
+      })
+    }
     return NextResponse.json(result.data)
   } catch (err) {
     return intakeErrorResponse(err, 'api/stock-intake/[id] PATCH', 'Failed to update stock intake batch')

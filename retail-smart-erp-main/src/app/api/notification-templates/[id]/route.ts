@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { eq, and } from 'drizzle-orm'
 import { notificationTemplates } from '@/lib/db/schema'
 import { logError } from '@/lib/ai/error-logger'
+import { normalizeTriggerEvent } from '@/lib/notifications/types'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -100,7 +101,7 @@ export async function PUT(request: Request, { params }: RouteParams) {
 
       if (name !== undefined) updateData.name = name
       if (channel !== undefined) updateData.channel = channel
-      if (triggerEvent !== undefined) updateData.triggerEvent = triggerEvent
+      if (triggerEvent !== undefined) updateData.triggerEvent = normalizeTriggerEvent(triggerEvent)
       if (isAutoTrigger !== undefined) updateData.isAutoTrigger = isAutoTrigger
       if (smsContent !== undefined) updateData.smsContent = smsContent
       if (emailSubject !== undefined) updateData.emailSubject = emailSubject

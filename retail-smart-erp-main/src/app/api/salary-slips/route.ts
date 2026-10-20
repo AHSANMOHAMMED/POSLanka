@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { salarySlipsListSchema, createSalarySlipSchema } from '@/lib/validation/schemas/hr'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 export async function GET(request: NextRequest) {
   try {
@@ -91,7 +92,7 @@ export async function POST(request: NextRequest) {
       // Load employee profile with user
       const profile = await db.query.employeeProfiles.findFirst({
         where: eq(employeeProfiles.id, employeeProfileId),
-        with: { user: true },
+        with: { user: SAFE_USER },
       })
 
       if (!profile) {

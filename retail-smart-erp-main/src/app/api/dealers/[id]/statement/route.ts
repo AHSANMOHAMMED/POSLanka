@@ -8,6 +8,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams, validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { dealerStatementSchema } from '@/lib/validation/schemas/dealership'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET dealer statement (all payments with running balance)
 export async function GET(
@@ -57,7 +58,7 @@ export async function GET(
           vehicleInventory: true,
           dealerAllocation: true,
           sale: true,
-          createdByUser: true,
+          createdByUser: SAFE_USER,
           confirmedByUser: true,
         },
         orderBy: [sql`${dealerPayments.paymentDate} ASC, ${dealerPayments.createdAt} ASC`],

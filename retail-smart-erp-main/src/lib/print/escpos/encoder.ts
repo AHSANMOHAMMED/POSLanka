@@ -478,6 +478,7 @@ function encodeUtf8(str: string): Uint8Array {
 
 export interface ReceiptBusiness {
   name: string
+  legalName?: string | null
   address?: string | null
   phone?: string | null
   taxId?: string | null
@@ -706,15 +707,36 @@ export interface ZReportInput {
   methods: ZReportMethod[]
   notes?: string | null
   currency?: string | null
+  /**
+   * Pre-filtered business lines (receipt-model `buildBusinessBlock`), printed
+   * under the name exactly like receipts. When omitted, the `business` fields
+   * (legal name, address, phone, VAT/TIN, BRN) are printed.
+   */
+  businessLines?: string[] | null
 }
 
 export interface ZReportBuildOptions {
   paperWidth: PaperWidth
   unicodeAsBitmap?: boolean
   rasterizer?: TextRasterizer | null
+  /** Packed logo bitmap (same as receipts: GET /api/settings/logo/raster). */
+  logoRaster?: PackedRaster | null
   noCut?: boolean
   decimals?: number
   codePage?: CodePage
+}
+
+function zReportBusinessLines(input: ZReportInput): string[] {
+  if (input.businessLines) return input.businessLines.filter((l) => l && l.trim())
+  const biz = input.business
+  const lines: string[] = []
+  const legal = (biz.legalName || '').trim()
+  if (legal && legal.toLowerCase() !== biz.name.trim().toLowerCase()) lines.push(legal)
+  if (biz.address) lines.push(biz.address)
+  if (biz.phone) lines.push(`Tel: ${biz.phone}`)
+  if (biz.taxId) lines.push(`VAT/TIN: ${biz.taxId}`)
+  if (biz.brn) lines.push(`BRN: ${biz.brn}`)
+  return lines
 }
 
 export function buildZReportEscPos(input: ZReportInput, opts: ZReportBuildOptions): Uint8Array {
@@ -724,8 +746,12 @@ export function buildZReportEscPos(input: ZReportInput, opts: ZReportBuildOption
   b.init()
   b.selectCodePage()
   b.align('center')
+  if (opts.logoRaster) {
+    b.packedRaster(opts.logoRaster)
+    b.feed(1)
+  }
   b.styledLine(input.business.name, { bold: true, size: 2, align: 'center' })
-  if (input.business.address) b.paragraph(input.business.address, { align: 'center' })
+  for (const l of zReportBusinessLines(input)) b.paragraph(l, { align: 'center' })
   b.styledLine(input.title || 'Z REPORT - SHIFT CLOSE', { bold: true, align: 'center' })
   b.align('left')
   b.hr('=')

@@ -7,6 +7,7 @@ import {
   type StockChangeResult,
 } from '@/lib/inventory/apply-stock-change'
 import { toApiError } from '@/lib/db/errors'
+import { recordItemChange } from '@/lib/inventory/item-audit'
 
 /**
  * Purchasing helpers built on top of the single stock writer (applyStockChange):
@@ -85,10 +86,26 @@ export async function applyPurchaseCost(tx: DbTx, input: PurchaseCostInput): Pro
     : round2(price)
   const stockAfter = round3(stockBefore + qty)
 
-  await tx.execute(sql`
-    UPDATE items SET cost_price = ${newCost.toFixed(2)}::numeric
-    WHERE tenant_id = ${input.tenantId} AND id = ${input.itemId}
-  `)
+  if (newCost !== round2(previousCost)) {
+    await tx.execute(sql`
+      UPDATE items
+      SET cost_price = ${newCost.toFixed(2)}::numeric,
+          updated_by = COALESCE(${input.userId || null}::uuid, updated_by),
+          version = version + 1,
+          updated_at = now()
+      WHERE tenant_id = ${input.tenantId} AND id = ${input.itemId}
+    `)
+    await recordItemChange(tx, {
+      tenantId: input.tenantId,
+      itemId: input.itemId,
+      userId: input.userId || null,
+      source: 'purchase',
+      action: 'update',
+      before: { costPrice: previousCost },
+      after: { costPrice: newCost },
+      notes: `Weighted-average cost${input.referenceNo ? ` from ${input.referenceNo.slice(0, 50)}` : ''}`,
+    })
+  }
 
   await tx.execute(sql`
     INSERT INTO item_cost_history (

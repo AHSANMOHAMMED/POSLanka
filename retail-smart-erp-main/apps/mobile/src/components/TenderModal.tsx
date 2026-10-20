@@ -14,6 +14,7 @@ import {
 import { THEME, formatLKR } from '../lib/theme'
 import { apiGet, apiPost, isNetworkError } from '../lib/api'
 import { enqueueSale, isQueueablePayload } from '../lib/offlineQueue'
+import { adjustLocalStock, nextOfflineRef } from '../lib/localdb'
 import { calculateCartTax, roundCurrency, type TaxConfig } from '../lib/tax'
 import { shiftCounterName, shiftWarehouseName, type Shift } from '../lib/shift'
 import { getPrinterSettings, isPrintingEnabled, TRANSPORT_LABELS, type PrinterSettings } from '../lib/printer'
@@ -223,7 +224,9 @@ export function TenderModal({
       subtotal,
       discount: 0,
       tax,
-      taxBreakdown: taxResult.breakdown.length > 0 ? taxResult.breakdown : undefined,
+      // Always sent (W6): the server then validates the device's template maths instead of
+      // recomputing, and an offline sale computed from cached templates is never rejected for rounding.
+      taxBreakdown: taxResult.breakdown,
       total: netPayable,
       amountPaid,
       creditAmount,
@@ -260,12 +263,57 @@ export function TenderModal({
 
     setBusy(true)
     try {
-      const res = await apiPost<SaleResponse>('/api/sales', payload)
       const businessInfo: BusinessInfo = business || { name: 'POSLanka' }
       const splits = payload.paymentSplits as Array<{ method: string; amount: number; reference?: string }> | undefined
       const fallbackPayment = splits?.[0] || { method: String(payload.paymentMethod), amount: Number(payload.amountPaid) || netPayable }
+      const stockLines = cart.map((c) => ({ itemId: c.itemId || c.id, quantity: c.quantity }))
+
+      // Saves the sale on the device with an OFF-<device>-<seq> receipt number (W6).
+      const completeOffline = async () => {
+        if (!isQueueablePayload(payload)) {
+          Alert.alert(
+            'No Connection',
+            'Credit, gift card and loyalty sales cannot be saved offline. Reconnect and try again, or switch to cash/card.'
+          )
+          return
+        }
+        const offlineRef = await nextOfflineRef()
+        payload.offlineRef = offlineRef
+        await enqueueSale(payload)
+        adjustLocalStock(stockLines).catch(() => undefined)
+        const receipt = receiptFromSale(
+          {
+            invoiceNo: offlineRef,
+            total: netPayable,
+            subtotal,
+            taxAmount: tax,
+            createdAt: new Date().toISOString(),
+            taxBreakdown: taxResult.breakdown.length ? taxResult.breakdown.map((b) => ({ taxName: b.taxName, amount: b.amount })) : null,
+            items: cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: roundCurrency(Number(c.sellingPrice) * c.quantity), unit: c.unit })),
+          },
+          { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, change, fallbackPayment }
+        )
+        onSaleComplete({
+          invoiceNo: offlineRef,
+          total: netPayable,
+          change,
+          tenderMethod,
+          queued: true,
+          receipt,
+          autoPrint,
+        })
+      }
+
+      // Known to be offline (power cut / no internet): don't wait for a network timeout.
+      if (!online) {
+        await completeOffline()
+        return
+      }
+
+      const res = await apiPost<SaleResponse>('/api/sales', payload)
 
       if (res.ok) {
+        adjustLocalStock(stockLines).catch(() => undefined)
         const sale = res.data || ({} as SaleResponse)
         const receipt = receiptFromSale(
           {
@@ -294,36 +342,9 @@ export function TenderModal({
       }
 
       if (isNetworkError(res)) {
-        if (!isQueueablePayload(payload)) {
-          Alert.alert(
-            'No Connection',
-            'Credit, gift card and loyalty sales cannot be saved offline. Reconnect and try again, or switch to cash/card.'
-          )
-          return
-        }
-        await enqueueSale(payload)
-        const offlineNo = `Offline ${clientSaleId.slice(0, 8).toUpperCase()}`
-        const receipt = receiptFromSale(
-          {
-            invoiceNo: offlineNo,
-            total: netPayable,
-            subtotal,
-            taxAmount: tax,
-            createdAt: new Date().toISOString(),
-            taxBreakdown: taxResult.breakdown.length ? taxResult.breakdown.map((b) => ({ taxName: b.taxName, amount: b.amount })) : null,
-            items: cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: roundCurrency(Number(c.sellingPrice) * c.quantity), unit: c.unit })),
-          },
-          { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, change, fallbackPayment }
-        )
-        onSaleComplete({
-          invoiceNo: offlineNo,
-          total: netPayable,
-          change,
-          tenderMethod,
-          queued: true,
-          receipt,
-          autoPrint,
-        })
+        // The request may or may not have reached the server; the queue replays it with the same
+        // clientSaleId, so the server returns the original sale if it was recorded after all.
+        await completeOffline()
         return
       }
 

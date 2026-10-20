@@ -12,6 +12,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { recalculateDocumentTax, type LineItemInput } from '@/lib/utils/tax-recalculate'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { insuranceEstimatesListSchema, createInsuranceEstimateSchema } from '@/lib/validation/schemas/insurance'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET all insurance estimates for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -70,7 +71,7 @@ export async function GET(request: NextRequest) {
           vehicle: true,
           insuranceCompany: true,
           assessor: true,
-          createdByUser: true,
+          createdByUser: SAFE_USER,
           items: {
             with: {
               serviceType: true,

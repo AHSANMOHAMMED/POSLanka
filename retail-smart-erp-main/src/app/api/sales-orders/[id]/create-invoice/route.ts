@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenantTransaction } from '@/lib/db'
-import { salesOrders, salesOrderItems, sales, saleItems, items as itemsTable, warehouseStock, stockMovements } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { salesOrders, salesOrderItems, sales, saleItems, items as itemsTable, warehouseStock } from '@/lib/db/schema'
+import { eq, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
 import { roundCurrency } from '@/lib/utils/currency'
@@ -13,6 +13,8 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createSalesInvoiceSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
+import { applyStockChange, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
+import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
 
 // POST create sales invoice from sales order
 export async function POST(
@@ -200,6 +202,7 @@ export async function POST(
     await tx.insert(saleItems).values(saleItemsData)
 
     // Deduct stock and update reserved stock
+    const stockChanges: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
     for (const item of invoiceItems) {
       if (!item.itemId) continue
 
@@ -212,46 +215,34 @@ export async function POST(
       if (!itemRecord?.trackStock) continue
 
       const qty = item.fulfillQty
+      if (!(qty > 0)) continue
 
-      // Lock warehouse stock row
-      const [stock] = await tx
-        .select()
-        .from(warehouseStock)
-        .where(and(
-          eq(warehouseStock.warehouseId, order.warehouseId),
-          eq(warehouseStock.itemId, item.itemId)
-        ))
-        .for('update')
-
-      if (stock) {
-        // Validate sufficient stock before deducting
-        const currentStock = parseFloat(stock.currentStock)
-        if (currentStock < qty) {
-          throw new Error(`INSUFFICIENT_STOCK:${item.itemName} (need: ${qty}, available: ${currentStock})`)
-        }
-
-        // Deduct currentStock and release reservedStock
-        await tx.update(warehouseStock)
-          .set({
-            currentStock: sql`${warehouseStock.currentStock} - ${qty}`,
-            reservedStock: sql`GREATEST(${warehouseStock.reservedStock} - ${qty}, 0)`,
-            updatedAt: new Date(),
-          })
-          .where(eq(warehouseStock.id, stock.id))
-
-        // Create stock movement
-        await tx.insert(stockMovements).values({
-          tenantId: session.user.tenantId,
-          warehouseId: order.warehouseId,
-          itemId: item.itemId,
-          type: 'out',
-          quantity: qty.toString(),
-          notes: `Sales Invoice ${invoiceNo} (from SO ${order.orderNo})`,
-          referenceType: 'sale',
-          referenceId: newSale.id,
-          createdBy: session.user.id,
-        })
+      // Single stock writer (locks, enforces non-negative, signed ledger row)
+      const input: StockChangeInput = {
+        tenantId: session.user.tenantId,
+        warehouseId: order.warehouseId,
+        itemId: item.itemId,
+        mode: 'delta',
+        qty: -qty,
+        type: 'out',
+        referenceType: 'sale',
+        referenceId: newSale.id,
+        notes: `Sales Invoice ${invoiceNo} (from SO ${order.orderNo})`,
+        userId: session.user.id,
+        source: 'sales_order',
+        costCenterId: costCenterId || null,
+        idempotencyKey: `so-invoice:${newSale.id}:${item.soItemId}`,
       }
+      const change = await applyStockChange(tx, input)
+      stockChanges.push({ result: change, input })
+
+      // Release the reservation made when the SO was confirmed (not ledgered)
+      await tx.update(warehouseStock)
+        .set({
+          reservedStock: sql`GREATEST(${warehouseStock.reservedStock} - ${qty}, 0)`,
+          updatedAt: new Date(),
+        })
+        .where(eq(warehouseStock.id, change.warehouseStockId))
     }
 
     // Update fulfilled quantities cumulatively on SO items
@@ -292,7 +283,8 @@ export async function POST(
       data: {
         sale: newSale,
         message: `Invoice ${newSale.invoiceNo} created successfully`,
-      }
+      },
+      stockChanges,
     }
   })
 
@@ -300,8 +292,10 @@ export async function POST(
     const message = error instanceof Error ? error.message : ''
     if (message.startsWith('INSUFFICIENT_STOCK:')) {
       const detail = message.replace('INSUFFICIENT_STOCK:', '')
-      return NextResponse.json({ error: `Insufficient stock: ${detail}` }, { status: 400 })
+      return NextResponse.json({ error: `Insufficient stock: ${detail}`, code: 'INSUFFICIENT_STOCK' }, { status: 400 })
     }
+    const stockError = stockErrorResponse(error)
+    if (stockError) return stockError
     logError('api/sales-orders/[id]/create-invoice', error)
     return NextResponse.json({ error: 'Failed to create invoice' }, { status: 500 })
   }
@@ -312,5 +306,6 @@ export async function POST(
   if ('error' in result) {
     return result.error
   }
+  notifyStockDecreased(result.stockChanges)
   return NextResponse.json(result.data)
 }

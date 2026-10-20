@@ -20,9 +20,10 @@ import { LanguageSwitcher } from './LanguageSwitcher'
 import { broadcastAuthEvent } from '@/lib/auth/events'
 import { Logo } from '@/components/ui/logo'
 import { AlertBell } from './AlertBell'
+import { InboxBell } from '@/components/notifications/InboxBell'
 import { useChatStore } from '@/lib/stores/chat-store'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
-import { MODULE_TABS, getModuleFromPathname, isModuleTabVisible } from '@/lib/navigation/module-sidebar'
+import { MODULE_TABS, getModuleFromPathname, getModuleTabHref, isModuleTabVisible } from '@/lib/navigation/module-sidebar'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { useFeatureFlags } from '@/hooks/useFeatureFlag'
 import { isModuleAllowedByFeatures } from '@/lib/features/nav-gate'
@@ -152,6 +153,7 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
     return isModuleTabVisible(tab, businessType, userRole, isModuleEnabled)
   }).map((tab) => ({
     ...tab,
+    href: getModuleTabHref(tab, userRole),
     label: moduleTabLabelOverrides[tab.key] || tab.label,
   }))
 
@@ -353,6 +355,9 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
             </span>
           )}
         </button>
+
+        {/* Vendor alerts inbox (low stock, refunds, approvals, reminders) */}
+        <InboxBell />
 
         {/* AI Alerts (desktop only) */}
         <div className="hidden lg:block">

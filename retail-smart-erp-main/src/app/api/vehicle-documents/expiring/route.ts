@@ -7,6 +7,7 @@ import { and, or, lte, gte, sql, isNotNull } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { vehicleDocumentsExpiringSchema } from '@/lib/validation/schemas/vehicles'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET documents expiring within N days (or already expired)
 export async function GET(request: NextRequest) {
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
           vehicleInventory: true,
           vehicleImport: true,
           dealer: true,
-          uploadedByUser: true,
+          uploadedByUser: SAFE_USER,
         },
         orderBy: [sql`${vehicleDocuments.expiryDate} ASC`],
       })

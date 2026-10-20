@@ -13,6 +13,7 @@ export const ROLE_PERMISSIONS = {
   viewReports: ['owner', 'manager', 'sales_manager', 'purchase_manager', 'hr_manager', 'stock_manager', 'report_user'],
   manageCustomers: ['owner', 'manager', 'waiter', 'sales_manager', 'dealer_sales'],
   manageUsers: ['owner', 'manager', 'system_manager'],
+  manageSales: ['owner', 'manager', 'sales_manager'],
 } as const
 
 export type Permission = keyof typeof ROLE_PERMISSIONS

@@ -7,6 +7,7 @@ import { and, gte, lte } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { posDailySummarySchema } from '@/lib/validation/schemas/pos'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET daily summary - aggregate all shifts for a given date
 export async function GET(request: NextRequest) {
@@ -41,7 +42,7 @@ export async function GET(request: NextRequest) {
             },
           },
           posProfile: true,
-          user: true,
+          user: SAFE_USER,
           reconciliation: true,
         },
         orderBy: posClosingEntries.openingTime,

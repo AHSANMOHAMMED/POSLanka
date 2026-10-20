@@ -1,25 +1,33 @@
-import { db } from '@/lib/db'
+import { withTenant } from '@/lib/db'
 import { eq, and, gte } from 'drizzle-orm'
+import { normalizeTriggerEvent, type TriggerEvent } from './types'
 import { notificationTemplates, notificationLogs, customers } from '@/lib/db/schema'
 import { renderTemplate, type RenderContext } from './templates/renderer'
 import { sendSmsWithLogging } from './sms/send'
 import { sendEmailWithLogging } from './email/send'
 
-export type TriggerEvent =
-  | 'appointment_confirmed'
-  | 'appointment_reminder'
-  | 'work_order_completed'
-  | 'work_order_invoiced'
-  | 'sale_completed'
-  | 'reservation_confirmed'
-  | 'estimate_approved'
-  | 'estimate_rejected'
-  | 'delivery_dispatched'
-  | 'delivery_delivered'
+export type { TriggerEvent }
 
 interface TriggerContext extends RenderContext {
   recipientPhone?: string
   recipientEmail?: string
+}
+
+/**
+ * Active auto-trigger templates for `event`. Stored names are compared in canonical form, so
+ * legacy dotted names ('work_order.completed') match the fired event ('work_order_completed').
+ * Read under the tenant's RLS context (notification_templates has FORCE RLS).
+ */
+export async function findTriggerTemplates(tenantId: string, event: TriggerEvent) {
+  const canonical = normalizeTriggerEvent(event)
+  const all = await withTenant(tenantId, (tdb) => tdb.query.notificationTemplates.findMany({
+    where: and(
+      eq(notificationTemplates.tenantId, tenantId),
+      eq(notificationTemplates.isAutoTrigger, true),
+      eq(notificationTemplates.isActive, true),
+    ),
+  }))
+  return all.filter((t) => normalizeTriggerEvent(t.triggerEvent) === canonical)
 }
 
 /**
@@ -35,15 +43,7 @@ export async function triggerNotification(
   context: TriggerContext
 ): Promise<void> {
   try {
-    // Find matching auto-trigger templates
-    const templates = await db.query.notificationTemplates.findMany({
-      where: and(
-        eq(notificationTemplates.tenantId, tenantId),
-        eq(notificationTemplates.isAutoTrigger, true),
-        eq(notificationTemplates.isActive, true),
-        eq(notificationTemplates.triggerEvent, event)
-      ),
-    })
+    const templates = await findTriggerTemplates(tenantId, event)
 
     if (templates.length === 0) return
 
@@ -52,9 +52,10 @@ export async function triggerNotification(
     let email = context.recipientEmail
 
     if ((!phone || !email) && context.customerId) {
-      const customer = await db.query.customers.findFirst({
-        where: eq(customers.id, context.customerId),
-      })
+      const customerId = context.customerId
+      const customer = await withTenant(tenantId, (tdb) => tdb.query.customers.findFirst({
+        where: and(eq(customers.id, customerId), eq(customers.tenantId, tenantId)),
+      }))
       if (customer) {
         if (!phone) phone = customer.phone || undefined
         if (!email) email = customer.email || undefined
@@ -68,14 +69,14 @@ export async function triggerNotification(
 
       // Deduplication: check if same template sent to same recipient in last 5 min
       const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000)
-      const recentLog = await db.query.notificationLogs.findFirst({
+      const recentLog = await withTenant(tenantId, (tdb) => tdb.query.notificationLogs.findFirst({
         where: and(
           eq(notificationLogs.tenantId, tenantId),
           eq(notificationLogs.templateId, template.id),
           eq(notificationLogs.recipientContact, recipient),
           gte(notificationLogs.sentAt, fiveMinAgo)
         ),
-      })
+      }))
 
       if (recentLog) continue // Skip duplicate
 

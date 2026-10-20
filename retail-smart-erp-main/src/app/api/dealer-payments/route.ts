@@ -10,6 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { dealerPaymentsListSchema, createDealerPaymentSchema } from '@/lib/validation/schemas/dealership'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET all dealer payments for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
           vehicleInventory: true,
           dealerAllocation: true,
           sale: true,
-          createdByUser: true,
+          createdByUser: SAFE_USER,
           confirmedByUser: true,
         },
         orderBy: [desc(dealerPayments.createdAt)],

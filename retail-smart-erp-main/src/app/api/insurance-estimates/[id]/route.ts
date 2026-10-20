@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateInsuranceEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // E12: Valid status transitions for estimates
 // Issue 10: Allow cancellation from more statuses
@@ -53,8 +54,8 @@ export async function GET(
           insuranceCompany: true,
           assessor: true,
           workOrder: true,
-          createdByUser: true,
-          submittedByUser: true,
+          createdByUser: SAFE_USER,
+          submittedByUser: SAFE_USER,
           items: {
             with: {
               serviceType: true,

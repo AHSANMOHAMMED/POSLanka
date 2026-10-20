@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { restaurantOrdersListSchema, createRestaurantOrderSchema } from '@/lib/validation/schemas/restaurant'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET all restaurant orders for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -84,7 +85,7 @@ export async function GET(request: NextRequest) {
         with: {
           table: true,
           customer: true,
-          createdByUser: true,
+          createdByUser: SAFE_USER,
           items: true,
           kitchenOrder: {
             with: {

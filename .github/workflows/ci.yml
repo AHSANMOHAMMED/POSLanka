@@ -28,8 +28,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: ESLint (POSLanka paths + core src)
-        run: npx eslint "src/lib/features/**/*.{ts,tsx}" "src/lib/whatsapp/**/*.{ts,tsx}" "src/lib/pdf/**/*.{ts,tsx}" "src/lib/offline/**/*.{ts,tsx}" "src/lib/i18n/**/*.{ts,tsx}" "src/lib/webxpay/**/*.{ts,tsx}" "src/hooks/useI18n.ts" "src/hooks/useOfflinePos.ts" "src/hooks/useFeatureFlag.ts" "src/app/api/features/**/*.{ts,tsx}" "src/app/api/quotations/**/*.{ts,tsx}" "src/app/api/credit-notes/**/*.{ts,tsx}" "src/app/api/documents/**/*.{ts,tsx}" "src/app/api/webxpay/**/*.{ts,tsx}" "src/app/api/auth/mobile-login/**/*.{ts,tsx}" "src/app/api/auth/impersonate/**/*.{ts,tsx}" "src/app/api/sys-control/vendors/**/*.{ts,tsx}" "src/components/shared/**/*.{ts,tsx}" "src/components/pos/OfflineStatusBanner.tsx" "src/components/pos/POSPaymentModal.tsx" --max-warnings 50
+      - name: ESLint (whole project, zero warnings)
+        run: npx eslint . --max-warnings 0
 
       - name: Validate migration numbers
         run: npm run validate:migrations
@@ -52,9 +52,82 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
         run: npx tsc --noEmit
+
+  db-tests:
+    name: Database & business-logic tests
+    runs-on: ubuntu-latest
+    needs: [typecheck]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: poslanka_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/poslanka_ci
+      DATABASE_APP_ROLE: app_user
+      NEXTAUTH_SECRET: ci-test-secret-not-for-production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: retail-smart-erp-main/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Migrate a fresh database
+        run: npm run db:migrate
+
+      - name: Migrations are idempotent (second run is a no-op)
+        run: npm run db:migrate | tee /dev/stderr | grep -q "up to date"
+
+      - name: Tenant isolation check
+        run: npm run db:check-isolation
+
+      - name: Pure self-tests (printing, labels, barcodes)
+        run: |
+          npx tsx src/lib/print/escpos/__selftest__.ts
+          npx tsx scripts/tests/w9-labels.ts
+          npx tsx scripts/tests/w7-logo-raster.ts
+          npx tsx scripts/tests/w7-code128.ts
+          npx tsx scripts/tests/w7-mobile-receipt.ts
+
+      - name: Staff accounts
+        run: npx tsx scripts/tests/w1-staff.ts
+      - name: Inventory core (item codes, ledger, stock takes, invoice numbers)
+        run: npx tsx scripts/tests/w2-inventory.ts
+      - name: Stock intake & sync
+        run: npx tsx scripts/tests/w3-intake.ts
+      - name: Import / export
+        run: npx tsx scripts/tests/w4-import.ts
+      - name: Returns, exchange, purchasing
+        run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/w8-returns.ts
+      - name: Tenant isolation behaviour
+        run: npx tsx scripts/tests/w10-isolation.ts
+      - name: Alerts & reminders
+        run: npx tsx scripts/tests/w5-alerts.ts
+      - name: Offline catalog sync & offline sales
+        run: |
+          npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/w6-offline.ts
+          npx tsx scripts/tests/w6-barcode-mobile.ts
+      - name: Remaining stock writers, kitchen tickets, mobile QR & labels
+        run: |
+          npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/c3-writers.ts
+          npx tsx scripts/tests/c3-kot.ts
+          npx tsx scripts/tests/c3-mobile-qr.ts
+          npx tsx scripts/tests/c3-mobile-labels.ts
 
   build:
     name: Production build
@@ -84,8 +157,8 @@ jobs:
       - name: Build
         run: npm run build
 
-  mobile-lint:
-    name: Mobile app package check
+  mobile:
+    name: Mobile app typecheck & bundle
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -98,6 +171,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: retail-smart-erp-main/apps/mobile/package-lock.json
 
-      - name: Validate package.json
-        run: node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('mobile package.json OK')"
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Android bundle (Metro)
+        run: CI=1 npx expo export --platform android --output-dir /tmp/expo-export

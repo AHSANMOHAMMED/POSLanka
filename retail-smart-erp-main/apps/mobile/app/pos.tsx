@@ -9,14 +9,29 @@ import {
   ActivityIndicator,
   Alert,
   ScrollView,
+  RefreshControl,
 } from 'react-native'
 import { router, useFocusEffect } from 'expo-router'
 import * as Crypto from 'expo-crypto'
 import { apiGet, apiPost, asList, getUser, qs, type AuthUser } from '../src/lib/api'
 import { hasPermission } from '../src/lib/roles'
-import { fetchCurrentShift, shiftCounterName, shiftWarehouseName, type Shift } from '../src/lib/shift'
-import { calculateCartTax, EMPTY_TAX_CONFIG, loadTaxConfig, type TaxConfig } from '../src/lib/tax'
-import { retryRejected, subscribe as subscribeQueue, syncNow, type QueueState } from '../src/lib/offlineQueue'
+import { loadShiftOfflineAware, shiftCounterName, shiftWarehouseName, type Shift } from '../src/lib/shift'
+import { calculateCartTax, EMPTY_TAX_CONFIG, loadTaxConfig, taxConfigFromBundle, type TaxConfig } from '../src/lib/tax'
+import { isOnline, subscribe as subscribeQueue, syncNow, type QueueState } from '../src/lib/offlineQueue'
+import {
+  catalogKey,
+  findByCode,
+  formatAge,
+  getBundle,
+  refreshBundle,
+  searchItems,
+  setActiveCatalog,
+  subscribeCatalog,
+  syncCatalog,
+  type CatalogStatus,
+  type OfflineBundle,
+} from '../src/lib/localdb'
+import { OfflineSalesModal } from '../src/components/OfflineSalesModal'
 import { THEME, formatLKR } from '../src/lib/theme'
 import { CartDrawerModal, CartLine } from '../src/components/CartDrawerModal'
 import { TenderModal, type SaleResultData } from '../src/components/TenderModal'
@@ -27,6 +42,7 @@ import { HeldSalesModal, type HeldSale } from '../src/components/HeldSalesModal'
 import { ReturnModal } from '../src/components/ReturnModal'
 import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
 import { loadBusinessInfo, type BusinessInfo } from '../src/lib/receipt'
+import { AlertsBell } from '../src/components/AlertsBell'
 
 interface Item {
   id: string
@@ -75,7 +91,9 @@ interface ScanInfo {
   gtin?: string | null
 }
 
-const EMPTY_QUEUE: QueueState = { pending: 0, rejected: 0, syncing: false, online: true, lastSyncAt: null, lastError: null }
+const EMPTY_QUEUE: QueueState = { pending: 0, rejected: 0, syncing: false, online: true, lastSyncAt: null, lastError: null, synced: 0 }
+/** Delta catalog sync cadence while the POS is open (a full refresh happens daily, see localdb). */
+const CATALOG_SYNC_MS = 5 * 60_000
 
 function stockOf(item: Item): number | null {
   if (item.trackStock === false) return null
@@ -92,6 +110,8 @@ export default function PosScreen() {
   const [shift, setShift] = useState<Shift | null>(null)
   const [shiftLoading, setShiftLoading] = useState(true)
   const [shiftError, setShiftError] = useState<string | null>(null)
+  /** true when the shift came from the device cache because the server is unreachable */
+  const [shiftOffline, setShiftOffline] = useState(false)
 
   // Catalog
   const [items, setItems] = useState<Item[]>([])
@@ -106,6 +126,13 @@ export default function PosScreen() {
   const [debouncedQuery, setDebouncedQuery] = useState('')
   const [lookupBusy, setLookupBusy] = useState(false)
   const requestSeq = useRef(0)
+
+  // W6 offline catalog
+  const [catalog, setCatalog] = useState<CatalogStatus | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [offlineSalesVisible, setOfflineSalesVisible] = useState(false)
+  const [nowTick, setNowTick] = useState(Date.now())
+  const scaleConfigRef = useRef<OfflineBundle['scaleBarcode']>(null)
 
   // Cart / sale
   const [cart, setCart] = useState<CartLine[]>([])
@@ -127,21 +154,58 @@ export default function PosScreen() {
   const [saleResult, setSaleResult] = useState<SaleResultData | null>(null)
 
   // ------------------------------------------------------------------ init
+  // Offline bundle: tax templates, categories, scale-label layout (cached on the device).
+  const applyBundle = useCallback((b: OfflineBundle | null) => {
+    if (!b) return
+    scaleConfigRef.current = b.scaleBarcode || null
+    if (b.complete === false) return
+    const cfg = taxConfigFromBundle(b)
+    if (cfg) setTaxConfig(cfg)
+    if (Array.isArray(b.categories)) setCategories(b.categories)
+  }, [])
+
+  const reloadBundle = useCallback(async () => {
+    const { bundle, offline } = await refreshBundle()
+    if (bundle && bundle.complete !== false) {
+      if (!offline) applyBundle(bundle)
+      return
+    }
+    if (!offline) {
+      // Older server without /api/pos/offline-bundle
+      loadTaxConfig(null).then(setTaxConfig)
+      apiGet<any>('/api/categories?all=true').then((r) => {
+        if (r.ok) setCategories(asList<Category>(r.data, 'categories'))
+      })
+    }
+  }, [applyBundle])
+
   useEffect(() => {
     getUser().then(setUser)
-    apiGet<any>('/api/categories?all=true').then((r) => {
-      if (r.ok) setCategories(asList<Category>(r.data, 'categories'))
-    })
-    loadTaxConfig().then(setTaxConfig)
+    getBundle().then(applyBundle)
+    reloadBundle()
     loadBusinessInfo().then(setBusiness)
-    return subscribeQueue(setQueueState)
-  }, [])
+    const unsubCatalog = subscribeCatalog(setCatalog)
+    const unsubQueue = subscribeQueue(setQueueState)
+    const tick = setInterval(() => setNowTick(Date.now()), 60_000)
+    return () => {
+      unsubCatalog()
+      unsubQueue()
+      clearInterval(tick)
+    }
+  }, [applyBundle, reloadBundle])
 
   const loadShift = useCallback(async () => {
     setShiftError(null)
-    const res = await fetchCurrentShift()
-    if (res.ok) setShift(res.data.shift)
-    else if (res.status !== 401) setShiftError(res.error)
+    const r = await loadShiftOfflineAware()
+    if (r.status === 401) {
+      setShiftLoading(false)
+      return
+    }
+    if (r.shift || !r.offline) setShift(r.shift)
+    setShiftOffline(r.offline && !!r.shift)
+    if (!r.shift && r.error) {
+      setShiftError(r.offline ? `${r.error}\n\nNo open shift is saved on this device yet — connect once to open or load your shift.` : r.error)
+    }
     setShiftLoading(false)
   }, [])
 
@@ -166,10 +230,30 @@ export default function PosScreen() {
   }, [query])
 
   const warehouseId = shift?.warehouseId
+  const tenantSlug = user?.tenantSlug
+  // Local catalog is used once it holds items for this tenant + branch (instant, works offline).
+  const localReady = !!warehouseId && !!tenantSlug && catalog?.key === catalogKey(tenantSlug, warehouseId) && (catalog?.itemCount ?? 0) > 0
 
   const fetchItems = useCallback(
     async (page: number, append: boolean) => {
       const seq = ++requestSeq.current
+      if (localReady) {
+        const r = await searchItems(debouncedQuery, {
+          categoryId: selectedCategoryId === 'all' ? null : selectedCategoryId,
+          limit: PAGE_SIZE,
+          offset: (page - 1) * PAGE_SIZE,
+          inStockOnly,
+        }).catch(() => null)
+        if (seq !== requestSeq.current) return
+        if (r) {
+          setItemsError(null)
+          setItems((prev) => (append ? [...prev, ...(r.items as Item[])] : (r.items as Item[])))
+          setPagination({ page, pageSize: PAGE_SIZE, total: r.total, totalPages: Math.max(1, Math.ceil(r.total / PAGE_SIZE)) })
+          setItemsLoading(false)
+          setLoadingMore(false)
+          return
+        }
+      }
       if (append) setLoadingMore(true)
       else setItemsLoading(true)
       setItemsError(null)
@@ -187,7 +271,7 @@ export default function PosScreen() {
       if (seq !== requestSeq.current) return
 
       if (!res.ok) {
-        setItemsError(res.error)
+        setItemsError(res.status === 0 ? 'Offline, and the item catalog is not on this device yet. Connect once to download it — you can still scan items the device knows.' : res.error)
         if (!append) setItems([])
       } else {
         const rows = asList<Item>(res.data)
@@ -197,8 +281,61 @@ export default function PosScreen() {
       setItemsLoading(false)
       setLoadingMore(false)
     },
-    [debouncedQuery, selectedCategoryId, warehouseId, inStockOnly]
+    [debouncedQuery, selectedCategoryId, warehouseId, inStockOnly, localReady]
   )
+  const fetchItemsRef = useRef(fetchItems)
+  fetchItemsRef.current = fetchItems
+
+  // ------------------------------------------------------------------ catalog sync (W6)
+  const runCatalogSync = useCallback(
+    async (full = false) => {
+      if (!warehouseId || !tenantSlug) return
+      const r = await syncCatalog(warehouseId, { full, tenantSlug })
+      if (r.ok && (r.upserted > 0 || r.deleted > 0)) fetchItemsRef.current(1, false)
+    },
+    [warehouseId, tenantSlug]
+  )
+
+  // On focus: select this tenant + branch catalog, delta-sync it, then every 5 minutes.
+  useFocusEffect(
+    useCallback(() => {
+      if (!warehouseId || !tenantSlug) return
+      let cancelled = false
+      setActiveCatalog(tenantSlug, warehouseId)
+        .then(() => {
+          if (!cancelled && isOnline()) runCatalogSync()
+        })
+        .catch(() => undefined)
+      const t = setInterval(() => {
+        if (isOnline()) runCatalogSync()
+      }, CATALOG_SYNC_MS)
+      return () => {
+        cancelled = true
+        clearInterval(t)
+      }
+    }, [warehouseId, tenantSlug, runCatalogSync])
+  )
+
+  // Back online: refresh the catalog, bundle and shift right away.
+  const wasOnline = useRef(queueState.online)
+  useEffect(() => {
+    if (queueState.online && !wasOnline.current) {
+      runCatalogSync()
+      reloadBundle()
+      loadShift()
+    }
+    wasOnline.current = queueState.online
+  }, [queueState.online, runCatalogSync, reloadBundle, loadShift])
+
+  async function onPullRefresh() {
+    setRefreshing(true)
+    try {
+      await Promise.all([runCatalogSync(), reloadBundle(), loadShift()])
+      await fetchItems(1, false)
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const hasShift = !!shift
   useEffect(() => {
@@ -276,28 +413,49 @@ export default function PosScreen() {
       setReturnQuery(trimmed)
       return
     }
-    setLookupBusy(true)
-    const res = await apiGet<Item & { scan?: ScanInfo | null }>(`/api/items/barcode-lookup${qs({ barcode: trimmed, warehouseId: shift.warehouseId })}`)
-    setLookupBusy(false)
-    if (res.ok && res.data?.id) {
-      const scan = res.data.scan
+    const addScanned = (item: Item, scan?: ScanInfo | null) => {
       const scanQty = scan?.quantity !== undefined && scan?.quantity !== null ? Number(scan.quantity) : NaN
       const scanPrice = scan?.unitPrice !== undefined && scan?.unitPrice !== null ? Number(scan.unitPrice) : NaN
       if (!isNaN(scanQty) && scanQty > 0) {
         // Weighing-scale barcode: quantity is the weight (kg); price may be embedded too.
-        addToCart(res.data, Math.round(scanQty * 1000) / 1000, { weighed: true, unitPrice: !isNaN(scanPrice) && scanPrice > 0 ? scanPrice : undefined })
+        addToCart(item, Math.round(scanQty * 1000) / 1000, { weighed: true, unitPrice: !isNaN(scanPrice) && scanPrice > 0 ? scanPrice : undefined })
       } else if (!isNaN(scanPrice) && scanPrice > 0) {
         // Price-embedded barcode without weight: one unit at the embedded price.
-        addToCart(res.data, 1, { weighed: true, unitPrice: scanPrice })
+        addToCart(item, 1, { weighed: true, unitPrice: scanPrice })
       } else {
-        addToCart(res.data)
+        addToCart(item)
       }
       setQuery('')
       setDebouncedQuery('')
+    }
+
+    // 1. Local catalog first: instant and works offline (same candidate rules as the server).
+    if (localReady) {
+      const local = await findByCode(trimmed, scaleConfigRef.current).catch(() => null)
+      if (local) {
+        addScanned(local.item as Item, { quantity: local.quantity ?? null, unitPrice: local.unitPrice ?? null })
+        return
+      }
+    }
+    const offlineNow = !queueState.online || shiftOffline
+    if (offlineNow) {
+      Alert.alert('Not in Offline Catalog', `No item with barcode / PLU ${trimmed} is saved on this device. It may be new — sync the catalog when back online.`)
+      return
+    }
+
+    // 2. Server lookup (new items not yet synced to the device)
+    setLookupBusy(true)
+    const res = await apiGet<Item & { scan?: ScanInfo | null }>(`/api/items/barcode-lookup${qs({ barcode: trimmed, warehouseId: shift.warehouseId })}`)
+    setLookupBusy(false)
+    if (res.ok && res.data?.id) {
+      addScanned(res.data, res.data.scan)
+      if (localReady) runCatalogSync()
       return
     }
     if (res.status === 404) {
       Alert.alert('Barcode Not Found', `No item registered with barcode / PLU: ${trimmed}`)
+    } else if (res.status === 0) {
+      Alert.alert('Not in Offline Catalog', `Offline, and barcode / PLU ${trimmed} is not saved on this device.`)
     } else {
       Alert.alert('Lookup Failed', res.error || 'Could not look up this barcode.')
     }
@@ -395,17 +553,8 @@ export default function PosScreen() {
   const canInventory = hasPermission(user, 'manageInventory')
 
   function handleSyncPress() {
-    if (queueState.rejected > 0 && queueState.pending === 0) {
-      Alert.alert(
-        'Rejected Offline Sales',
-        `${queueState.rejected} queued sale(s) were rejected by the server.${queueState.lastError ? `\n\nLast error: ${queueState.lastError}` : ''}`,
-        [
-          { text: 'Close', style: 'cancel' },
-          { text: 'Retry', onPress: () => retryRejected() },
-        ]
-      )
-      return
-    }
+    setOfflineSalesVisible(true)
+    if (queueState.pending === 0) return
     syncNow().then((r) => {
       if (r.stoppedOffline) triggerToast('Still offline — will retry automatically')
       else if (r.synced > 0) triggerToast(`${r.synced} sale(s) synced`)
@@ -450,9 +599,30 @@ export default function PosScreen() {
         </Pressable>
       </View>
 
+      {/* W6: offline mode + catalog freshness + offline sales */}
+      {shift && (shiftOffline || !queueState.online) ? (
+        <View style={styles.offlineModeBanner}>
+          <Text style={styles.offlineModeText}>📴 Offline mode — sales will sync</Text>
+        </View>
+      ) : null}
+      {shift ? (
+        <Pressable style={styles.catalogBar} onPress={() => setOfflineSalesVisible(true)}>
+          <Text style={styles.catalogBarText} numberOfLines={1}>
+            {catalog?.syncing
+              ? 'Updating catalog…'
+              : localReady
+                ? `Catalog updated ${formatAge(catalog?.lastSyncAt, nowTick)} · ${catalog?.itemCount ?? 0} items`
+                : 'Catalog not on this device yet'}
+            {queueState.pending > 0 ? ` · ${queueState.pending} pending` : ''}
+            {queueState.rejected > 0 ? ` · ${queueState.rejected} need attention` : ''}
+          </Text>
+        </Pressable>
+      ) : null}
+
       {/* Quick navigation (role-filtered) */}
       <View style={styles.quickNavContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickNavContent}>
+          <AlertsBell />
           <Pressable style={styles.quickNavPill} onPress={() => setHeldVisible(true)}>
             <Text style={styles.quickNavPillText}>⏸ Held</Text>
           </Pressable>
@@ -606,7 +776,9 @@ export default function PosScreen() {
           ) : itemsError ? (
             <ErrorView message={itemsError} onRetry={() => fetchItems(1, false)} />
           ) : items.length === 0 ? (
-            <EmptyView icon="📦" title="No matching items found" subtitle="Try another search term or category, or scan a barcode." />
+            <ScrollView contentContainerStyle={{ flexGrow: 1 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}>
+              <EmptyView icon="📦" title="No matching items found" subtitle="Try another search term or category, or scan a barcode. Pull down to refresh the catalog." />
+            </ScrollView>
           ) : (
             <FlatList
               data={items}
@@ -616,6 +788,7 @@ export default function PosScreen() {
               keyboardShouldPersistTaps="handled"
               onEndReached={loadMore}
               onEndReachedThreshold={0.5}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
               ListFooterComponent={
                 loadingMore ? (
                   <View style={{ padding: 16 }}>
@@ -770,6 +943,8 @@ export default function PosScreen() {
             setCart([])
             setCustomer(null)
             setSaleResult(data)
+            // stock shown in the grid reflects the sale (local catalog was adjusted)
+            if (localReady) fetchItems(1, false)
           }}
         />
       )}
@@ -786,9 +961,16 @@ export default function PosScreen() {
             setReturnQuery(null)
             setSaleResult(data)
             fetchItems(1, false)
+            runCatalogSync()
           }}
         />
       )}
+
+      <OfflineSalesModal
+        visible={offlineSalesVisible}
+        onClose={() => setOfflineSalesVisible(false)}
+        canDiscard={hasPermission(user, 'manageSales')}
+      />
 
       <SaleReceiptModal visible={!!saleResult} saleData={saleResult} onClose={() => setSaleResult(null)} />
     </View>
@@ -797,6 +979,10 @@ export default function PosScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: THEME.colors.background },
+  offlineModeBanner: { backgroundColor: THEME.colors.secondaryLight, paddingHorizontal: 16, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: THEME.colors.secondaryAmber },
+  offlineModeText: { color: THEME.colors.onSecondaryContainer, fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  catalogBar: { paddingHorizontal: 16, paddingVertical: 4, backgroundColor: THEME.colors.surfaceContainerLow },
+  catalogBarText: { color: THEME.colors.textMuted, fontSize: 11, textAlign: 'center' },
   header: {
     paddingTop: 48,
     paddingHorizontal: 16,

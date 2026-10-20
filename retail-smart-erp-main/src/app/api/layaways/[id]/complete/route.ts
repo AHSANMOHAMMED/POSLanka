@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db as rawDb, withAuthTenantTransaction } from '@/lib/db'
-import { layaways, layawayItems, sales, saleItems, payments, items as itemsTable, warehouseStock, stockMovements, warehouses, workOrderParts, workOrders, heldSales, insuranceEstimateItems, insuranceEstimates } from '@/lib/db/schema'
+import { layaways, layawayItems, sales, saleItems, payments, items as itemsTable, warehouseStock, warehouses, workOrderParts, workOrders, heldSales, insuranceEstimateItems, insuranceEstimates } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
@@ -16,6 +16,8 @@ import { layawayCompleteSchema } from '@/lib/validation/schemas/layaways'
 import { stripNullValues, validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
+import { applyStockChange, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
+import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
 
 // POST complete a layaway (convert to sale)
 export async function POST(
@@ -263,6 +265,7 @@ export async function POST(
 
     // Create sale items and update stock
     let totalCOGS = 0
+    const stockChanges: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
     for (let idx = 0; idx < layawayItemsData.length; idx++) {
       const item = layawayItemsData[idx]
       const quantity = parseCurrency(item.quantity)
@@ -297,46 +300,25 @@ export async function POST(
           totalCOGS += roundCurrency(parseCurrency(itemRecord.costPrice) * quantity)
         }
 
-        if (itemRecord?.trackStock) {
-          // Lock and update warehouse stock
-          const [existingStock] = await tx
-            .select()
-            .from(warehouseStock)
-            .where(and(
-              eq(warehouseStock.warehouseId, warehouseId),
-              eq(warehouseStock.itemId, item.itemId)
-            ))
-            .for('update')
-
-          // Check if sufficient stock exists before deducting
-          const currentStock = existingStock ? parseCurrency(existingStock.currentStock) : 0
-          if (currentStock < quantity) {
-            throw new Error(
-              `Insufficient stock for item "${item.itemName}". Available: ${currentStock}, Required: ${quantity}`
-            )
-          }
-
-          if (existingStock) {
-            await tx.update(warehouseStock)
-              .set({
-                currentStock: sql`${warehouseStock.currentStock} - ${quantity}`,
-                updatedAt: new Date(),
-              })
-              .where(eq(warehouseStock.id, existingStock.id))
-          }
-
-          // Create stock movement record
-          await tx.insert(stockMovements).values({
+        if (itemRecord?.trackStock && quantity !== 0) {
+          // Single stock writer: locks the row, enforces non-negative stock and
+          // writes the signed ledger row. Keyed per layaway line (replay-safe).
+          const input: StockChangeInput = {
             tenantId: session.user.tenantId,
             warehouseId,
             itemId: item.itemId,
+            mode: 'delta',
+            qty: -quantity,
             type: 'out',
-            quantity: Math.abs(quantity).toString(),
-            notes: `Sale from layaway ${layaway.layawayNo}`,
             referenceType: 'sale',
             referenceId: newSale.id,
-            createdBy: session.user.id,
-          })
+            notes: `Sale from layaway ${layaway.layawayNo}`,
+            userId: session.user.id,
+            source: 'layaway',
+            idempotencyKey: `layaway:${id}:${item.id}`,
+          }
+          const change = await applyStockChange(tx, input)
+          stockChanges.push({ result: change, input })
         }
       }
     }
@@ -385,6 +367,7 @@ export async function POST(
       },
       tenantId: session.user.tenantId,
       warehouseId,
+      stockChanges,
     }
   })
   } catch (err: unknown) {
@@ -392,6 +375,8 @@ export async function POST(
     if (message.startsWith('Insufficient stock')) {
       return NextResponse.json({ error: message }, { status: 400 })
     }
+    const stockError = stockErrorResponse(err)
+    if (stockError) return stockError
     logError('api/layaways/[id]/complete', err)
     return NextResponse.json({ error: message }, { status: 500 })
   }
@@ -402,6 +387,8 @@ export async function POST(
   if ('error' in result) {
     return result.error
   }
+
+  notifyStockDecreased(result.stockChanges)
 
   // Broadcast changes
   logAndBroadcast(result.tenantId, 'layaway', 'updated', id)

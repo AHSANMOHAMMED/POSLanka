@@ -21,6 +21,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       if (permError) return { error: permError }
       const line = await updateIntakeLine(db, {
         tenantId: session.user.tenantId, batchId: p.data.id, lineId: p.data.lineId, patch: parsed.data,
+        actor: { userId: session.user.id, role: session.user.role },
       })
       logAndBroadcast(session.user.tenantId, 'stock-intake', 'updated', p.data.id, { userId: session.user.id })
       return { data: line }
@@ -41,7 +42,10 @@ export async function DELETE(_request: NextRequest, { params }: Ctx) {
     const result = await withAuthTenant(async (session, db) => {
       const permError = requirePermission(session, 'submitStockIntake')
       if (permError) return { error: permError }
-      await deleteIntakeLine(db, { tenantId: session.user.tenantId, batchId: p.data.id, lineId: p.data.lineId })
+      await deleteIntakeLine(db, {
+        tenantId: session.user.tenantId, batchId: p.data.id, lineId: p.data.lineId,
+        actor: { userId: session.user.id, role: session.user.role },
+      })
       logAndBroadcast(session.user.tenantId, 'stock-intake', 'updated', p.data.id, { userId: session.user.id })
       return { data: { success: true } }
     })

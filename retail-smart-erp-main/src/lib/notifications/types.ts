@@ -145,34 +145,56 @@ export interface NotificationTemplate {
   updatedAt: Date
 }
 
-// Available trigger events for auto-notifications
+// Available trigger events for auto-notifications.
+// Canonical names use underscores (what triggerNotification() fires). Older templates were
+// saved with dotted names ('work_order.completed'); normalizeTriggerEvent() maps them.
 export type TriggerEvent =
-  | 'work_order.created'
-  | 'work_order.completed'
-  | 'work_order.invoice_created'
-  | 'appointment.created'
-  | 'appointment.confirmed'
-  | 'appointment.reminder' // 24h before
-  | 'appointment.reminder_1h' // 1h before
-  | 'sale.completed'
-  | 'vehicle.service_due'
-  | 'customer.birthday'
-  | 'estimate.approved'
-  | 'estimate.rejected'
+  | 'work_order_created'
+  | 'work_order_completed'
+  | 'work_order_invoiced'
+  | 'appointment_created'
+  | 'appointment_confirmed'
+  | 'appointment_reminder' // 24h before
+  | 'appointment_reminder_1h' // 1h before
+  | 'sale_completed'
+  | 'reservation_confirmed'
+  | 'vehicle_service_due'
+  | 'customer_birthday'
+  | 'estimate_approved'
+  | 'estimate_rejected'
+  | 'delivery_dispatched'
+  | 'delivery_delivered'
 
 export const TRIGGER_EVENT_LABELS: Record<TriggerEvent, string> = {
-  'work_order.created': 'Work Order Created',
-  'work_order.completed': 'Work Order Completed',
-  'work_order.invoice_created': 'Work Order Invoice Created',
-  'appointment.created': 'Appointment Scheduled',
-  'appointment.confirmed': 'Appointment Confirmed',
-  'appointment.reminder': 'Appointment Reminder (24h)',
-  'appointment.reminder_1h': 'Appointment Reminder (1h)',
-  'sale.completed': 'Sale Completed',
-  'vehicle.service_due': 'Vehicle Service Due',
-  'customer.birthday': 'Customer Birthday',
-  'estimate.approved': 'Estimate Approved',
-  'estimate.rejected': 'Estimate Rejected',
+  work_order_created: 'Work Order Created',
+  work_order_completed: 'Work Order Completed',
+  work_order_invoiced: 'Work Order Invoice Created',
+  appointment_created: 'Appointment Scheduled',
+  appointment_confirmed: 'Appointment Confirmed',
+  appointment_reminder: 'Appointment Reminder (24h)',
+  appointment_reminder_1h: 'Appointment Reminder (1h)',
+  sale_completed: 'Sale Completed',
+  reservation_confirmed: 'Reservation Confirmed',
+  vehicle_service_due: 'Vehicle Service Due',
+  customer_birthday: 'Customer Birthday',
+  estimate_approved: 'Estimate Approved',
+  estimate_rejected: 'Estimate Rejected',
+  delivery_dispatched: 'Delivery Dispatched',
+  delivery_delivered: 'Delivery Delivered',
+}
+
+const TRIGGER_EVENT_ALIASES: Record<string, TriggerEvent> = {
+  'work_order.invoice_created': 'work_order_invoiced',
+  work_order_invoice_created: 'work_order_invoiced',
+  'work_order.invoiced': 'work_order_invoiced',
+}
+
+/** Map any stored trigger name ('a.b' legacy or 'a_b') to the canonical underscore form. */
+export function normalizeTriggerEvent(name: string | null | undefined): string | null {
+  if (!name) return null
+  const trimmed = name.trim()
+  if (!trimmed) return null
+  return TRIGGER_EVENT_ALIASES[trimmed] || trimmed.replace(/\./g, '_')
 }
 
 // ==================== LOG TYPES ====================

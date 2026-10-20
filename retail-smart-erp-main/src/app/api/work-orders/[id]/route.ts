@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { workOrders, workOrderParts, appointments, insuranceEstimateItems, insuranceEstimates, stockMovements, vehicleInspections, sales, payments, customers, vehicles, customerCreditTransactions, warehouseStock, workOrderAssignmentHistory, users, heldSales, stockTransfers, stockTransferItems } from '@/lib/db/schema'
+import { workOrders, workOrderParts, appointments, insuranceEstimateItems, insuranceEstimates, vehicleInspections, sales, payments, customers, vehicles, customerCreditTransactions, warehouseStock, workOrderAssignmentHistory, users, heldSales, stockTransfers, stockTransferItems } from '@/lib/db/schema'
 import { eq, and, sql, desc, inArray } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { deleteWorkOrderInspectionFiles, deleteFilesByDocument } from '@/lib/utils/file-cleanup'
@@ -13,6 +13,8 @@ import { postVoidToGL } from '@/lib/accounting/auto-post'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateWorkOrderSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { findMovements, reverseMovements } from '@/lib/purchasing/stock-cost'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // Issue #24: Expanded workflow with intermediate states
 const validStatusTransitions: Record<string, string[]> = {
@@ -54,12 +56,12 @@ export async function GET(
             },
           },
           warehouse: true,
-          assignedUser: true,
-          createdByUser: true,
+          assignedUser: SAFE_USER,
+          createdByUser: SAFE_USER,
           services: {
             with: {
               serviceType: true,
-              technician: true,
+              technician: SAFE_USER,
             },
           },
           parts: {
@@ -525,53 +527,25 @@ export async function PUT(
             },
           })
 
-          for (const part of parts) {
-            const item = Array.isArray(part.item) ? part.item[0] : part.item
-            if (item?.trackStock && currentWorkOrder.warehouseId) {
-              // Lock and get warehouse stock
-              const [existingStock] = await tx
-                .select()
-                .from(warehouseStock)
-                .where(and(
-                  eq(warehouseStock.itemId, part.itemId),
-                  eq(warehouseStock.warehouseId, currentWorkOrder.warehouseId),
-                  eq(warehouseStock.tenantId, session.user.tenantId)
-                ))
-                .for('update')
-
-              if (existingStock) {
-                // Restore stock
-                await tx.update(warehouseStock)
-                  .set({
-                    currentStock: sql`${warehouseStock.currentStock} + ${part.quantity}`,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(warehouseStock.id, existingStock.id))
-              } else {
-                // Create warehouse stock record
-                await tx.insert(warehouseStock).values({
-                  tenantId: session.user.tenantId,
-                  warehouseId: currentWorkOrder.warehouseId,
-                  itemId: part.itemId,
-                  currentStock: part.quantity,
-                  minStock: '0',
-                })
-              }
-
-              // Create stock movement record for traceability
-              await tx.insert(stockMovements).values({
-                tenantId: session.user.tenantId,
-                warehouseId: currentWorkOrder.warehouseId,
-                itemId: part.itemId,
-                type: 'in',
-                quantity: part.quantity,
-                referenceType: 'work_order_cancelled',
-                referenceId: id,
-                notes: `Stock restored from cancelled Work Order ${currentWorkOrder.orderNo}`,
-                createdBy: userId,
-              })
-            }
-          }
+          // Reverse exactly what the invoice deducted (signed ledger rows),
+          // keyed per original movement so a replay never restores twice.
+          const trackedItemIds = new Set(
+            parts
+              .filter(p => (Array.isArray(p.item) ? p.item[0] : p.item)?.trackStock)
+              .map(p => p.itemId),
+          )
+          const invoiceMovements = (await findMovements(tx, session.user.tenantId, 'work_order', id))
+            .filter(m => trackedItemIds.has(m.itemId) && m.qtyChange < 0)
+          await reverseMovements(tx, invoiceMovements, {
+            tenantId: session.user.tenantId,
+            referenceType: 'work_order_cancelled',
+            referenceId: id,
+            notes: `Stock restored from cancelled Work Order ${currentWorkOrder.orderNo}`,
+            userId,
+            source: 'work_order',
+            costCenterId: currentWorkOrder.costCenterId || null,
+            keyPrefix: 'wo-cancel',
+          })
         }
 
         // Reverse WIP GL entries (work_order_part and work_order_invoice vouchers)

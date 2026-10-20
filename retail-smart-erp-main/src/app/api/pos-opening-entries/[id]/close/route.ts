@@ -9,7 +9,8 @@ import {
 } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { sendPushToPermission } from '@/lib/notifications/push'
+import { notify } from '@/lib/notifications/notify'
+import { getAlertSettings } from '@/lib/notifications/alert-settings'
 import { logError } from '@/lib/ai/error-logger'
 import { postPosShiftVarianceToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
@@ -25,6 +26,7 @@ import { validateBody } from '@/lib/validation'
 import { closePosShiftSchema } from '@/lib/validation/schemas/pos'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // POST close a shift with enhanced payment method validation and optimistic locking
 export async function POST(
@@ -345,7 +347,7 @@ export async function POST(
             },
           },
           posProfile: true,
-          user: true,
+          user: SAFE_USER,
           reconciliation: true,
         },
       })
@@ -359,12 +361,15 @@ export async function POST(
 
       logAndBroadcast(session.user.tenantId, 'pos-shift', 'updated', id)
       logAndBroadcast(session.user.tenantId, 'pos-closing', 'created', closingEntry.id)
-      if (Math.abs(totalVariance) >= 0.01) {
-        void sendPushToPermission(session.user.tenantId, 'manageSales', {
+      const varianceThreshold = Math.max((await getAlertSettings(session.user.tenantId)).varianceThreshold, 0.01)
+      if (Math.abs(totalVariance) >= varianceThreshold) {
+        void notify(session.user.tenantId, 'shift_variance', {
           title: `Shift closed with ${totalVariance > 0 ? 'excess' : 'shortage'} ${Math.abs(totalVariance).toFixed(2)}`,
           body: `${session.user.name || 'Cashier'} closed ${openingEntry.posProfile?.name || 'counter'} (${closingEntry.entryNumber})`,
-          data: { screen: 'shifts', type: 'shift_variance', id: closingEntry.id },
-        }, session.user.id)
+          data: { screen: 'shifts', id: closingEntry.id },
+          permission: 'manageSales',
+          excludeUserId: session.user.id,
+        })
       }
 
       return NextResponse.json({

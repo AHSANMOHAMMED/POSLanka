@@ -26,6 +26,7 @@ import {
   forgetLocalBatch,
   newId,
   removeLocalLine,
+  retryLocalLine,
   startIntakeAutoSync,
   subscribeIntake,
   uploadBatch,
@@ -282,6 +283,7 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
   const flush = useCallback(async () => {
     const r = await uploadBatch(batch.clientBatchId)
     if (r.ok) {
+      if (r.newlyRejected) Alert.alert('Some scans were rejected', `${r.newlyRejected} scan(s) could not be added. The rest were uploaded. Fix or remove the marked scans.`)
       await refresh()
       return true
     }
@@ -382,6 +384,17 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
 
   const lines = detail?.lines || []
   const title = detail?.batch.batchNo || batch.batchNo || 'New batch'
+  // Received (posted) lines -> "Print labels" after a sync.
+  const labelItems = lines
+    .filter((l) => l.status === 'posted' && l.lineMode === 'receive' && Number(l.quantity) > 0)
+    .map((l) => ({
+      name: l.match.item?.name || l.name || l.barcode || l.sku || '',
+      barcode: l.barcode,
+      sku: l.sku || l.match.item?.itemCode || null,
+      price: l.sellingPrice != null ? Number(l.sellingPrice) : undefined,
+      qty: Math.max(1, Math.ceil(Number(l.quantity))),
+    }))
+  const openLabels = () => router.push({ pathname: '/labels', params: { items: JSON.stringify(labelItems) } })
 
   return (
     <View style={styles.screen}>
@@ -441,8 +454,16 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
             <Text style={styles.sectionTitle}>⏳ Waiting to upload ({batch.lines.length})</Text>
             {batch.lines.map((l) => (
               <View key={l.clientLineId} style={[styles.card, styles.rowBetween]}>
-                <Text style={styles.cardTitle}>{l.barcode} · {l.mode === 'count' ? '=' : '+'}{fmtQty(l.quantity)}</Text>
-                <Pressable onPress={() => removeLocalLine(batch.clientBatchId, l.clientLineId)}><Text style={styles.errorText}>✕</Text></Pressable>
+                <View style={{ flexShrink: 1 }}>
+                  <Text style={styles.cardTitle}>{l.barcode} · {l.mode === 'count' ? '=' : '+'}{fmtQty(l.quantity)}</Text>
+                  {l.rejected ? <Text style={styles.errorText}>{l.error || 'Rejected by the server'}</Text> : null}
+                </View>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  {l.rejected ? (
+                    <Pressable onPress={() => retryLocalLine(batch.clientBatchId, l.clientLineId).then(() => online && flush())}><Text style={styles.cardTitle}>↻</Text></Pressable>
+                  ) : null}
+                  <Pressable onPress={() => removeLocalLine(batch.clientBatchId, l.clientLineId)}><Text style={styles.errorText}>✕</Text></Pressable>
+                </View>
               </View>
             ))}
             {online && (
@@ -494,11 +515,23 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
               {busy === 'submit' ? <ActivityIndicator color={THEME.colors.primary} /> : <Text style={styles.secondaryBtnText}>Submit</Text>}
             </Pressable>
           )}
+          {labelItems.length > 0 && (
+            <Pressable style={[styles.secondaryBtn, { flex: 1 }]} disabled={!!busy} onPress={openLabels}>
+              <Text style={styles.secondaryBtnText}>🏷️ Print labels</Text>
+            </Pressable>
+          )}
           {canPost && (
             <Pressable style={[styles.primaryBtn, { flex: 1 }]} disabled={!!busy || (lines.length === 0 && batch.lines.length === 0)} onPress={sync}>
               {busy === 'sync' ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>{serverStatus === 'partially_posted' ? 'Re-sync errors' : 'Sync to stock'}</Text>}
             </Pressable>
           )}
+        </View>
+      )}
+      {batch.serverId && !editable && labelItems.length > 0 && (
+        <View style={styles.footer}>
+          <Pressable style={[styles.primaryBtn, { flex: 1 }]} onPress={openLabels}>
+            <Text style={styles.primaryBtnText}>🏷️ Print labels ({labelItems.length} item{labelItems.length === 1 ? '' : 's'})</Text>
+          </Pressable>
         </View>
       )}
       {!batch.serverId && batch.lines.length === 0 && (

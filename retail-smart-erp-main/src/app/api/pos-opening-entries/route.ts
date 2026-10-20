@@ -14,6 +14,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { posOpeningListSchema, createPosOpeningSchema } from '@/lib/validation/schemas/pos'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET list of opening entries (shifts)
 export async function GET(request: NextRequest) {
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
         where,
         with: {
           posProfile: true,
-          user: true,
+          user: SAFE_USER,
           warehouse: true,
           balances: true,
         },
@@ -200,7 +201,7 @@ export async function POST(request: NextRequest) {
           },
           warehouse: true,
           balances: true,
-          user: true,
+          user: SAFE_USER,
         },
       })
 

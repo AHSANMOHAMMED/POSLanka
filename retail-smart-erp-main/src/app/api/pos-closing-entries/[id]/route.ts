@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePosClosingEntrySchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET a single closing entry
 export async function GET(
@@ -48,8 +49,8 @@ export async function GET(
               warehouse: true,
             },
           },
-          user: true,
-          submittedByUser: true,
+          user: SAFE_USER,
+          submittedByUser: SAFE_USER,
           reconciliation: true,
         },
       })
@@ -192,8 +193,8 @@ export async function PUT(
             },
           },
           posProfile: true,
-          user: true,
-          submittedByUser: true,
+          user: SAFE_USER,
+          submittedByUser: SAFE_USER,
           reconciliation: true,
         },
       })

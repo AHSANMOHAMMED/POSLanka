@@ -11,6 +11,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { customerCreditSchema } from '@/lib/validation/schemas/customers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { postCustomerCreditToGL } from '@/lib/accounting/auto-post'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET credit history for a customer
 export async function GET(
@@ -42,7 +43,7 @@ export async function GET(
       const transactions = await db.query.customerCreditTransactions.findMany({
         where: eq(customerCreditTransactions.customerId, customerId),
         with: {
-          createdByUser: true,
+          createdByUser: SAFE_USER,
         },
         orderBy: [desc(customerCreditTransactions.createdAt)],
         limit: 50,

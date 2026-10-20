@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, or, sql, type SQL } from 'drizzle-orm'
-import { items, stockIntakeBatches, stockIntakeLines, users, warehouses, warehouseStock } from '@/lib/db/schema'
+import { items, stockIntakeBatches, stockIntakeLines, users, userWarehouses, warehouses, warehouseStock } from '@/lib/db/schema'
 import { isUniqueViolation } from '@/lib/db/errors'
 import { nextSequence } from './item-codes'
 import { withSavepoint, type DbTx } from './db-types'
@@ -255,6 +255,36 @@ export async function buildLinePreviews(db: DbTx, tenantId: string, warehouseId:
   })
 }
 
+// ==================== Branch access ====================
+
+/** Roles that may work on any branch regardless of user_warehouses assignments. */
+const BRANCH_BYPASS_ROLES = new Set(['owner', 'manager'])
+
+/** Who is acting, for branch-access checks. Omit (internal callers) to skip the check. */
+export interface IntakeActor {
+  userId: string
+  role: string
+}
+
+/**
+ * Enforce the user's branch (warehouse) access: owners/managers bypass; anyone
+ * else needs an active user_warehouses assignment for the warehouse. A user with
+ * no assignments at all is denied, matching /api/warehouses?userOnly=true.
+ */
+export async function assertBranchAccess(db: DbTx, tenantId: string, actor: IntakeActor | undefined, warehouseId: string): Promise<void> {
+  if (!actor || BRANCH_BYPASS_ROLES.has(actor.role)) return
+  const [row] = await db.select({ id: userWarehouses.id })
+    .from(userWarehouses)
+    .where(and(
+      eq(userWarehouses.tenantId, tenantId),
+      eq(userWarehouses.userId, actor.userId),
+      eq(userWarehouses.warehouseId, warehouseId),
+      eq(userWarehouses.isActive, true),
+    ))
+    .limit(1)
+  if (!row) throw new IntakeError('You do not have access to this branch', 403, 'BRANCH_FORBIDDEN')
+}
+
 // ==================== Batches ====================
 
 export interface CreateBatchInput {
@@ -267,6 +297,8 @@ export interface CreateBatchInput {
   supplierId?: string | null
   /** 'web' | 'mobile' */
   source?: string
+  /** acting user's role; when set, branch access is enforced */
+  role?: string
 }
 
 async function findBatchByClientId(db: DbTx, tenantId: string, clientBatchId: string): Promise<IntakeBatchRow | undefined> {
@@ -289,9 +321,13 @@ export async function createIntakeBatch(db: DbTx, input: CreateBatchInput): Prom
   const { tenantId } = input
   if (input.clientBatchId) {
     const existing = await findBatchByClientId(db, tenantId, input.clientBatchId)
-    if (existing) return { batch: existing, created: false }
+    if (existing) {
+      await assertBranchAccess(db, tenantId, input.role ? { userId: input.userId, role: input.role } : undefined, existing.warehouseId)
+      return { batch: existing, created: false }
+    }
   }
   await assertWarehouse(db, tenantId, input.warehouseId)
+  await assertBranchAccess(db, tenantId, input.role ? { userId: input.userId, role: input.role } : undefined, input.warehouseId)
   const batchNo = formatBatchNo(await nextSequence(db, tenantId, 'stock_intake'))
   try {
     const batch = await withSavepoint(db, async (sp) => {
@@ -443,6 +479,8 @@ export interface AddLinesInput {
   userId: string
   batchId: string
   lines: IntakeLineInput[]
+  /** acting user's role; when set, branch access is enforced */
+  role?: string
 }
 
 export interface AddLinesResult {
@@ -473,6 +511,7 @@ function validateQuantity(mode: IntakeLineMode, q: number, label: string) {
 export async function addIntakeLines(db: DbTx, input: AddLinesInput): Promise<AddLinesResult> {
   const { tenantId, userId, batchId } = input
   const batch = await loadIntakeBatch(db, tenantId, batchId, true)
+  await assertBranchAccess(db, tenantId, input.role ? { userId, role: input.role } : undefined, batch.warehouseId)
   assertBatchEditable(batch)
 
   const existing = await loadLines(db, tenantId, batchId)
@@ -628,9 +667,10 @@ async function loadOpenLineForUpdate(db: DbTx, tenantId: string, batchId: string
   return line
 }
 
-export async function updateIntakeLine(db: DbTx, input: { tenantId: string; batchId: string; lineId: string; patch: IntakeLinePatch }): Promise<LinePreview> {
+export async function updateIntakeLine(db: DbTx, input: { tenantId: string; batchId: string; lineId: string; patch: IntakeLinePatch; actor?: IntakeActor }): Promise<LinePreview> {
   const { tenantId, batchId, lineId, patch } = input
   const batch = await loadIntakeBatch(db, tenantId, batchId, true)
+  await assertBranchAccess(db, tenantId, input.actor, batch.warehouseId)
   assertBatchEditable(batch)
   const line = await loadOpenLineForUpdate(db, tenantId, batchId, lineId)
 
@@ -675,8 +715,9 @@ export async function updateIntakeLine(db: DbTx, input: { tenantId: string; batc
   return preview
 }
 
-export async function deleteIntakeLine(db: DbTx, input: { tenantId: string; batchId: string; lineId: string }): Promise<void> {
+export async function deleteIntakeLine(db: DbTx, input: { tenantId: string; batchId: string; lineId: string; actor?: IntakeActor }): Promise<void> {
   const batch = await loadIntakeBatch(db, input.tenantId, input.batchId, true)
+  await assertBranchAccess(db, input.tenantId, input.actor, batch.warehouseId)
   assertBatchEditable(batch)
   await loadOpenLineForUpdate(db, input.tenantId, input.batchId, input.lineId)
   await db.delete(stockIntakeLines).where(eq(stockIntakeLines.id, input.lineId))
@@ -697,11 +738,15 @@ export interface UpdateBatchInput {
   supplierId?: string | null
   /** caller holds postStockIntake (required to cancel) */
   canPost: boolean
+  /** acting user's role; when set, branch access is enforced */
+  role?: string
 }
 
 export async function updateIntakeBatch(db: DbTx, input: UpdateBatchInput): Promise<IntakeBatchRow> {
   const { tenantId, batchId } = input
   const batch = await loadIntakeBatch(db, tenantId, batchId, true)
+  const actor = input.role ? { userId: input.userId, role: input.role } : undefined
+  await assertBranchAccess(db, tenantId, actor, batch.warehouseId)
   if (batch.version !== input.expectedVersion) {
     throw new IntakeError('This batch was changed by someone else. Reload and try again.', 409, 'VERSION_CONFLICT', { current: batch })
   }
@@ -728,6 +773,7 @@ export async function updateIntakeBatch(db: DbTx, input: UpdateBatchInput): Prom
       .where(and(eq(stockIntakeLines.batchId, batchId), eq(stockIntakeLines.status, 'posted')))
     if (posted > 0) throw new IntakeError('The branch cannot change after lines were posted', 409, 'WAREHOUSE_LOCKED')
     await assertWarehouse(db, tenantId, input.warehouseId)
+    await assertBranchAccess(db, tenantId, actor, input.warehouseId)
     set.warehouseId = input.warehouseId
     // count snapshots refer to the old branch: re-take them for the new one
     const countLines = await db.select().from(stockIntakeLines)

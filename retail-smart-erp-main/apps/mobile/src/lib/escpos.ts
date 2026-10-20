@@ -412,21 +412,17 @@ export function invoiceCodeFor(input: Pick<ReceiptInput, 'qrPayload' | 'invoiceC
   return { value, barcode: type === 'barcode' || type === 'both', qr: type === 'qr' || type === 'both' }
 }
 
-export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Array {
-  const b = new EscPosBuilder(opts.paperWidth)
+/**
+ * Logo (pre-rasterised and centered on the paper width by the server) and the
+ * business block. Shared by receipts and the Z report so both carry the same
+ * branding (legal name, tax numbers ...). Leaves the builder center-aligned.
+ */
+function businessHeader(b: EscPosBuilder, biz: ReceiptBusiness, logo?: ReceiptLogo | null): void {
   const cols = b.cols
-  b.init()
-  if (opts.drawerKick && !input.isReturn) b.drawerKick()
-  b.raw([ESC, 0x74, 0x00]) // ESC t 0: CP437 (text is ASCII-only)
-
-  // Logo (pre-rasterised and centered on the paper width by the server)
-  if (input.logo?.data) {
-    const bits = base64ToBytes(input.logo.data)
-    b.align('center').rasterPacked(input.logo.width, input.logo.height, bits).line()
+  if (logo?.data) {
+    const bits = base64ToBytes(logo.data)
+    b.align('center').rasterPacked(logo.width, logo.height, bits).line()
   }
-
-  // Business block
-  const biz = input.business
   b.align('center').bold(true).size(2, 2).line(sanitizeAscii(biz.name).slice(0, Math.floor(cols / 2))).size(1, 1).bold(false)
   if (biz.legalName && biz.legalName.trim().toLowerCase() !== biz.name.trim().toLowerCase()) b.centeredBlock(biz.legalName)
   if (biz.address) b.centeredBlock(biz.address)
@@ -435,6 +431,17 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
   if (biz.website) b.centeredBlock(biz.website)
   if (biz.taxId) b.centeredBlock(`VAT/TIN: ${biz.taxId}`)
   if (biz.brn) b.centeredBlock(`BRN: ${biz.brn}`)
+}
+
+export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Array {
+  const b = new EscPosBuilder(opts.paperWidth)
+  const cols = b.cols
+  b.init()
+  if (opts.drawerKick && !input.isReturn) b.drawerKick()
+  b.raw([ESC, 0x74, 0x00]) // ESC t 0: CP437 (text is ASCII-only)
+
+  // Logo + business block
+  businessHeader(b, input.business, input.logo)
   const headerLines = input.headerLines?.length ? input.headerLines : input.header ? [input.header] : []
   if (headerLines.length) {
     b.line()
@@ -534,14 +541,16 @@ export interface ZReportInput {
   }
   tenders: ZReportTender[]
   notes?: string | null
+  /** Receipt logo raster (same as receipts); printed above the business block. */
+  logo?: ReceiptLogo | null
 }
 
 export function buildZReport(input: ZReportInput, opts: { paperWidth: PaperWidth }): Uint8Array {
   const b = new EscPosBuilder(opts.paperWidth)
   const cols = b.cols
   b.init()
-  b.align('center').bold(true).size(2, 2).line(sanitizeAscii(input.business.name).slice(0, Math.floor(cols / 2))).size(1, 1).bold(false)
-  if (input.business.address) b.centeredBlock(input.business.address)
+  b.raw([ESC, 0x74, 0x00]) // ESC t 0: CP437 (text is ASCII-only)
+  businessHeader(b, input.business, input.logo)
   b.line()
   b.bold(true).size(1, 2).line(input.title || 'Z REPORT - SHIFT CLOSE').size(1, 1).bold(false)
   b.align('left').rule('=')

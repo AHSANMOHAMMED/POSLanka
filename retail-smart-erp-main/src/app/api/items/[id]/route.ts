@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant, withTenantTransaction } from '@/lib/db'
-import { items, saleItems, workOrderParts, heldSales, layawayItems, purchaseItems, purchaseOrderItems, stockMovements, warehouseStock, itemCostHistory, users } from '@/lib/db/schema'
+import { items, saleItems, workOrderParts, heldSales, layawayItems, purchaseItems, purchaseOrderItems, stockMovements, warehouseStock, itemCostHistory, users, itemTombstones } from '@/lib/db/schema'
 import { eq, and, sql, ne, inArray } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { checkPriceChangeAnomalies } from '@/lib/ai/anomaly-detector'
@@ -426,6 +426,11 @@ export async function DELETE(
       if (!deleted) {
         return NextResponse.json({ error: 'Item not found' }, { status: 404 })
       }
+
+      // W6: tombstone (same transaction) so offline catalogs drop the item on their next delta sync
+      await db.insert(itemTombstones)
+        .values({ tenantId, itemId: id, deletedAt: sql`now()` })
+        .onConflictDoUpdate({ target: [itemTombstones.tenantId, itemTombstones.itemId], set: { deletedAt: sql`now()` } })
 
       await recordItemChange(db, {
         tenantId,

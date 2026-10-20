@@ -162,11 +162,17 @@ function taxRows(sale: ReceiptSaleSource, taxInclusive: boolean): ReceiptAmountR
 
 const clean = (s: string | null | undefined) => (s || '').trim()
 
-export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
-  const { sale, tenant } = args
-  const s: ReceiptSettings = args.settings || DEFAULT_RECEIPT_SETTINGS
+/**
+ * Business header block shared by receipts and the Z report: name plus the
+ * lines under it (legal name, address, phone, email, website, VAT/TIN, BRN),
+ * filtered by the receipt settings toggles, and the logo flag.
+ */
+export function buildBusinessBlock(
+  tenant: ReceiptTenantInfo,
+  settings?: ReceiptSettings | null
+): { name: string; lines: string[]; logo: ReceiptModel['logo'] } {
+  const s: ReceiptSettings = settings || DEFAULT_RECEIPT_SETTINGS
   const name = clean(tenant.name) || 'Business'
-
   const lines: string[] = []
   const legal = clean(tenant.legalName)
   if (s.showLegalName && legal && legal.toLowerCase() !== name.toLowerCase()) lines.push(legal)
@@ -176,6 +182,17 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
   if (s.showWebsite && clean(tenant.website)) lines.push(clean(tenant.website))
   if (s.showTaxId && clean(tenant.taxId)) lines.push(`VAT/TIN: ${clean(tenant.taxId)}`)
   if (s.showBrn && clean(tenant.brn)) lines.push(`BRN: ${clean(tenant.brn)}`)
+  return {
+    name,
+    lines,
+    logo: { show: s.showLogo && !!tenant.logoUrl, widthPct: s.logoWidthPct, url: tenant.logoUrl || null },
+  }
+}
+
+export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
+  const { sale, tenant } = args
+  const s: ReceiptSettings = args.settings || DEFAULT_RECEIPT_SETTINGS
+  const { name, lines, logo } = buildBusinessBlock(tenant, s)
 
   const created = sale.createdAt instanceof Date ? sale.createdAt : new Date(sale.createdAt)
   const dateText = Number.isNaN(created.getTime())
@@ -236,7 +253,7 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
 
   return {
     business: { name, lines },
-    logo: { show: s.showLogo && !!tenant.logoUrl, widthPct: s.logoWidthPct, url: tenant.logoUrl || null },
+    logo,
     headerLines: s.headerLines,
     title: sale.isReturn ? '*** RETURN ***' : null,
     copyLabel: args.copyLabel || null,

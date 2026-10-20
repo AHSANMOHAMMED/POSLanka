@@ -1685,9 +1685,8 @@ export const stockMovements = pgTable('stock_movements', {
   createdBy: uuid('created_by').references(() => users.id),
   costCenterId: uuid('cost_center_id').references(() => costCenters.id),
   // W2 stock ledger: signed change + running balance (quantity is always >= 0)
-  // NOT NULL in the DB; optional on insert only because the transitional
-  // stock_movements_legacy_fill trigger derives it for legacy writers.
-  qtyChange: decimal('qty_change', { precision: 12, scale: 3 }).notNull().default(sql`NULL`),
+  // NOT NULL; every writer goes through applyStockChange (legacy trigger dropped in 0142).
+  qtyChange: decimal('qty_change', { precision: 12, scale: 3 }).notNull(),
   stockBefore: decimal('stock_before', { precision: 12, scale: 3 }),
   stockAfter: decimal('stock_after', { precision: 12, scale: 3 }),
   signSource: varchar('sign_source', { length: 20 }),
@@ -2153,6 +2152,8 @@ export const sales = pgTable('sales', {
   returnAgainst: uuid('return_against'),
   // W8: offline receipt number ('OFF-<device>-<seq>'), unique per tenant when set
   offlineRef: varchar('offline_ref', { length: 40 }),
+  // W6: offline annotations {offline, priceDifferences, taxDifference, stockShortfall} (drizzle/0141)
+  flags: jsonb('flags').$type<SaleFlags>().notNull().default({}),
   // W8: on the sale half of an exchange → the linked return (sales.id, FK in drizzle/0137)
   exchangeOf: uuid('exchange_of'),
   returnReason: varchar('return_reason', { length: 50 }),
@@ -6063,3 +6064,55 @@ export const importJobRows = pgTable('import_job_rows', {
 // ===== W8 returns =====
 // Column additions live in place on `sales` (offline_ref, exchange_of, return_reason, return_notes)
 // and `sale_items` (returned_quantity, original_sale_item_id); see drizzle/0137_sales_offline_returns.sql.
+
+// ===== W6 offline =====
+// `sales.flags` lives in place on `sales`; see drizzle/0141_offline_catalog_sync.sql.
+export interface SaleFlags {
+  offline?: boolean
+  priceDifferences?: Array<{ itemId: string; name?: string; sold: number; catalog: number }>
+  taxDifference?: { client: number; server: number; difference: number; withinTolerance: boolean }
+  stockShortfall?: Array<{ itemId: string; name?: string; quantity: number; available: number }>
+  [key: string]: unknown
+}
+
+// Hard-deleted items, so offline catalogs (mobile POS) can drop them on delta sync.
+export const itemTombstones = pgTable('item_tombstones', {
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  itemId: uuid('item_id').notNull(),
+  deletedAt: timestamp('deleted_at').defaultNow().notNull(),
+}, (t) => [primaryKey({ columns: [t.tenantId, t.itemId] })])
+
+// ===== W5 alerts =====
+// Vendor alerts: per-user preferences, in-app inbox and de-dupe windows (drizzle/0140_notifications_alerts.sql).
+// Tenant alert settings live in tenants.settings.alerts (see src/lib/notifications/alert-settings.ts).
+
+export const notificationPreferences = pgTable('notification_preferences', {
+  userId: uuid('user_id').primaryKey().references(() => users.id, { onDelete: 'cascade' }),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  enabledTypes: text('enabled_types').array(), // null = all types
+  mutedTypes: text('muted_types').array().notNull().default(sql`'{}'::text[]`),
+  quietStart: time('quiet_start'),
+  quietEnd: time('quiet_end'),
+  timezone: varchar('timezone', { length: 50 }),
+  digestHour: integer('digest_hour').default(8), // smallint in SQL; null = no digest
+  pushEnabled: boolean('push_enabled').notNull().default(true),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const inAppNotifications = pgTable('in_app_notifications', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  type: varchar('type', { length: 40 }).notNull(),
+  title: varchar('title', { length: 255 }).notNull(),
+  body: text('body').notNull().default(''),
+  data: jsonb('data').$type<Record<string, unknown>>().notNull().default({}),
+  readAt: timestamp('read_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const alertDedupe = pgTable('alert_dedupe', {
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  dedupeKey: varchar('dedupe_key', { length: 200 }).notNull(),
+  lastSentAt: timestamp('last_sent_at').defaultNow().notNull(),
+}, (t) => [primaryKey({ columns: [t.tenantId, t.dedupeKey] })])

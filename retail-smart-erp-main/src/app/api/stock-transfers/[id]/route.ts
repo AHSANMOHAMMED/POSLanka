@@ -15,6 +15,7 @@ import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateStockTransferSchema } from '@/lib/validation/schemas/stock'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET single stock transfer
 export async function GET(
@@ -38,10 +39,10 @@ export async function GET(
         with: {
           fromWarehouse: true,
           toWarehouse: true,
-          requestedByUser: true,
-          approvedByUser: true,
+          requestedByUser: SAFE_USER,
+          approvedByUser: SAFE_USER,
           shippedByUser: true,
-          receivedByUser: true,
+          receivedByUser: SAFE_USER,
           items: {
             with: {
               item: true,
@@ -180,7 +181,7 @@ export async function PUT(
             with: {
               fromWarehouse: true,
               toWarehouse: true,
-              requestedByUser: true,
+              requestedByUser: SAFE_USER,
               items: {
                 with: {
                   item: true,

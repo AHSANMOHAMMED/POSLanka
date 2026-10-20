@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { payrollRunsListSchema, createPayrollRunSchema } from '@/lib/validation/schemas/hr'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 export async function GET(request: NextRequest) {
   try {
@@ -118,7 +119,7 @@ export async function POST(request: NextRequest) {
 
       const profiles = await db.query.employeeProfiles.findMany({
         where: and(...conditions),
-        with: { user: true },
+        with: { user: SAFE_USER },
       })
 
       // Filter by department if specified

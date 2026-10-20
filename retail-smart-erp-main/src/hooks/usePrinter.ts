@@ -32,8 +32,9 @@ import {
   logoToPackedRaster,
   type TenantReceiptInfo,
 } from '@/lib/print/receipt-loader'
-import type { LegacyProfileReceiptFields } from '@/lib/print/receipt-settings'
-import { num } from '@/lib/print/receipt-model'
+import { resolveReceiptSettings, type LegacyProfileReceiptFields } from '@/lib/print/receipt-settings'
+import { buildBusinessBlock, num } from '@/lib/print/receipt-model'
+import { buildKitchenTicketEscPos, type KitchenTicketInput } from '@/lib/print/escpos/kitchen-ticket'
 import {
   getPrinterForRole,
   getPrinterProfilesServerSnapshot,
@@ -146,8 +147,18 @@ export function closingToZReportInput(src: ZReportSource, tenant: TenantResponse
     }
   })
   const closedAt = src.closingEntry?.closingTime || src.closingEntry?.createdAt || new Date().toISOString()
+  // Same business header as receipts (tenant receipt settings toggles applied).
+  const block = buildBusinessBlock(tenant, resolveReceiptSettings(tenant.receiptSettingsRaw ?? tenant.receiptSettings ?? {}))
   return {
-    business: { name: tenant.name || 'Business', address: tenant.address ?? null, phone: tenant.phone ?? null },
+    business: {
+      name: block.name,
+      legalName: tenant.legalName ?? null,
+      address: tenant.address ?? null,
+      phone: tenant.phone ?? null,
+      taxId: tenant.taxId ?? null,
+      brn: tenant.brn ?? null,
+    },
+    businessLines: block.lines,
     entryNumber: src.shift?.entryNumber || src.closingEntry?.entryNumber || '-',
     counter: src.shift?.posProfile?.name ?? null,
     cashier: src.cashier ?? null,
@@ -254,6 +265,48 @@ export async function buildReceiptBytesForSale(
 export async function buildReceiptTestBytes(p: PrinterProfile): Promise<Uint8Array> {
   const tenant = await fetchTenantInfo()
   return buildTestPageEscPos({ paperWidth: p.paperWidth, businessName: tenant.name || undefined, codePage: p.codePage })
+}
+
+/** Logo raster for the Z report, using the same cache + settings as receipts. Never throws. */
+async function zReportLogo(tenant: TenantResponse, p: PrinterProfile) {
+  try {
+    const block = buildBusinessBlock(tenant, resolveReceiptSettings(tenant.receiptSettingsRaw ?? tenant.receiptSettings ?? {}))
+    if (!block.logo.show) return null
+    const widthDots = DOT_WIDTH[p.paperWidth] as 384 | 576
+    return logoToPackedRaster(await fetchLogoRaster(widthDots, block.logo.widthPct, block.logo.url))
+  } catch {
+    return null
+  }
+}
+
+// ─── Kitchen tickets (KOT) ──────────────────────────────────────────────
+
+export type KitchenPrintResult = 'printed' | 'skipped' | 'failed'
+
+/**
+ * Print a kitchen order ticket on this terminal's kitchen-role printer.
+ * Returns 'skipped' (silently) when no kitchen printer is configured or there
+ * is nothing to print; never throws, so callers can fire-and-forget.
+ */
+export async function printKitchenTicket(ticket: KitchenTicketInput): Promise<KitchenPrintResult> {
+  if (!ticket.items.length) return 'skipped'
+  const p = getPrinterForRole('kitchen')
+  if (!p) return 'skipped'
+  try {
+    const one = buildKitchenTicketEscPos(ticket, {
+      paperWidth: p.paperWidth,
+      codePage: p.codePage,
+      unicodeAsBitmap: p.unicodeAsBitmap,
+      rasterizer: p.unicodeAsBitmap ? getRasterizer() : null,
+    })
+    const copies = Math.min(5, Math.max(1, p.copies || 1))
+    const bytes = copies > 1 ? concatBytes(Array.from({ length: copies }, () => one)) : one
+    await sendToPrinter(p, bytes, { title: `KOT-${ticket.orderNo}` })
+    return 'printed'
+  } catch (e) {
+    console.warn('Kitchen ticket print failed:', errorMessage(e))
+    return 'failed'
+  }
 }
 
 /** All printer profiles of this terminal + edit helpers. */
@@ -393,11 +446,13 @@ export function usePrinter() {
         'methods' in closing && Array.isArray((closing as ZReportInput).methods)
           ? (closing as ZReportInput)
           : closingToZReportInput(closing as ZReportSource, tenant)
+      const logo = await zReportLogo(tenant, profile)
       const bytes = buildZReportEscPos(input, {
         paperWidth: profile.paperWidth,
         unicodeAsBitmap: profile.unicodeAsBitmap,
         rasterizer: profile.unicodeAsBitmap ? getRasterizer() : null,
         codePage: profile.codePage,
+        logoRaster: logo,
       })
       return printBytes(bytes, `Z-Report-${input.entryNumber}`)
     },

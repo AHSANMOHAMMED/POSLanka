@@ -11,6 +11,7 @@ import { validateBody } from '@/lib/validation'
 import { posProfileUsersSchema, posProfileAddUserSchema } from '@/lib/validation/schemas/pos'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET users assigned to a POS profile
 export async function GET(
@@ -40,7 +41,7 @@ export async function GET(
       const users = await db.query.posProfileUsers.findMany({
         where: eq(posProfileUsers.posProfileId, id),
         with: {
-          user: true,
+          user: SAFE_USER,
         },
       })
 
@@ -104,7 +105,7 @@ export async function POST(
       const updated = await db.query.posProfileUsers.findMany({
         where: eq(posProfileUsers.posProfileId, id),
         with: {
-          user: true,
+          user: SAFE_USER,
         },
       })
 

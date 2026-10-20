@@ -6,6 +6,7 @@ import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { syncIntakeBatch } from '@/lib/inventory/stock-intake-sync'
 import { intakeErrorResponse } from '@/lib/inventory/stock-intake-http'
+import { notify } from '@/lib/notifications/notify'
 
 // POST /api/stock-intake/[id]/sync — post open lines into stock (header Idempotency-Key optional)
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -38,6 +39,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         for (const itemId of result.affectedItemIds) {
           logAndBroadcast(tenantId, 'item', created.has(itemId) ? 'created' : 'updated', itemId, opts)
         }
+      }
+      if (result.errors.length > 0) {
+        void notify(tenantId, 'intake_sync_errors', {
+          title: `Stock intake ${result.batchNo}: ${result.errors.length} line(s) failed`,
+          body: `${result.posted} line(s) posted, ${result.errors.length} need attention. ${result.errors[0].error}`.slice(0, 300),
+          data: { screen: 'intake', batchId: result.batchId },
+          permission: 'postStockIntake',
+          userIds: [session.user.id],
+        })
       }
     }
     return NextResponse.json(result)

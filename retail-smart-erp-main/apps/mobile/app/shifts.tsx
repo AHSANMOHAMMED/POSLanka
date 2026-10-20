@@ -27,7 +27,7 @@ import { roleLabel } from '../src/lib/roles'
 import { THEME, formatLKR } from '../src/lib/theme'
 import { ErrorView } from '../src/components/StateViews'
 import { getPrinterSettings, isPrintingEnabled, printerErrorMessage, printZReport } from '../src/lib/printer'
-import { loadBusinessInfo, zReportFromClose } from '../src/lib/receipt'
+import { loadBusinessInfo, resolveReceiptSettings, zReportFromClose } from '../src/lib/receipt'
 
 interface ReconciliationRow {
   paymentMethod: string
@@ -85,7 +85,21 @@ export default function ShiftsScreen() {
     setPrintState({ status: 'printing' })
     try {
       const business = await loadBusinessInfo()
-      await printZReport(zReportFromClose(result, { business, shift: forShift, cashier: user?.name, notes }))
+      const z = zReportFromClose(result, { business, shift: forShift, cashier: user?.name, notes })
+      // Same branding as receipts: logo + business block filtered by the receipt settings.
+      const rs = resolveReceiptSettings(business, forShift)
+      z.business = {
+        name: business.name,
+        legalName: rs.showLegalName ? business.legalName || null : null,
+        address: rs.showAddress ? business.address || null : null,
+        phone: rs.showPhone ? business.phone || null : null,
+        email: rs.showEmail ? business.email || null : null,
+        website: rs.showWebsite ? business.website || null : null,
+        taxId: rs.showTaxId ? business.taxId || null : null,
+        brn: rs.showBrn ? business.brn || null : null,
+      }
+      z.logo = rs.showLogo && business.logo ? business.logo : null
+      await printZReport(z)
       setPrintState({ status: 'done' })
     } catch (e) {
       setPrintState({ status: 'error', message: printerErrorMessage(e) })

@@ -45,7 +45,8 @@
           "color": "#0F766E",
           "defaultChannel": "poslanka-default"
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "extra": {
       "apiBaseUrl": "https://app.poslanka.lk"

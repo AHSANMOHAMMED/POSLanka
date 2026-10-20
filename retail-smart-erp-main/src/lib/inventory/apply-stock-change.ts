@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import type { DbTx } from './db-types'
+import { stockAlertListener } from '@/lib/notifications/stock-alerts'
 
 /**
  * The single writer for warehouse stock. Every stock change:
@@ -57,7 +58,7 @@ function rows<T>(res: unknown): T[] {
 
 type StockDecreasedListener = (result: StockChangeResult, input: StockChangeInput) => void
 
-const decreaseListeners = new Set<StockDecreasedListener>()
+const decreaseListeners = new Set<StockDecreasedListener>([stockAlertListener]) // W5 low/out-of-stock alerts
 
 /**
  * Register a listener for stock decreases (e.g. low-stock alerts). Listeners are

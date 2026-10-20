@@ -7,12 +7,14 @@ import { eq, and, sql } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { notifySaleVoided } from '@/lib/notifications/sales-alerts'
 import { roundCurrency, parseCurrency } from '@/lib/utils/currency'
 import { postVoidToGL } from '@/lib/accounting/auto-post'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { voidSaleSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET single sale
 export async function GET(
@@ -35,7 +37,7 @@ export async function GET(
         where: eq(sales.id, id),
         with: {
           customer: true,
-          user: true,
+          user: SAFE_USER,
           items: {
             with: {
               item: true,
@@ -456,6 +458,10 @@ export async function PUT(
         activityAction: 'cancel',
         entityName: result.voidedSale.invoiceNo,
         description: `Voided sale ${result.voidedSale.invoiceNo}${voidReason ? `: ${voidReason}` : ''}`,
+      })
+      notifySaleVoided(session.user.tenantId, {
+        saleId: id, invoiceNo: result.voidedSale.invoiceNo, total: Math.abs(Number(result.voidedSale.total) || 0),
+        reason: voidReason, actorUserId: userId, actorName: session.user.name,
       })
       // WS-3: Broadcast specific item stock updates (not 'all')
       for (const itemId of result.affectedItemIds) {

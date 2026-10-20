@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateEmployeeAdvanceSchema } from '@/lib/validation/schemas/hr'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 export async function GET(
   request: NextRequest,
@@ -30,7 +31,7 @@ export async function GET(
       const advance = await db.query.employeeAdvances.findFirst({
         where: eq(employeeAdvances.id, id),
         with: {
-          employeeProfile: { with: { user: true } },
+          employeeProfile: { with: { user: SAFE_USER } },
           recoveryRecords: true,
         },
       })

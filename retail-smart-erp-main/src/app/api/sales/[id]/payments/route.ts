@@ -13,6 +13,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addSalePaymentSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET payments for a sale
 export async function GET(
@@ -44,7 +45,7 @@ export async function GET(
       const salePayments = await db.query.payments.findMany({
         where: eq(payments.saleId, saleId),
         with: {
-          receivedByUser: true,
+          receivedByUser: SAFE_USER,
         },
       })
 

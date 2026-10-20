@@ -21,6 +21,9 @@ export interface LocalIntakeLine {
   sellingPrice?: number | null
   costPrice?: number | null
   scannedAt: string
+  /** the server rejected THIS line (validation); other lines keep uploading */
+  rejected?: boolean
+  error?: string | null
 }
 
 export interface LocalIntakeBatch {
@@ -35,7 +38,7 @@ export interface LocalIntakeBatch {
   /** scans not yet confirmed by the server */
   lines: LocalIntakeLine[]
   lastError?: string | null
-  /** set when the server rejected the batch/lines (4xx); needs user attention */
+  /** set when the server rejected the batch itself (e.g. creation 4xx, batch closed); needs user attention */
   rejected?: boolean
 }
 
@@ -64,7 +67,7 @@ function snapshot(): IntakeStoreState {
   const list = batches || []
   return {
     batches: list.map((b) => ({ ...b, lines: [...b.lines] })),
-    pendingLines: list.reduce((n, b) => n + b.lines.length, 0),
+    pendingLines: list.reduce((n, b) => n + b.lines.filter((l) => !l.rejected).length, 0),
     uploading,
     online,
   }
@@ -162,7 +165,6 @@ export async function addLocalLine(clientBatchId: string, line: Omit<LocalIntake
   if (!b) throw new Error('Batch not found on this device')
   const entry: LocalIntakeLine = { ...line, clientLineId: newId(), scannedAt: new Date().toISOString() }
   b.lines.push(entry)
-  b.rejected = false
   await persist()
   return entry
 }
@@ -171,6 +173,17 @@ export async function removeLocalLine(clientBatchId: string, clientLineId: strin
   const b = await getLocalBatch(clientBatchId)
   if (!b) return
   b.lines = b.lines.filter((l) => l.clientLineId !== clientLineId)
+  await persist()
+}
+
+/** Clear a rejected line's error so the next upload tries it again (e.g. after creating the item). */
+export async function retryLocalLine(clientBatchId: string, clientLineId: string) {
+  const b = await getLocalBatch(clientBatchId)
+  const l = b?.lines.find((x) => x.clientLineId === clientLineId)
+  if (!b || !l) return
+  l.rejected = false
+  l.error = null
+  b.rejected = false
   await persist()
 }
 
@@ -191,6 +204,10 @@ export interface UploadOutcome {
   /** the server could not be reached (scans stay on the device) */
   offline?: boolean
   error?: string
+  /** lines rejected by the server during this upload (kept on the device with their error) */
+  newlyRejected?: number
+  /** rejected lines still waiting on the device */
+  rejectedLines?: number
 }
 
 /** Create the server batch if needed, then push all unconfirmed lines. */
@@ -221,37 +238,79 @@ export async function uploadBatch(clientBatchId: string): Promise<UploadOutcome>
   }
 
   let uploaded = 0
-  while (b.lines.length > 0) {
-    const chunk = b.lines.slice(0, MAX_LINES_PER_REQUEST)
-    const res = await apiPost(`/api/stock-intake/${b.serverId}/lines`, {
-      lines: chunk.map((l) => ({
-        clientLineId: l.clientLineId,
-        mode: l.mode,
-        barcode: l.barcode || undefined,
-        itemId: l.itemId || undefined,
-        quantity: l.quantity,
-        name: l.name || undefined,
-        sellingPrice: l.sellingPrice ?? undefined,
-        costPrice: l.costPrice ?? undefined,
-      })),
-    })
-    if (!res.ok) {
-      const offline = isNetworkError(res)
+  let lineErrors = 0
+  const toWire = (l: LocalIntakeLine) => ({
+    clientLineId: l.clientLineId,
+    mode: l.mode,
+    barcode: l.barcode || undefined,
+    itemId: l.itemId || undefined,
+    quantity: l.quantity,
+    name: l.name || undefined,
+    sellingPrice: l.sellingPrice ?? undefined,
+    costPrice: l.costPrice ?? undefined,
+  })
+  const markDone = (ids: Set<string>) => {
+    b.lines = b.lines.filter((l) => !ids.has(l.clientLineId))
+  }
+  // Errors that concern the whole batch (not one line): stop and keep every line.
+  const isBatchLevel = (status: number) => status === 401 || status === 403 || status === 404 || status === 409
+
+  for (;;) {
+    const chunk = b.lines.filter((l) => !l.rejected).slice(0, MAX_LINES_PER_REQUEST)
+    if (chunk.length === 0) break
+    const res = await apiPost(`/api/stock-intake/${b.serverId}/lines`, { lines: chunk.map(toWire) })
+    if (res.ok) {
+      markDone(new Set(chunk.map((l) => l.clientLineId)))
+      uploaded += chunk.length
+      b.lastError = null
+      b.rejected = false
+      online = true
+      await persist()
+      continue
+    }
+    const offline = isNetworkError(res)
+    if (offline || isBatchLevel(res.status) || res.status >= 500 || chunk.length === 1) {
+      if (chunk.length === 1 && !offline && !isBatchLevel(res.status) && res.status < 500) {
+        // a single bad line: mark it and carry on with the rest
+        chunk[0].rejected = true
+        chunk[0].error = res.error
+        lineErrors++
+        await persist()
+        continue
+      }
       b.lastError = res.error
-      if (!offline) b.rejected = true
       if (offline) online = false
+      // closed / missing batch needs the user; 409 "being synced" and 5xx are retried later
+      if (!offline && (res.status === 403 || res.status === 404 || (res.status === 409 && !/sync/i.test(res.error || '')))) b.rejected = true
       await persist()
       return { ok: false, offline, error: res.error }
     }
-    const done = new Set(chunk.map((l) => l.clientLineId))
-    b.lines = b.lines.filter((l) => !done.has(l.clientLineId))
-    uploaded += chunk.length
-    b.lastError = null
-    b.rejected = false
+    // Validation failure somewhere in the chunk: upload line by line so only the bad lines stay.
+    for (const l of chunk) {
+      const one = await apiPost(`/api/stock-intake/${b.serverId}/lines`, { lines: [toWire(l)] })
+      if (one.ok) {
+        markDone(new Set([l.clientLineId]))
+        uploaded++
+        continue
+      }
+      if (isNetworkError(one) || isBatchLevel(one.status) || one.status >= 500) {
+        b.lastError = one.error
+        if (isNetworkError(one)) online = false
+        await persist()
+        return { ok: false, offline: isNetworkError(one), error: one.error }
+      }
+      l.rejected = true
+      l.error = one.error
+      lineErrors++
+    }
     online = true
     await persist()
   }
-  return { ok: true, serverId: b.serverId!, uploaded }
+  const remainingBad = b.lines.filter((l) => l.rejected).length
+  b.lastError = remainingBad > 0 ? `${remainingBad} scan(s) were rejected — fix or remove them` : null
+  await persist()
+  // Good lines are on the server; rejected ones stay visible on the device with their error.
+  return { ok: true, serverId: b.serverId!, uploaded, newlyRejected: lineErrors, rejectedLines: remainingBad, error: b.lastError || undefined }
 }
 
 /** Upload every batch with unconfirmed work (skips ones the server rejected). */
@@ -263,7 +322,7 @@ export async function uploadAllPending(): Promise<void> {
     const list = await load()
     for (const b of [...list]) {
       if (b.rejected) continue
-      if (b.serverId && b.lines.length === 0) continue
+      if (b.serverId && b.lines.every((l) => l.rejected)) continue
       const r = await uploadBatch(b.clientBatchId)
       if (!r.ok && r.offline) break
     }

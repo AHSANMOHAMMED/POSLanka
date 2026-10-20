@@ -6,12 +6,12 @@
   "deploy": {
     "startCommand": "npm start",
     "healthcheckPath": "/api/health",
-    "postdeploy": "npm run db:migrate",
     "variables": {
-      "SKIP_MIGRATIONS": "false",
-      "REQUIRE_MIGRATIONS": "true",
+      "SKIP_MIGRATIONS": "true",
+      "REQUIRE_MIGRATIONS": "false",
       "NODE_ENV": "production",
       "NEXT_PUBLIC_APP_NAME": "POSLanka"
-    }
+    },
+    "preDeployCommand": "npm run db:migrate"
   }
 }

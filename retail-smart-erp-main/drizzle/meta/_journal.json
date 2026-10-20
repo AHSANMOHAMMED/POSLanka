@@ -967,6 +967,27 @@
       "when": 1771446337024,
       "tag": "0139_rls_isolation_fixes",
       "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1771446337025,
+      "tag": "0140_notifications_alerts",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1771446337026,
+      "tag": "0141_offline_catalog_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1771446337027,
+      "tag": "0142_drop_legacy_movement_trigger",
+      "breakpoints": true
     }
   ]
 }

@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { stockTransfersListSchema, createStockTransferSchema } from '@/lib/validation/schemas/stock'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET all stock transfers (with pagination)
 export async function GET(request: NextRequest) {
@@ -63,8 +64,8 @@ export async function GET(request: NextRequest) {
         with: {
           fromWarehouse: true,
           toWarehouse: true,
-          requestedByUser: true,
-          approvedByUser: true,
+          requestedByUser: SAFE_USER,
+          approvedByUser: SAFE_USER,
           items: {
             with: {
               item: true,
@@ -211,7 +212,7 @@ export async function POST(request: NextRequest) {
         with: {
           fromWarehouse: true,
           toWarehouse: true,
-          requestedByUser: true,
+          requestedByUser: SAFE_USER,
           items: {
             with: {
               item: true,

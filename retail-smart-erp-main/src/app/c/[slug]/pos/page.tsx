@@ -51,7 +51,8 @@ import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { useDebouncedValue } from '@/hooks/useDebounce'
 import { quickPrint } from '@/hooks/usePrint'
-import { usePrinter } from '@/hooks/usePrinter'
+import { usePrinter, printKitchenTicket } from '@/hooks/usePrinter'
+import { kitchenModifierLabels } from '@/lib/print/escpos/kitchen-ticket'
 import { fetchLogoRaster, loadReceiptModel } from '@/lib/print/receipt-loader'
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
 import type { PaperSize } from '@/lib/print/types'
@@ -1009,7 +1010,98 @@ export default function POSPage() {
 
   async function handleSendToKitchen() {
     if (!restaurantOrderId || cart.length === 0) return
+    const orderId = restaurantOrderId
+    const unsent = cart.filter((c) => !c.restaurantOrderItemId && c.quantity > 0)
+    if (unsent.length === 0) {
+      toast.info('Nothing new to send to the kitchen')
+      return
+    }
+
+    // Current order: order no / table / server for the ticket, and lines that were
+    // already posted (modifier picks are posted on add) so they are not duplicated.
+    type OrderLine = { id: string; itemId: string | null; modifiers?: unknown; notes?: string | null }
+    let order: {
+      orderNo?: string
+      orderType?: string
+      table?: { name?: string | null; area?: string | null } | null
+      createdByUser?: { fullName?: string | null } | null
+      items?: OrderLine[]
+    } | null = null
+    try {
+      const res = await fetch(`/api/restaurant-orders/${orderId}`)
+      if (res.ok) order = await res.json()
+    } catch {
+      /* offline: post everything below */
+    }
+    const modKey = (mods: unknown) =>
+      (Array.isArray(mods) ? mods : [])
+        .map((m) => (m && typeof m === 'object' ? String((m as { id?: unknown }).id ?? '') : String(m)))
+        .sort()
+        .join('|')
+    const claimed = new Set(cart.map((c) => c.restaurantOrderItemId).filter(Boolean) as string[])
+
+    const sent: { line: CartItem; orderItemId: string }[] = []
+    let failed = 0
+    for (const line of unsent) {
+      const key = modKey(line.modifiers)
+      const match = (order?.items || []).find((oi) => !claimed.has(oi.id) && oi.itemId === line.itemId && modKey(oi.modifiers) === key)
+      if (match) {
+        claimed.add(match.id)
+        sent.push({ line, orderItemId: match.id })
+        continue
+      }
+      try {
+        const res = await fetch(`/api/restaurant-orders/${orderId}/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            itemId: line.itemId,
+            itemName: line.name,
+            quantity: Math.max(1, Math.round(line.quantity)),
+            unitPrice: line.unitPrice,
+            modifiers: line.modifiers && line.modifiers.length > 0 ? line.modifiers : undefined,
+            notes: line.notes || undefined,
+          }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (res.ok && data?.item?.id) {
+          claimed.add(data.item.id)
+          sent.push({ line, orderItemId: data.item.id })
+        } else failed++
+      } catch {
+        failed++
+      }
+    }
+
+    if (sent.length > 0) {
+      const ids = new Map(sent.map((s) => [s.line.cartLineId, s.orderItemId]))
+      setCart((prev) => prev.map((c) => (ids.has(c.cartLineId) ? { ...c, restaurantOrderItemId: ids.get(c.cartLineId) } : c)))
+    }
+    if (failed > 0) toast.error(`${failed} item(s) could not be sent to the kitchen`)
+    if (sent.length === 0) return
     toast.success('Items sent to kitchen')
+
+    // Kitchen ticket for this batch only. Skips silently without a kitchen printer;
+    // a print failure never undoes the send.
+    const table = order?.table ?? tables.find((t) => t.id === selectedTableId) ?? null
+    printKitchenTicket({
+      orderNo: order?.orderNo || orderId.slice(0, 8).toUpperCase(),
+      orderType: order?.orderType || orderType,
+      table: table?.name ?? null,
+      tableArea: table?.area ?? null,
+      server: cashierName || order?.createdByUser?.fullName || null,
+      time: new Date(),
+      items: sent.map(({ line }) => ({
+        name: line.name,
+        quantity: line.quantity,
+        modifiers: kitchenModifierLabels(line.modifiers),
+        notes: line.notes ?? null,
+      })),
+    })
+      .then((r) => {
+        if (r === 'failed') toast.warning('Sent to kitchen, but the kitchen ticket did not print')
+      })
+      .catch(() => {})
   }
 
   // ─── Held Sales Functions ─────────────────────────────────────

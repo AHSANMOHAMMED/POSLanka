@@ -28,23 +28,37 @@ POSLanka uses a multi-tenant SaaS architecture on Next.js 16 (App Router), React
 Connect to your PostgreSQL database as superuser (`postgres`) and run:
 
 ```sql
--- 1. Create a non-superuser LOGIN role for the application connection
-CREATE ROLE poslanka_app WITH LOGIN PASSWORD 'YOUR_STRONG_PASSWORD_HERE';
+-- 1. A non-superuser LOGIN role for the application connection.
+--    BYPASSRLS lets platform code (super-admin console, billing, cron, auth) read
+--    across vendors. Vendor code is still isolated: every vendor request switches to
+--    the NOLOGIN role app_user (no BYPASSRLS) with SET LOCAL ROLE, so RLS applies.
+CREATE ROLE poslanka_app WITH LOGIN BYPASSRLS PASSWORD 'YOUR_STRONG_PASSWORD_HERE';
 GRANT CONNECT ON DATABASE poslanka TO poslanka_app;
 GRANT USAGE ON SCHEMA public TO poslanka_app;
-
--- 2. Run the migrations first (as the superuser / DATABASE_URL_ADMIN):
---    npm run db:migrate   # per-file runner (scripts/migrate.mjs); works on a fresh database
-SUPER_ADMIN_EMAIL=you@company.lk SUPER_ADMIN_PASSWORD='<min 12 chars>' npm run db:seed-admin   # creates your super admin; then enable 2FA in /sys-control/settings
---    They create the NOLOGIN role `app_user`, grant it CRUD on every table and
---    create the RLS policies. 44 of those policies are written `TO app_user`,
---    so the application MUST act as app_user (or a member of it).
-
--- 3. Make the login role a member of app_user so it can SET ROLE app_user
-GRANT app_user TO poslanka_app;
-
--- 4. Verify: GET /api/health must report  "tenantIsolation": "app_role"
 ```
+
+Then, from the app directory, run the migrations as the superuser (`DATABASE_URL_ADMIN`). They create the NOLOGIN role `app_user`, grant it CRUD on every table and create the RLS policies:
+
+```bash
+npm run db:migrate          # per-file runner (scripts/migrate.mjs); safe on a fresh database, no-op when up to date
+npm run db:check-isolation  # must print OK (every vendor table has RLS + tenant policies)
+```
+
+Make the login role a member of `app_user` so it can `SET ROLE app_user`, and grant table access for platform code:
+
+```sql
+GRANT app_user TO poslanka_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO poslanka_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO poslanka_app;
+```
+
+Create your super admin once, then enable two-factor login in `/sys-control/settings`:
+
+```bash
+SUPER_ADMIN_EMAIL=you@company.lk SUPER_ADMIN_PASSWORD='<min 12 chars>' npm run db:seed-admin
+```
+
+Verify: `GET /api/health` must report `"tenantIsolation": "app_role"`.
 
 ### Step 2: Generate High-Entropy NextAuth Secret
 Never reuse development secrets in production:
@@ -124,6 +138,14 @@ GEMINI_API_KEY=
 VAPID_PUBLIC_KEY=
 VAPID_PRIVATE_KEY=
 VAPID_SUBJECT=mailto:admin@poslanka.lk
+
+# ==================== Scheduled jobs (cron) ====================
+# Shared secret for every /api/cron/* route (Authorization: Bearer <CRON_SECRET>).
+# Routes fail closed (401) when it is unset. Generate with: openssl rand -hex 32
+CRON_SECRET=GENERATE_WITH_OPENSSL_RAND_HEX_32
+
+# Mobile push (Expo). Optional access token for the Expo push API.
+EXPO_ACCESS_TOKEN=
 
 # ==================== Migration Behavior ====================
 SKIP_MIGRATIONS=false
@@ -318,6 +340,43 @@ npx expo start
 ```bash
 pg_dump -U postgres -h your-db-host poslanka | gzip > /backups/poslanka_$(date +\%Y\%m\%d_\%H\%M\%S).sql.gz
 ```
+
+### Scheduled Jobs (`/api/cron/*`)
+
+The app has no built-in scheduler. Every cron route is a `POST` guarded by
+`Authorization: Bearer $CRON_SECRET` (401 when the secret is missing or wrong). The repository
+ships `.github/workflows/cron.yml`, which calls them on GitHub Actions schedules; set two
+repository secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `CRON_SECRET` | the same value as the app's `CRON_SECRET` env var |
+| `APP_URL` | public base URL of the app, e.g. `https://app.poslanka.lk` (no trailing slash) |
+
+Without them the workflow skips with a notice. Any other scheduler (system cron, Railway cron,
+cron-job.org) works the same way:
+`curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/<name>"`.
+
+| Route | Schedule | Purpose |
+|---|---|---|
+| `stock-alerts` | hourly | low-stock digest + expiring stock at each stock manager's local digest hour; inbox housekeeping |
+| `import-maintenance` | every 15 min | resume interrupted bulk imports (stale heartbeat); delete import jobs finished > 30 days ago |
+| `enforce-subscriptions` | every 6 h | trial / subscription lockouts |
+| `subscription-reminders` | daily | trial / plan ending in 7 and 1 days → company owners (push + in-app) |
+| `calculate-storage` | daily | tenant storage usage |
+| `cleanup-held-sales` | daily | delete expired held sales |
+| `refresh-exchange-rates` | daily | currency rates |
+
+Run a single job manually from the Actions tab (**Scheduled jobs → Run workflow → job**).
+
+### Vendor Alerts
+
+Alerts (low / out of stock, expiring stock, large refunds, voids, returns without receipt,
+shift variance, stock-intake, approvals, import finished, subscription reminders) are stored in
+each user's in-app inbox (bell icon on web, **🔔 Alerts** on the mobile POS) and pushed to the
+mobile app unless the user muted the type, turned push off or is inside quiet hours. Company
+thresholds live in **Settings → Notifications → Alerts & reminders** (`tenants.settings.alerts`);
+each user sets their own types, quiet hours and digest hour there or in the mobile app.
 
 ### Storage Quota Monitoring
 System administrators can monitor tenant storage and database sizes at `/sys-control/vendors`.

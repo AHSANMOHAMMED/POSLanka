@@ -37,11 +37,18 @@ export interface ModuleTab {
   restaurantOnly?: boolean
   dealershipOnly?: boolean
   permission?: Permission
+  /**
+   * Users lacking `permission` still see the tab when they hold one of these
+   * (e.g. cashiers with submitStockIntake reach Stock → Stock Intake). Such users
+   * land on `limitedHref` instead of the module workspace.
+   */
+  altPermissions?: Permission[]
+  limitedHref?: string
 }
 
 export const MODULE_TABS: ModuleTab[] = [
   { key: 'dashboard', label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
-  { key: 'stock', label: 'Stock', href: '/stock', icon: 'Package', permission: 'manageItems' },
+  { key: 'stock', label: 'Stock', href: '/stock', icon: 'Package', permission: 'manageItems', altPermissions: ['submitStockIntake'], limitedHref: '/inventory/stock-intake' },
   { key: 'selling', label: 'Selling', href: '/selling', icon: 'ShoppingCart' },
   { key: 'barcode', label: 'Barcode & Labels', href: '/barcode', icon: 'Barcode' },
   { key: 'buying', label: 'Buying', href: '/buying', icon: 'Truck', permission: 'managePurchases' },
@@ -823,9 +830,21 @@ export function isModuleTabVisible(
   if (tab.autoServiceOnly && businessType !== 'auto_service') return false
   if (tab.dealershipOnly && businessType !== 'dealership') return false
   if (tab.restaurantOnly && businessType !== 'restaurant') return false
-  if (tab.permission && role && !hasPermission(role, tab.permission)) return false
+  if (tab.permission && role && !hasPermission(role, tab.permission)
+    && !(tab.altPermissions || []).some((p) => hasPermission(role, p))) return false
   if (isModuleEnabled && role && !isModuleEnabled(tab.key, role)) return false
   return true
+}
+
+/**
+ * The href a role should open for a module tab: the module workspace, or the
+ * tab's `limitedHref` when the role only qualifies through `altPermissions`.
+ */
+export function getModuleTabHref(tab: ModuleTab, role?: string): string {
+  if (tab.limitedHref && tab.permission && role && !hasPermission(role, tab.permission)) {
+    return tab.limitedHref
+  }
+  return tab.href
 }
 
 /**

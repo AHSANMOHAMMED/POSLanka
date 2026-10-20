@@ -1,0 +1,66 @@
+// Bell pill with the unread alert count; opens the alerts inbox (/alerts).
+// Self-contained: polls GET /api/notifications every minute and whenever the screen regains focus.
+import React, { useCallback, useEffect, useState } from 'react'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { router, useFocusEffect } from 'expo-router'
+import { apiGet } from '../lib/api'
+import { THEME } from '../lib/theme'
+
+const POLL_MS = 60_000
+
+export function AlertsBell() {
+  const [unread, setUnread] = useState(0)
+
+  const refresh = useCallback(async () => {
+    const res = await apiGet<{ unreadCount?: number }>('/api/notifications?pageSize=1')
+    if (res.ok && typeof res.data?.unreadCount === 'number') setUnread(res.data.unreadCount)
+  }, [])
+
+  useFocusEffect(useCallback(() => { void refresh() }, [refresh]))
+  useEffect(() => {
+    const t = setInterval(() => { void refresh() }, POLL_MS)
+    return () => clearInterval(t)
+  }, [refresh])
+
+  return (
+    <Pressable
+      style={[styles.pill, unread > 0 && styles.pillActive]}
+      onPress={() => router.push('/alerts' as any)}
+      accessibilityRole="button"
+      accessibilityLabel={unread > 0 ? `Alerts, ${unread} unread` : 'Alerts'}
+    >
+      <Text style={styles.text}>🔔 Alerts</Text>
+      {unread > 0 ? (
+        <View style={styles.badge}>
+          <Text style={styles.badgeText}>{unread > 99 ? '99+' : unread}</Text>
+        </View>
+      ) : null}
+    </Pressable>
+  )
+}
+
+const styles = StyleSheet.create({
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: THEME.colors.surfaceContainerLow,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+  },
+  pillActive: { borderColor: THEME.colors.error, backgroundColor: THEME.colors.errorLight },
+  text: { fontSize: 11, fontWeight: '700', color: THEME.colors.text },
+  badge: {
+    marginLeft: 6,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: THEME.colors.error,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  badgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },
+})

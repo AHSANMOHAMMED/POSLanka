@@ -9,6 +9,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { removeSaleLinesSchema } from '@/lib/validation/schemas/sales'
 import { createReturnInTx } from '@/lib/sales/returns'
+import { notifyReturnAlerts } from '@/lib/notifications/sales-alerts'
 import { saleFlowErrorResponse } from '@/lib/sales/route-helpers'
 
 /**
@@ -54,6 +55,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       logAndBroadcast(tenantId, 'sale', 'updated', p.data.id, { userId })
       for (const itemId of result.affectedItemIds) logAndBroadcast(tenantId, 'item', 'updated', itemId)
       logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.warehouseId)
+      notifyReturnAlerts(tenantId, {
+        returnId: rtn.id, returnNo: rtn.invoiceNo, originalInvoiceNo: result.originalSale?.invoiceNo,
+        manual: false, refundTotal: result.refundTotal, actorUserId: userId, actorName: session.user.name,
+      })
 
       return NextResponse.json({
         returnSale: rtn,

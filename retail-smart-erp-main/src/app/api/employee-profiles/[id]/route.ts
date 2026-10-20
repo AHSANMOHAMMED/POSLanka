@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateEmployeeProfileSchema } from '@/lib/validation/schemas/hr'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET single employee profile
 export async function GET(
@@ -32,7 +33,7 @@ export async function GET(
     return await withTenant(session.user.tenantId, async (db) => {
       const profile = await db.query.employeeProfiles.findFirst({
         where: eq(employeeProfiles.id, id),
-        with: { user: true },
+        with: { user: SAFE_USER },
       })
 
       if (!profile) {

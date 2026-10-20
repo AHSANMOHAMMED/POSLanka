@@ -5,7 +5,7 @@
 //   there is no EAS projectId (Expo Go / local builds) or permission is denied.
 // - unregisterPushToken(): DELETE /api/account/devices on logout.
 // - installNotificationHandlers(): foreground toast/alert + deep-link by
-//   `data.screen` ('approvals' | 'pos' | 'shifts').
+//   `data.screen` ('approvals' | 'pos' | 'shifts' | 'inventory' | 'intake' | 'alerts').
 import { Platform, Alert } from 'react-native'
 import Constants from 'expo-constants'
 import * as Device from 'expo-device'
@@ -17,12 +17,15 @@ import { api, getToken, onBeforeLogout } from './api'
 const PUSH_TOKEN_KEY = 'poslanka_push_token'
 const ANDROID_CHANNEL_ID = 'poslanka-default'
 
-export type NotificationScreen = 'approvals' | 'pos' | 'shifts'
+export type NotificationScreen = 'approvals' | 'pos' | 'shifts' | 'inventory' | 'intake' | 'alerts'
 
 const SCREEN_ROUTES: Record<NotificationScreen, string> = {
   approvals: '/approvals',
   pos: '/pos',
   shifts: '/shifts',
+  inventory: '/inventory',
+  intake: '/intake',
+  alerts: '/alerts',
 }
 
 type ToastFn = (title: string, body: string, onPress?: () => void) => void
@@ -112,7 +115,17 @@ export async function unregisterPushToken(): Promise<void> {
 
 function screenFromData(data: unknown): NotificationScreen | null {
   const screen = (data as any)?.screen
-  return screen === 'approvals' || screen === 'pos' || screen === 'shifts' ? screen : null
+  if (typeof screen === 'string' && screen in SCREEN_ROUTES) return screen as NotificationScreen
+  // any server alert (data.type) without a known screen opens the alerts inbox
+  return typeof (data as any)?.type === 'string' ? 'alerts' : null
+}
+
+/** Navigate for an alert's `data` (same rules as a push tap). Returns false when there is no target. */
+export function openNotificationTarget(data: unknown): boolean {
+  const screen = screenFromData(data)
+  if (!screen || screen === 'alerts') return false
+  navigateTo(screen)
+  return true
 }
 
 function navigateTo(screen: NotificationScreen) {

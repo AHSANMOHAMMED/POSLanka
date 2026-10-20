@@ -3,6 +3,7 @@
 // Tax templates need the `viewAccounting` permission; cashiers get 403 and fall
 // back to zero tax (same behaviour as the web POS for that role).
 import { apiGet } from './api'
+import { getBundle, type OfflineBundle } from './localdb'
 
 export interface TaxTemplateItem {
   taxName: string
@@ -38,14 +39,7 @@ export function roundCurrency(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
 
-export async function loadTaxConfig(): Promise<TaxConfig> {
-  const [ttRes, settingsRes] = await Promise.all([
-    apiGet<any>('/api/accounting/tax-templates?all=true'),
-    apiGet<any>('/api/accounting/settings'),
-  ])
-  if (!ttRes.ok) return EMPTY_TAX_CONFIG
-
-  const list: any[] = Array.isArray(ttRes.data) ? ttRes.data : ttRes.data?.data || []
+function buildTaxConfig(list: any[], defaultId: string | null | undefined): TaxConfig {
   const templates = new Map<string, TaxTemplate>()
   for (const t of list) {
     if (!t || t.isActive === false) continue
@@ -62,10 +56,32 @@ export async function loadTaxConfig(): Promise<TaxConfig> {
   }
 
   let defaultTemplate: TaxTemplate | null = null
-  const defaultId = settingsRes.ok ? settingsRes.data?.defaultTaxTemplateId : null
   if (defaultId && templates.has(defaultId)) defaultTemplate = templates.get(defaultId)!
 
   return { templates, defaultTemplate, unavailable: false }
+}
+
+/** Tax config from the offline bundle (GET /api/pos/offline-bundle, cached on the device). */
+export function taxConfigFromBundle(bundle: OfflineBundle | null | undefined): TaxConfig | null {
+  if (!bundle || bundle.complete === false || !Array.isArray(bundle.taxTemplates)) return null
+  return buildTaxConfig(bundle.taxTemplates, bundle.accountingSettings?.defaultTaxTemplateId)
+}
+
+/**
+ * Tax templates for the POS. Prefers the given / cached offline bundle (available to cashiers and
+ * persisted on the device, so offline sales compute the same tax the server expects); falls back
+ * to the accounting endpoints (viewAccounting) when no bundle exists.
+ */
+export async function loadTaxConfig(bundle?: OfflineBundle | null): Promise<TaxConfig> {
+  const fromBundle = taxConfigFromBundle(bundle !== undefined ? bundle : await getBundle())
+  if (fromBundle) return fromBundle
+  const [ttRes, settingsRes] = await Promise.all([
+    apiGet<any>('/api/accounting/tax-templates?all=true'),
+    apiGet<any>('/api/accounting/settings'),
+  ])
+  if (!ttRes.ok) return EMPTY_TAX_CONFIG
+  const list: any[] = Array.isArray(ttRes.data) ? ttRes.data : ttRes.data?.data || []
+  return buildTaxConfig(list, settingsRes.ok ? settingsRes.data?.defaultTaxTemplateId : null)
 }
 
 export interface ItemTaxResult {

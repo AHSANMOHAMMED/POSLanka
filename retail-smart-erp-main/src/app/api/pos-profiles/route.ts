@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { createPosProfileSchema } from '@/lib/validation/schemas/pos'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET current user's POS profiles (profiles they have access to)
 export async function GET(request: NextRequest) {
@@ -227,7 +228,7 @@ export async function POST(request: NextRequest) {
           costCenter: true,
           users: {
             with: {
-              user: true,
+              user: SAFE_USER,
             },
           },
         },

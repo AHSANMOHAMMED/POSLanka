@@ -6,11 +6,12 @@ import { employeeAdvances, employeeProfiles } from '@/lib/db/schema'
 import { eq, and, sql, ilike } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { sendPushToPermission } from '@/lib/notifications/push'
+import { notify } from '@/lib/notifications/notify'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { employeeAdvancesListSchema, createEmployeeAdvanceSchema } from '@/lib/validation/schemas/hr'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 export async function GET(request: NextRequest) {
   try {
@@ -83,7 +84,7 @@ export async function POST(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       const profile = await db.query.employeeProfiles.findFirst({
         where: eq(employeeProfiles.id, employeeProfileId),
-        with: { user: true },
+        with: { user: SAFE_USER },
       })
 
       if (!profile) {
@@ -128,11 +129,13 @@ export async function POST(request: NextRequest) {
       })
 
       logAndBroadcast(session.user.tenantId, 'employee-advance', 'created', advance.id)
-      void sendPushToPermission(session.user.tenantId, 'approveAdvances', {
+      void notify(session.user.tenantId, 'advance_requested', {
         title: 'Employee advance request',
         body: 'A new salary advance request needs your approval',
-        data: { screen: 'approvals', type: 'employee_advance', id: advance.id },
-      }, session.user.id)
+        data: { screen: 'approvals', kind: 'employee_advance', id: advance.id },
+        permission: 'approveAdvances',
+        excludeUserId: session.user.id,
+      })
 
       return NextResponse.json(advance)
     })

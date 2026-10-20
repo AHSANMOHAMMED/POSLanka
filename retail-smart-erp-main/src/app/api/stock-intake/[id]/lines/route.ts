@@ -23,6 +23,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         userId: session.user.id,
         batchId: p.data.id,
         lines: parsed.data.lines,
+        role: session.user.role,
       })
       logAndBroadcast(session.user.tenantId, 'stock-intake', 'updated', p.data.id, { userId: session.user.id })
       return { data: out }

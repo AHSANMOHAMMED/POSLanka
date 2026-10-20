@@ -6,6 +6,7 @@ import { eq, desc, and, ilike, or, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { notificationTemplates } from '@/lib/db/schema'
 import { logError } from '@/lib/ai/error-logger'
+import { normalizeTriggerEvent } from '@/lib/notifications/types'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateSearchParams } from '@/lib/validation'
@@ -138,7 +139,7 @@ export async function POST(request: Request) {
           tenantId: session.user.tenantId,
           name,
           channel,
-          triggerEvent: triggerEvent || null,
+          triggerEvent: normalizeTriggerEvent(triggerEvent),
           isAutoTrigger: isAutoTrigger || false,
           smsContent: smsContent || null,
           emailSubject: emailSubject || null,

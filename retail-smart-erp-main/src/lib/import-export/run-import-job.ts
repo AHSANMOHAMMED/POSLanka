@@ -16,6 +16,7 @@ import { withTenantTransaction } from '@/lib/db'
 import * as schema from '@/lib/db/schema'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notify } from '@/lib/notifications/notify'
 import { DuplicateError, getPgError } from '@/lib/db/errors'
 import { withSavepoint, type DbTx } from '@/lib/inventory/db-types'
 import { createItem, type CreateItemData } from '@/lib/inventory/create-item'
@@ -606,6 +607,15 @@ export async function runImportJob(params: RunImportJobParams): Promise<ImportJo
           },
         })
       }
+    }
+    if (done) {
+      const imported = done.inserted + done.updated
+      void notify(tenantId, 'import_finished', {
+        title: `Import finished: ${ctx.config.label}`,
+        body: `${imported} imported (${done.inserted} new, ${done.updated} updated), ${done.skipped} skipped, ${done.failed} failed${done.fileName ? ` — ${done.fileName}` : ''}.`,
+        data: { screen: 'alerts', jobId, entity: done.entityName },
+        userIds: [done.userId],
+      })
     }
     return finalJob
   } catch (err) {

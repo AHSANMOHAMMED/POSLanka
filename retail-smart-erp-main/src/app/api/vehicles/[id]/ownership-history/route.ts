@@ -7,6 +7,7 @@ import { eq, desc } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET ownership history for a vehicle
 export async function GET(
@@ -32,7 +33,7 @@ export async function GET(
         with: {
           customer: true,
           previousCustomer: true,
-          changedByUser: true,
+          changedByUser: SAFE_USER,
         },
         orderBy: desc(vehicleOwnershipHistory.changedAt),
       })

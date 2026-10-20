@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePosProfileSchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET a single POS profile
 export async function GET(
@@ -37,7 +38,7 @@ export async function GET(
           },
           users: {
             with: {
-              user: true,
+              user: SAFE_USER,
             },
           },
           itemGroups: {
@@ -242,7 +243,7 @@ export async function PUT(
           },
           users: {
             with: {
-              user: true,
+              user: SAFE_USER,
             },
           },
           itemGroups: {

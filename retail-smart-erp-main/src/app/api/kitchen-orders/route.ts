@@ -55,6 +55,7 @@ export async function GET(request: NextRequest) {
           restaurantOrder: {
             with: {
               table: true,
+              createdByUser: { columns: { fullName: true } },
             },
           },
           items: {
@@ -95,6 +96,7 @@ export async function GET(request: NextRequest) {
           orderType: restaurantOrder?.orderType || 'dine_in',
           tableName: table?.name || null,
           tableArea: table?.area || null,
+          serverName: (restaurantOrder?.createdByUser as { fullName?: string | null } | null | undefined)?.fullName || null,
           items: itemsWithDetails,
           // Summary stats
           totalItems: itemsWithDetails.length,

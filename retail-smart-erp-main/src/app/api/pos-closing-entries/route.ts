@@ -7,6 +7,7 @@ import { eq, desc, and, sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation'
 import { posClosingListSchema } from '@/lib/validation/schemas/pos'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 
 // GET list of closing entries
 export async function GET(request: NextRequest) {
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
             },
           },
           posProfile: true,
-          user: true,
+          user: SAFE_USER,
           reconciliation: true,
         },
         orderBy: [desc(posClosingEntries.closingTime)],

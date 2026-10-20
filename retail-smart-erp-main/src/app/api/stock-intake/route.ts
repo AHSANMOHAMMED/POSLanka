@@ -53,6 +53,7 @@ export async function POST(request: NextRequest) {
         updateCost: body.updateCost,
         supplierId: body.supplierId,
         source: isMobileRequest(request, body.source) ? 'mobile' : 'web',
+        role: session.user.role,
       })
       if (out.created) {
         logAndBroadcast(session.user.tenantId, 'stock-intake', 'created', out.batch.id, {
