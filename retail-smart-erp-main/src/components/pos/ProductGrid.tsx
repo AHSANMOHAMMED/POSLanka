@@ -4,7 +4,6 @@ import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
 import { Search, ScanBarcode, Package, RotateCcw, Loader2, Warehouse, ChevronLeft, ChevronRight, Scale } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { ShiftStatus } from './ShiftStatus'
-import { Badge } from '@/components/ui/badge'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { Item, Category, ActiveShift, POSBusinessConfig } from './types'
 import { POS_ITEMS_LIMIT } from './types'
@@ -65,8 +64,8 @@ function CategoryPillBar({ categories, selectedCategory, onCategoryChange, allLa
   }
 
   const pillClasses = (active: boolean) =>
-    `px-4 py-2 rounded text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
-      active ? 'bg-blue-600 text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+    `px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${
+      active ? 'bg-teal-700 text-white shadow-md font-semibold' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
     }`
 
   return (
@@ -144,7 +143,7 @@ export function ProductGrid({
   }, [items, search])
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div className="w-full lg:w-[60%] flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50/50">
       {/* Search Header */}
       <div className="bg-white border-b px-4 py-3">
         <div className="flex items-center gap-3">
@@ -211,7 +210,7 @@ export function ProductGrid({
           </div>
         )}
 
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
           {filteredItems.map(item => {
             const stock = parseFloat(item.availableStock)
             const isLowStock = item.trackStock && stock <= 5 && stock > 0
@@ -222,41 +221,50 @@ export function ProductGrid({
                 key={item.id}
                 onClick={() => onAddToCart(item)}
                 disabled={isOutOfStock && !isReturnMode}
-                className={`bg-white rounded-2xl border-2 p-4 text-left transition-all hover:shadow-lg hover:-translate-y-0.5 ${
+                className={`bg-white rounded-xl border p-3.5 text-left transition-all hover:shadow-md hover:border-teal-600 group relative ${
                   isOutOfStock && !isReturnMode
-                    ? 'opacity-50 cursor-not-allowed border-gray-200'
-                    : 'border-gray-100 hover:border-blue-400'
+                    ? 'opacity-50 cursor-not-allowed border-slate-200'
+                    : 'border-slate-200 hover:-translate-y-0.5'
                 }`}
               >
-                {/* Product placeholder with letter */}
-                <div className="w-full aspect-square bg-gradient-to-br from-blue-50 to-blue-100 rounded-md flex items-center justify-center mb-3">
-                  <span className="text-2xl font-bold text-blue-300">
-                    {item.name.charAt(0).toUpperCase()}
+                {/* Stock Tag on Top Right */}
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-bold">
+                    {item.barcode ? `EAN: ${item.barcode.slice(-6)}` : item.sku || 'ITEM'}
                   </span>
+                  {item.trackStock && (
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        isOutOfStock
+                          ? 'bg-red-100 text-red-700'
+                          : isLowStock
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-emerald-50 text-emerald-700'
+                      }`}
+                    >
+                      {isOutOfStock ? 'Out' : `${stock.toFixed(0)} in stock`}
+                    </span>
+                  )}
                 </div>
 
-                {item.barcode && (
-                  <p className="text-xs text-gray-400 mb-0.5 truncate">{item.barcode}</p>
-                )}
-
-                <h3 className="font-semibold text-gray-900 text-sm leading-tight line-clamp-2 mb-1">
+                <h3 className="font-bold text-slate-900 text-sm leading-snug line-clamp-2 min-h-[36px] mb-1 group-hover:text-teal-800 transition-colors">
                   {item.name}
                 </h3>
 
                 {(() => {
                   const partNum = getItemPartNumber(item, businessType)
-                  return partNum ? <p className="text-xs text-gray-400 mb-1">{partNum}</p> : null
+                  return partNum ? <p className="text-[11px] text-slate-400 mb-1 font-mono">{partNum}</p> : null
                 })()}
 
                 {item.categoryName && (
-                  <p className="text-xs text-gray-400 truncate mb-2">{item.categoryName}</p>
+                  <p className="text-[11px] text-slate-400 truncate mb-2">{item.categoryName}</p>
                 )}
 
                 {/* Weighable / Core charge indicators */}
                 {(config.enableWeighableItems && item.isWeighable) && (
                   <div className="flex items-center gap-1 mb-1">
-                    <Scale size={12} className="text-orange-500" />
-                    <span className="text-xs text-orange-600 font-medium">Weighable</span>
+                    <Scale size={12} className="text-amber-600" />
+                    <span className="text-xs text-amber-700 font-medium">Weighable (PLU)</span>
                   </div>
                 )}
                 {(config.enableCoreChargeDisplay && item.coreCharge && parseFloat(item.coreCharge) > 0) && (
@@ -265,21 +273,16 @@ export function ProductGrid({
                   </div>
                 )}
 
-                <div className="flex items-end justify-between">
-                  <span className="text-lg font-bold text-blue-600">
+                <div className="flex items-end justify-between pt-2 border-t border-slate-100 mt-2">
+                  <span className="text-base font-bold text-teal-800 font-mono">
                     {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
                     {config.enableWeighableItems && item.isWeighable && (
-                      <span className="text-xs font-normal text-gray-400">/kg</span>
+                      <span className="text-xs font-normal text-slate-400">/kg</span>
                     )}
                   </span>
-                  {item.trackStock && (
-                    <Badge
-                      variant={isOutOfStock ? 'danger' : isLowStock ? 'warning' : 'success'}
-                      size="sm"
-                    >
-                      {isOutOfStock ? 'Out' : stock.toFixed(0)}
-                    </Badge>
-                  )}
+                  <span className="w-7 h-7 rounded-lg bg-slate-100 group-hover:bg-teal-700 group-hover:text-white flex items-center justify-center text-slate-700 text-xs font-bold transition-colors">
+                    +
+                  </span>
                 </div>
               </button>
             )

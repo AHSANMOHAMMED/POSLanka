@@ -114,3 +114,102 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to update vendors' }, { status: 500 })
   }
 }
+
+export async function POST(request: NextRequest) {
+  try {
+    const session = await validateAdminSession()
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const body = await request.json()
+    const {
+      name,
+      slug,
+      email,
+      phone,
+      address,
+      businessType = 'retail',
+      plan = 'trial',
+      country = 'LK',
+      currency = 'LKR',
+      tin,
+      brn,
+      featureFlags,
+    } = body
+
+    if (!name || !slug || !email) {
+      return NextResponse.json(
+        { error: 'Name, slug, and email are required' },
+        { status: 400 }
+      )
+    }
+
+    // Clean slug
+    const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-]/g, '')
+
+    // Check if slug already exists
+    const existing = await db.query.tenants.findFirst({
+      where: eq(tenants.slug, cleanSlug),
+    })
+
+    if (existing) {
+      return NextResponse.json(
+        { error: `Slug "${cleanSlug}" is already taken.` },
+        { status: 409 }
+      )
+    }
+
+    const mergedFlags = featureFlags
+      ? normalizeFeatureFlags(featureFlags)
+      : DEFAULT_VENDOR_FEATURE_FLAGS
+
+    const newSettings = {
+      tin: tin || null,
+      brn: brn || null,
+      featureFlags: mergedFlags,
+    }
+
+    const mappedBusinessType = (
+      businessType === 'auto_care' ? 'auto_service' :
+      businessType === 'pharmacy' ? 'retail' :
+      (['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership'].includes(businessType) ? businessType : 'retail')
+    ) as 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'dealership'
+
+    const mappedPlan = (
+      plan === 'starter' ? 'basic' :
+      plan === 'professional' ? 'standard' :
+      plan === 'enterprise' ? 'premium' :
+      (['trial', 'basic', 'standard', 'premium'].includes(plan) ? plan : 'trial')
+    ) as 'trial' | 'basic' | 'standard' | 'premium'
+
+    const [created] = await db
+      .insert(tenants)
+      .values({
+        name,
+        slug: cleanSlug,
+        email,
+        phone: phone || null,
+        address: address || null,
+        businessType: mappedBusinessType,
+        plan: mappedPlan,
+        country,
+        currency,
+        status: 'active',
+        settings: newSettings,
+      })
+      .returning()
+
+    return NextResponse.json({
+      success: true,
+      vendor: created,
+    })
+  } catch (error) {
+    logError('api/sys-control/vendors POST', error)
+    return NextResponse.json(
+      { error: (error as Error).message || 'Failed to create vendor' },
+      { status: 500 }
+    )
+  }
+}
+

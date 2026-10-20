@@ -36,11 +36,28 @@ declare module 'react-native' {
   export const Pressable: any;
   export const StyleSheet: {
     create: <T extends Record<string, any>>(styles: T) => T;
+    absoluteFillObject: Record<string, any>;
   };
   export const Alert: {
     alert: (title: string, message?: string, buttons?: any[]) => void;
   };
   export const FlatList: any;
   export const ActivityIndicator: any;
+  export const ScrollView: any;
+  export const Modal: any;
+  export const TouchableOpacity: any;
+  export const Image: any;
+  export const Switch: any;
+  export const Dimensions: any;
+  export const Platform: any;
 }
 
+declare module 'expo-camera' {
+  export const CameraView: any;
+  export function useCameraPermissions(): [any, () => Promise<any>];
+}
+
+declare module 'expo-linking' {
+  export function openURL(url: string): Promise<boolean>;
+  export function canOpenURL(url: string): Promise<boolean>;
+}

@@ -116,7 +116,7 @@ export function CartPanel({
   const { currency: currencyCode } = useCurrency()
 
   return (
-    <div className="w-[420px] flex-shrink-0 flex flex-col bg-white border-l shadow-xl">
+    <div className="w-full lg:w-[40%] min-w-[360px] xl:min-w-[420px] flex-shrink-0 flex flex-col bg-white border-l border-slate-200 shadow-xl">
       {/* Cart Header */}
       <div className={`px-5 py-4 border-b ${isReturnMode ? 'bg-red-50' : 'bg-white'}`}>
         <div className="flex items-center justify-between mb-3">
@@ -411,9 +411,11 @@ export function CartPanel({
               <span>-{currencyCode} {loyaltyRedeemValue.toFixed(2)}</span>
             </div>
           )}
-          <div className={`flex justify-between text-2xl font-bold pt-2 border-t ${isReturnMode ? 'text-red-700' : 'text-gray-900'}`}>
-            <span>{isReturnMode ? 'Refund' : 'Total'}</span>
-            <span>{currencyCode} {Math.abs(isReturnMode ? total : Math.max(0, total - loyaltyRedeemValue + (config.enableTips ? (tipAmount || 0) : 0))).toFixed(2)}</span>
+          <div className={`flex justify-between items-baseline text-2xl font-black pt-3 border-t border-slate-200 ${isReturnMode ? 'text-red-700' : 'text-teal-950 font-mono'}`}>
+            <span className="text-sm font-sans font-bold text-slate-500 uppercase tracking-wider">{isReturnMode ? 'Refund Due' : 'Total Payable'}</span>
+            <span className="text-2xl font-mono font-black text-teal-800">
+              {currencyCode} {Math.abs(isReturnMode ? total : Math.max(0, total - loyaltyRedeemValue + (config.enableTips ? (tipAmount || 0) : 0))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>
           </div>
         </div>
 
@@ -423,7 +425,7 @@ export function CartPanel({
             <button
               onClick={onSendToKitchen}
               disabled={cart.length === 0 || !restaurantOrderId}
-              className="w-full py-2.5 bg-orange-50 text-orange-700 rounded-md font-medium hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 border border-orange-200 disabled:opacity-50"
+              className="w-full py-2.5 bg-orange-50 text-orange-700 rounded-xl font-bold hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 border border-orange-200 disabled:opacity-50"
             >
               Send to Kitchen
             </button>
@@ -435,7 +437,7 @@ export function CartPanel({
           <button
             onClick={onClearCart}
             disabled={cart.length === 0}
-            className="py-3.5 bg-gray-100 text-gray-700 rounded-md font-medium hover:bg-gray-200 transition-colors disabled:opacity-50"
+            className="py-3.5 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors disabled:opacity-50"
           >
             Clear
           </button>
@@ -443,22 +445,22 @@ export function CartPanel({
             <button
               onClick={onHoldSale}
               disabled={cart.length === 0 || holdingInProgress}
-              className="py-3.5 bg-amber-100 text-amber-700 rounded-md font-medium hover:bg-amber-200 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              className="py-3.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl font-bold hover:bg-amber-100 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
             >
-              <Pause size={18} />
+              <Pause size={17} />
               Hold
             </button>
           )}
           <button
             onClick={onOpenPayment}
             disabled={cart.length === 0}
-            className={`py-3.5 text-white rounded-md font-bold shadow-lg hover:shadow-xl transition-all disabled:opacity-50 ${
+            className={`py-3.5 text-white rounded-xl font-extrabold shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 ${
               isReturnMode
                 ? 'bg-gradient-to-r from-red-600 to-red-500 col-span-2'
-                : 'bg-gradient-to-r from-blue-600 to-blue-500'
+                : 'bg-teal-700 hover:bg-teal-800 shadow-teal-900/20'
             }`}
           >
-            {isReturnMode ? 'Process Refund' : terms.payNow}
+            {isReturnMode ? 'Process Refund' : `${terms.payNow} →`}
           </button>
         </div>
       </div>

@@ -1622,8 +1622,30 @@ export default function POSPage() {
   // ─── Main Render ──────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-100 -m-5 overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-100 -m-5 overflow-hidden font-sans">
       <OfflineStatusBanner />
+      {/* Stitch "Operational Velocity" Operational Context Bar */}
+      <div className="w-full bg-slate-900 text-slate-300 px-4 py-1.5 flex items-center justify-between text-xs font-mono border-b border-slate-800 shrink-0 select-none">
+        <div className="flex items-center gap-2.5">
+          <span className="font-extrabold text-white uppercase tracking-wider">{company.tenantName || 'POSLanka'}</span>
+          <span className="text-slate-600">•</span>
+          <span className="text-slate-300">{posWarehouse?.name || 'Colombo Store'}</span>
+          <span className="text-slate-600">•</span>
+          <span className="text-teal-400 font-bold">Register (10&quot; Tablet Terminal)</span>
+          <span className="text-slate-600">•</span>
+          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 font-bold border border-emerald-800/80">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            RAMIS Fiscal Engine v2.4
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-amber-400 font-bold">
+            Shift #{activeShift?.id?.slice(0, 8).toUpperCase() || 'ACTIVE'}
+          </span>
+          <span className="text-slate-600">•</span>
+          <span className="text-slate-400">Printer: Ready (ESC/POS)</span>
+        </div>
+      </div>
       <div className="flex flex-1 overflow-hidden">
       <ProductGrid
         items={items}
