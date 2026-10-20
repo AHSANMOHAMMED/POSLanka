@@ -3,7 +3,6 @@
 // instead of a cryptic 500 after the transaction rolls back.
 
 import { accountingSettings } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { withTenant } from '@/lib/db'
 

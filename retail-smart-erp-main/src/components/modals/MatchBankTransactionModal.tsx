@@ -66,7 +66,6 @@ export function MatchBankTransactionModal({
     ? Math.abs(parseFloat(transaction.debit || '0') - parseFloat(transaction.credit || '0'))
     : 0
   const txnDebit = parseFloat(transaction?.debit || '0')
-  const txnCredit = parseFloat(transaction?.credit || '0')
 
   const fetchCandidates = useCallback(async () => {
     if (!isOpen || !transaction || !hasLinkedAccount) return

@@ -33,10 +33,15 @@ async function createSuperAdmin() {
 
     if (result.rowCount && result.rowCount > 0) {
       console.log('Super admin created successfully!');
-      console.log('Email: ravindu2012@hotmail.com');
       console.log(`Email: ${adminEmail}`);
+    } else if (process.env.SUPER_ADMIN_RESET === 'true') {
+      await pool.query(
+        `UPDATE super_admins SET password_hash = $1, is_active = true, failed_login_attempts = 0, locked_until = NULL, updated_at = now() WHERE email = $2`,
+        [passwordHash, adminEmail]
+      );
+      console.log(`Super admin password reset: ${adminEmail}`);
     } else {
-      console.log('Super admin already exists, skipping.');
+      console.log('Super admin already exists, skipping. (Set SUPER_ADMIN_RESET=true to reset its password.)');
     }
   } finally {
     await pool.end();

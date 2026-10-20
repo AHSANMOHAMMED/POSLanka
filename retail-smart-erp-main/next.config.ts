@@ -4,6 +4,10 @@ import packageJson from './package.json';
 const baseDomain = (process.env.NEXT_PUBLIC_BASE_DOMAIN || 'poslanka.lk').split(':')[0].toLowerCase();
 
 const nextConfig: NextConfig = {
+  // Pin the workspace root to this app; stray lockfiles in parent folders
+  // (or apps/mobile's own lockfile) must not change module/trace resolution.
+  turbopack: { root: process.cwd() },
+  outputFileTracingRoot: process.cwd(),
   env: {
     APP_VERSION: packageJson.version,
   },

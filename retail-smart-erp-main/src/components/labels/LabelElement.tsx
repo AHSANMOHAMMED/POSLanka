@@ -165,6 +165,7 @@ function BarcodePreview({ element }: { element: LabelElementType & { type: 'barc
   }, [element.format, data, element.showText])
 
   return (
+    // eslint-disable-next-line @next/next/no-img-element -- generated barcode data URL; next/image cannot optimise it
     <img
       src={dataUrl}
       alt="barcode"
@@ -214,6 +215,7 @@ function TextPreview({ element, zoom, codeWord }: { element: LabelElementType & 
 
 function ImagePreview({ element }: { element: LabelElementType & { type: 'image' } }) {
   if (element.source === 'custom' && element.customUrl) {
+    // eslint-disable-next-line @next/next/no-img-element -- user-supplied label image rendered at print size
     return <img src={element.customUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain' }} draggable={false} />
   }
   return (

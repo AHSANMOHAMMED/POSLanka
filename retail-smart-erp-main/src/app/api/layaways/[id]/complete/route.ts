@@ -414,6 +414,7 @@ export async function POST(
     if (message.startsWith('Insufficient stock')) {
       return NextResponse.json({ error: message }, { status: 400 })
     }
+    logError('api/layaways/[id]/complete', err)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 

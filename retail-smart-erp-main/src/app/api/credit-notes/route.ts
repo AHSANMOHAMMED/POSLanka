@@ -4,6 +4,7 @@ import { withAuthTenant } from '@/lib/db/with-auth-tenant'
 import { creditNotes, creditNoteItems } from '@/lib/db/schema'
 import { requireTenantFeature } from '@/lib/features/check'
 import { z } from 'zod'
+import { validateBody } from '@/lib/validation/helpers'
 
 const itemSchema = z.object({
   itemId: z.string().uuid().optional().nullable(),
@@ -54,10 +55,10 @@ export async function POST(request: NextRequest) {
     if (!feature.ok) {
       return { error: 'Credit notes disabled', status: 403 as const }
     }
-    const body = await request.json()
-    const parsed = createSchema.safeParse(body)
+    const parsed = await validateBody(request, createSchema)
     if (!parsed.success) {
-      return { error: parsed.error.flatten(), status: 400 as const }
+      const details = await parsed.response.json().catch(() => ({ error: 'Invalid request body' }))
+      return { error: details, status: 400 as const }
     }
 
     const countResult = await db

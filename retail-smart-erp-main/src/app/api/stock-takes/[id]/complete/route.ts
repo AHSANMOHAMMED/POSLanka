@@ -6,7 +6,6 @@ import { stockTakes, stockTakeItems, warehouseStock, stockMovements } from '@/li
 import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { postStockAdjustmentToGL } from '@/lib/accounting/auto-post'
-import { logError } from '@/lib/ai/error-logger'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'

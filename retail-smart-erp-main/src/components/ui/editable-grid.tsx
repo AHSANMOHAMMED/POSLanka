@@ -360,7 +360,7 @@ export function EditableGrid<T extends Record<string, unknown>>({
   onSaveChanges,
   dirtyRowIds: externalDirtyRowIds,
   onDirtyChange,
-  businessType,
+  businessType: _businessType,
 }: EditableGridProps<T>) {
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())

@@ -18,7 +18,7 @@ const documentTypes: { key: DocumentType; label: string; description: string }[]
 ]
 
 export default function SettingsPage() {
-  const { data: session, update } = useSession()
+  const { data: session } = useSession()
   const tenantSlug = session?.user?.tenantSlug || ''
   // Print settings state
   const [printSettings, setPrintSettings] = useState<DocumentPrintSettings>(DEFAULT_PRINT_SETTINGS)

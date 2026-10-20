@@ -21,7 +21,6 @@ export interface ImportJob {
 }
 
 declare global {
-  // eslint-disable-next-line no-var
   var __importJobs: Map<string, ImportJob> | undefined
 }
 

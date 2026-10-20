@@ -111,7 +111,6 @@ export default function NewPaymentEntryPage() {
   const qPartyType = searchParams.get('partyType') as 'customer' | 'supplier' | null
   const qPartyId = searchParams.get('partyId')
   const qPartyName = searchParams.get('partyName')
-  const qReferenceType = searchParams.get('referenceType')
   const qReferenceId = searchParams.get('referenceId')
   const qAmount = searchParams.get('amount')
 

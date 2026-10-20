@@ -1,6 +1,6 @@
 'use client'
 
-import { Barcode, QrCode, Type, Image, Minus, Square, RectangleHorizontal, Circle } from 'lucide-react'
+import { Barcode, QrCode, Type, Image as ImageIcon, Minus, Square, RectangleHorizontal, Circle } from 'lucide-react'
 import type { LabelElement, BarcodeFormat, PresetLabelSize, LabelShape } from '@/lib/labels/types'
 import { PRESET_LABEL_SIZES } from '@/lib/labels/types'
 
@@ -125,7 +125,7 @@ export function ElementToolbox({ widthMm, heightMm, labelShape, cornerRadius, on
           <ToolButton icon={<Barcode size={16} />} label="Barcode" onClick={() => addBarcode('code128')} />
           <ToolButton icon={<QrCode size={16} />} label="QR Code" onClick={() => addBarcode('qrcode')} />
           <ToolButton icon={<Type size={16} />} label="Text" onClick={addText} />
-          <ToolButton icon={<Image size={16} />} label="Image" onClick={addImage} />
+          <ToolButton icon={<ImageIcon size={16} />} label="Image" onClick={addImage} />
           <ToolButton icon={<Minus size={16} />} label="Line" onClick={addLine} />
           <ToolButton icon={<Square size={16} />} label="Rectangle" onClick={addRect} />
           <ToolButton icon={<RectangleHorizontal size={16} />} label="Rounded Rect" onClick={addRoundedRect} />

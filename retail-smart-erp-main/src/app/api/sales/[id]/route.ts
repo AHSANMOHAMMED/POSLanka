@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { sales, saleItems, stockMovements, payments, customers, customerCreditTransactions, warehouseStock, loyaltyTransactions, salesOrders, salesOrderItems, itemSerialNumbers } from '@/lib/db/schema'
+import { sales, saleItems, stockMovements, payments, customers, customerCreditTransactions, warehouseStock, loyaltyTransactions, salesOrders, salesOrderItems } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'

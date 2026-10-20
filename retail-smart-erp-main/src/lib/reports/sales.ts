@@ -273,7 +273,6 @@ export async function getPaymentCollection(
     bank: 'bank_transfer',
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const data: { method: string; totalAmount: number; transactionCount: number; percentage: number }[] = []
   let grandTotal = 0
 

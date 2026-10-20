@@ -8,7 +8,7 @@ import { PermissionGuard } from '@/components/auth/PermissionGuard'
 import { Breadcrumb } from '@/components/ui/page-header'
 import {
   Shield, Save, RotateCcw, Plus, Trash2, Loader2,
-  ChevronRight, Check, X, Search, Pencil,
+  ChevronRight, Search,
 } from 'lucide-react'
 import {
   ROLE_PERMISSIONS,
@@ -241,7 +241,7 @@ export default function RolePermissionsPage() {
       if (filtered.length > 0) result[category] = filtered
     }
     return result
-  }, [searchQuery])
+  }, [searchQuery, businessCategories])
 
   // Check if a permission differs from system default
   const isOverridden = useCallback((permKey: string): boolean => {

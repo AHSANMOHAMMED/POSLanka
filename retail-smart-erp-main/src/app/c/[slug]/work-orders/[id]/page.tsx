@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   Home, ChevronRight, Plus, FileText, Wrench, Package, Car,
   CheckCircle, CreditCard, Calendar, Clock, AlertCircle,
-  Printer, ClipboardCheck, History, Save, RotateCcw
+  Printer, ClipboardCheck, Save, RotateCcw
 } from 'lucide-react'
 import { ServiceTypeModal, ItemModal, CancellationReasonModal, CustomerFormModal, VehicleModal } from '@/components/modals'
 import { WarehouseSelector } from '@/components/ui/warehouse-selector'
@@ -596,7 +596,7 @@ export default function WorkOrderDetailPage({ params }: { params: Promise<{ slug
         )
       },
     },
-  ], [searchItems])
+  ], [searchItems, businessType])
 
   // ============================================
   // DATA FETCHING

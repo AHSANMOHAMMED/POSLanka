@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 import bcrypt from 'bcryptjs'
-import { db, withTenant } from '@/lib/db'
+import { withTenant } from '@/lib/db'
 import { users } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'

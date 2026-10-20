@@ -8,6 +8,7 @@ import {
 } from '@/lib/whatsapp'
 import { renderDocumentHtml, type DocumentPayload } from '@/lib/pdf/documents'
 import { z } from 'zod'
+import { validateBody } from '@/lib/validation/helpers'
 
 const schema = z.object({
   documentType: z.enum(['receipt', 'invoice', 'quotation', 'credit_note']),
@@ -52,11 +53,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'WhatsApp feature disabled' }, { status: 403 })
   }
 
-  const body = await request.json()
-  const parsed = schema.safeParse(body)
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
-  }
+  const parsed = await validateBody(request, schema)
+  if (!parsed.success) return parsed.response
 
   const text = buildDocumentShareText({
     documentType: parsed.data.documentType as WhatsAppDocumentType,

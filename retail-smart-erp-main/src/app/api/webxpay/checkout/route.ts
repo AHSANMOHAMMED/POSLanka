@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { accountAuth } from '@/lib/auth/account-auth'
 import { createWebXPayCheckout, webxpayConfig } from '@/lib/webxpay'
 import { z } from 'zod'
+import { validateBody } from '@/lib/validation/helpers'
 
 const schema = z.object({
   orderId: z.string().min(1),
@@ -25,11 +26,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'WebXPay not configured' }, { status: 503 })
   }
 
-  const body = await request.json()
-  const parsed = schema.safeParse(body)
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 })
-  }
+  const parsed = await validateBody(request, schema)
+  if (!parsed.success) return parsed.response
 
   try {
     const checkout = createWebXPayCheckout(parsed.data)

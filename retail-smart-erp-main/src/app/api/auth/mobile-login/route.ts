@@ -5,6 +5,7 @@ import { db, withTenant } from '@/lib/db'
 import { tenants, users } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
+import { validateBody } from '@/lib/validation/helpers'
 import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
 
 const schema = z.object({
@@ -24,11 +25,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 })
   }
 
-  const body = await request.json()
-  const parsed = schema.safeParse(body)
-  if (!parsed.success) {
-    return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
-  }
+  const parsed = await validateBody(request, schema)
+  if (!parsed.success) return parsed.response
 
   const email = parsed.data.email.toLowerCase()
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown'
