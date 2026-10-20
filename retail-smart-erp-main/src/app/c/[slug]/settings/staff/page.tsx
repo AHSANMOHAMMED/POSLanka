@@ -73,6 +73,7 @@ export default function StaffPage() {
     fullName: '',
     email: '',
     password: '',
+    pin: '',
     role: 'cashier' as UserRole,
   })
   const [submitting, setSubmitting] = useState(false)
@@ -139,7 +140,7 @@ export default function StaffPage() {
 
   function openCreateModal() {
     setEditingUser(null)
-    setFormData({ fullName: '', email: '', password: '', role: 'cashier' })
+    setFormData({ fullName: '', email: '', password: '', pin: '', role: 'cashier' })
     setShowModal(true)
   }
 
@@ -149,6 +150,7 @@ export default function StaffPage() {
       fullName: user.fullName,
       email: user.email,
       password: '',
+      pin: '',
       role: user.role,
     })
     setShowModal(true)
@@ -157,7 +159,7 @@ export default function StaffPage() {
   function closeModal() {
     setShowModal(false)
     setEditingUser(null)
-    setFormData({ fullName: '', email: '', password: '', role: 'cashier' })
+    setFormData({ fullName: '', email: '', password: '', pin: '', role: 'cashier' })
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -175,6 +177,10 @@ export default function StaffPage() {
       }
       if (formData.password && formData.password.length < 8) {
         toast.error('Password must be at least 8 characters')
+        return
+      }
+      if (formData.pin && !/^\d{4,6}$/.test(formData.pin)) {
+        toast.error('POS PIN must be 4-6 digits')
         return
       }
     } else {
@@ -198,6 +204,9 @@ export default function StaffPage() {
         }
         if (formData.password) {
           updateData.password = formData.password
+        }
+        if (formData.pin) {
+          updateData.pin = formData.pin
         }
 
         const res = await fetch(`/api/users/${editingUser.id}`, {
@@ -675,6 +684,20 @@ export default function StaffPage() {
                       placeholder="Leave blank to keep current"
                     />
                     <p className="text-xs text-gray-500 mt-1">Minimum 8 characters</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      POS PIN (4-6 digits, leave blank to keep current)
+                    </label>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      value={formData.pin}
+                      onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                      className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      placeholder="Used to unlock the terminal and approve overrides"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Cashiers unlock their terminal with it; managers approve discounts and price overrides with it.</p>
                   </div>
                 </>
               ) : (

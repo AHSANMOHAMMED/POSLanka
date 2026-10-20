@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { normalizeScaleConfig, type ScaleBarcodeConfig } from '@/lib/inventory/barcode-parse'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
@@ -34,6 +35,7 @@ export async function GET() {
           phone: true,
           address: true,
           email: true,
+          settings: true,
         },
       })
 
@@ -41,7 +43,9 @@ export async function GET() {
         return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
       }
 
-      return NextResponse.json(tenant)
+      const { settings, ...rest } = tenant
+      const scaleBarcode = normalizeScaleConfig(((settings || {}) as { scaleBarcode?: Partial<ScaleBarcodeConfig> }).scaleBarcode)
+      return NextResponse.json({ ...rest, scaleBarcode })
     })
   } catch (error) {
     logError('api/tenant', error)
@@ -62,7 +66,7 @@ export async function PUT(request: NextRequest) {
 
     const parsed = await validateBody(request, updateTenantSchema)
     if (!parsed.success) return parsed.response
-    const { businessType, timezone, aiEnabled, taxRate, taxInclusive } = parsed.data
+    const { businessType, timezone, aiEnabled, taxRate, taxInclusive, scaleBarcode } = parsed.data
 
     // Build update data
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -104,6 +108,15 @@ export async function PUT(request: NextRequest) {
           updateData.aiConsentAcceptedAt = new Date()
         }
       }
+    }
+
+    if (scaleBarcode) {
+      const current = await withTenant(session.user.tenantId, async (db) =>
+        db.query.tenants.findFirst({ where: eq(tenants.id, session.user.tenantId), columns: { settings: true } })
+      )
+      const settings = { ...((current?.settings || {}) as Record<string, unknown>) }
+      settings.scaleBarcode = normalizeScaleConfig(scaleBarcode)
+      updateData.settings = settings
     }
 
     if (Object.keys(updateData).length <= 1) {

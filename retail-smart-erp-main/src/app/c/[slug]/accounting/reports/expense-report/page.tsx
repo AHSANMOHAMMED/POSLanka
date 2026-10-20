@@ -84,11 +84,10 @@ export default function ExpenseReportPage() {
       hasData={!!data && data.data.length > 0}
       emptyIcon={<Receipt size={40} />}
       emptyMessage="Select a date range and click Generate to view expenses."
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       exportData={data?.data.map(row => ({
         ...row,
         pctOfTotal: totalExpenses > 0 ? Math.round((row.totalAmount / totalExpenses) * 10000) / 10000 : 0,
-      })) as any}
+      })) as unknown as Record<string, unknown>[]}
       exportColumns={exportColumns}
       exportName="Expense Report"
       summaryCards={data ? <>

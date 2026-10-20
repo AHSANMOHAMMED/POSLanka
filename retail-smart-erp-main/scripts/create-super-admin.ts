@@ -16,19 +16,25 @@ async function createSuperAdmin() {
   console.log('Creating super admin...');
 
   try {
-    const passwordHash = await bcrypt.hash('Gaje@7616', 10);
+    const adminEmail = (process.env.SUPER_ADMIN_EMAIL || '').trim().toLowerCase();
+    const adminPassword = process.env.SUPER_ADMIN_PASSWORD || '';
+    if (!adminEmail || adminPassword.length < 12) {
+      console.error('Set SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD (min 12 characters) before running db:seed-admin');
+      process.exit(1);
+    }
+    const passwordHash = await bcrypt.hash(adminPassword, 12);
 
     const result = await pool.query(`
       INSERT INTO super_admins (email, password_hash, full_name, is_active)
       VALUES ($1, $2, $3, true)
       ON CONFLICT (email) DO NOTHING
       RETURNING id
-    `, ['ravindu2012@hotmail.com', passwordHash, 'Super Admin']);
+    `, [adminEmail, passwordHash, process.env.SUPER_ADMIN_NAME || 'Super Admin']);
 
     if (result.rowCount && result.rowCount > 0) {
       console.log('Super admin created successfully!');
       console.log('Email: ravindu2012@hotmail.com');
-      console.log('Password: Gaje@7616');
+      console.log(`Email: ${adminEmail}`);
     } else {
       console.log('Super admin already exists, skipping.');
     }

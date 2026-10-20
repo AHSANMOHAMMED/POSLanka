@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import {
   Radio,
   Pause,
@@ -14,154 +15,118 @@ import {
   CheckCircle2,
   Building,
   Search,
-  ShieldCheck,
   TrendingUp,
+  AlertOctagon,
+  Loader2,
+  Cpu,
 } from 'lucide-react'
 
-type Transaction = {
+type RangeKey = 'today' | '7d' | '30d'
+
+interface LiveReceipt {
   id: string
-  receiptHash: string
-  time: string
-  merchant: string
-  slug: string
-  province: string
-  sector: 'Supermarket' | 'Auto Care' | 'Textiles' | 'Dining' | 'Healthcare'
-  till: string
-  cashier: string
-  itemCount: number
-  paymentMethod: 'LankaQR' | 'VISA' | 'Mastercard' | 'Cash' | 'Koko'
-  ramisStatus: 'Fiscalized' | 'Pending' | 'Exempt'
-  amount: number
+  invoiceNo: string
+  tenantId: string
+  tenantName: string
+  tenantSlug: string
+  businessType: string
+  warehouseName: string | null
+  cashierName: string | null
+  total: number
+  isReturn: boolean
+  paymentMethod: string | null
+  createdAt: string
 }
 
-const INITIAL_TRANSACTIONS: Transaction[] = [
-  {
-    id: 'tx-101',
-    receiptHash: 'REC-CMB-89412',
-    time: '14:52:18',
-    merchant: 'Keells Super - Crescat Boulevard',
-    slug: 'keells-crescat',
-    province: 'Western',
-    sector: 'Supermarket',
-    till: 'POS-04',
-    cashier: 'N. Perera',
-    itemCount: 14,
-    paymentMethod: 'LankaQR',
-    ramisStatus: 'Fiscalized',
-    amount: 14250.0,
-  },
-  {
-    id: 'tx-102',
-    receiptHash: 'REC-KND-39211',
-    time: '14:52:14',
-    merchant: 'Cargills Food City - Kandy City Centre',
-    slug: 'cargills-kcc',
-    province: 'Central',
-    sector: 'Supermarket',
-    till: 'POS-02',
-    cashier: 'M. Bandara',
-    itemCount: 8,
-    paymentMethod: 'VISA',
-    ramisStatus: 'Fiscalized',
-    amount: 8940.0,
-  },
-  {
-    id: 'tx-103',
-    receiptHash: 'REC-GLL-58291',
-    time: '14:52:09',
-    merchant: 'Toyota Lanka Auto Service - Galle',
-    slug: 'toyota-galle',
-    province: 'Southern',
-    sector: 'Auto Care',
-    till: 'POS-01',
-    cashier: 'K. Silva',
-    itemCount: 3,
-    paymentMethod: 'Mastercard',
-    ramisStatus: 'Fiscalized',
-    amount: 84500.0,
-  },
-  {
-    id: 'tx-104',
-    receiptHash: 'REC-CMB-77128',
-    time: '14:52:05',
-    merchant: 'Odel Department Store - Colombo 07',
-    slug: 'odel-alexandra',
-    province: 'Western',
-    sector: 'Textiles',
-    till: 'POS-08',
-    cashier: 'S. Fernando',
-    itemCount: 5,
-    paymentMethod: 'Koko',
-    ramisStatus: 'Fiscalized',
-    amount: 28400.0,
-  },
-  {
-    id: 'tx-105',
-    receiptHash: 'REC-NEG-11942',
-    time: '14:51:58',
-    merchant: 'Perera & Sons Bakery - Negombo',
-    slug: 'p-and-s-negombo',
-    province: 'Western',
-    sector: 'Dining',
-    till: 'POS-03',
-    cashier: 'R. Jayawardena',
-    itemCount: 4,
-    paymentMethod: 'Cash',
-    ramisStatus: 'Fiscalized',
-    amount: 2150.0,
-  },
-  {
-    id: 'tx-106',
-    receiptHash: 'REC-KUR-90214',
-    time: '14:51:51',
-    merchant: 'Asiri Health Pharmacy - Kurunegala',
-    slug: 'asiri-pharmacy',
-    province: 'North Western',
-    sector: 'Healthcare',
-    till: 'POS-01',
-    cashier: 'T. Dissanayake',
-    itemCount: 6,
-    paymentMethod: 'LankaQR',
-    ramisStatus: 'Fiscalized',
-    amount: 6720.0,
-  },
+interface LiveResponse {
+  since: string
+  serverTime: string
+  receipts: LiveReceipt[]
+  hourly: Array<{ hour: string; netSales: number; receipts: number }>
+}
+
+interface SalesAnalytics {
+  totals: { netSales: number; grossSales: number; returns: number; receipts: number; avgBasket: number; voids: number }
+  byDay: Array<{ date: string; netSales: number; receipts: number }>
+  byBusinessType: Array<{ businessType: string; netSales: number; receipts: number }>
+  topVendors: Array<{ tenantId: string; name: string; slug: string; netSales: number; receipts: number }>
+  topBranches: Array<{ tenantId: string; tenantName: string; warehouseId: string | null; warehouseName: string; netSales: number; receipts: number }>
+  openShifts: { count: number; byVendor: Array<{ tenantId: string; name: string; count: number }> }
+}
+
+const LIVE_POLL_MS = 5_000
+const SALES_POLL_MS = 60_000
+const MAX_FEED_ROWS = 200
+const HIGH_VALUE_THRESHOLD = 30_000
+
+const BUSINESS_TYPES: Array<{ id: string; label: string }> = [
+  { id: 'all', label: 'All' },
+  { id: 'supermarket', label: 'Supermarket' },
+  { id: 'retail', label: 'Retail' },
+  { id: 'restaurant', label: 'Restaurant' },
+  { id: 'auto_service', label: 'Auto Service' },
+  { id: 'dealership', label: 'Dealership' },
 ]
 
-const SAMPLE_MERCHANTS = [
-  { name: 'Keells Super - Union Place', slug: 'keells-up', province: 'Western', sector: 'Supermarket' as const },
-  { name: 'Cargills Food City - Katubedda', slug: 'cargills-kat', province: 'Western', sector: 'Supermarket' as const },
-  { name: 'Singer Mega - Kandy', slug: 'singer-kandy', province: 'Central', sector: 'Textiles' as const },
-  { name: 'DIMO Workshop - Matara', slug: 'dimo-matara', province: 'Southern', sector: 'Auto Care' as const },
-  { name: 'Nolimit Fashion - Dehiwala', slug: 'nolimit-deh', province: 'Western', sector: 'Textiles' as const },
-  { name: 'Spicy Lanka Restaurant - Ella', slug: 'spicy-ella', province: 'Uva', sector: 'Dining' as const },
-  { name: 'Hemas MediClinics - Wattala', slug: 'hemas-wat', province: 'Western', sector: 'Healthcare' as const },
-]
+const TYPE_LABEL: Record<string, string> = {
+  supermarket: 'Supermarket',
+  retail: 'Retail',
+  restaurant: 'Restaurant',
+  auto_service: 'Auto Service',
+  dealership: 'Dealership',
+}
+
+const PAYMENT_LABEL: Record<string, string> = {
+  cash: 'Cash',
+  card: 'Card',
+  bank_transfer: 'Bank',
+  credit: 'Credit',
+  gift_card: 'Gift Card',
+}
+
+const BAR_COLORS = ['#6bd8cb', '#4fdbc8', '#29a195', '#04b4a2', '#222a3d']
+
+function fmtMoney(n: number): string {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function fmtCompact(n: number): string {
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return n.toFixed(0)
+}
 
 export default function RealTimeSalesWallPage() {
-  const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS)
+  const [receipts, setReceipts] = useState<LiveReceipt[]>([])
+  const [analytics, setAnalytics] = useState<SalesAnalytics | null>(null)
+  const [range, setRange] = useState<RangeKey>('today')
   const [isFrozen, setIsFrozen] = useState(false)
   const [soundEnabled, setSoundEnabled] = useState(false)
-  const [selectedSector, setSelectedSector] = useState<string>('All')
-  const [selectedProvince, setSelectedProvince] = useState<string>('All')
+  const [selectedType, setSelectedType] = useState<string>('all')
+  const [selectedPayment, setSelectedPayment] = useState<string>('all')
   const [minAmount, setMinAmount] = useState<number>(0)
   const [searchQuery, setSearchQuery] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [lastLiveAt, setLastLiveAt] = useState<Date | null>(null)
+  const [feedLatency, setFeedLatency] = useState<number | null>(null)
 
-  // Running live metrics
-  const [receiptCount, setReceiptCount] = useState(42892)
-  const [totalGmv, setTotalGmv] = useState(149210480.0)
-  const [tpsVelocity, setTpsVelocity] = useState(18.4)
+  const soundRef = useRef(soundEnabled)
+  useEffect(() => {
+    soundRef.current = soundEnabled
+  }, [soundEnabled])
 
-  // Web Audio chime for high-value transactions
   const playChime = useCallback(() => {
-    if (!soundEnabled) return
+    if (!soundRef.current) return
     try {
-      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
+      const AudioContextClass =
+        window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext
       if (!AudioContextClass) return
       const ctx = new AudioContextClass()
       const osc = ctx.createOscillator()
       const gain = ctx.createGain()
       osc.type = 'sine'
-      osc.frequency.setValueAtTime(880, ctx.currentTime) // A5
+      osc.frequency.setValueAtTime(880, ctx.currentTime)
       osc.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.15)
       gain.gain.setValueAtTime(0.15, ctx.currentTime)
       gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.25)
@@ -172,88 +137,148 @@ export default function RealTimeSalesWallPage() {
     } catch {
       // AudioContext not allowed or not supported
     }
-  }, [soundEnabled])
+  }, [])
 
-  // Live incoming transaction stream generator
+  const knownIdsRef = useRef<Set<string> | null>(null)
+
+  const loadLive = useCallback(async () => {
+    const started = performance.now()
+    try {
+      const res = await fetch('/api/sys-control/analytics/live', { cache: 'no-store' })
+      if (res.status === 401) {
+        window.location.href = '/sys-control/login'
+        return
+      }
+      if (!res.ok) throw new Error('Failed to load live feed')
+      const data: LiveResponse = await res.json()
+      setFeedLatency(Math.round(performance.now() - started))
+
+      const incoming = data.receipts || []
+      if (knownIdsRef.current) {
+        const fresh = incoming.filter((r) => !knownIdsRef.current!.has(r.id))
+        if (fresh.some((r) => r.total >= HIGH_VALUE_THRESHOLD)) playChime()
+      }
+      knownIdsRef.current = new Set(incoming.map((r) => r.id))
+
+      setReceipts((prev) => {
+        // Merge: keep rows we've already seen (within window) so the feed never "jumps"
+        const map = new Map<string, LiveReceipt>()
+        for (const r of incoming) map.set(r.id, r)
+        const cutoff = Date.now() - 60 * 60 * 1000
+        for (const r of prev) {
+          if (!map.has(r.id) && Date.parse(r.createdAt) >= cutoff) map.set(r.id, r)
+        }
+        return Array.from(map.values())
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+          .slice(0, MAX_FEED_ROWS)
+      })
+      setLastLiveAt(new Date())
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load live feed')
+    }
+  }, [playChime])
+
+  const loadAnalytics = useCallback(async (r: RangeKey, type: string) => {
+    try {
+      const params = new URLSearchParams({ range: r })
+      if (type !== 'all') params.set('businessType', type)
+      const res = await fetch(`/api/sys-control/analytics/sales?${params.toString()}`, { cache: 'no-store' })
+      if (res.status === 401) {
+        window.location.href = '/sys-control/login'
+        return
+      }
+      if (!res.ok) throw new Error('Failed to load sales analytics')
+      setAnalytics(await res.json())
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load sales analytics')
+    }
+  }, [])
+
+  // Initial load
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([loadLive(), loadAnalytics('today', 'all')]).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Live feed polling (5s) – paused when frozen
   useEffect(() => {
     if (isFrozen) return
+    const id = setInterval(() => {
+      if (!document.hidden) loadLive()
+    }, LIVE_POLL_MS)
+    return () => clearInterval(id)
+  }, [isFrozen, loadLive])
 
-    const interval = setInterval(() => {
-      const now = new Date()
-      const timeStr = now.toTimeString().split(' ')[0]
-      const merchant = SAMPLE_MERCHANTS[Math.floor(Math.random() * SAMPLE_MERCHANTS.length)]
-      const methods: ('LankaQR' | 'VISA' | 'Mastercard' | 'Cash' | 'Koko')[] = [
-        'LankaQR',
-        'VISA',
-        'Mastercard',
-        'Cash',
-        'Koko',
-      ]
-      const method = methods[Math.floor(Math.random() * methods.length)]
-      const amount = Math.floor(Math.random() * 45000) + 1250
+  // Analytics polling (60s) – refetch immediately on range / type change
+  useEffect(() => {
+    loadAnalytics(range, selectedType)
+    const id = setInterval(() => {
+      if (!document.hidden) loadAnalytics(range, selectedType)
+    }, SALES_POLL_MS)
+    return () => clearInterval(id)
+  }, [range, selectedType, loadAnalytics])
 
-      if (amount > 30000) {
-        playChime()
-      }
-
-      const newTx: Transaction = {
-        id: `tx-${Date.now()}`,
-        receiptHash: `REC-${merchant.province.slice(0, 3).toUpperCase()}-${Math.floor(
-          10000 + Math.random() * 90000
-        )}`,
-        time: timeStr,
-        merchant: merchant.name,
-        slug: merchant.slug,
-        province: merchant.province,
-        sector: merchant.sector,
-        till: `POS-0${Math.floor(Math.random() * 6) + 1}`,
-        cashier: 'Cashier ' + (Math.floor(Math.random() * 12) + 1),
-        itemCount: Math.floor(Math.random() * 15) + 1,
-        paymentMethod: method,
-        ramisStatus: 'Fiscalized',
-        amount,
-      }
-
-      setTransactions((prev) => [newTx, ...prev.slice(0, 49)])
-      setReceiptCount((prev) => prev + 1)
-      setTotalGmv((prev) => prev + amount)
-      setTpsVelocity(Number((16 + Math.random() * 6).toFixed(1)))
-    }, 2800)
-
-    return () => clearInterval(interval)
-  }, [isFrozen, playChime])
-
-  // Filtered transactions
-  const filtered = transactions.filter((tx) => {
-    if (selectedSector !== 'All' && tx.sector !== selectedSector) return false
-    if (selectedProvince !== 'All' && tx.province !== selectedProvince) return false
-    if (minAmount > 0 && tx.amount < minAmount) return false
+  // Filtered feed
+  const q = searchQuery.trim().toLowerCase()
+  const filtered = receipts.filter((tx) => {
+    if (selectedType !== 'all' && tx.businessType !== selectedType) return false
+    if (selectedPayment !== 'all' && (tx.paymentMethod || 'unknown') !== selectedPayment) return false
+    if (minAmount > 0 && Math.abs(tx.total) < minAmount) return false
     if (
-      searchQuery &&
-      !tx.merchant.toLowerCase().includes(searchQuery.toLowerCase()) &&
-      !tx.receiptHash.toLowerCase().includes(searchQuery.toLowerCase())
+      q &&
+      !tx.tenantName.toLowerCase().includes(q) &&
+      !tx.invoiceNo.toLowerCase().includes(q) &&
+      !(tx.cashierName || '').toLowerCase().includes(q)
     ) {
       return false
     }
     return true
   })
 
+  // Velocity: receipts in the last 60 minutes (from the live window)
+  const lastHourCount = receipts.filter((r) => !r.isReturn).length
+  const txPerMin = lastHourCount / 60
+  const lastHourNet = receipts.reduce((s, r) => s + r.total, 0)
+
+  const totals = analytics?.totals
+  const typeTotal = (analytics?.byBusinessType || []).reduce((s, t) => s + t.netSales, 0)
+  const rangeLabel = range === 'today' ? 'Today' : range === '7d' ? '7 Days' : '30 Days'
+
+  if (loading) {
+    return (
+      <div className="py-24 text-center text-[#bcc9c6] space-y-3">
+        <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#6bd8cb]" />
+        <div className="font-mono text-xs">Connecting to live sales stream...</div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6 pb-12">
-      {/* Live Telemetry Status Banner (Stitch S3) */}
+      {/* Live Telemetry Status Banner */}
       <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-3 bg-[#131b2e] border border-[#2d3449] rounded-xl shadow-sm">
         <div className="flex items-center gap-3 min-w-0">
           <div className="relative flex items-center justify-center w-3 h-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4fdbc8] opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-[#4fdbc8]"></span>
+            {!isFrozen && (
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4fdbc8] opacity-75"></span>
+            )}
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${isFrozen ? 'bg-[#ff5451]' : 'bg-[#4fdbc8]'}`}></span>
           </div>
           <div className="flex items-center gap-2 truncate">
             <span className="font-mono text-xs text-[#4fdbc8] font-bold uppercase tracking-widest">
-              LIVE BROADCAST STREAM
+              {isFrozen ? 'STREAM FROZEN' : 'LIVE RECEIPT STREAM'}
             </span>
             <span className="text-[#3d4947]">•</span>
             <span className="font-mono text-xs text-[#bcc9c6] truncate">
-              WS://LK-CENTRAL-1.SYS.STREAM
+              LAST SYNC {lastLiveAt ? lastLiveAt.toLocaleTimeString('en-LK', { hour12: false }) : '—'}
             </span>
           </div>
         </div>
@@ -261,12 +286,12 @@ export default function RealTimeSalesWallPage() {
         <div className="flex items-center gap-3">
           <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#222a3d] border border-[#3d4947] text-[#6bd8cb] font-mono text-xs">
             <Zap className="w-3.5 h-3.5 text-[#6bd8cb]" />
-            FEED LATENCY: 14ms
+            FEED LATENCY: {feedLatency !== null ? `${feedLatency}ms` : '—'}
           </span>
 
           <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#171f33] border border-[#2d3449] text-[#4fdbc8] font-mono text-xs">
             <CheckCircle2 className="w-3.5 h-3.5 text-[#4fdbc8]" />
-            SYNCHRONIZED
+            POLL 5s / 60s
           </span>
 
           <button
@@ -306,113 +331,107 @@ export default function RealTimeSalesWallPage() {
         </div>
       </div>
 
-      {/* KPI Ticker Metrics Grid (4 Top Highlights) */}
+      {error && (
+        <div className="p-3 bg-[#93000a]/30 border border-[#ff5451]/50 rounded-xl text-xs text-[#ffdad6] flex items-center gap-2">
+          <AlertOctagon className="w-4 h-4 text-[#ffb4ab]" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* KPI Ticker Metrics Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Total Receipts */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm relative overflow-hidden group hover:border-[#6bd8cb]/50 transition-all">
           <div className="flex items-center justify-between text-xs text-[#879391] mb-1 font-mono uppercase font-semibold">
-            <span>Total Receipts Today</span>
+            <span>Receipts {rangeLabel}</span>
             <Receipt className="w-4 h-4 text-[#6bd8cb]" />
           </div>
           <div className="flex items-baseline gap-2">
             <span className="font-mono text-2xl font-bold text-white tracking-tight">
-              {receiptCount.toLocaleString()}
+              {(totals?.receipts ?? 0).toLocaleString()}
             </span>
-            <span className="font-mono text-xs text-[#4fdbc8] font-semibold">+18.2% vs lw</span>
+            <span className="font-mono text-xs text-[#ff5451] font-semibold">{totals?.voids ?? 0} voids</span>
           </div>
           <div className="flex items-center gap-2 mt-2.5 font-mono text-[10px] text-[#bcc9c6]">
-            <span>SYNC: 100%</span>
-            <span>•</span>
-            <span className="text-[#6bd8cb] font-semibold">ALL TILLS FISCALIZED</span>
+            <span>RETURNS: LKR {fmtCompact(totals?.returns ?? 0)}</span>
           </div>
         </div>
 
-        {/* Live GMV Volume */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm relative overflow-hidden group hover:border-[#4fdbc8]/50 transition-all">
           <div className="flex items-center justify-between text-xs text-[#879391] mb-1 font-mono uppercase font-semibold">
-            <span>Live GMV Volume (LKR)</span>
+            <span>Net Sales {rangeLabel} (LKR)</span>
             <DollarSign className="w-4 h-4 text-[#4fdbc8]" />
           </div>
           <div className="flex items-baseline gap-2">
             <span className="font-mono text-2xl font-bold text-[#4fdbc8] tracking-tight">
-              {totalGmv.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {fmtMoney(totals?.netSales ?? 0)}
             </span>
           </div>
           <div className="flex items-center gap-2 mt-2.5 font-mono text-[10px] text-[#bcc9c6]">
-            <span className="text-[#4fdbc8] font-semibold">LKR 1.84M / MIN</span>
+            <span className="text-[#4fdbc8] font-semibold">GROSS: {fmtCompact(totals?.grossSales ?? 0)}</span>
             <span>•</span>
-            <span>TARGET: 160M EOD</span>
+            <span>LAST 60 MIN: {fmtCompact(lastHourNet)}</span>
           </div>
         </div>
 
-        {/* Throughput Velocity */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm relative overflow-hidden group hover:border-[#6bd8cb]/50 transition-all">
           <div className="flex items-center justify-between text-xs text-[#879391] mb-1 font-mono uppercase font-semibold">
             <span>Throughput Velocity</span>
             <Zap className="w-4 h-4 text-[#6bd8cb]" />
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-2xl font-bold text-white tracking-tight">
-              {tpsVelocity}
-            </span>
-            <span className="font-mono text-sm text-[#6bd8cb] font-semibold">tx / sec</span>
+            <span className="font-mono text-2xl font-bold text-white tracking-tight">{txPerMin.toFixed(2)}</span>
+            <span className="font-mono text-sm text-[#6bd8cb] font-semibold">tx / min</span>
           </div>
           <div className="flex items-center gap-2 mt-2.5 font-mono text-[10px] text-[#bcc9c6]">
-            <span>PEAK TODAY: 29.8 tx/s</span>
-            <span>•</span>
-            <span className="text-[#4fdbc8]">BURST: 120 tx/s</span>
+            <span>{lastHourCount} RECEIPTS IN LAST 60 MIN</span>
           </div>
         </div>
 
-        {/* Average Basket Size */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm relative overflow-hidden group hover:border-[#4fdbc8]/50 transition-all">
           <div className="flex items-center justify-between text-xs text-[#879391] mb-1 font-mono uppercase font-semibold">
-            <span>Average Basket Size</span>
+            <span>Average Basket</span>
             <ShoppingBag className="w-4 h-4 text-[#4fdbc8]" />
           </div>
           <div className="flex items-baseline gap-2">
             <span className="font-mono text-2xl font-bold text-white tracking-tight">
-              LKR 3,478.00
+              LKR {fmtMoney(totals?.avgBasket ?? 0)}
             </span>
           </div>
           <div className="flex items-center gap-2 mt-2.5 font-mono text-[10px] text-[#bcc9c6]">
-            <span className="text-[#4fdbc8] font-semibold">+4.2%</span>
-            <span>•</span>
-            <span>SUPERMARKET AVG: 4,120</span>
+            <Cpu className="w-3 h-3 text-[#4fdbc8]" />
+            <span className="text-[#4fdbc8] font-semibold">{analytics?.openShifts.count ?? 0} OPEN SHIFTS</span>
           </div>
         </div>
       </div>
 
-      {/* Real-time Filter & Configuration Strip */}
+      {/* Filter Strip */}
       <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          {/* Sector Buttons */}
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-mono text-[10px] text-[#879391] uppercase tracking-wider font-semibold mr-1">
               SECTOR:
             </span>
-            {['All', 'Supermarket', 'Auto Care', 'Textiles', 'Dining', 'Healthcare'].map((sector) => (
+            {BUSINESS_TYPES.map((t) => (
               <button
-                key={sector}
+                key={t.id}
                 type="button"
-                onClick={() => setSelectedSector(sector)}
+                onClick={() => setSelectedType(t.id)}
                 className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                  selectedSector === sector
+                  selectedType === t.id
                     ? 'bg-[#29a195] text-[#00302b]'
                     : 'bg-[#171f33] text-[#bcc9c6] hover:bg-[#222a3d] hover:text-white border border-[#2d3449]'
                 }`}
               >
-                {sector}
+                {t.label}
               </button>
             ))}
           </div>
 
-          {/* Quick Search */}
           <div className="relative min-w-[220px]">
             <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-[#879391]" />
             <input
               type="text"
-              placeholder="Search merchant, receipt..."
+              placeholder="Search vendor, invoice, cashier..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-8 pr-3 py-1.5 bg-[#060e20] border border-[#2d3449] rounded-lg text-white font-mono text-xs placeholder:text-[#879391] focus:border-[#6bd8cb] outline-none"
@@ -421,31 +440,43 @@ export default function RealTimeSalesWallPage() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#2d3449]/40 text-xs">
-          {/* Province Filter */}
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] text-[#879391] uppercase font-semibold">
-              PROVINCE:
-            </span>
-            <select
-              value={selectedProvince}
-              onChange={(e) => setSelectedProvince(e.target.value)}
-              className="bg-[#060e20] border border-[#2d3449] text-white text-xs rounded-lg px-2.5 py-1 outline-none font-mono"
-            >
-              <option value="All">All Sri Lanka</option>
-              <option value="Western">Western Province (Colombo, Gampaha)</option>
-              <option value="Central">Central Province (Kandy, Matale)</option>
-              <option value="Southern">Southern Province (Galle, Matara)</option>
-              <option value="North Western">North Western (Kurunegala)</option>
-              <option value="Eastern">Eastern Province (Trincomalee)</option>
-              <option value="Uva">Uva Province (Badulla, Ella)</option>
-            </select>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[10px] text-[#879391] uppercase font-semibold">RANGE:</span>
+              <div className="flex items-center gap-1 bg-[#060e20] p-0.5 rounded-lg font-mono text-[11px]">
+                {(['today', '7d', '30d'] as RangeKey[]).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setRange(r)}
+                    className={`px-2 py-0.5 rounded ${
+                      range === r ? 'bg-[#6bd8cb] text-[#003732] font-bold' : 'text-[#bcc9c6] hover:text-white'
+                    }`}
+                  >
+                    {r === 'today' ? 'Today' : r.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[10px] text-[#879391] uppercase font-semibold">PAYMENT:</span>
+              <select
+                value={selectedPayment}
+                onChange={(e) => setSelectedPayment(e.target.value)}
+                className="bg-[#060e20] border border-[#2d3449] text-white text-xs rounded-lg px-2.5 py-1 outline-none font-mono"
+              >
+                <option value="all">All methods</option>
+                <option value="cash">Cash</option>
+                <option value="card">Card</option>
+                <option value="bank_transfer">Bank Transfer</option>
+                <option value="credit">Credit</option>
+                <option value="gift_card">Gift Card</option>
+              </select>
+            </div>
           </div>
 
-          {/* Min Amount Threshold */}
           <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] text-[#879391] uppercase font-semibold">
-              MIN AMOUNT:
-            </span>
+            <span className="font-mono text-[10px] text-[#879391] uppercase font-semibold">MIN AMOUNT:</span>
             {[
               { label: 'All', value: 0 },
               { label: '> 5K', value: 5000 },
@@ -457,9 +488,7 @@ export default function RealTimeSalesWallPage() {
                 type="button"
                 onClick={() => setMinAmount(th.value)}
                 className={`px-2 py-0.5 rounded font-mono text-[11px] font-semibold transition-colors ${
-                  minAmount === th.value
-                    ? 'bg-[#6bd8cb] text-[#003732]'
-                    : 'bg-[#171f33] text-[#bcc9c6] hover:bg-[#222a3d]'
+                  minAmount === th.value ? 'bg-[#6bd8cb] text-[#003732]' : 'bg-[#171f33] text-[#bcc9c6] hover:bg-[#222a3d]'
                 }`}
               >
                 {th.label}
@@ -469,196 +498,184 @@ export default function RealTimeSalesWallPage() {
         </div>
       </div>
 
-      {/* Main Grid: Streaming Transactions Feed (Left) & Regional Heatmap / Leaderboard (Right) */}
+      {/* Main Grid */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        {/* Left: Live Retail Transactions Feed (8 cols) */}
+        {/* Left: Live Transactions Feed */}
         <div className="xl:col-span-8 bg-[#131b2e] border border-[#2d3449] rounded-xl shadow-md overflow-hidden flex flex-col">
           <div className="p-4 border-b border-[#2d3449] flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Radio className="w-4 h-4 text-[#4fdbc8] animate-pulse" />
-              <h3 className="font-bold text-base text-white">Live Retail Transaction Stream</h3>
+              <Radio className={`w-4 h-4 text-[#4fdbc8] ${isFrozen ? '' : 'animate-pulse'}`} />
+              <h3 className="font-bold text-base text-white">Live Receipt Stream (last 60 min)</h3>
               <span className="font-mono text-[11px] bg-[#060e20] text-[#6bd8cb] px-2 py-0.5 rounded font-bold">
-                {filtered.length} active rows
+                {filtered.length} rows
               </span>
             </div>
-            <div className="font-mono text-xs text-[#879391]">
-              Live updates every ~3s
-            </div>
+            <div className="font-mono text-xs text-[#879391]">Updates every 5s</div>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[720px] overflow-y-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-[#060e20] text-[#879391] font-mono text-[10px] uppercase border-b border-[#2d3449]">
+              <thead className="bg-[#060e20] text-[#879391] font-mono text-[10px] uppercase border-b border-[#2d3449] sticky top-0">
                 <tr>
                   <th className="px-4 py-3">Time</th>
-                  <th className="px-4 py-3">Receipt / Hash</th>
-                  <th className="px-4 py-3">Merchant / Outlet</th>
-                  <th className="px-3 py-3">Till</th>
-                  <th className="px-3 py-3">Items</th>
+                  <th className="px-4 py-3">Invoice</th>
+                  <th className="px-4 py-3">Vendor / Outlet</th>
+                  <th className="px-3 py-3">Cashier</th>
                   <th className="px-3 py-3">Payment</th>
-                  <th className="px-3 py-3">RAMIS</th>
+                  <th className="px-3 py-3">Type</th>
                   <th className="px-4 py-3 text-right">Amount (LKR)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#2d3449]/40 font-mono text-xs">
-                {filtered.map((tx) => (
-                  <tr
-                    key={tx.id}
-                    className="hover:bg-[#171f33] transition-colors group animate-fade-in"
-                  >
-                    <td className="px-4 py-3 text-[#bcc9c6] whitespace-nowrap">{tx.time}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className="text-[#4fdbc8] font-bold group-hover:underline">
-                        {tx.receiptHash}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <div className="font-sans font-semibold text-white truncate max-w-[200px]">
-                        {tx.merchant}
-                      </div>
-                      <div className="text-[10px] text-[#879391]">
-                        {tx.province} • {tx.sector}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3 text-[#bcc9c6] whitespace-nowrap">{tx.till}</td>
-                    <td className="px-3 py-3 text-white whitespace-nowrap">{tx.itemCount}</td>
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                          tx.paymentMethod === 'LankaQR'
-                            ? 'bg-[#29a195]/20 text-[#6bd8cb] border border-[#29a195]/40'
-                            : tx.paymentMethod === 'VISA' || tx.paymentMethod === 'Mastercard'
-                            ? 'bg-[#04b4a2]/20 text-[#4fdbc8] border border-[#04b4a2]/40'
-                            : tx.paymentMethod === 'Koko'
-                            ? 'bg-[#ff5451]/20 text-[#ffb4ab] border border-[#ff5451]/40'
-                            : 'bg-[#222a3d] text-[#bcc9c6]'
-                        }`}
-                      >
-                        {tx.paymentMethod}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 whitespace-nowrap">
-                      <span className="inline-flex items-center gap-1 text-[10px] text-[#4fdbc8] font-semibold">
-                        <ShieldCheck className="w-3 h-3 text-[#4fdbc8]" />
-                        {tx.ramisStatus}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right whitespace-nowrap font-bold">
-                      <span
-                        className={
-                          tx.amount > 25000
-                            ? 'text-[#6bd8cb] text-sm'
-                            : 'text-white'
-                        }
-                      >
-                        {tx.amount.toLocaleString('en-US', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}
-                      </span>
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-12 text-center text-[#879391]">
+                      No receipts in the last 60 minutes matching the current filters.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  filtered.map((tx) => (
+                    <tr key={tx.id} className="hover:bg-[#171f33] transition-colors group">
+                      <td className="px-4 py-3 text-[#bcc9c6] whitespace-nowrap">
+                        {new Date(tx.createdAt).toLocaleTimeString('en-LK', { hour12: false })}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className="text-[#4fdbc8] font-bold">{tx.invoiceNo}</span>
+                        {tx.isReturn && (
+                          <span className="ml-1.5 px-1.5 py-0.5 rounded bg-[#ff5451]/20 text-[#ffb4ab] text-[9px] font-bold">
+                            RETURN
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <Link
+                          href={`/sys-control/vendors/${tx.tenantId}`}
+                          className="font-sans font-semibold text-white truncate max-w-[200px] block hover:text-[#6bd8cb] hover:underline"
+                        >
+                          {tx.tenantName}
+                        </Link>
+                        <div className="text-[10px] text-[#879391]">
+                          {tx.tenantSlug}
+                          {tx.warehouseName ? ` • ${tx.warehouseName}` : ''}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-[#bcc9c6] whitespace-nowrap">{tx.cashierName || '—'}</td>
+                      <td className="px-3 py-3 whitespace-nowrap">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
+                            tx.paymentMethod === 'card'
+                              ? 'bg-[#04b4a2]/20 text-[#4fdbc8] border border-[#04b4a2]/40'
+                              : tx.paymentMethod === 'bank_transfer'
+                                ? 'bg-[#29a195]/20 text-[#6bd8cb] border border-[#29a195]/40'
+                                : tx.paymentMethod === 'credit'
+                                  ? 'bg-[#ff5451]/20 text-[#ffb4ab] border border-[#ff5451]/40'
+                                  : 'bg-[#222a3d] text-[#bcc9c6]'
+                          }`}
+                        >
+                          {tx.paymentMethod ? PAYMENT_LABEL[tx.paymentMethod] || tx.paymentMethod : '—'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 whitespace-nowrap text-[10px] text-[#bcc9c6]">
+                        {TYPE_LABEL[tx.businessType] || tx.businessType}
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap font-bold">
+                        <span
+                          className={
+                            tx.total < 0 ? 'text-[#ffb4ab]' : tx.total > 25000 ? 'text-[#6bd8cb] text-sm' : 'text-white'
+                          }
+                        >
+                          {fmtMoney(tx.total)}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
         </div>
 
-        {/* Right: Regional Throughput Heatmap & Leaderboard (4 cols) */}
+        {/* Right: Sector mix & Leaderboard */}
         <div className="xl:col-span-4 space-y-6">
-          {/* Provincial Heatmap Distribution */}
           <div className="bg-[#131b2e] border border-[#2d3449] p-5 rounded-xl shadow-md space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-[#2d3449]/50">
               <h4 className="font-bold text-sm text-white flex items-center gap-2">
                 <Building className="w-4 h-4 text-[#6bd8cb]" />
-                Provincial Load Distribution
+                Sales by Business Type
               </h4>
-              <span className="font-mono text-[10px] text-[#4fdbc8] font-bold">9 PROVINCES</span>
+              <span className="font-mono text-[10px] text-[#4fdbc8] font-bold uppercase">{rangeLabel}</span>
             </div>
 
             <div className="space-y-3 font-mono text-xs">
-              <div>
-                <div className="flex justify-between text-[#bcc9c6] mb-1">
-                  <span>Western Province (Colombo/Gampaha)</span>
-                  <span className="text-white font-bold">54%</span>
-                </div>
-                <div className="w-full bg-[#060e20] h-2 rounded-full overflow-hidden">
-                  <div className="bg-[#6bd8cb] h-full" style={{ width: '54%' }}></div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-[#bcc9c6] mb-1">
-                  <span>Central Province (Kandy)</span>
-                  <span className="text-white font-bold">18%</span>
-                </div>
-                <div className="w-full bg-[#060e20] h-2 rounded-full overflow-hidden">
-                  <div className="bg-[#4fdbc8] h-full" style={{ width: '18%' }}></div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-[#bcc9c6] mb-1">
-                  <span>Southern Province (Galle/Matara)</span>
-                  <span className="text-white font-bold">14%</span>
-                </div>
-                <div className="w-full bg-[#060e20] h-2 rounded-full overflow-hidden">
-                  <div className="bg-[#29a195] h-full" style={{ width: '14%' }}></div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-[#bcc9c6] mb-1">
-                  <span>North Western (Kurunegala)</span>
-                  <span className="text-white font-bold">8%</span>
-                </div>
-                <div className="w-full bg-[#060e20] h-2 rounded-full overflow-hidden">
-                  <div className="bg-[#04b4a2] h-full" style={{ width: '8%' }}></div>
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between text-[#bcc9c6] mb-1">
-                  <span>Eastern &amp; Other Provinces</span>
-                  <span className="text-white font-bold">6%</span>
-                </div>
-                <div className="w-full bg-[#060e20] h-2 rounded-full overflow-hidden">
-                  <div className="bg-[#222a3d] h-full" style={{ width: '6%' }}></div>
-                </div>
-              </div>
+              {(analytics?.byBusinessType || []).length === 0 && (
+                <div className="text-[#879391] text-center py-4">No sales in this range</div>
+              )}
+              {(analytics?.byBusinessType || []).map((t, i) => {
+                const pct = typeTotal > 0 ? Math.round((t.netSales / typeTotal) * 100) : 0
+                return (
+                  <div key={t.businessType}>
+                    <div className="flex justify-between text-[#bcc9c6] mb-1">
+                      <span>
+                        {TYPE_LABEL[t.businessType] || t.businessType} • {t.receipts} receipts
+                      </span>
+                      <span className="text-white font-bold">{pct}%</span>
+                    </div>
+                    <div className="w-full bg-[#060e20] h-2 rounded-full overflow-hidden">
+                      <div className="h-full" style={{ width: `${pct}%`, backgroundColor: BAR_COLORS[i % BAR_COLORS.length] }}></div>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
 
-          {/* Top Merchant Tills Leaderboard */}
           <div className="bg-[#131b2e] border border-[#2d3449] p-5 rounded-xl shadow-md space-y-4">
             <div className="flex items-center justify-between pb-2 border-b border-[#2d3449]/50">
               <h4 className="font-bold text-sm text-white flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-[#4fdbc8]" />
-                Top Velocity Tills Today
+                Top Branches {rangeLabel}
               </h4>
-              <span className="font-mono text-[10px] text-[#bcc9c6]">SLST 14:00-15:00</span>
+              <span className="font-mono text-[10px] text-[#bcc9c6]">NET SALES</span>
             </div>
 
             <div className="space-y-3">
-              {[
-                { name: 'Keells Super - Crescat', till: 'POS-04', gmv: 'LKR 4,892,100', receipts: 482 },
-                { name: 'Cargills Food City - KCC', till: 'POS-02', gmv: 'LKR 3,421,900', receipts: 394 },
-                { name: 'Toyota Lanka - Galle', till: 'POS-01', gmv: 'LKR 2,980,400', receipts: 38 },
-                { name: 'Odel - Colombo 07', till: 'POS-08', gmv: 'LKR 2,640,000', receipts: 142 },
-              ].map((leader, idx) => (
-                <div
-                  key={idx}
-                  className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between"
+              {(analytics?.topBranches || []).length === 0 && (
+                <div className="text-[#879391] text-center py-4 font-mono text-xs">No sales in this range</div>
+              )}
+              {(analytics?.topBranches || []).slice(0, 6).map((b, idx) => (
+                <Link
+                  key={`${b.tenantId}-${b.warehouseId ?? idx}`}
+                  href={`/sys-control/vendors/${b.tenantId}`}
+                  className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between hover:border-[#6bd8cb]/40 transition-colors"
                 >
-                  <div>
-                    <div className="text-xs font-semibold text-white">{leader.name}</div>
-                    <div className="font-mono text-[10px] text-[#879391]">
-                      Till: {leader.till} • {leader.receipts} receipts
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-white truncate">{b.tenantName}</div>
+                    <div className="font-mono text-[10px] text-[#879391] truncate">
+                      {b.warehouseName} • {b.receipts} receipts
                     </div>
                   </div>
-                  <div className="font-mono text-xs text-[#6bd8cb] font-bold">
-                    {leader.gmv}
-                  </div>
+                  <div className="font-mono text-xs text-[#6bd8cb] font-bold shrink-0">LKR {fmtCompact(b.netSales)}</div>
+                </Link>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-[#131b2e] border border-[#2d3449] p-5 rounded-xl shadow-md space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-[#2d3449]/50">
+              <h4 className="font-bold text-sm text-white flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-[#6bd8cb]" />
+                Open Shifts by Vendor
+              </h4>
+              <span className="font-mono text-[10px] text-[#4fdbc8] font-bold">{analytics?.openShifts.count ?? 0} OPEN</span>
+            </div>
+            <div className="space-y-1.5 font-mono text-[11px]">
+              {(analytics?.openShifts.byVendor || []).length === 0 && (
+                <div className="text-[#879391] text-center py-3">No open shifts</div>
+              )}
+              {(analytics?.openShifts.byVendor || []).slice(0, 8).map((v) => (
+                <div key={v.tenantId} className="flex justify-between text-[#bcc9c6]">
+                  <span className="truncate">{v.name}</span>
+                  <span className="text-white font-bold">{v.count}</span>
                 </div>
               ))}
             </div>

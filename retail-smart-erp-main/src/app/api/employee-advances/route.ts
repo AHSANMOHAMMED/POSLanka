@@ -6,6 +6,7 @@ import { employeeAdvances, employeeProfiles } from '@/lib/db/schema'
 import { eq, and, sql, ilike } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { sendPushToPermission } from '@/lib/notifications/push'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
@@ -127,6 +128,11 @@ export async function POST(request: NextRequest) {
       })
 
       logAndBroadcast(session.user.tenantId, 'employee-advance', 'created', advance.id)
+      void sendPushToPermission(session.user.tenantId, 'approveAdvances', {
+        title: 'Employee advance request',
+        body: 'A new salary advance request needs your approval',
+        data: { screen: 'approvals', type: 'employee_advance', id: advance.id },
+      }, session.user.id)
 
       return NextResponse.json(advance)
     })

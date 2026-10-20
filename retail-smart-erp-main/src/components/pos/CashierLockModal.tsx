@@ -59,8 +59,8 @@ export function CashierLockModal({
       } else {
         setError('Incorrect PIN. Please re-enter.')
       }
-    } catch {
-      setError('Error verifying PIN')
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Error verifying PIN')
     } finally {
       setIsUnlocking(false)
     }

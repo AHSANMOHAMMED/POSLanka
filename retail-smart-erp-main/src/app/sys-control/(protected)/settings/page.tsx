@@ -1,5 +1,7 @@
 'use client'
 
+import { TwoFactorCard } from '@/components/admin/TwoFactorCard'
+
 import { useState, useEffect, useCallback } from 'react'
 import {
   Loader2, Save, CreditCard, Bell, Settings, Zap, Lock, Percent,
@@ -481,6 +483,8 @@ export default function SettingsPage() {
       {/* ==================== TAB 1: GENERAL ==================== */}
       {activeTab === 'general' && (
         <div className="space-y-8">
+          <TwoFactorCard cardClass={CARD_CLASS} />
+
           {/* System Announcement */}
           <div className={CARD_CLASS}>
             <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">

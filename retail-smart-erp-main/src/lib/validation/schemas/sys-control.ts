@@ -5,6 +5,7 @@ import { emailSchema, shortTextSchema, uuidSchema } from './common'
 
 // POST /api/sys-control/auth/login
 export const sysLoginSchema = z.object({
+  totpCode: z.string().regex(/^\d{6}$/).optional(),
   email: emailSchema,
   password: z.string().min(1, 'Password is required'),
 })

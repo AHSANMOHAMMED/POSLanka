@@ -56,15 +56,16 @@ export const createSaleSchema = z.object({
   paymentMethod: paymentMethodSchema.optional(),
   /** Split tender at POS — when present, overrides single paymentMethod for payment rows */
   paymentSplits: z.array(paymentSplitSchema).max(10).optional(),
-  subtotal: z.coerce.number().min(0),
+  /** Negative for returns (cart lines carry negative quantities); must be >= 0 for sales — enforced below */
+  subtotal: z.coerce.number(),
   discount: z.coerce.number().min(0).default(0),
   discountType: discountTypeSchema.optional(),
   discountReason: z.string().max(500).optional(),
-  tax: z.coerce.number().min(0).default(0),
+  tax: z.coerce.number().default(0),
   taxRate: z.coerce.number().min(0).optional(),
   taxInclusive: z.boolean().optional(),
   taxBreakdown: z.array(taxBreakdownItemSchema).optional(),
-  total: z.coerce.number().min(0),
+  total: z.coerce.number(),
   amountPaid: z.coerce.number().min(0).optional(),
   creditAmount: z.coerce.number().min(0).default(0),
   addOverpaymentToCredit: z.boolean().optional(),
@@ -82,6 +83,12 @@ export const createSaleSchema = z.object({
   giftCardId: optionalUuid,
   /** Offline sync idempotency key */
   clientSaleId: z.string().uuid().optional(),
+}).superRefine((data, ctx) => {
+  if (!data.isReturn) {
+    if (data.subtotal < 0) ctx.addIssue({ code: 'custom', path: ['subtotal'], message: 'Subtotal cannot be negative' })
+    if (data.tax < 0) ctx.addIssue({ code: 'custom', path: ['tax'], message: 'Tax cannot be negative' })
+    if (data.total < 0) ctx.addIssue({ code: 'custom', path: ['total'], message: 'Total cannot be negative' })
+  }
 })
 
 // ==================== SALES ORDERS ====================

@@ -44,6 +44,7 @@ const eslintConfig = defineConfig([
     "dark-mode-scan.js",
     "scripts/**",
     "update-drizzle-migrations.js",
+    "rebuild-migration-table.js",
     "fix-migration-numbers.js",
     "create-first-company.ts",
     "stress-tests/**",

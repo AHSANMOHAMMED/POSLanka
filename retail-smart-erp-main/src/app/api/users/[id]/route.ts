@@ -76,7 +76,7 @@ export async function PUT(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, updateUserSchema)
     if (!parsed.success) return parsed.response
-    const { fullName, email, role, isActive, password, expectedUpdatedAt } = parsed.data
+    const { fullName, email, role, isActive, password, pin, expectedUpdatedAt } = parsed.data
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -146,6 +146,11 @@ export async function PUT(
             throw new Error('INVALID_PASSWORD')
           }
           updateData.passwordHash = await bcrypt.hash(password, 12)
+        }
+
+        // POS PIN: hash on save, empty string clears
+        if (pin !== undefined) {
+          updateData.pinHash = pin === '' ? null : await bcrypt.hash(pin, 10)
         }
 
         // Update user

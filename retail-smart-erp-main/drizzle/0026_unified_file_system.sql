@@ -1,3 +1,17 @@
+-- POSLanka: the application role must exist before GRANT/POLICY statements below.
+-- Guarded so it is a no-op on databases where the role already exists or the
+-- migration user lacks CREATEROLE (then DATABASE_APP_ROLE must be provisioned manually).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
+    BEGIN
+      CREATE ROLE app_user NOLOGIN;
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE NOTICE 'app_user role not created (insufficient privilege)';
+    END;
+  END IF;
+END $$;
+--> statement-breakpoint
 -- Migration: Unified File System (ERPNext-Inspired)
 -- Replaces 3 separate attachment systems with a single files table
 

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { X, Percent, DollarSign, Trash2 } from 'lucide-react'
 import { useCurrency } from '@/hooks/useCurrency'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface DiscountModalProps {
   isOpen: boolean
@@ -13,6 +14,8 @@ interface DiscountModalProps {
   subtotal: number
   maxDiscountPercent: number
   allowDiscount: boolean
+  /** When provided, discounts above maxDiscountPercent ask a supervisor instead of being blocked */
+  onRequestOverride?: (discount: { type: 'percentage' | 'fixed'; value: number; reason: string }) => void
 }
 
 export function DiscountModal({
@@ -24,6 +27,7 @@ export function DiscountModal({
   subtotal,
   maxDiscountPercent,
   allowDiscount,
+  onRequestOverride,
 }: DiscountModalProps) {
   const { currency: currencyCode } = useCurrency()
   const [type, setType] = useState<'percentage' | 'fixed'>(currentDiscount.type)
@@ -40,6 +44,8 @@ export function DiscountModal({
       setError('')
     }
   }, [isOpen, currentDiscount])
+
+  useEscapeKey(isOpen, onClose)
 
   if (!isOpen) return null
 
@@ -81,8 +87,20 @@ export function DiscountModal({
     return true
   }
 
+  function exceedsLimit(): boolean {
+    if (numericValue <= 0 || !reason.trim()) return false
+    if (type === 'percentage') return numericValue > maxDiscountPercent && numericValue <= 100
+    if (subtotal <= 0 || numericValue > subtotal) return false
+    return (numericValue / subtotal) * 100 > maxDiscountPercent
+  }
+
   function handleApply() {
     setError('')
+    if (onRequestOverride && exceedsLimit()) {
+      onRequestOverride({ type, value: numericValue, reason: reason.trim() })
+      onClose()
+      return
+    }
     if (!validate()) return
     onApply({ type, value: numericValue, reason: reason.trim() })
     onClose()

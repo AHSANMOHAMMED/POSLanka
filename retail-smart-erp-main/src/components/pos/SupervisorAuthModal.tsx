@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { ShieldCheck, X, AlertTriangle, Lock, CheckCircle2 } from 'lucide-react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface SupervisorAuthModalProps {
   isOpen: boolean
@@ -31,6 +32,8 @@ export function SupervisorAuthModal({
   const [reason, setReason] = useState('Customer Goodwill / Manager Discretion')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEscapeKey(isOpen, onClose)
 
   if (!isOpen) return null
 

@@ -1,0 +1,18 @@
+{
+  "name": "poslanka-print-agent",
+  "version": "1.0.0",
+  "description": "Local HTTP bridge that forwards raw ESC/POS bytes from the POSLanka web POS to network, shared or serial receipt printers.",
+  "type": "module",
+  "private": true,
+  "main": "index.mjs",
+  "bin": {
+    "poslanka-print-agent": "./index.mjs"
+  },
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

@@ -3,6 +3,7 @@
 import { CheckCircle, Printer } from 'lucide-react'
 import { useTerminology } from '@/hooks/useTerminology'
 import { useCurrency } from '@/hooks/useCurrency'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface SaleSuccessModalProps {
   lastSale: { invoiceNo: string; total: number; isReturn: boolean } | null
@@ -15,6 +16,8 @@ interface SaleSuccessModalProps {
 export function SaleSuccessModal({ lastSale, lastSaleId, onDismiss, onPrintReceipt }: SaleSuccessModalProps) {
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()
+  useEscapeKey(!!lastSale, onDismiss, onDismiss)
+
   if (!lastSale) return null
 
   return (

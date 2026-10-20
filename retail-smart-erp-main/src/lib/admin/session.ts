@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { adminSessions, superAdmins } from '@/lib/db/schema'
-import { and, eq, gte, lt } from 'drizzle-orm'
+import { and, eq, gte, lt, like, notLike } from 'drizzle-orm'
 import { headers, cookies } from 'next/headers'
 import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'
@@ -20,20 +20,25 @@ interface AdminSession {
 /**
  * Create a new admin session for a super admin
  */
-export async function createAdminSession(superAdminId: string): Promise<string> {
+export async function createAdminSession(superAdminId: string, options: { setCookie?: boolean } = {}): Promise<string> {
   const headersList = await headers()
   const forwardedFor = headersList.get('x-forwarded-for')
   const realIp = headersList.get('x-real-ip')
   const ipAddress = forwardedFor?.split(',')[0]?.trim() || realIp || 'unknown'
   const userAgent = headersList.get('user-agent') || undefined
 
-  const sessionToken = randomBytes(32).toString('hex')
+  const sessionToken = (options.setCookie === false ? 'sa_' : '') + randomBytes(32).toString('hex')
   const now = new Date()
   const expiresAt = new Date(now.getTime() + SESSION_TIMEOUT_MS)
 
-  // Invalidate any existing sessions for this super admin
+  // Invalidate existing sessions for this super admin on the SAME channel only:
+  // a mobile (bearer, `sa_` prefix) login must not log out the web console and vice versa.
+  const isBearer = options.setCookie === false
   await db.delete(adminSessions)
-    .where(eq(adminSessions.superAdminId, superAdminId))
+    .where(and(
+      eq(adminSessions.superAdminId, superAdminId),
+      isBearer ? like(adminSessions.sessionToken, 'sa\\_%') : notLike(adminSessions.sessionToken, 'sa\\_%'),
+    ))
 
   // Create new session
   await db.insert(adminSessions).values({
@@ -45,7 +50,8 @@ export async function createAdminSession(superAdminId: string): Promise<string> 
     expiresAt,
   })
 
-  // Set cookie
+  // Set cookie (skipped for bearer/mobile sessions)
+  if (options.setCookie === false) return sessionToken
   const cookieStore = await cookies()
   cookieStore.set(SESSION_COOKIE_NAME, sessionToken, {
     httpOnly: true,
@@ -63,9 +69,23 @@ export async function createAdminSession(superAdminId: string): Promise<string> 
  * Returns the session if valid, null if invalid/expired
  * Does NOT refresh the cookie - use validateAdminSessionWithRefresh for Route Handlers
  */
-export async function validateAdminSession(): Promise<AdminSession | null> {
+/** Session token from the admin cookie, or `Authorization: Bearer <token>` (mobile companion app). */
+async function readAdminToken(): Promise<string | undefined> {
   const cookieStore = await cookies()
-  const sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  const fromCookie = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  if (fromCookie) return fromCookie
+  try {
+    const h = await headers()
+    const auth = h.get('authorization')
+    if (auth?.startsWith('Bearer sa_')) return auth.slice(7)
+  } catch {
+    // headers() unavailable outside a request
+  }
+  return undefined
+}
+
+export async function validateAdminSession(): Promise<AdminSession | null> {
+  const sessionToken = await readAdminToken()
 
   if (!sessionToken) {
     return null
@@ -101,7 +121,7 @@ export async function validateAdminSession(): Promise<AdminSession | null> {
  */
 export async function validateAdminSessionWithRefresh(): Promise<AdminSession | null> {
   const cookieStore = await cookies()
-  const sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
+  const sessionToken = await readAdminToken()
 
   if (!sessionToken) {
     return null

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, use } from 'react'
+import { useState, useEffect, use, useCallback } from 'react'
 import Link from 'next/link'
 import {
   Store,
@@ -11,11 +11,12 @@ import {
   CheckCircle2,
   Zap,
   Globe,
-  HardDrive,
   Cpu,
   ArrowLeft,
-  Key,
   TrendingUp,
+  Users,
+  AlertOctagon,
+  Receipt,
 } from 'lucide-react'
 import {
   FEATURE_FLAGS,
@@ -27,7 +28,9 @@ import {
 interface VendorBranch {
   id: string
   name: string
+  code?: string | null
   address?: string | null
+  isDefault?: boolean
   isActive?: boolean
 }
 
@@ -35,7 +38,20 @@ interface VendorCounter {
   id: string
   name: string
   code?: string | null
-  isActive?: boolean
+  status?: string
+  warehouseId?: string | null
+}
+
+interface VendorSubscription {
+  status: string
+  currentPeriodStart?: string | null
+  currentPeriodEnd?: string | null
+  trialEndsAt?: string | null
+  billingCycle?: string | null
+  lastPaymentAt?: string | null
+  subscribedPriceMonthly?: string | null
+  subscribedPriceYearly?: string | null
+  tier?: { id: string; name: string; priceMonthly?: string | null; priceYearly?: string | null } | null
 }
 
 interface VendorData {
@@ -49,15 +65,64 @@ interface VendorData {
   status: string
   plan?: string | null
   currency: string
+  country?: string
+  createdAt?: string
+  setupCompletedAt?: string | null
   userCount?: number
   branches?: VendorBranch[]
   counters?: VendorCounter[]
   featureFlags?: FeatureFlagsMap
   settings?: Record<string, unknown> | null
+  subscription?: VendorSubscription | null
+}
+
+interface RangeTotals {
+  netSales: number
+  grossSales: number
+  returns: number
+  receipts: number
+  avgBasket: number
+}
+
+interface VendorAnalytics {
+  totals: { today: RangeTotals; '7d': RangeTotals; '30d': RangeTotals }
+  byBranch: Array<{ warehouseId: string | null; name: string; netSales: number; receipts: number }>
+  byCounter: Array<{ posProfileId: string | null; name: string; netSales: number; receipts: number }>
+  byCashier: Array<{ userId: string | null; name: string; netSales: number; receipts: number; variance: number }>
+  openShifts: Array<{ id: string; entryNumber: string; cashierName: string; counterName: string; warehouseName: string; openingTime: string }>
+}
+
+interface AuditLogRow {
+  id: string
+  action: string
+  resource: string
+  resourceId: string | null
+  details: Record<string, unknown> | null
+  ipAddress: string | null
+  createdAt: string
+  account?: { email: string; fullName: string } | null
 }
 
 interface Vendor360Props {
   params: Promise<{ id: string }>
+}
+
+type TabId = 'sales' | 'branches' | 'flags' | 'billing' | 'audit'
+
+function fmtMoney(n: number): string {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+
+function fmtDate(iso?: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-LK', { year: 'numeric', month: 'short', day: '2-digit' })
+}
+
+function fmtDateTime(iso?: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('en-LK', { hour12: false })
 }
 
 export default function Vendor360DossierPage({ params }: Vendor360Props) {
@@ -65,67 +130,84 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
   const vendorId = resolvedParams.id
 
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [vendorData, setVendorData] = useState<VendorData | null>(null)
-  const [activeTab, setActiveTab] = useState<'branches' | 'flags' | 'billing' | 'audit'>('branches')
+  const [analytics, setAnalytics] = useState<VendorAnalytics | null>(null)
+  const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[] | null>(null)
+  const [activeTab, setActiveTab] = useState<TabId>('sales')
   const [flags, setFlags] = useState<FeatureFlagsMap>({} as FeatureFlagsMap)
   const [savingFlags, setSavingFlags] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [status, setStatus] = useState('active')
+  const [statusBusy, setStatusBusy] = useState(false)
+
+  const loadVendor = useCallback(async () => {
+    setLoading(true)
+    setLoadError(null)
+    try {
+      const res = await fetch(`/api/sys-control/vendors/${vendorId}`, { cache: 'no-store' })
+      if (res.status === 401) {
+        window.location.href = '/sys-control/login'
+        return
+      }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setLoadError(data.error || 'Failed to load vendor')
+        return
+      }
+      setVendorData(data.vendor)
+      setFlags(data.vendor.featureFlags || {})
+      setStatus(data.vendor.status || 'active')
+    } catch {
+      setLoadError('Network error while loading vendor')
+    } finally {
+      setLoading(false)
+    }
+  }, [vendorId])
+
+  const loadAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true)
+    try {
+      const res = await fetch(`/api/sys-control/analytics/vendors/${vendorId}`, { cache: 'no-store' })
+      if (res.ok) {
+        setAnalytics(await res.json())
+      }
+    } catch {
+      // keep previous analytics
+    } finally {
+      setAnalyticsLoading(false)
+    }
+  }, [vendorId])
+
+  const loadAudit = useCallback(async () => {
+    try {
+      const res = await fetch('/api/sys-control/audit-logs?days=90&limit=500', { cache: 'no-store' })
+      if (res.ok) {
+        const rows: AuditLogRow[] = await res.json()
+        setAuditLogs(
+          (Array.isArray(rows) ? rows : []).filter(
+            (r) =>
+              r.resourceId === vendorId ||
+              (r.details && (r.details as { tenantIds?: string[] }).tenantIds?.includes(vendorId))
+          )
+        )
+      } else {
+        setAuditLogs([])
+      }
+    } catch {
+      setAuditLogs([])
+    }
+  }, [vendorId])
 
   useEffect(() => {
-    async function loadVendor() {
-      setLoading(true)
-      try {
-        const res = await fetch(`/api/sys-control/vendors/${vendorId}`)
-        if (res.ok) {
-          const data = await res.json()
-          setVendorData(data.vendor)
-          setFlags(data.vendor.featureFlags || {})
-          setStatus(data.vendor.status || 'active')
-        } else {
-          // Fallback sample data for preview
-          const sample = {
-            id: vendorId,
-            name: 'Keells Franchise Express (Pvt) Ltd',
-            slug: 'keells-express',
-            email: 'operations@keells-express.lk',
-            phone: '+94 11 230 3500',
-            address: 'No. 148, Vauxhall Street, Colombo 02',
-            businessType: 'supermarket',
-            status: 'active',
-            plan: 'enterprise',
-            currency: 'LKR',
-            userCount: 8,
-            branches: [
-              { id: 'b1', name: 'Colombo 03 Crescat Flagship', address: 'Galle Road, Colombo 03', isActive: true },
-              { id: 'b2', name: 'Havelock City Mall Outlet', address: 'Havelock Road, Colombo 05', isActive: true },
-              { id: 'b3', name: 'Rajagiriya Express Mart', address: 'Kotte Road, Rajagiriya', isActive: true },
-            ],
-            counters: [
-              { id: 'c1', name: 'Counter 01 - Cash / Card', code: 'POS-01', isActive: true },
-              { id: 'c2', name: 'Counter 02 - Express 10 Items', code: 'POS-02', isActive: true },
-              { id: 'c3', name: 'Counter 03 - LankaQR Priority', code: 'POS-03', isActive: true },
-              { id: 'c4', name: 'Counter 04 - Self Checkout Kiosk', code: 'POS-04', isActive: true },
-            ],
-            settings: {
-              tin: '102948291-7000',
-              brn: 'PV-882194',
-              mid: 'MID-LK-499102',
-              payhere: 'PH-MERCH-81204',
-            },
-          }
-          setVendorData(sample)
-          setStatus('active')
-        }
-      } catch {
-        // Fallback on network error
-      } finally {
-        setLoading(false)
-      }
-    }
-
     loadVendor()
-  }, [vendorId])
+    loadAnalytics()
+  }, [loadVendor, loadAnalytics])
+
+  useEffect(() => {
+    if (activeTab === 'audit' && auditLogs === null) loadAudit()
+  }, [activeTab, auditLogs, loadAudit])
 
   const handleToggleFlag = (flag: FeatureFlag) => {
     setFlags((prev) => ({ ...prev, [flag]: !prev[flag] }))
@@ -141,9 +223,13 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
         body: JSON.stringify({ featureFlags: flags }),
       })
       if (res.ok) {
-        setMessage('Feature flags updated and synchronized to tenant edge caches.')
+        const data = await res.json()
+        setFlags(data.featureFlags || flags)
+        setMessage('Feature flags updated.')
+        setAuditLogs(null)
       } else {
-        setMessage('Failed to persist feature flag update.')
+        const data = await res.json().catch(() => ({}))
+        setMessage(data.error || 'Failed to persist feature flag update.')
       }
     } catch {
       setMessage('Network error while saving flags.')
@@ -153,38 +239,42 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
   }
 
   const handleImpersonate = async () => {
+    setMessage(null)
     try {
-      const res = await fetch(`/api/sys-control/vendors/${vendorId}/impersonate`, {
-        method: 'POST',
-      })
-      const data = await res.json()
+      const res = await fetch(`/api/sys-control/vendors/${vendorId}/impersonate`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
       if (res.ok && data.redirectUrl) {
         window.location.href = data.redirectUrl
       } else {
-        alert('Impersonation token established. Redirecting to tenant POS.')
-        window.location.href = `/c/${vendorData?.slug || 'demo-store'}/pos`
+        setMessage(data.error || 'Impersonation failed.')
       }
     } catch {
-      window.location.href = `/c/${vendorData?.slug || 'demo-store'}/pos`
+      setMessage('Network error while starting impersonation.')
     }
   }
 
   const handleToggleStatus = async () => {
     const nextStatus = status === 'active' ? 'locked' : 'active'
+    setStatusBusy(true)
+    setMessage(null)
     try {
       const res = await fetch(`/api/sys-control/vendors/${vendorId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: nextStatus }),
       })
+      const data = await res.json().catch(() => ({}))
       if (res.ok) {
-        setStatus(nextStatus)
+        setStatus(data.vendor?.status || nextStatus)
         setMessage(`Tenant status updated to: ${nextStatus.toUpperCase()}`)
+        setAuditLogs(null)
       } else {
-        setStatus(nextStatus)
+        setMessage(data.error || 'Failed to update tenant status.')
       }
     } catch {
-      setStatus(nextStatus)
+      setMessage('Network error while updating status.')
+    } finally {
+      setStatusBusy(false)
     }
   }
 
@@ -192,74 +282,93 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
     return (
       <div className="py-24 text-center text-[#bcc9c6] space-y-3">
         <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#6bd8cb]" />
-        <div className="font-mono text-xs">Loading Vendor 360° Cryptographic Dossier...</div>
+        <div className="font-mono text-xs">Loading Vendor 360° Dossier...</div>
       </div>
     )
   }
 
-  const tin = (vendorData?.settings?.tin as string) || '102948291-7000'
-  const mid = (vendorData?.settings?.mid as string) || 'MID-LK-499102'
-  const payhere = (vendorData?.settings?.payhere as string) || 'PH-MERCH-81204'
+  if (loadError || !vendorData) {
+    return (
+      <div className="py-24 text-center space-y-4">
+        <AlertOctagon className="w-10 h-10 mx-auto text-[#ff5451]" />
+        <div className="text-sm text-[#ffdad6]">{loadError || 'Vendor not found'}</div>
+        <div className="flex items-center justify-center gap-3">
+          <button
+            type="button"
+            onClick={loadVendor}
+            className="px-4 py-2 rounded-lg bg-[#222a3d] text-white text-xs font-semibold"
+          >
+            Retry
+          </button>
+          <Link href="/sys-control/vendors" className="px-4 py-2 rounded-lg bg-[#6bd8cb] text-[#003732] text-xs font-bold">
+            Back to Vendors
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const settings = (vendorData.settings || {}) as Record<string, unknown>
+  const tin = (settings.tin as string) || null
+  const brn = (settings.brn as string) || null
+  const sub = vendorData.subscription
+  const currency = vendorData.currency || 'LKR'
+  const t30 = analytics?.totals['30d']
+  const tToday = analytics?.totals.today
+  const t7 = analytics?.totals['7d']
+
+  const monthlyFee = sub?.subscribedPriceMonthly ?? sub?.tier?.priceMonthly ?? null
+  const daysRemaining = sub?.currentPeriodEnd
+    ? Math.max(0, Math.ceil((Date.parse(sub.currentPeriodEnd) - Date.now()) / 86400000))
+    : null
 
   return (
     <div className="space-y-6 pb-16">
-      {/* Breadcrumb & Micro Status Strip (Stitch S6) */}
+      {/* Breadcrumb strip */}
       <div className="flex flex-wrap items-center justify-between gap-3 py-1 font-mono text-xs">
         <div className="flex items-center gap-2 text-[#879391]">
-          <Link
-            href="/sys-control/vendors"
-            className="hover:text-[#6bd8cb] flex items-center gap-1 transition-colors"
-          >
+          <Link href="/sys-control/vendors" className="hover:text-[#6bd8cb] flex items-center gap-1 transition-colors">
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Vendors Directory</span>
           </Link>
           <span>/</span>
-          <span>Western Province</span>
+          <span className="capitalize">{vendorData.businessType.replace('_', ' ')}</span>
           <span>/</span>
-          <span className="text-[#6bd8cb] font-semibold">
-            {vendorData?.slug || vendorId}
-          </span>
+          <span className="text-[#6bd8cb] font-semibold">{vendorData.slug}</span>
         </div>
 
         <div className="flex items-center gap-4 text-[#bcc9c6]">
           <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#131b2e] border border-[#2d3449]">
-            <span className="text-[#879391] text-[10px] uppercase">DATABASE SHARD:</span>
-            <span className="text-[#4fdbc8] font-bold">lk-db-node-04b</span>
+            <span className="text-[#879391] text-[10px] uppercase">CREATED:</span>
+            <span className="text-[#4fdbc8] font-bold">{fmtDate(vendorData.createdAt)}</span>
           </div>
           <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#131b2e] border border-[#2d3449]">
-            <span className="text-[#879391] text-[10px] uppercase">HEARTBEAT:</span>
-            <span className="text-[#4fdbc8] font-bold">23ms</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-[#4fdbc8] animate-pulse"></span>
-            <span>SYNC ENGINE: IDLE</span>
+            <span className="text-[#879391] text-[10px] uppercase">SETUP:</span>
+            <span className={`font-bold ${vendorData.setupCompletedAt ? 'text-[#4fdbc8]' : 'text-[#ffb4ab]'}`}>
+              {vendorData.setupCompletedAt ? 'COMPLETE' : 'PENDING'}
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Primary Vendor 360 Header & Emergency Bar */}
+      {/* Header */}
       <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-6 shadow-xl relative overflow-hidden">
         <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-6 relative z-10">
-          {/* Tenant Identity Block */}
           <div className="flex items-start gap-5 min-w-0">
-            {/* Logo Avatar with Tier Indicator */}
             <div className="relative shrink-0">
               <div className="w-16 h-16 rounded-xl bg-[#060e20] border border-[#2d3449] flex items-center justify-center text-[#6bd8cb] font-bold text-2xl shadow-inner">
                 <Store className="w-8 h-8 text-[#6bd8cb]" />
               </div>
-              <span className="absolute -bottom-1 -right-1 px-1.5 py-0.5 bg-[#29a195] text-[#00302b] font-mono text-[9px] font-bold rounded shadow">
-                TIER 1
+              <span className="absolute -bottom-1 -right-1 px-1.5 py-0.5 bg-[#29a195] text-[#00302b] font-mono text-[9px] font-bold rounded shadow uppercase">
+                {vendorData.plan || 'trial'}
               </span>
             </div>
 
-            {/* Identity Details */}
             <div className="space-y-1.5 min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-bold text-white tracking-tight truncate">
-                  {vendorData?.name || 'Keells Franchise Express'}
-                </h1>
+                <h1 className="text-2xl font-bold text-white tracking-tight truncate">{vendorData.name}</h1>
                 <span className="px-2 py-0.5 rounded bg-[#29a195]/20 text-[#6bd8cb] font-mono text-xs font-semibold">
-                  Slug: {vendorData?.slug}
+                  Slug: {vendorData.slug}
                 </span>
                 <span className="px-2 py-0.5 rounded bg-[#060e20] border border-[#2d3449] text-[#bcc9c6] font-mono text-[11px]">
                   ID: {vendorId.slice(0, 8)}
@@ -271,53 +380,46 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
                       : 'bg-[#ff5451]/20 text-[#ffb4ab] border border-[#ff5451]/40'
                   }`}
                 >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      status === 'active' ? 'bg-[#4fdbc8] animate-pulse' : 'bg-[#ff5451]'
-                    }`}
-                  ></span>
-                  <span className="uppercase">{status} &amp; NOMINAL</span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${status === 'active' ? 'bg-[#4fdbc8] animate-pulse' : 'bg-[#ff5451]'}`}></span>
+                  <span className="uppercase">{status}</span>
                 </div>
               </div>
 
               <div className="flex items-center gap-3 text-xs font-mono text-[#bcc9c6] flex-wrap">
-                <a
-                  href={`https://${vendorData?.slug || 'demo'}.poslanka.lk`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex items-center gap-1 text-[#6bd8cb] hover:underline"
-                >
+                <Link href={`/c/${vendorData.slug}/login`} className="flex items-center gap-1 text-[#6bd8cb] hover:underline">
                   <Globe className="w-3.5 h-3.5" />
-                  <span>{vendorData?.slug}.poslanka.lk</span>
-                </a>
+                  <span>/c/{vendorData.slug}</span>
+                </Link>
                 <span className="text-[#3d4947]">•</span>
-                <span className="text-white capitalize">{vendorData?.businessType}</span>
+                <span className="text-white capitalize">{vendorData.businessType.replace('_', ' ')}</span>
                 <span className="text-[#3d4947]">•</span>
-                <span>
-                  Plan: <strong className="text-white uppercase">{vendorData?.plan || 'Enterprise'} Tier</strong>
-                </span>
+                <span>{vendorData.email}</span>
+                {vendorData.phone && (
+                  <>
+                    <span className="text-[#3d4947]">•</span>
+                    <span>{vendorData.phone}</span>
+                  </>
+                )}
               </div>
 
-              {/* Compliance Identifiers: RAMIS & LankaQR */}
               <div className="flex items-center gap-3 pt-1 flex-wrap text-xs font-mono">
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#060e20] border border-[#2d3449] text-white">
-                  <span className="text-[#879391] uppercase text-[10px]">RAMIS TIN:</span>
-                  <span className="text-[#6bd8cb] font-bold">{tin}</span>
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#4fdbc8]" />
+                  <span className="text-[#879391] uppercase text-[10px]">TIN:</span>
+                  <span className="text-[#6bd8cb] font-bold">{tin || 'Not set'}</span>
+                  {tin && <ShieldCheck className="w-3.5 h-3.5 text-[#4fdbc8]" />}
                 </div>
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#060e20] border border-[#2d3449] text-white">
-                  <span className="text-[#879391] uppercase text-[10px]">CBSL LankaQR MID:</span>
-                  <span className="text-[#4fdbc8] font-bold">{mid}</span>
+                  <span className="text-[#879391] uppercase text-[10px]">BRN:</span>
+                  <span className="text-[#4fdbc8] font-bold">{brn || 'Not set'}</span>
                 </div>
                 <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#060e20] border border-[#2d3449] text-white">
-                  <span className="text-[#879391] uppercase text-[10px]">PayHere Sub-Merchant:</span>
-                  <span className="text-[#bcc9c6]">{payhere}</span>
+                  <span className="text-[#879391] uppercase text-[10px]">Currency:</span>
+                  <span className="text-[#bcc9c6]">{currency}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Right: Emergency Super Admin Actions & Killswitches */}
           <div className="flex flex-col items-start xl:items-end gap-2 shrink-0">
             <button
               type="button"
@@ -325,34 +427,25 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
               className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#ff5451] hover:bg-[#ff897d] text-[#690005] font-bold text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95"
             >
               <Zap className="w-4 h-4" />
-              <span>Impersonate Vendor (5-Min Audit Token)</span>
+              <span>Impersonate Vendor</span>
             </button>
             <div className="font-mono text-[10px] text-[#ffb4ab] bg-[#93000a]/20 px-2.5 py-0.5 rounded border border-[#ff5451]/30">
-              All actions cryptographically hashed into admin_audit_logs
+              All actions recorded in admin_audit_logs
             </div>
 
-            {/* Killswitch Row */}
             <div className="flex items-center gap-2 pt-2">
               <button
                 type="button"
+                disabled={statusBusy}
                 onClick={handleToggleStatus}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-semibold transition-colors ${
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-50 ${
                   status === 'active'
                     ? 'bg-[#171f33] border-[#ff5451]/50 text-[#ffdad7] hover:bg-[#93000a]/30'
                     : 'bg-[#29a195] border-[#6bd8cb] text-[#003732] hover:bg-[#89f5e7]'
                 }`}
               >
-                <Lock className="w-3.5 h-3.5" />
+                {statusBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
                 <span>{status === 'active' ? 'Lock / Freeze Tenant' : 'Unlock Tenant'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => alert('Master token rotated. Notification sent to registered owner.')}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#060e20] hover:bg-[#222a3d] border border-[#2d3449] text-white text-xs font-semibold transition-colors"
-              >
-                <Key className="w-3.5 h-3.5 text-[#6bd8cb]" />
-                <span>Rotate Secret</span>
               </button>
             </div>
           </div>
@@ -366,76 +459,79 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
         </div>
       )}
 
-      {/* 4 High-Density Mission Metric Cards (Stitch S6) */}
+      {/* Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* 1. Gross Revenue 30D */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm">
           <div className="flex items-center justify-between text-xs text-[#879391] font-mono uppercase font-semibold mb-1">
-            <span>Gross Revenue 30D</span>
+            <span>Net Sales 30D</span>
             <TrendingUp className="w-4 h-4 text-[#6bd8cb]" />
           </div>
-          <div className="text-xl font-bold text-white font-mono">LKR 14,892,100</div>
+          <div className="text-xl font-bold text-white font-mono">
+            {analyticsLoading && !analytics ? '…' : `${currency} ${fmtMoney(t30?.netSales ?? 0)}`}
+          </div>
           <div className="mt-2 flex items-center justify-between font-mono text-[11px] bg-[#060e20] p-1.5 rounded">
-            <span className="text-[#bcc9c6]">Daily Avg: 496.4k</span>
-            <span className="text-[#4fdbc8] font-bold">+14.2% MoM</span>
+            <span className="text-[#bcc9c6]">Daily Avg: {fmtMoney((t30?.netSales ?? 0) / 30)}</span>
+            <span className="text-[#4fdbc8] font-bold">{t30?.receipts ?? 0} receipts</span>
           </div>
         </div>
 
-        {/* 2. Active Outlets & Tills */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm">
           <div className="flex items-center justify-between text-xs text-[#879391] font-mono uppercase font-semibold mb-1">
             <span>Outlets &amp; Tills</span>
             <Building2 className="w-4 h-4 text-[#4fdbc8]" />
           </div>
           <div className="text-xl font-bold text-white font-mono">
-            {vendorData?.branches?.length || 3} Branches • {vendorData?.counters?.length || 8} Tills
+            {vendorData.branches?.length ?? 0} Branches • {vendorData.counters?.length ?? 0} Tills
           </div>
           <div className="mt-2 flex items-center justify-between font-mono text-[11px] bg-[#060e20] p-1.5 rounded">
-            <span className="text-[#4fdbc8]">All Online</span>
-            <span className="text-[#bcc9c6]">U2F Paired</span>
+            <span className="text-[#4fdbc8]">{analytics?.openShifts.length ?? 0} shifts open</span>
+            <span className="text-[#bcc9c6]">{vendorData.userCount ?? 0} users</span>
           </div>
         </div>
 
-        {/* 3. Database & Cloud Storage Quota */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm">
           <div className="flex items-center justify-between text-xs text-[#879391] font-mono uppercase font-semibold mb-1">
-            <span>Storage &amp; DB Quota</span>
-            <HardDrive className="w-4 h-4 text-[#6bd8cb]" />
+            <span>Today</span>
+            <Receipt className="w-4 h-4 text-[#6bd8cb]" />
           </div>
-          <div className="text-xl font-bold text-white font-mono">14.2 GB / 25 GB</div>
+          <div className="text-xl font-bold text-white font-mono">
+            {currency} {fmtMoney(tToday?.netSales ?? 0)}
+          </div>
           <div className="mt-2 flex items-center justify-between font-mono text-[11px] bg-[#060e20] p-1.5 rounded">
-            <span className="text-[#bcc9c6]">184k Records</span>
-            <span className="text-[#6bd8cb] font-bold">56% Cap</span>
+            <span className="text-[#bcc9c6]">{tToday?.receipts ?? 0} receipts</span>
+            <span className="text-[#6bd8cb] font-bold">avg {fmtMoney(tToday?.avgBasket ?? 0)}</span>
           </div>
         </div>
 
-        {/* 4. RAMIS IRD Fiscal Sync Rate */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm">
           <div className="flex items-center justify-between text-xs text-[#879391] font-mono uppercase font-semibold mb-1">
-            <span>RAMIS Tax Sync</span>
+            <span>Subscription</span>
             <ShieldCheck className="w-4 h-4 text-[#4fdbc8]" />
           </div>
-          <div className="text-xl font-bold text-[#4fdbc8] font-mono">99.98% Fiscalized</div>
+          <div className="text-xl font-bold text-[#4fdbc8] font-mono uppercase">{sub?.status || 'NONE'}</div>
           <div className="mt-2 flex items-center justify-between font-mono text-[11px] bg-[#060e20] p-1.5 rounded">
-            <span className="text-[#4fdbc8]">0 Unsent Invoices</span>
-            <span className="text-[#bcc9c6]">P95: 18ms</span>
+            <span className="text-[#4fdbc8]">{sub?.tier?.name || vendorData.plan || 'trial'}</span>
+            <span className="text-[#bcc9c6]">Ends {fmtDate(sub?.currentPeriodEnd || sub?.trialEndsAt)}</span>
           </div>
         </div>
       </div>
 
-      {/* Tabbed Navigation */}
-      <div className="flex items-center gap-2 border-b border-[#2d3449] pb-1 font-mono text-xs">
-        {[
-          { id: 'branches', label: 'Terminals & Branches' },
-          { id: 'flags', label: 'Feature Flags Matrix' },
-          { id: 'billing', label: 'Billing & Commercials' },
-          { id: 'audit', label: 'Audit Trail & Access' },
-        ].map((tab) => (
+      {/* Tabs */}
+      <div className="flex items-center gap-2 border-b border-[#2d3449] pb-1 font-mono text-xs overflow-x-auto">
+        {(
+          [
+            { id: 'sales', label: 'Sales Analytics' },
+            { id: 'branches', label: 'Terminals & Branches' },
+            { id: 'flags', label: 'Feature Flags Matrix' },
+            { id: 'billing', label: 'Billing & Commercials' },
+            { id: 'audit', label: 'Audit Trail & Access' },
+          ] as Array<{ id: TabId; label: string }>
+        ).map((tab) => (
           <button
             key={tab.id}
             type="button"
-            onClick={() => setActiveTab(tab.id as typeof activeTab)}
-            className={`px-4 py-2 rounded-t-lg font-semibold transition-all ${
+            onClick={() => setActiveTab(tab.id)}
+            className={`px-4 py-2 rounded-t-lg font-semibold transition-all whitespace-nowrap ${
               activeTab === tab.id
                 ? 'bg-[#131b2e] border-t border-x border-[#2d3449] text-[#6bd8cb]'
                 : 'text-[#879391] hover:text-white'
@@ -446,22 +542,171 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
         ))}
       </div>
 
-      {/* TAB 1: Terminals & Branches */}
+      {/* TAB: Sales Analytics */}
+      {activeTab === 'sales' && (
+        <div className="space-y-4">
+          {analyticsLoading && !analytics ? (
+            <div className="py-12 text-center text-[#bcc9c6] font-mono text-xs flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-[#6bd8cb]" />
+              Loading sales analytics...
+            </div>
+          ) : !analytics ? (
+            <div className="py-12 text-center text-[#ffb4ab] font-mono text-xs">
+              Sales analytics unavailable.{' '}
+              <button type="button" onClick={loadAnalytics} className="underline">
+                Retry
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
+                {(
+                  [
+                    { key: 'today', label: 'Today', t: tToday },
+                    { key: '7d', label: 'Last 7 Days', t: t7 },
+                    { key: '30d', label: 'Last 30 Days', t: t30 },
+                  ] as Array<{ key: string; label: string; t?: RangeTotals }>
+                ).map(({ key, label, t }) => (
+                  <div key={key} className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl space-y-2">
+                    <div className="text-[#879391] uppercase text-[10px]">{label}</div>
+                    <div className="text-xl font-bold text-white">
+                      {currency} {fmtMoney(t?.netSales ?? 0)}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 text-[11px] text-[#bcc9c6]">
+                      <span>Gross: {fmtMoney(t?.grossSales ?? 0)}</span>
+                      <span className="text-right">Returns: {fmtMoney(t?.returns ?? 0)}</span>
+                      <span>Receipts: {t?.receipts ?? 0}</span>
+                      <span className="text-right text-[#4fdbc8]">Avg: {fmtMoney(t?.avgBasket ?? 0)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* By Branch */}
+                <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-4 shadow-sm">
+                  <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
+                    <Building2 className="w-4 h-4 text-[#6bd8cb]" />
+                    By Branch (30D)
+                  </h4>
+                  <div className="space-y-2 font-mono text-xs">
+                    {analytics.byBranch.length === 0 && <div className="text-[#879391]">No sales</div>}
+                    {analytics.byBranch.map((b, i) => (
+                      <div key={b.warehouseId ?? i} className="flex items-center justify-between p-2 bg-[#060e20] rounded-lg border border-[#2d3449]/50">
+                        <div className="min-w-0">
+                          <div className="text-white truncate">{b.name}</div>
+                          <div className="text-[10px] text-[#879391]">{b.receipts} receipts</div>
+                        </div>
+                        <div className="text-[#6bd8cb] font-bold shrink-0">{fmtMoney(b.netSales)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* By Counter */}
+                <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-4 shadow-sm">
+                  <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-[#4fdbc8]" />
+                    By Counter (30D)
+                  </h4>
+                  <div className="space-y-2 font-mono text-xs">
+                    {analytics.byCounter.length === 0 && <div className="text-[#879391]">No sales</div>}
+                    {analytics.byCounter.map((c, i) => (
+                      <div key={c.posProfileId ?? i} className="flex items-center justify-between p-2 bg-[#060e20] rounded-lg border border-[#2d3449]/50">
+                        <div className="min-w-0">
+                          <div className="text-white truncate">{c.name}</div>
+                          <div className="text-[10px] text-[#879391]">{c.receipts} receipts</div>
+                        </div>
+                        <div className="text-[#6bd8cb] font-bold shrink-0">{fmtMoney(c.netSales)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* By Cashier */}
+                <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-4 shadow-sm">
+                  <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
+                    <Users className="w-4 h-4 text-[#6bd8cb]" />
+                    By Cashier (30D)
+                  </h4>
+                  <div className="space-y-2 font-mono text-xs">
+                    {analytics.byCashier.length === 0 && <div className="text-[#879391]">No sales</div>}
+                    {analytics.byCashier.map((c, i) => (
+                      <div key={c.userId ?? i} className="flex items-center justify-between p-2 bg-[#060e20] rounded-lg border border-[#2d3449]/50">
+                        <div className="min-w-0">
+                          <div className="text-white truncate">{c.name}</div>
+                          <div className="text-[10px] text-[#879391]">
+                            {c.receipts} receipts • variance{' '}
+                            <span className={c.variance < 0 ? 'text-[#ffb4ab]' : c.variance > 0 ? 'text-[#4fdbc8]' : ''}>
+                              {c.variance >= 0 ? '+' : ''}
+                              {c.variance.toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-[#6bd8cb] font-bold shrink-0">{fmtMoney(c.netSales)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Open shifts */}
+              <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl overflow-hidden p-4 shadow-sm">
+                <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-[#4fdbc8]" />
+                  Open Shifts ({analytics.openShifts.length})
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left font-mono text-xs">
+                    <thead className="bg-[#060e20] text-[#879391] uppercase text-[10px] border-b border-[#2d3449]">
+                      <tr>
+                        <th className="px-3 py-2">Entry</th>
+                        <th className="px-3 py-2">Cashier</th>
+                        <th className="px-3 py-2">Counter</th>
+                        <th className="px-3 py-2">Branch</th>
+                        <th className="px-3 py-2 text-right">Opened</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#2d3449]/40">
+                      {analytics.openShifts.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="px-3 py-6 text-center text-[#879391]">No open shifts</td>
+                        </tr>
+                      )}
+                      {analytics.openShifts.map((s) => (
+                        <tr key={s.id} className="hover:bg-[#171f33]">
+                          <td className="px-3 py-2 text-[#4fdbc8] font-bold">{s.entryNumber}</td>
+                          <td className="px-3 py-2 text-white">{s.cashierName}</td>
+                          <td className="px-3 py-2 text-[#bcc9c6]">{s.counterName}</td>
+                          <td className="px-3 py-2 text-[#bcc9c6]">{s.warehouseName}</td>
+                          <td className="px-3 py-2 text-right text-[#879391]">{fmtDateTime(s.openingTime)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB: Terminals & Branches */}
       {activeTab === 'branches' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {(vendorData?.branches || []).map((b: VendorBranch, idx: number) => (
-              <div
-                key={idx}
-                className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm space-y-2"
-              >
+            {(vendorData.branches || []).length === 0 && (
+              <div className="md:col-span-3 text-xs text-[#879391] font-mono">No branches configured.</div>
+            )}
+            {(vendorData.branches || []).map((b, idx) => (
+              <div key={b.id} className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm space-y-2">
                 <div className="flex items-center justify-between">
                   <div className="font-bold text-sm text-white">{b.name}</div>
-                  <span className="w-2 h-2 rounded-full bg-[#4fdbc8]"></span>
+                  <span className={`w-2 h-2 rounded-full ${b.isActive === false ? 'bg-[#ff5451]' : 'bg-[#4fdbc8]'}`}></span>
                 </div>
-                <div className="text-xs text-[#bcc9c6]">{b.address || 'Colombo, Sri Lanka'}</div>
+                <div className="text-xs text-[#bcc9c6]">{b.address || 'No address on file'}</div>
                 <div className="pt-2 border-t border-[#2d3449]/40 flex justify-between font-mono text-[11px] text-[#879391]">
-                  <span>Status: Operational</span>
+                  <span>Code: {b.code || '—'}{b.isDefault ? ' • Default' : ''}</span>
                   <span className="text-[#6bd8cb]">Branch #{idx + 1}</span>
                 </div>
               </div>
@@ -471,33 +716,44 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
           <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl overflow-hidden p-4 shadow-sm">
             <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
               <Cpu className="w-4 h-4 text-[#4fdbc8]" />
-              Registered Hardware Tills &amp; POS Counters
+              POS Counters / Profiles
             </h4>
             <div className="overflow-x-auto">
               <table className="w-full text-left font-mono text-xs">
                 <thead className="bg-[#060e20] text-[#879391] uppercase text-[10px] border-b border-[#2d3449]">
                   <tr>
-                    <th className="px-3 py-2">Till Code</th>
+                    <th className="px-3 py-2">Code</th>
                     <th className="px-3 py-2">Counter Name</th>
-                    <th className="px-3 py-2">Peripherals</th>
-                    <th className="px-3 py-2">Hardware Fingerprint</th>
+                    <th className="px-3 py-2">Branch</th>
                     <th className="px-3 py-2 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#2d3449]/40">
-                  {(vendorData?.counters || []).map((c: VendorCounter, idx: number) => (
-                    <tr key={idx} className="hover:bg-[#171f33]">
-                      <td className="px-3 py-2 text-[#4fdbc8] font-bold">{c.code || `POS-0${idx + 1}`}</td>
-                      <td className="px-3 py-2 text-white">{c.name}</td>
-                      <td className="px-3 py-2 text-[#bcc9c6]">Thermal 80mm • Zebra 2D Scanner</td>
-                      <td className="px-3 py-2 text-[#879391]">HW-LK-89412-B{idx + 1}</td>
-                      <td className="px-3 py-2 text-right">
-                        <span className="px-2 py-0.5 rounded bg-[#4fdbc8]/15 text-[#4fdbc8] text-[10px] font-bold">
-                          ONLINE
-                        </span>
-                      </td>
+                  {(vendorData.counters || []).length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-6 text-center text-[#879391]">No POS profiles configured.</td>
                     </tr>
-                  ))}
+                  )}
+                  {(vendorData.counters || []).map((c, idx) => {
+                    const branch = (vendorData.branches || []).find((b) => b.id === c.warehouseId)
+                    const active = (c.status || 'active') === 'active'
+                    return (
+                      <tr key={c.id} className="hover:bg-[#171f33]">
+                        <td className="px-3 py-2 text-[#4fdbc8] font-bold">{c.code || `POS-${String(idx + 1).padStart(2, '0')}`}</td>
+                        <td className="px-3 py-2 text-white">{c.name}</td>
+                        <td className="px-3 py-2 text-[#bcc9c6]">{branch?.name || '—'}</td>
+                        <td className="px-3 py-2 text-right">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              active ? 'bg-[#4fdbc8]/15 text-[#4fdbc8]' : 'bg-[#ff5451]/20 text-[#ffb4ab]'
+                            }`}
+                          >
+                            {c.status || 'active'}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -505,15 +761,13 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
         </div>
       )}
 
-      {/* TAB 2: Feature Flags Matrix */}
+      {/* TAB: Feature Flags */}
       {activeTab === 'flags' && (
         <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-6 shadow-sm space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-[#2d3449]/50">
             <div>
               <h3 className="font-bold text-base text-white">Granular Feature Flags &amp; Modules</h3>
-              <p className="text-xs text-[#bcc9c6]">
-                Configure real-time feature capabilities for {vendorData?.name}
-              </p>
+              <p className="text-xs text-[#bcc9c6]">Configure feature capabilities for {vendorData.name}</p>
             </div>
             <button
               type="button"
@@ -534,27 +788,15 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
                   key={flag}
                   onClick={() => handleToggleFlag(flag)}
                   className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between transition-all ${
-                    enabled
-                      ? 'bg-[#29a195]/20 border-[#6bd8cb]'
-                      : 'bg-[#060e20] border-[#2d3449] opacity-75'
+                    enabled ? 'bg-[#29a195]/20 border-[#6bd8cb]' : 'bg-[#060e20] border-[#2d3449] opacity-75'
                   }`}
                 >
                   <div>
-                    <div className="text-xs font-semibold text-white">
-                      {FEATURE_FLAG_LABELS[flag]}
-                    </div>
+                    <div className="text-xs font-semibold text-white">{FEATURE_FLAG_LABELS[flag]}</div>
                     <div className="font-mono text-[10px] text-[#879391]">{flag}</div>
                   </div>
-                  <div
-                    className={`w-9 h-5 rounded-full p-0.5 flex transition-colors ${
-                      enabled ? 'bg-[#6bd8cb] justify-end' : 'bg-[#222a3d] justify-start'
-                    }`}
-                  >
-                    <div
-                      className={`w-4 h-4 rounded-full ${
-                        enabled ? 'bg-[#003732]' : 'bg-[#879391]'
-                      }`}
-                    ></div>
+                  <div className={`w-9 h-5 rounded-full p-0.5 flex transition-colors ${enabled ? 'bg-[#6bd8cb] justify-end' : 'bg-[#222a3d] justify-start'}`}>
+                    <div className={`w-4 h-4 rounded-full ${enabled ? 'bg-[#003732]' : 'bg-[#879391]'}`}></div>
                   </div>
                 </div>
               )
@@ -563,63 +805,91 @@ export default function Vendor360DossierPage({ params }: Vendor360Props) {
         </div>
       )}
 
-      {/* TAB 3: Billing & Commercials */}
+      {/* TAB: Billing */}
       {activeTab === 'billing' && (
         <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-6 shadow-sm space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-[#2d3449]/50">
             <h3 className="font-bold text-base text-white">Commercial Tier &amp; Billing Records</h3>
-            <span className="font-mono text-xs text-[#4fdbc8] font-bold">
-              PLAN: {vendorData?.plan?.toUpperCase() || 'ENTERPRISE'}
+            <span className="font-mono text-xs text-[#4fdbc8] font-bold uppercase">
+              PLAN: {vendorData.plan || 'trial'}
+              {sub?.tier?.name ? ` (${sub.tier.name})` : ''}
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
-            <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
-              <div className="text-[#879391] uppercase text-[10px]">Monthly Fee</div>
-              <div className="text-xl font-bold text-white">LKR 34,500.00</div>
-              <div className="text-[#4fdbc8]">Auto-debit via PayHere IPN</div>
+          {!sub ? (
+            <div className="text-xs text-[#879391] font-mono">
+              No subscription record for this tenant.{' '}
+              <Link href="/sys-control/subscriptions" className="text-[#6bd8cb] underline">
+                Manage subscriptions
+              </Link>
             </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
+              <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
+                <div className="text-[#879391] uppercase text-[10px]">
+                  {sub.billingCycle === 'yearly' ? 'Yearly Fee' : 'Monthly Fee'}
+                </div>
+                <div className="text-xl font-bold text-white">
+                  {monthlyFee !== null && monthlyFee !== undefined
+                    ? `LKR ${fmtMoney(parseFloat(String(sub.billingCycle === 'yearly' ? sub.subscribedPriceYearly ?? sub.tier?.priceYearly ?? monthlyFee : monthlyFee)))}`
+                    : '—'}
+                </div>
+                <div className="text-[#4fdbc8]">Cycle: {sub.billingCycle || 'monthly'}</div>
+              </div>
 
-            <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
-              <div className="text-[#879391] uppercase text-[10px]">Current Period End</div>
-              <div className="text-xl font-bold text-white">2026-11-20</div>
-              <div className="text-[#bcc9c6]">30 days remaining in cycle</div>
-            </div>
+              <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
+                <div className="text-[#879391] uppercase text-[10px]">Current Period End</div>
+                <div className="text-xl font-bold text-white">{fmtDate(sub.currentPeriodEnd || sub.trialEndsAt)}</div>
+                <div className="text-[#bcc9c6]">
+                  {daysRemaining !== null ? `${daysRemaining} days remaining in cycle` : 'No period set'}
+                </div>
+              </div>
 
-            <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
-              <div className="text-[#879391] uppercase text-[10px]">Settlement Status</div>
-              <div className="text-xl font-bold text-[#4fdbc8]">PAID IN FULL</div>
-              <div className="text-[#879391]">Invoice #LK-INV-99214</div>
+              <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
+                <div className="text-[#879391] uppercase text-[10px]">Subscription Status</div>
+                <div className={`text-xl font-bold uppercase ${sub.status === 'active' ? 'text-[#4fdbc8]' : 'text-[#ffb4ab]'}`}>
+                  {sub.status}
+                </div>
+                <div className="text-[#879391]">Last payment: {fmtDate(sub.lastPaymentAt)}</div>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* TAB 4: Audit Trail & Access */}
+      {/* TAB: Audit */}
       {activeTab === 'audit' && (
         <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-6 shadow-sm space-y-3 font-mono text-xs">
-          <h3 className="font-bold text-base text-white mb-3">Privileged Security Audit History</h3>
-          <div className="space-y-2">
-            {[
-              { time: 'Today 14:12', action: 'TENANT_360_VIEW', actor: 'root.admin@poslanka.lk', ip: '175.157.88.24' },
-              { time: 'Yesterday 18:40', action: 'FLAG_UPDATE [whatsapp: true]', actor: 'system-agent', ip: '10.0.4.12' },
-              { time: '3 days ago', action: 'BRANCH_PROVISIONED [Havelock Outlet]', actor: 'root.admin@poslanka.lk', ip: '175.157.88.24' },
-              { time: '14 days ago', action: 'TENANT_INITIAL_ONBOARDING', actor: 'sys-provisioner', ip: '10.0.0.1' },
-            ].map((log, idx) => (
-              <div
-                key={idx}
-                className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between"
-              >
-                <div>
-                  <div className="text-white font-semibold">{log.action}</div>
-                  <div className="text-[10px] text-[#879391]">
-                    Actor: {log.actor} • Client IP: {log.ip}
-                  </div>
-                </div>
-                <div className="text-[#bcc9c6] text-[11px]">{log.time}</div>
-              </div>
-            ))}
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-bold text-base text-white">Privileged Admin Audit History (90 days)</h3>
+            <Link href="/sys-control/audit-logs" className="text-[#6bd8cb] hover:underline text-xs">
+              Full audit log →
+            </Link>
           </div>
+          {auditLogs === null ? (
+            <div className="py-8 text-center text-[#bcc9c6] flex items-center justify-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin text-[#6bd8cb]" />
+              Loading audit history...
+            </div>
+          ) : auditLogs.length === 0 ? (
+            <div className="py-8 text-center text-[#879391]">No admin actions recorded for this tenant.</div>
+          ) : (
+            <div className="space-y-2">
+              {auditLogs.map((log) => (
+                <div key={log.id} className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-white font-semibold uppercase truncate">
+                      {log.action}_{log.resource}
+                    </div>
+                    <div className="text-[10px] text-[#879391] truncate">
+                      Actor: {log.account?.email || 'system'} • IP: {log.ipAddress || '—'}
+                    </div>
+                  </div>
+                  <div className="text-[#bcc9c6] text-[11px] shrink-0">{fmtDateTime(log.createdAt)}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

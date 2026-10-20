@@ -63,6 +63,12 @@ DECLARE
 BEGIN
   FOREACH tbl IN ARRAY tables_to_fix
   LOOP
+    -- Skip tables that do not exist in this database (e.g. dropped legacy tables)
+    IF to_regclass(tbl) IS NULL THEN
+      RAISE NOTICE 'RLS skipped (table missing): %', tbl;
+      CONTINUE;
+    END IF;
+
     -- Enable RLS
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', tbl);
 

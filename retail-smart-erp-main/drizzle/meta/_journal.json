@@ -862,6 +862,34 @@
       "when": 1771446337007,
       "tag": "0122_sales_client_sale_id",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1771446337008,
+      "tag": "0123_users_pin_items_plu_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1771446337009,
+      "tag": "0124_push_devices_admin_totp",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1771446337010,
+      "tag": "0125_remove_default_super_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1771446337011,
+      "tag": "0126_backfill_console_vendor_billing",
+      "breakpoints": true
     }
   ]
 }

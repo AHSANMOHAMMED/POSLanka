@@ -28,19 +28,22 @@ POSLanka uses a multi-tenant SaaS architecture on Next.js 16 (App Router), React
 Connect to your PostgreSQL database as superuser (`postgres`) and run:
 
 ```sql
--- 1. Create a non-superuser role for the application
+-- 1. Create a non-superuser LOGIN role for the application connection
 CREATE ROLE poslanka_app WITH LOGIN PASSWORD 'YOUR_STRONG_PASSWORD_HERE';
-
--- 2. Grant privileges on schema public
 GRANT CONNECT ON DATABASE poslanka TO poslanka_app;
 GRANT USAGE ON SCHEMA public TO poslanka_app;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO poslanka_app;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO poslanka_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO poslanka_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO poslanka_app;
 
--- 3. Verify RLS policies are enabled on all tables
--- (npm run db:migrate will create all tables with RLS policies)
+-- 2. Run the migrations first (as the superuser / DATABASE_URL_ADMIN):
+--    npm run db:migrate   # per-file runner (scripts/migrate.mjs); works on a fresh database
+SUPER_ADMIN_EMAIL=you@company.lk SUPER_ADMIN_PASSWORD='<min 12 chars>' npm run db:seed-admin   # creates your super admin; then enable 2FA in /sys-control/settings
+--    They create the NOLOGIN role `app_user`, grant it CRUD on every table and
+--    create the RLS policies. 44 of those policies are written `TO app_user`,
+--    so the application MUST act as app_user (or a member of it).
+
+-- 3. Make the login role a member of app_user so it can SET ROLE app_user
+GRANT app_user TO poslanka_app;
+
+-- 4. Verify: GET /api/health must report  "tenantIsolation": "app_role"
 ```
 
 ### Step 2: Generate High-Entropy NextAuth Secret
@@ -69,8 +72,9 @@ ALLOWED_HOSTS=poslanka.lk,app.poslanka.lk,*.poslanka.lk,localhost
 # Connection string using the non-superuser application role
 DATABASE_URL=postgresql://poslanka_app:YOUR_STRONG_PASSWORD_HERE@your-db-host:5432/poslanka?sslmode=require
 
-# Role used by withTenant() to enforce RLS (must match role created above)
-DATABASE_APP_ROLE=poslanka_app
+# Role used by withTenant() to enforce RLS. Must be app_user (the role the
+# migrations grant privileges and policies to); the login user above must be a member of it.
+DATABASE_APP_ROLE=app_user
 
 # Optional admin connection string (used only for initial db:migrate / migrations runner)
 # DATABASE_URL_ADMIN=postgresql://postgres:SUPERUSER_PASSWORD@your-db-host:5432/poslanka?sslmode=require

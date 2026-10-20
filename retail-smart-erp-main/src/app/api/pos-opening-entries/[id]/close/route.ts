@@ -9,6 +9,7 @@ import {
 } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { sendPushToPermission } from '@/lib/notifications/push'
 import { logError } from '@/lib/ai/error-logger'
 import { postPosShiftVarianceToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
@@ -142,27 +143,44 @@ export async function POST(
         }
       })
 
-      // Process sales
+      // Process sales — each sale is counted exactly once:
+      // payment rows are authoritative (they carry split tenders, credit used and
+      // the real cash received); sale.paymentMethod/total is only a fallback for
+      // legacy rows that have no payment records.
+      const ensureMethod = (method: PaymentMethod) => {
+        if (method && !salesByPaymentMethod[method]) {
+          salesByPaymentMethod[method] = { totalSales: 0, totalReturns: 0, netSales: 0, transactionCount: 0 }
+        }
+      }
+
       for (const sale of openingEntry.sales) {
+        if (sale.status === 'void') continue
         const saleAmount = parseFloat(sale.total)
-        
-        // First, use the sale's paymentMethod if available
         const salePaymentMethod = sale.paymentMethod as PaymentMethod
+        // Methods used in sales but not declared at opening (e.g. card) still count toward the shift
+        ensureMethod(salePaymentMethod)
+        for (const payment of sale.payments || []) ensureMethod(payment.method as PaymentMethod)
         if (salePaymentMethod && salesByPaymentMethod[salePaymentMethod]) {
-          if (sale.isReturn) {
-            salesByPaymentMethod[salePaymentMethod].totalReturns += Math.abs(saleAmount)
-            salesByPaymentMethod[salePaymentMethod].netSales -= Math.abs(saleAmount)
-          } else {
-            salesByPaymentMethod[salePaymentMethod].totalSales += saleAmount
-            salesByPaymentMethod[salePaymentMethod].netSales += saleAmount
-          }
           salesByPaymentMethod[salePaymentMethod].transactionCount++
         }
-        
-        // Also process payments if they exist (for split payments or legacy data)
+
+        if (!sale.payments || sale.payments.length === 0) {
+          if (salePaymentMethod && salesByPaymentMethod[salePaymentMethod]) {
+            if (sale.isReturn) {
+              salesByPaymentMethod[salePaymentMethod].totalReturns += Math.abs(saleAmount)
+              salesByPaymentMethod[salePaymentMethod].netSales -= Math.abs(saleAmount)
+            } else {
+              salesByPaymentMethod[salePaymentMethod].totalSales += saleAmount
+              salesByPaymentMethod[salePaymentMethod].netSales += saleAmount
+            }
+          }
+          continue
+        }
+
         for (const payment of sale.payments) {
           const paymentMethod = payment.method as PaymentMethod
-          const paymentAmount = parseFloat(payment.amount)
+          // Return payment rows are stored negative (money out); normalise and apply sign by isReturn
+          const paymentAmount = Math.abs(parseFloat(payment.amount))
           
           if (paymentMethod && salesByPaymentMethod[paymentMethod]) {
             // If we already counted this sale via sale.paymentMethod, adjust for split payments
@@ -224,8 +242,12 @@ export async function POST(
         }, { status: 400 })
       }
 
-      // Calculate expected amounts and variances
-      const reconciliationValues = openingPaymentMethods.map(method => {
+      // Calculate expected amounts and variances for every method that was opened OR used in a sale
+      const reconciliationMethods = Array.from(new Set<PaymentMethod>([
+        ...openingPaymentMethods,
+        ...(Object.keys(salesByPaymentMethod) as PaymentMethod[]),
+      ]))
+      const reconciliationValues = reconciliationMethods.map(method => {
         const openingAmount = openingBalanceMap[method] || 0
         const expectedAmount = calculateExpectedAmount(openingAmount, salesByPaymentMethod[method]?.totalSales || 0, salesByPaymentMethod[method]?.totalReturns || 0)
         const actualAmount = actualAmountsMap[method] || 0
@@ -337,6 +359,13 @@ export async function POST(
 
       logAndBroadcast(session.user.tenantId, 'pos-shift', 'updated', id)
       logAndBroadcast(session.user.tenantId, 'pos-closing', 'created', closingEntry.id)
+      if (Math.abs(totalVariance) >= 0.01) {
+        void sendPushToPermission(session.user.tenantId, 'manageSales', {
+          title: `Shift closed with ${totalVariance > 0 ? 'excess' : 'shortage'} ${Math.abs(totalVariance).toFixed(2)}`,
+          body: `${session.user.name || 'Cashier'} closed ${openingEntry.posProfile?.name || 'counter'} (${closingEntry.entryNumber})`,
+          data: { screen: 'shifts', type: 'shift_variance', id: closingEntry.id },
+        }, session.user.id)
+      }
 
       return NextResponse.json({
         success: true,

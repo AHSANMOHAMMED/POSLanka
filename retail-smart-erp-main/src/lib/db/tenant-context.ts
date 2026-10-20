@@ -184,3 +184,35 @@ export async function withoutTenant<T>(
     client.release()
   }
 }
+
+
+// ==================== Tenant isolation self-check ====================
+
+export type TenantIsolationMode = 'app_role' | 'owner_force_rls' | 'UNSAFE_SUPERUSER_NO_ROLE'
+
+let isolationCache: { mode: TenantIsolationMode; checkedAt: number } | null = null
+
+/**
+ * Reports how tenant isolation is enforced for this process.
+ * - app_role: DATABASE_APP_ROLE is set → every tenant query runs under that role (RLS enforced).
+ * - owner_force_rls: no app role, but the connection user is not a superuser, so
+ *   FORCE ROW LEVEL SECURITY policies still apply.
+ * - UNSAFE_SUPERUSER_NO_ROLE: superuser connection without DATABASE_APP_ROLE → RLS is bypassed
+ *   and tenants are NOT isolated. Fix by setting DATABASE_APP_ROLE=app_user.
+ */
+export async function checkTenantIsolation(): Promise<TenantIsolationMode> {
+  if (isolationCache && Date.now() - isolationCache.checkedAt < 5 * 60 * 1000) return isolationCache.mode
+  let mode: TenantIsolationMode = 'owner_force_rls'
+  if (getAppRole()) {
+    mode = 'app_role'
+  } else {
+    const pool = getSharedPool()
+    const { rows } = await pool.query<{ rolsuper: boolean }>('SELECT rolsuper FROM pg_roles WHERE rolname = current_user')
+    if (rows[0]?.rolsuper) mode = 'UNSAFE_SUPERUSER_NO_ROLE'
+  }
+  isolationCache = { mode, checkedAt: Date.now() }
+  if (mode === 'UNSAFE_SUPERUSER_NO_ROLE') {
+    console.error('[SECURITY] DATABASE_APP_ROLE is not set and the database user is a superuser: row-level security is BYPASSED and tenants are not isolated. Set DATABASE_APP_ROLE=app_user.')
+  }
+  return mode
+}

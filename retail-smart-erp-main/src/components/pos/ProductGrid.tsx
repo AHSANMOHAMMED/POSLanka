@@ -30,7 +30,12 @@ interface ProductGridProps {
   onReturnModeConfirm: () => void
   config: POSBusinessConfig
   businessType?: string
+  /** Enter in the search box: immediate exact barcode/PLU lookup (bypasses debounce). Return true when handled. */
+  onScanSubmit?: (code: string) => Promise<boolean> | boolean
 }
+
+/** DOM id of the POS search box so keyboard shortcuts can focus it */
+export const POS_SEARCH_INPUT_ID = 'pos-search-input'
 
 function CategoryPillBar({ categories, selectedCategory, onCategoryChange, allLabel }: {
   categories: Category[]
@@ -124,7 +129,22 @@ export function ProductGrid({
   onReturnModeConfirm,
   config,
   businessType,
+  onScanSubmit,
 }: ProductGridProps) {
+  const [scanBusy, setScanBusy] = useState(false)
+
+  async function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== 'Enter' || !onScanSubmit) return
+    const code = search.trim()
+    if (!code) return
+    e.preventDefault()
+    setScanBusy(true)
+    try {
+      await onScanSubmit(code)
+    } finally {
+      setScanBusy(false)
+    }
+  }
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()
 
@@ -169,13 +189,16 @@ export function ProductGrid({
           {/* Search */}
           <div className="flex-1 min-w-0">
             <FormInput
+              id={POS_SEARCH_INPUT_ID}
               type="text"
               placeholder={terms.searchPlaceholder}
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
               leftIcon={<Search size={20} />}
-              rightIcon={<ScanBarcode size={20} />}
+              rightIcon={scanBusy ? <Loader2 size={20} className="animate-spin" /> : <ScanBarcode size={20} />}
               inputSize="lg"
+              autoComplete="off"
               autoFocus
             />
           </div>

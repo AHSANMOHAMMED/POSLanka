@@ -732,8 +732,27 @@ export const superAdmins = pgTable('super_admins', {
   lastLoginIp: varchar('last_login_ip', { length: 45 }),
   failedLoginAttempts: integer('failed_login_attempts').notNull().default(0),
   lockedUntil: timestamp('locked_until'),
+  // TOTP two-factor authentication
+  totpSecret: text('totp_secret'),
+  totpEnabled: boolean('totp_enabled').notNull().default(false),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+// Push-notification device registry (Expo push tokens). Rows may belong to a tenant user,
+// an account owner, or a super admin.
+export const userDevices = pgTable('user_devices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id'),
+  accountId: uuid('account_id'),
+  superAdminId: uuid('super_admin_id').references(() => superAdmins.id, { onDelete: 'cascade' }),
+  pushToken: varchar('push_token', { length: 255 }).notNull().unique(),
+  platform: varchar('platform', { length: 20 }).notNull().default('android'),
+  deviceName: varchar('device_name', { length: 255 }),
+  appVersion: varchar('app_version', { length: 50 }),
+  lastSeenAt: timestamp('last_seen_at').defaultNow().notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
 // ==================== USERS ====================
@@ -755,6 +774,8 @@ export const users = pgTable('users', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
   dealerId: uuid('dealer_id').references(() => dealers.id), // References dealers table - for dealer portal users
   customRoleId: uuid('custom_role_id').references(() => customRoles.id),
+  // Short numeric PIN (bcrypt hash) for POS lock-screen unlock and supervisor overrides
+  pinHash: text('pin_hash'),
 })
 
 // ==================== WAREHOUSES ====================

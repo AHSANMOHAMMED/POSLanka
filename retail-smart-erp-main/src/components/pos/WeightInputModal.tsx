@@ -5,6 +5,7 @@ import { X, Scale } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { Item } from './types'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface WeightInputModalProps {
   isOpen: boolean
@@ -25,6 +26,8 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
       setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [isOpen])
+
+  useEscapeKey(isOpen && !!item, onClose)
 
   if (!isOpen || !item) return null
 

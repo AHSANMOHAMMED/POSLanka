@@ -19,6 +19,7 @@ import {
   Loader2,
   CheckCircle2,
   ChevronRight,
+  ChevronLeft,
   Sliders,
 } from 'lucide-react'
 
@@ -39,10 +40,17 @@ type VendorRow = {
   settings?: Record<string, unknown> | null
 }
 
+type Pagination = { page: number; pageSize: number; total: number }
+
+const PAGE_SIZE = 50
+
 export default function VendorsAdminPage() {
   const [vendors, setVendors] = useState<VendorRow[]>([])
+  const [pagination, setPagination] = useState<Pagination>({ page: 1, pageSize: PAGE_SIZE, total: 0 })
+  const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
   const [selectedVertical, setSelectedVertical] = useState('all')
   const [selectedStatus, setSelectedStatus] = useState('all')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -51,20 +59,44 @@ export default function VendorsAdminPage() {
   const [bulkModalOpen, setBulkModalOpen] = useState(false)
   const [bulkFlags, setBulkFlags] = useState<Partial<FeatureFlagsMap>>({})
 
+  // Debounce search input before hitting the server
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedQ(q.trim())
+      setPage(1)
+    }, 350)
+    return () => clearTimeout(t)
+  }, [q])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/sys-control/vendors?q=${encodeURIComponent(q)}`)
-      const data = await res.json()
+      const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) })
+      if (debouncedQ) params.set('q', debouncedQ)
+      const res = await fetch(`/api/sys-control/vendors?${params.toString()}`, { cache: 'no-store' })
+      if (res.status === 401) {
+        window.location.href = '/sys-control/login'
+        return
+      }
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setMessage(data.error || 'Failed to load vendors')
+        return
+      }
       setVendors(data.vendors || [])
+      setPagination(data.pagination || { page, pageSize: PAGE_SIZE, total: (data.vendors || []).length })
+    } catch {
+      setMessage('Network error while loading vendors')
     } finally {
       setLoading(false)
     }
-  }, [q])
+  }, [page, debouncedQ])
 
   useEffect(() => {
     load()
   }, [load])
+
+  const totalPages = Math.max(1, Math.ceil(pagination.total / pagination.pageSize))
 
   async function toggleFlag(vendor: VendorRow, flag: FeatureFlag) {
     setSavingId(vendor.id)
@@ -126,8 +158,8 @@ export default function VendorsAdminPage() {
     const res = await fetch(`/api/sys-control/vendors/${vendor.id}/impersonate`, {
       method: 'POST',
     })
-    const data = await res.json()
-    if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.redirectUrl) {
       setMessage(data.error || 'Impersonation failed')
       return
     }
@@ -210,7 +242,7 @@ export default function VendorsAdminPage() {
                 </h1>
                 <div className="flex items-center gap-1.5 px-2.5 py-0.5 bg-[#171f33] border border-[#2d3449] rounded-lg text-xs font-mono">
                   <span className="w-2 h-2 rounded-full bg-[#4fdbc8]"></span>
-                  <span className="text-white font-bold">{vendors.length || 142}</span>
+                  <span className="text-white font-bold">{pagination.total}</span>
                   <span className="text-[#bcc9c6]">Registered</span>
                 </div>
               </div>
@@ -220,19 +252,19 @@ export default function VendorsAdminPage() {
             <div className="hidden xl:flex items-center gap-2 font-mono text-xs bg-[#060e20] border border-[#2d3449] px-3 py-1.5 rounded-lg">
               <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#131b2e]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#4fdbc8]"></span>
-                <span className="text-[#4fdbc8] font-bold">{liveCount || 118}</span>
+                <span className="text-[#4fdbc8] font-bold">{liveCount}</span>
                 <span className="text-[#bcc9c6]">Live</span>
               </div>
               <span className="text-[#3d4947]">·</span>
               <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#131b2e]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#ffdad7]"></span>
-                <span className="text-[#ffdad7] font-bold">{trialCount || 19}</span>
+                <span className="text-[#ffdad7] font-bold">{trialCount}</span>
                 <span className="text-[#bcc9c6]">Trial</span>
               </div>
               <span className="text-[#3d4947]">·</span>
               <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#131b2e]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#ff5451]"></span>
-                <span className="text-[#ff5451] font-bold">{lockedCount || 5}</span>
+                <span className="text-[#ff5451] font-bold">{lockedCount}</span>
                 <span className="text-[#bcc9c6]">Locked</span>
               </div>
             </div>
@@ -304,10 +336,10 @@ export default function VendorsAdminPage() {
               >
                 <option value="all" className="bg-[#131b2e]">All Verticals</option>
                 <option value="supermarket" className="bg-[#131b2e]">Supermarket</option>
-                <option value="retail" className="bg-[#131b2e]">Retail &amp; Marine</option>
+                <option value="retail" className="bg-[#131b2e]">Retail</option>
                 <option value="restaurant" className="bg-[#131b2e]">Restaurant / F&amp;B</option>
-                <option value="auto_care" className="bg-[#131b2e]">Auto Care &amp; Workshop</option>
-                <option value="pharmacy" className="bg-[#131b2e]">Pharmacy &amp; Health</option>
+                <option value="auto_service" className="bg-[#131b2e]">Auto Service &amp; Workshop</option>
+                <option value="dealership" className="bg-[#131b2e]">Dealership</option>
               </select>
             </div>
 
@@ -331,7 +363,7 @@ export default function VendorsAdminPage() {
 
           <div className="flex items-center justify-between text-xs text-[#879391] font-mono">
             <span>
-              Showing {filteredVendors.length} of {vendors.length} vendors
+              Showing {filteredVendors.length} of {vendors.length} on this page • {pagination.total} total
             </span>
           </div>
         </div>
@@ -437,15 +469,13 @@ export default function VendorsAdminPage() {
                       <td className="px-3 py-3 whitespace-nowrap">
                         <div className="flex items-center gap-1.5 text-xs text-[#bcc9c6]">
                           <ShieldCheck className="w-3.5 h-3.5 text-[#4fdbc8]" />
-                          <span>
-                            {(vendor.settings?.tin as string) || `RAMIS-${vendor.slug.slice(0, 4).toUpperCase()}`}
-                          </span>
+                          <span>{(vendor.settings?.tin as string) || '—'}</span>
                         </div>
                       </td>
 
                       {/* Tills / Users */}
                       <td className="px-3 py-3 whitespace-nowrap text-white">
-                        <span>{vendor.userCount} Tills</span>
+                        <span>{vendor.userCount} Users</span>
                       </td>
 
                       {/* Plan / Status */}
@@ -546,6 +576,33 @@ export default function VendorsAdminPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="flex items-center justify-between px-4 py-3 border-t border-[#2d3449] font-mono text-xs text-[#879391]">
+          <span>
+            Page {pagination.page} of {totalPages} • {pagination.total} vendors
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#171f33] border border-[#2d3449] text-white disabled:opacity-40"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              Prev
+            </button>
+            <button
+              type="button"
+              disabled={page >= totalPages || loading}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#171f33] border border-[#2d3449] text-white disabled:opacity-40"
+            >
+              Next
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
       </div>
 

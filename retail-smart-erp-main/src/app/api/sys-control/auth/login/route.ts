@@ -4,6 +4,7 @@ import { headers } from 'next/headers'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
 import { sysLoginSchema } from '@/lib/validation/schemas/sys-control'
+import { checkAdminTotp } from '@/lib/admin/totp'
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,7 +14,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = await validateBody(request, sysLoginSchema)
     if (!parsed.success) return parsed.response
-    const { email, password } = parsed.data
+    const { email, password, totpCode } = parsed.data
 
     // Get IP address for logging
     const headersList = await headers()
@@ -30,6 +31,11 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       )
     }
+
+    // Two-factor (TOTP) when enabled for this admin
+    const totp = await checkAdminTotp(result.admin!.id, totpCode)
+    if (totp === 'required') return NextResponse.json({ requires2fa: true, error: 'Two-factor code required' }, { status: 428 })
+    if (totp === 'invalid') return NextResponse.json({ requires2fa: true, error: 'Invalid two-factor code' }, { status: 401 })
 
     // Create session
     await createAdminSession(result.admin!.id)

@@ -8,6 +8,7 @@ import { escapeLikePattern } from '@/lib/utils/sql'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { sendPushToPermission } from '@/lib/notifications/push'
 import { roundCurrency, compareCurrency, currencyEquals, parseCurrency } from '@/lib/utils/currency'
 import { postSaleToGL, postGiftCardSaleToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
@@ -213,6 +214,9 @@ export async function GET(request: NextRequest) {
 
 // POST create new sale
 export async function POST(request: NextRequest) {
+  // Kept outside the try so the catch can resolve an idempotent duplicate (racing retries)
+  let idemClientSaleId: string | undefined
+  let idemTenantId: string | undefined
   try {
     const session = await authWithCompany()
     if (!session) {
@@ -249,6 +253,9 @@ export async function POST(request: NextRequest) {
     // Pre-validate accounting config before starting transaction
     const acctError = await requireAccountingConfig(rawDb, session.user.tenantId, 'sale')
     if (acctError) return acctError
+
+    idemClientSaleId = clientSaleId
+    idemTenantId = session.user.tenantId
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -789,12 +796,17 @@ export async function POST(request: NextRequest) {
           }
         }
       } else {
-        // Create payment record for cash/card payment
-        if (cashCardAmount > 0) {
+        // Create payment record for cash/card payment.
+        // Record what actually stays in the drawer: change handed back is not revenue,
+        // unless the overpayment was deliberately kept as customer credit.
+        const cashCardRecorded = addOverpaymentToCredit
+          ? cashCardAmount
+          : Math.max(0, Math.min(cashCardAmount, actualPaidAmount - creditUsed))
+        if (cashCardRecorded > 0) {
           await tx.insert(payments).values({
             tenantId: session.user.tenantId,
             saleId: newSale.id,
-            amount: String(cashCardAmount),
+            amount: String(cashCardRecorded),
             method: paymentMethod || 'cash',
             receivedBy: userId,
           })
@@ -1337,6 +1349,30 @@ export async function POST(request: NextRequest) {
       })
       // WS-3: Broadcast specific item stock updates (not 'all')
       const affectedItemIds = [...new Set(expandedCartItems.map(i => i.itemId))]
+
+      // Low-stock alert → stock managers (only when a minimum is configured for the branch)
+      if (!isReturn && warehouseId && affectedItemIds.length > 0) {
+        try {
+          const low = await db.select({ name: items.name, current: warehouseStock.currentStock, min: warehouseStock.minStock })
+            .from(warehouseStock)
+            .innerJoin(items, eq(items.id, warehouseStock.itemId))
+            .where(and(
+              eq(warehouseStock.warehouseId, warehouseId),
+              inArray(warehouseStock.itemId, affectedItemIds.filter((id): id is string => !!id)),
+              sql`${warehouseStock.minStock} > 0`,
+              sql`${warehouseStock.currentStock} <= ${warehouseStock.minStock}`,
+            ))
+          if (low.length > 0) {
+            void sendPushToPermission(session.user.tenantId, 'manageInventory', {
+              title: low.length === 1 ? `Low stock: ${low[0].name}` : `${low.length} items at or below minimum stock`,
+              body: low.slice(0, 3).map(l => `${l.name}: ${Number(l.current)} left (min ${Number(l.min)})`).join(' · '),
+              data: { screen: 'inventory', type: 'low_stock', warehouseId },
+            })
+          }
+        } catch (lowStockError) {
+          logError('api/sales', lowStockError, { stage: 'low-stock-alert' })
+        }
+      }
       for (const itemId of affectedItemIds) {
         logAndBroadcast(session.user.tenantId, 'item', 'updated', itemId)
       }
@@ -1437,6 +1473,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(result)
     })
   } catch (error) {
+    // Racing retries of the same clientSaleId: the unique index (tenant_id, client_sale_id)
+    // rejected the loser → return the sale the winner created instead of a 500.
+    const pgCode = (error as { code?: string; cause?: { code?: string; constraint?: string } })?.cause?.code
+      || (error as { code?: string })?.code
+    const constraint = (error as { cause?: { constraint?: string }; constraint?: string })?.cause?.constraint
+      || (error as { constraint?: string })?.constraint || ''
+    if (pgCode === '23505' && idemClientSaleId && idemTenantId && constraint.includes('client_sale')) {
+      try {
+        const tenantId = idemTenantId
+        const key = idemClientSaleId
+        const existing = await withTenant(tenantId, async (db) =>
+          db.query.sales.findFirst({
+            where: and(eq(sales.tenantId, tenantId), eq(sales.clientSaleId, key)),
+            with: { customer: true, user: true, items: { with: { item: true } } },
+          })
+        )
+        if (existing) return NextResponse.json(existing, { status: 200 })
+      } catch (lookupError) {
+        logError('api/sales', lookupError, { method: 'POST', path: '/api/sales', stage: 'idempotent-recovery' })
+      }
+    }
+
     logError('api/sales', error, { method: 'POST', path: '/api/sales' })
     const message = error instanceof Error ? error.message : ''
 

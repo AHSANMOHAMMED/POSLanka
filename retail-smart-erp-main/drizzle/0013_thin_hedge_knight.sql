@@ -1,7 +1,9 @@
 CREATE TYPE "public"."customer_business_type" AS ENUM('individual', 'company');--> statement-breakpoint
 CREATE TYPE "public"."customer_type" AS ENUM('retail', 'wholesale', 'vip');--> statement-breakpoint
 CREATE TYPE "public"."part_condition" AS ENUM('new', 'refurbished', 'used');--> statement-breakpoint
-CREATE TYPE "public"."pending_company_status" AS ENUM('pending_payment', 'pending_approval', 'approved', 'rejected', 'expired');--> statement-breakpoint
+DO $$ BEGIN
+ CREATE TYPE "public"."pending_company_status" AS ENUM('pending_payment', 'pending_approval', 'approved', 'rejected', 'expired');
+EXCEPTION WHEN duplicate_object THEN null; END $$;--> statement-breakpoint
 CREATE TYPE "public"."stock_transfer_status" AS ENUM('draft', 'pending_approval', 'approved', 'in_transit', 'completed', 'cancelled');--> statement-breakpoint
 CREATE TABLE "account_notifications" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -29,7 +31,7 @@ CREATE TABLE "credit_transactions" (
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "pending_companies" (
+CREATE TABLE IF NOT EXISTS "pending_companies" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"account_id" uuid NOT NULL,
 	"name" varchar(255) NOT NULL,
@@ -216,7 +218,7 @@ ALTER TABLE "items" ADD COLUMN "warranty_months" integer;--> statement-breakpoin
 ALTER TABLE "items" ADD COLUMN "image_url" text;--> statement-breakpoint
 ALTER TABLE "items" ADD COLUMN "superseded_by" uuid;--> statement-breakpoint
 ALTER TABLE "payment_deposits" ADD COLUMN "is_wallet_deposit" boolean DEFAULT false NOT NULL;--> statement-breakpoint
-ALTER TABLE "payment_deposits" ADD COLUMN "pending_company_id" uuid;--> statement-breakpoint
+ALTER TABLE "payment_deposits" ADD COLUMN IF NOT EXISTS "pending_company_id" uuid;--> statement-breakpoint
 ALTER TABLE "pricing_tiers" ADD COLUMN "currency" varchar(3) DEFAULT 'USD' NOT NULL;--> statement-breakpoint
 ALTER TABLE "purchases" ADD COLUMN "warehouse_id" uuid;--> statement-breakpoint
 ALTER TABLE "sales" ADD COLUMN "warehouse_id" uuid;--> statement-breakpoint
@@ -230,8 +232,12 @@ ALTER TABLE "account_notifications" ADD CONSTRAINT "account_notifications_accoun
 ALTER TABLE "credit_transactions" ADD CONSTRAINT "credit_transactions_account_id_accounts_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "credit_transactions" ADD CONSTRAINT "credit_transactions_payment_deposit_id_payment_deposits_id_fk" FOREIGN KEY ("payment_deposit_id") REFERENCES "public"."payment_deposits"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "credit_transactions" ADD CONSTRAINT "credit_transactions_subscription_id_subscriptions_id_fk" FOREIGN KEY ("subscription_id") REFERENCES "public"."subscriptions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "pending_companies" ADD CONSTRAINT "pending_companies_account_id_accounts_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "pending_companies" ADD CONSTRAINT "pending_companies_tier_id_pricing_tiers_id_fk" FOREIGN KEY ("tier_id") REFERENCES "public"."pricing_tiers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "pending_companies" ADD CONSTRAINT "pending_companies_account_id_accounts_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."accounts"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null; END $$;--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "pending_companies" ADD CONSTRAINT "pending_companies_tier_id_pricing_tiers_id_fk" FOREIGN KEY ("tier_id") REFERENCES "public"."pricing_tiers"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null; END $$;--> statement-breakpoint
 ALTER TABLE "pos_profiles" ADD CONSTRAINT "pos_profiles_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pos_profiles" ADD CONSTRAINT "pos_profiles_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "pos_profiles" ADD CONSTRAINT "pos_profiles_warehouse_id_warehouses_id_fk" FOREIGN KEY ("warehouse_id") REFERENCES "public"."warehouses"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

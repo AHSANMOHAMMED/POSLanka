@@ -10,12 +10,19 @@ import {
 import { THEME, formatLKR } from '../lib/theme'
 
 export interface CartLine {
+  /** Cart line key. Equals the item id except for scale-weighed lines (`<itemId>#<n>`). */
   id: string
+  /** Catalog item id when it differs from `id`. */
+  itemId?: string
   name: string
   sku?: string | null
   barcode?: string | null
   sellingPrice: string
   quantity: number
+  unit?: string | null
+  taxTemplateId?: string | null
+  trackStock?: boolean
+  availableStock?: number | null
 }
 
 interface CartDrawerModalProps {
@@ -27,6 +34,11 @@ interface CartDrawerModalProps {
   onClearCart: () => void
   onHoldCart: () => void
   onProceedToTender: () => void
+  /** Document tax computed by the parent (tax templates). */
+  tax: number
+  taxLabel?: string
+  /** True when the tax is already included in item prices. */
+  taxInclusive?: boolean
 }
 
 export function CartDrawerModal({
@@ -38,6 +50,9 @@ export function CartDrawerModal({
   onClearCart,
   onHoldCart,
   onProceedToTender,
+  tax,
+  taxLabel = 'Tax',
+  taxInclusive = false,
 }: CartDrawerModalProps) {
   if (!visible) return null
 
@@ -45,8 +60,7 @@ export function CartDrawerModal({
     (sum, line) => sum + Number(line.sellingPrice) * line.quantity,
     0
   )
-  const ssclTax = subtotal * 0.025 // 2.5% SSCL estimate
-  const totalPayable = subtotal + ssclTax
+  const totalPayable = taxInclusive ? subtotal : subtotal + tax
 
   return (
     <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
@@ -141,8 +155,8 @@ export function CartDrawerModal({
                 <Text style={styles.summaryVal}>{formatLKR(subtotal)}</Text>
               </View>
               <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>SSCL (2.5%)</Text>
-                <Text style={styles.summaryVal}>{formatLKR(ssclTax)}</Text>
+                <Text style={styles.summaryLabel}>{taxLabel}{taxInclusive ? ' (included)' : ''}</Text>
+                <Text style={styles.summaryVal}>{formatLKR(tax)}</Text>
               </View>
               <View style={[styles.summaryRow, styles.totalRow]}>
                 <Text style={styles.totalLabel}>Total Payable</Text>

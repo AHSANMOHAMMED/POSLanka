@@ -3,6 +3,7 @@ import { validateAdminSessionWithRefresh } from '@/lib/admin'
 import { sendSystemEmail } from '@/lib/email/system-email'
 import { validateBody } from '@/lib/validation/helpers'
 import { sysSendEmailSchema } from '@/lib/validation/schemas/sys-control'
+import { logError } from '@/lib/ai/error-logger'
 
 export async function POST(request: NextRequest) {
   const session = await validateAdminSessionWithRefresh()
@@ -28,6 +29,7 @@ export async function POST(request: NextRequest) {
       messageId: 'messageId' in result ? result.messageId : undefined,
     })
   } catch (error) {
+    logError('api/sys-control/send-email', error)
     return NextResponse.json(
       { error: 'Failed to send email' },
       { status: 500 }

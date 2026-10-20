@@ -20,6 +20,9 @@ import {
   PlusCircle,
   Eye,
   LogOut,
+  Bell,
+  Mail,
+  Bug,
   type LucideIcon,
 } from 'lucide-react'
 import { AdminSessionTimer } from './AdminSessionTimer'
@@ -56,7 +59,7 @@ export function SuperAdminLayoutShell({ children, adminEmail }: SuperAdminLayout
       links: [
         { label: 'Overview', href: '/sys-control', icon: Activity, exact: true },
         { label: 'Live Sales Wall', href: '/sys-control/sales-wall', icon: Radio, pulse: true },
-        { label: 'Vendors & Tenants', href: '/sys-control/vendors', icon: Store, badge: '142' },
+        { label: 'Vendors & Tenants', href: '/sys-control/vendors', icon: Store },
         { label: 'Provision Tenant', href: '/sys-control/vendors/create', icon: PlusCircle, sub: true },
         { label: 'Platform Users', href: '/sys-control/users', icon: Users },
       ],
@@ -72,8 +75,11 @@ export function SuperAdminLayoutShell({ children, adminEmail }: SuperAdminLayout
     {
       group: 'Deep Infrastructure',
       links: [
-        { label: 'Error & Audit Logs', href: '/sys-control/audit-logs', icon: FileText },
+        { label: 'Audit Logs', href: '/sys-control/audit-logs', icon: FileText },
+        { label: 'Error Logs', href: '/sys-control/error-logs', icon: Bug },
         { label: 'Broadcasts & Support', href: '/sys-control/messages', icon: Radio },
+        { label: 'Notifications', href: '/sys-control/notifications', icon: Bell },
+        { label: 'Send Email', href: '/sys-control/send-email', icon: Mail },
         { label: 'Platform Settings', href: '/sys-control/settings', icon: Settings },
       ],
     },
@@ -81,7 +87,8 @@ export function SuperAdminLayoutShell({ children, adminEmail }: SuperAdminLayout
 
   const isLinkActive = (href: string, exact?: boolean) => {
     if (exact) return pathname === href
-    return pathname.startsWith(href)
+    if (href === '/sys-control/vendors' && pathname.startsWith('/sys-control/vendors/create')) return false
+    return pathname === href || pathname.startsWith(`${href}/`)
   }
 
   return (

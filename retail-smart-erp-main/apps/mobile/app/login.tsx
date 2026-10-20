@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   View,
   Text,
@@ -8,40 +8,142 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  Switch,
 } from 'react-native'
 import { router } from 'expo-router'
-import { apiFetch, setApiBase, setToken } from '../src/lib/api'
+import {
+  api,
+  DEFAULT_API_URL,
+  loadSavedSettings,
+  saveSettings,
+  setToken,
+  setUser,
+  type AuthUser,
+} from '../src/lib/api'
+import { fetchCurrentShift } from '../src/lib/shift'
 import { THEME } from '../src/lib/theme'
+import { adminLogin, setAdminSession } from '../src/lib/adminApi'
+import { registerPushToken } from '../src/lib/notifications'
+
+interface LoginResponse {
+  token: string
+  user: AuthUser
+}
 
 export default function LoginScreen() {
-  const [apiUrl, setApiUrl] = useState('http://localhost:3000')
+  const [apiUrl, setApiUrl] = useState(DEFAULT_API_URL)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tenantSlug, setTenantSlug] = useState('')
   const [busy, setBusy] = useState(false)
+  const [settingsLoaded, setSettingsLoaded] = useState(false)
+  // Platform admin (super-admin console) mode: separate endpoint, separate token.
+  const [adminMode, setAdminMode] = useState(false)
+  const [totpCode, setTotpCode] = useState('')
+  const [needsTotp, setNeedsTotp] = useState(false)
+
+  // Company slug + server URL are remembered on the device.
+  useEffect(() => {
+    loadSavedSettings()
+      .then((s) => {
+        setApiUrl(s.apiUrl || DEFAULT_API_URL)
+        setTenantSlug(s.tenantSlug || '')
+      })
+      .finally(() => setSettingsLoaded(true))
+  }, [])
+
+  async function onAdminLogin(url: string) {
+    if (!email.trim() || !password) {
+      Alert.alert('Required Fields', 'Please enter your admin email and password.')
+      return
+    }
+    if (needsTotp && !/^\d{6}$/.test(totpCode.trim())) {
+      Alert.alert('Authenticator Code', 'Enter the 6-digit code from your authenticator app.')
+      return
+    }
+    setBusy(true)
+    try {
+      await saveSettings({ apiUrl: url, tenantSlug: tenantSlug.trim().toLowerCase() })
+      const res = await adminLogin(email.trim(), password, needsTotp ? totpCode.trim() : undefined)
+      if (res.requires2fa) {
+        setNeedsTotp(true)
+        setTotpCode('')
+        return
+      }
+      if (!res.ok) {
+        Alert.alert(
+          res.status === 0 ? 'Network Error' : 'Admin Login Failed',
+          res.status === 401 ? (needsTotp ? 'Invalid credentials or authenticator code.' : 'Invalid admin credentials.') : res.error
+        )
+        if (res.status === 401 && needsTotp) setTotpCode('')
+        return
+      }
+      const admin = res.data.admin || { name: 'Platform admin', email: email.trim() }
+      await setAdminSession(res.data.token, { name: admin.name || 'Platform admin', email: admin.email || email.trim() })
+      setPassword('')
+      setTotpCode('')
+      setNeedsTotp(false)
+      router.replace('/admin/pulse')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function onLogin() {
-    if (!email || !password) {
+    const slug = tenantSlug.trim().toLowerCase()
+    const url = apiUrl.trim()
+    if (!url || !/^https?:\/\//i.test(url)) {
+      Alert.alert('Server URL', 'Enter the server address including http:// or https://.')
+      return
+    }
+    if (adminMode) {
+      await onAdminLogin(url)
+      return
+    }
+    if (!slug) {
+      Alert.alert('Company Slug', 'Enter your company slug (subdomain).')
+      return
+    }
+    if (!email.trim() || !password) {
       Alert.alert('Required Fields', 'Please enter your email and password.')
       return
     }
 
     setBusy(true)
     try {
-      setApiBase(apiUrl)
-      const res = await apiFetch('/api/auth/mobile-login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password, tenantSlug }),
-      })
-      const data = await res.json()
+      await saveSettings({ apiUrl: url, tenantSlug: slug })
+
+      const res = await api<LoginResponse>(
+        '/api/auth/mobile-login',
+        {
+          method: 'POST',
+          body: JSON.stringify({ email: email.trim(), password, tenantSlug: slug }),
+        },
+        { skipUnauthorizedHandler: true }
+      )
+
       if (!res.ok) {
-        Alert.alert('Login Failed', data.error || 'Invalid credentials or company slug.')
+        Alert.alert(
+          res.status === 0 ? 'Network Error' : 'Login Failed',
+          res.status === 401 ? 'Invalid credentials or company slug.' : res.error
+        )
         return
       }
-      await setToken(data.token)
-      router.replace('/pos')
-    } catch (e) {
-      Alert.alert('Network Error', e instanceof Error ? e.message : 'Connection to POSLanka server failed')
+
+      await setToken(res.data.token)
+      await setUser(res.data.user)
+      setPassword('')
+
+      // Push registration (permission prompt + POST /api/account/devices); never blocks login.
+      registerPushToken().catch(() => undefined)
+
+      // Route by shift state: open shift -> POS, otherwise -> open a shift first.
+      const shiftRes = await fetchCurrentShift()
+      if (shiftRes.ok && shiftRes.data.hasOpenShift) {
+        router.replace('/pos')
+      } else {
+        router.replace('/shifts')
+      }
     } finally {
       setBusy(false)
     }
@@ -58,32 +160,54 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardHeader}>Cashier Station Authentication</Text>
+        <Text style={styles.cardHeader}>{adminMode ? 'Platform Admin Console' : 'Cashier Station Authentication'}</Text>
+
+        <View style={styles.modeRow}>
+          <View style={{ flex: 1, marginRight: 12 }}>
+            <Text style={styles.modeTitle}>Platform admin</Text>
+            <Text style={styles.modeSub}>Super-admin companion: pulse, live feed, vendors, approvals</Text>
+          </View>
+          <Switch
+            value={adminMode}
+            onValueChange={(v) => {
+              setAdminMode(v)
+              setNeedsTotp(false)
+              setTotpCode('')
+            }}
+            trackColor={{ false: THEME.colors.border, true: THEME.colors.primary }}
+          />
+        </View>
 
         <Text style={styles.label}>SERVER API ENDPOINT</Text>
         <TextInput
           style={styles.input}
-          placeholder="http://localhost:3000"
+          placeholder={DEFAULT_API_URL}
           placeholderTextColor={THEME.colors.textSubtle}
           autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
           value={apiUrl}
           onChangeText={setApiUrl}
         />
 
-        <Text style={styles.label}>COMPANY SLUG (SUBDOMAIN)</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="e.g. lanka-super"
-          placeholderTextColor={THEME.colors.textSubtle}
-          autoCapitalize="none"
-          value={tenantSlug}
-          onChangeText={setTenantSlug}
-        />
+        {!adminMode && (
+          <>
+            <Text style={styles.label}>COMPANY SLUG (SUBDOMAIN)</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g. lanka-super"
+              placeholderTextColor={THEME.colors.textSubtle}
+              autoCapitalize="none"
+              value={tenantSlug}
+              onChangeText={setTenantSlug}
+            />
+          </>
+        )}
 
-        <Text style={styles.label}>CASHIER EMAIL</Text>
+        <Text style={styles.label}>{adminMode ? 'ADMIN EMAIL' : 'CASHIER EMAIL'}</Text>
         <TextInput
           style={styles.input}
-          placeholder="cashier@poslanka.lk"
+          placeholder={adminMode ? 'admin@poslanka.lk' : 'cashier@poslanka.lk'}
           placeholderTextColor={THEME.colors.textSubtle}
           autoCapitalize="none"
           keyboardType="email-address"
@@ -101,21 +225,38 @@ export default function LoginScreen() {
           onChangeText={setPassword}
         />
 
+        {adminMode && needsTotp && (
+          <>
+            <Text style={styles.label}>AUTHENTICATOR CODE (6 DIGITS)</Text>
+            <TextInput
+              style={[styles.input, styles.totpInput]}
+              placeholder="123456"
+              placeholderTextColor={THEME.colors.textSubtle}
+              keyboardType="number-pad"
+              maxLength={6}
+              autoFocus
+              value={totpCode}
+              onChangeText={(v) => setTotpCode(v.replace(/[^0-9]/g, ''))}
+              onSubmitEditing={onLogin}
+            />
+          </>
+        )}
+
         <Pressable
           style={[styles.button, busy && { opacity: 0.6 }]}
           onPress={onLogin}
-          disabled={busy}
+          disabled={busy || !settingsLoaded}
         >
-          {busy ? (
+          {busy || !settingsLoaded ? (
             <ActivityIndicator color="#FFF" />
           ) : (
-            <Text style={styles.buttonText}>Sign In to Register →</Text>
+            <Text style={styles.buttonText}>{adminMode ? (needsTotp ? 'Verify Code & Open Console →' : 'Sign In to Admin Console →') : 'Sign In to Register →'}</Text>
           )}
         </Pressable>
 
         <View style={styles.footerNote}>
           <Text style={styles.footerNoteText}>
-            🔒 Protected by Row-Level Security & Role-Based Access Control
+            Server address and company slug are remembered on this device.
           </Text>
         </View>
       </View>
@@ -196,6 +337,18 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   buttonText: { color: '#FFF', fontWeight: '800', fontSize: 15 },
+  modeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: THEME.colors.surfaceContainerLow,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 16,
+  },
+  modeTitle: { fontSize: 13, fontWeight: '800', color: THEME.colors.text },
+  modeSub: { fontSize: 11, color: THEME.colors.textMuted, marginTop: 1 },
+  totpInput: { fontFamily: 'monospace', fontSize: 22, letterSpacing: 6, textAlign: 'center' },
   footerNote: { marginTop: 16, alignItems: 'center' },
   footerNoteText: { fontSize: 11, color: THEME.colors.textSubtle, textAlign: 'center' },
 })

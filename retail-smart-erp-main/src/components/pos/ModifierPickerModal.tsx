@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { X, Loader2, Check } from 'lucide-react'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { ModifierGroupForPOS, SelectedModifier } from './types'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface ModifierPickerModalProps {
   isOpen: boolean
@@ -53,6 +54,8 @@ export function ModifierPickerModal({ isOpen, itemId, itemName, onClose, onConfi
       setSelections({})
     }
   }, [isOpen, itemId, fetchModifierGroups])
+
+  useEscapeKey(isOpen, onClose)
 
   if (!isOpen) return null
 

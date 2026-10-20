@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { X, Hash, Loader2, Check } from 'lucide-react'
 import type { Item } from './types'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface SerialNumber {
   id: string
@@ -51,6 +52,8 @@ export function SerialPickerModal({ isOpen, item, warehouseId, quantity, onClose
       setLoading(false)
     }
   }
+
+  useEscapeKey(isOpen && !!item, onClose)
 
   if (!isOpen || !item) return null
 

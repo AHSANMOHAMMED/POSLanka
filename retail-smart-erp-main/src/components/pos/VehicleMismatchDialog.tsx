@@ -2,6 +2,7 @@
 
 import { AlertCircle } from 'lucide-react'
 import type { Vehicle } from './types'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface VehicleMismatchDialogProps {
   isOpen: boolean
@@ -20,6 +21,8 @@ export function VehicleMismatchDialog({
   onUseVehicleOwner,
   onCancel,
 }: VehicleMismatchDialogProps) {
+  useEscapeKey(isOpen, onCancel)
+
   if (!isOpen || !mismatchInfo || !pendingVehicle) return null
 
   return (

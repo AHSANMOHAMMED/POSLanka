@@ -5,6 +5,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { purchaseRequisitions, purchaseRequisitionItems } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { sendPushToPermission } from '@/lib/notifications/push'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 
@@ -50,6 +51,11 @@ export async function POST(
       .returning()
 
     logAndBroadcast(session.user.tenantId, 'purchase-requisition', 'updated', id)
+    void sendPushToPermission(session.user.tenantId, 'approveRequisitions', {
+      title: 'Purchase requisition awaiting approval',
+      body: `${session.user.name || 'A colleague'} submitted a requisition for approval`,
+      data: { screen: 'approvals', type: 'purchase_requisition', id },
+    }, session.user.id)
     return { data: updated }
   })
 

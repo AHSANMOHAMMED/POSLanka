@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
@@ -108,6 +108,30 @@ export function POSPaymentModal({
   setSplitSecondAmount,
 }: POSPaymentModalProps) {
   const { currency: currencyCode } = useCurrency()
+
+  const completeDisabled = processing
+    || (isReturnMode && refundMethod === 'credit' && !selectedCustomer)
+    || (!isReturnMode && paymentMethod === 'credit' && !selectedCustomer)
+    || (!isReturnMode && paymentMethod === 'gift_card' && (!giftCardInfo || giftCardInfo.status !== 'active'))
+
+  // Keyboard: Enter = complete sale, Escape = close (ignored while a text field other than amounts is focused)
+  useEffect(() => {
+    if (!isOpen) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        if (!processing) onClose()
+        return
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !completeDisabled) {
+        const el = document.activeElement as HTMLElement | null
+        if (el && el.tagName === 'BUTTON') return
+        e.preventDefault()
+        onCompleteSale()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isOpen, processing, completeDisabled, onClose, onCompleteSale])
   const payableTotal = Math.max(0, total - loyaltyRedeemValue + (tipAmount || 0))
   const creditUsed = parseFloat(creditAmount) || 0
   const remainingAfterCredit = Math.max(0, payableTotal - creditUsed)
@@ -577,7 +601,7 @@ export function POSPaymentModal({
           </button>
           <button
             onClick={onCompleteSale}
-            disabled={processing || (isReturnMode && refundMethod === 'credit' && !selectedCustomer) || (!isReturnMode && paymentMethod === 'credit' && !selectedCustomer) || (!isReturnMode && paymentMethod === 'gift_card' && (!giftCardInfo || giftCardInfo.status !== 'active'))}
+            disabled={completeDisabled}
             className={`flex-1 py-3.5 text-white rounded-md font-bold shadow-lg transition-all disabled:opacity-50 ${
               isReturnMode
                 ? 'bg-gradient-to-r from-red-600 to-red-500'

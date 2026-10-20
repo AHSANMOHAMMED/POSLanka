@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
 import { validateAdminSession, adminAudit } from '@/lib/admin'
+import { validateBody } from '@/lib/validation'
 import { logError } from '@/lib/ai/error-logger'
 import { getTenantFeatureFlags, setTenantFeatureFlags } from '@/lib/features/check'
 import { normalizeFeatureFlags, type FeatureFlagsMap } from '@/lib/features/flags'
+
+const updateFlagsSchema = z.object({
+  featureFlags: z.record(z.string(), z.boolean()),
+})
 
 export async function GET(
   _request: NextRequest,
@@ -32,8 +38,9 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     const { id } = await params
-    const body = await request.json()
-    const flags = normalizeFeatureFlags(body.featureFlags as Partial<FeatureFlagsMap>)
+    const parsed = await validateBody(request, updateFlagsSchema)
+    if (!parsed.success) return parsed.response
+    const flags = normalizeFeatureFlags(parsed.data.featureFlags as Partial<FeatureFlagsMap>)
     const next = await setTenantFeatureFlags(id, flags)
 
     await adminAudit.update(session.superAdminId, 'tenant_feature_flags', id, {

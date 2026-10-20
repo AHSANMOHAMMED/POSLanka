@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import {
   enqueuePendingSale,
   listPendingSales,
-  saveCatalogSnapshot,
+  mergeCatalogSnapshot,
+  loadCatalogSnapshot,
   syncPendingSales,
   type PendingSale,
 } from '@/lib/offline/pos-queue'
@@ -87,7 +88,12 @@ export function useOfflinePos() {
   )
 
   const cacheCatalog = useCallback(async (items: unknown[]) => {
-    await saveCatalogSnapshot(items)
+    await mergeCatalogSnapshot(items)
+  }, [])
+
+  const loadCachedCatalog = useCallback(async () => {
+    const snap = await loadCatalogSnapshot()
+    return snap?.items || []
   }, [])
 
   return {
@@ -95,6 +101,7 @@ export function useOfflinePos() {
     pendingCount,
     queueSale,
     cacheCatalog,
+    loadCachedCatalog,
     refreshPending,
   }
 }

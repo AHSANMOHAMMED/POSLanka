@@ -77,6 +77,21 @@ export async function saveCatalogSnapshot(items: unknown[]): Promise<void> {
   })
 }
 
+/** Merge items into the catalog snapshot by id (keeps items from other pages/searches). */
+export async function mergeCatalogSnapshot(items: unknown[]): Promise<void> {
+  const existing = await loadCatalogSnapshot()
+  const byId = new Map<string, unknown>()
+  for (const it of existing?.items || []) {
+    const id = (it as { id?: string })?.id
+    if (id) byId.set(id, it)
+  }
+  for (const it of items) {
+    const id = (it as { id?: string })?.id
+    if (id) byId.set(id, it)
+  }
+  await saveCatalogSnapshot(Array.from(byId.values()))
+}
+
 export async function loadCatalogSnapshot(): Promise<{ items: unknown[]; savedAt: string } | null> {
   const db = await openDb()
   return new Promise((resolve, reject) => {

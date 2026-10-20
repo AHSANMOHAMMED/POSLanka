@@ -1,0 +1,22 @@
+import { analyseScan, expandUpcE, gtinCheckDigit, isValidGtin, parseGs1, parseScaleBarcode, normalizeScaleConfig } from './barcode-parse'
+import assert from 'node:assert'
+assert.strictEqual(gtinCheckDigit('400638133393'), 1)
+assert.ok(isValidGtin('4006381333931'))
+assert.ok(!isValidGtin('4006381333932'))
+assert.strictEqual(expandUpcE('01234565'), '012345000065')
+const gs1 = parseGs1(']C10109501101530003\u001d17260131\u001d10AB12\u001d3103001250')
+assert.ok(gs1 && gs1.gtin === '09501101530003' && gs1.expiryDate === '2026-01-31' && gs1.batchNo === 'AB12' && gs1.netWeightKg === 1.25)
+const gs1b = parseGs1('(01)09501101530003(10)LOT7')
+assert.ok(gs1b && gs1b.batchNo === 'LOT7')
+const cfg = normalizeScaleConfig({ enabled: true })
+const body = '2' + '0' + '04011' + '01234'
+const scaleCode = body + gtinCheckDigit(body)
+const sc = parseScaleBarcode(scaleCode, cfg)
+assert.ok(sc && sc.plu === '4011' && Math.abs(sc.value - 1.234) < 1e-9 && sc.valueType === 'weight')
+const a = analyseScan(scaleCode, cfg)
+assert.strictEqual(a.symbology, 'scale'); assert.strictEqual(a.candidates[0].lookup, '4011')
+assert.strictEqual(analyseScan('4006381333931').symbology, 'ean13')
+assert.strictEqual(analyseScan('012000003455').symbology, 'upca')
+assert.strictEqual(analyseScan('RICE-001').symbology, 'sku')
+assert.strictEqual(analyseScan('01234565').symbology, 'ean8')
+console.log('barcode engine self-test OK')

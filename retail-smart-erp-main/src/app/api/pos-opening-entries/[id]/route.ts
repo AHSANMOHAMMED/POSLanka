@@ -42,6 +42,7 @@ export async function GET(
           closingEntry: true,
           sales: {
             orderBy: (sales, { desc }) => [desc(sales.createdAt)],
+            with: { payments: true },
           },
         },
       })
@@ -85,23 +86,42 @@ export async function GET(
         }
       })
 
-      // Process each sale
+      // Process each sale exactly once (same rules as the close endpoint):
+      // payment rows are authoritative (split tender, credit used, real cash kept);
+      // sale.paymentMethod/total is the fallback for legacy rows without payments.
       entry.sales.forEach(sale => {
+        if (sale.status === 'void') return
         const method = sale.paymentMethod as PaymentMethod
-        if (!method || !paymentMethodBreakdown[method]) {
-          // Skip if payment method is null or not recognized
+        if (method && paymentMethodBreakdown[method]) {
+          paymentMethodBreakdown[method].transactionCount++
+        }
+
+        const rows = sale.payments || []
+        if (rows.length === 0) {
+          if (!method || !paymentMethodBreakdown[method]) return
+          const amount = parseFloat(sale.total)
+          if (sale.isReturn) {
+            paymentMethodBreakdown[method].returns += Math.abs(amount)
+            paymentMethodBreakdown[method].netSales -= Math.abs(amount)
+          } else {
+            paymentMethodBreakdown[method].sales += amount
+            paymentMethodBreakdown[method].netSales += amount
+          }
           return
         }
 
-        const amount = parseFloat(sale.total)
-        if (sale.isReturn) {
-          paymentMethodBreakdown[method].returns += Math.abs(amount)
-          paymentMethodBreakdown[method].netSales -= Math.abs(amount)
-        } else {
-          paymentMethodBreakdown[method].sales += amount
-          paymentMethodBreakdown[method].netSales += amount
+        for (const payment of rows) {
+          const pm = payment.method as PaymentMethod
+          if (!pm || !paymentMethodBreakdown[pm]) continue
+          const amount = Math.abs(parseFloat(payment.amount))
+          if (sale.isReturn) {
+            paymentMethodBreakdown[pm].returns += amount
+            paymentMethodBreakdown[pm].netSales -= amount
+          } else {
+            paymentMethodBreakdown[pm].sales += amount
+            paymentMethodBreakdown[pm].netSales += amount
+          }
         }
-        paymentMethodBreakdown[method].transactionCount++
       })
 
       // Get opening balances by payment method

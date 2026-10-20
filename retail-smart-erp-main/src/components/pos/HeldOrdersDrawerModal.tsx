@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { Clock, X, Play, Trash2, ShoppingBag, User } from 'lucide-react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 export interface HeldOrder {
   id: string
@@ -29,6 +30,8 @@ export function HeldOrdersDrawerModal({
   onResumeOrder,
   onVoidOrder,
 }: HeldOrdersDrawerModalProps) {
+  useEscapeKey(isOpen, onClose)
+
   if (!isOpen) return null
 
   return (

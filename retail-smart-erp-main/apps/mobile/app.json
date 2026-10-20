@@ -8,11 +8,26 @@
     "userInterfaceStyle": "light",
     "android": {
       "package": "lk.poslanka.app",
-      "permissions": ["CAMERA", "BLUETOOTH", "BLUETOOTH_CONNECT", "BLUETOOTH_SCAN"]
+      "permissions": [
+        "CAMERA",
+        "BLUETOOTH",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "POST_NOTIFICATIONS",
+        "VIBRATE",
+        "BLUETOOTH_ADMIN",
+        "ACCESS_FINE_LOCATION",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ]
     },
     "ios": {
       "bundleIdentifier": "lk.poslanka.app",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow POSLanka to scan barcodes",
+        "NSBluetoothAlwaysUsageDescription": "Allow POSLanka to connect to Bluetooth receipt printers"
+      }
     },
     "plugins": [
       "expo-router",
@@ -21,10 +36,24 @@
         {
           "cameraPermission": "Allow POSLanka to scan barcodes"
         }
+      ],
+      "expo-asset",
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "color": "#0F766E",
+          "defaultChannel": "poslanka-default"
+        }
       ]
     ],
     "extra": {
       "apiBaseUrl": "https://app.poslanka.lk"
+    },
+    "notification": {
+      "color": "#0F766E",
+      "androidMode": "default",
+      "androidCollapsedTitle": "POSLanka"
     }
   }
 }

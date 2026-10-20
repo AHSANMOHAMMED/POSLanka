@@ -29,7 +29,8 @@ export default function NewLabelTemplatePage({ params }: { params: Promise<{ slu
     heightMm: preset.heightMm,
     labelShape: preset.labelShape as LabelShape,
     cornerRadius: preset.cornerRadius ?? null,
-    elements: preset.elements.map(el => ({ ...el, id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 6)}` })),
+    // Deterministic ids (pure during render); the designer re-keys elements on edit
+    elements: preset.elements.map((el, index) => ({ ...el, id: `el-${preset.name.replace(/\W+/g, '-').toLowerCase()}-${index}` })),
   } : undefined
 
   return <LabelDesigner tenantSlug={slug} presetData={initialData} />

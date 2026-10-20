@@ -1,7 +1,6 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   Building2,
@@ -17,6 +16,9 @@ import {
   Database,
   Globe,
   Sliders,
+  KeyRound,
+  Copy,
+  ExternalLink,
 } from 'lucide-react'
 import {
   FEATURE_FLAGS,
@@ -26,27 +28,44 @@ import {
   DEFAULT_VENDOR_FEATURE_FLAGS,
 } from '@/lib/features/flags'
 
+type PlanId = 'trial' | 'basic' | 'standard' | 'premium'
+type BusinessTypeId = 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'dealership'
+
+interface ProvisionResult {
+  vendor: { id: string; name: string; slug: string }
+  owner: { id: string; email: string }
+  loginUrl: string
+  inviteSent?: boolean
+}
+
 export default function CreateVendorWizardPage() {
-  const router = useRouter()
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [result, setResult] = useState<ProvisionResult | null>(null)
+  const [copied, setCopied] = useState(false)
 
   // Form State
-  const [name, setName] = useState('Lanka Agro Mart (Pvt) Ltd')
-  const [slug, setSlug] = useState('lanka-agro')
-  const [businessType, setBusinessType] = useState('supermarket')
-  const [email, setEmail] = useState('director@lankaagro.lk')
-  const [phone, setPhone] = useState('+94 11 289 4412')
-  const [address, setAddress] = useState('No. 42, Nawala Road, Nugegoda')
+  const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [businessType, setBusinessType] = useState<BusinessTypeId>('retail')
+  const [email, setEmail] = useState('')
+  const [phone, setPhone] = useState('')
+  const [address, setAddress] = useState('')
   const [province, setProvince] = useState('Western')
-  const [city, setCity] = useState('Colombo')
-  const [brn, setBrn] = useState('PV-0029148')
-  const [tin, setTin] = useState('RAMIS-8941203')
+  const [city, setCity] = useState('')
+  const [brn, setBrn] = useState('')
+  const [tin, setTin] = useState('')
   const [vatRegistered, setVatRegistered] = useState(true)
 
+  // Owner account
+  const [ownerName, setOwnerName] = useState('')
+  const [ownerEmail, setOwnerEmail] = useState('')
+  const [ownerPassword, setOwnerPassword] = useState('')
+  const [sendInvite, setSendInvite] = useState(false)
+
   // Plan & Hardware State
-  const [plan, setPlan] = useState<'trial' | 'starter' | 'professional' | 'enterprise'>('professional')
+  const [plan, setPlan] = useState<PlanId>('standard')
   const [countersQuota, setCountersQuota] = useState(4)
   const [storageGb, setStorageGb] = useState(25)
 
@@ -64,8 +83,23 @@ export default function CreateVendorWizardPage() {
     setFlags((prev) => ({ ...prev, [flag]: !prev[flag] }))
   }
 
+  const validate = (): string | null => {
+    if (name.trim().length < 2) return 'Company name is required'
+    if (!/^[a-z0-9-]{3,50}$/.test(slug)) return 'Slug must be 3-50 characters: a-z, 0-9 and hyphens'
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return 'A valid administrative email is required'
+    if (ownerName.trim().length < 2) return 'Owner full name is required'
+    if (ownerEmail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(ownerEmail)) return 'Owner email is invalid'
+    if (!sendInvite && ownerPassword.length < 8) return 'Owner password must be at least 8 characters (or send an invite instead)'
+    return null
+  }
+
   const handleSubmit = async () => {
     setError('')
+    const validationError = validate()
+    if (validationError) {
+      setError(validationError)
+      return
+    }
     setLoading(true)
 
     try {
@@ -73,47 +107,134 @@ export default function CreateVendorWizardPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name,
+          name: name.trim(),
           slug,
-          email,
-          phone,
-          address: `${address}, ${city}, ${province} Province`,
+          email: email.trim(),
+          phone: phone.trim() || undefined,
+          address: [address.trim(), city.trim(), province ? `${province} Province` : ''].filter(Boolean).join(', ') || undefined,
           businessType,
           plan,
-          tin,
-          brn,
+          country: 'LK',
+          currency: 'LKR',
+          tin: tin.trim() || undefined,
+          brn: brn.trim() || undefined,
+          vatRegistered,
           featureFlags: flags,
-          settings: {
-            vatRegistered,
-            countersQuota,
-            storageGb,
-            province,
-            city,
-          },
+          limits: { countersQuota, storageGb },
+          location: { province, city: city.trim() || undefined },
+          ownerName: ownerName.trim(),
+          ownerEmail: ownerEmail.trim() || undefined,
+          ownerPassword: sendInvite ? undefined : ownerPassword,
+          sendInvite,
         }),
       })
 
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
 
       if (!res.ok) {
-        setError(data.error || 'Failed to provision vendor')
+        const details = Array.isArray(data.details)
+          ? data.details.map((d: { message?: string; path?: string }) => d.message || d.path).filter(Boolean).join('; ')
+          : typeof data.details === 'object' && data.details
+            ? Object.values(data.details as Record<string, unknown>).flat().join('; ')
+            : ''
+        setError(data.error ? `${data.error}${details ? `: ${details}` : ''}` : 'Failed to provision vendor')
         setLoading(false)
         return
       }
 
-      // Success -> Redirect to newly created vendor 360 dossier
-      router.push(`/sys-control/vendors/${data.vendor?.id || ''}`)
+      setResult(data as ProvisionResult)
     } catch {
       setError('Network communication failed during tenant provisioning.')
+    } finally {
       setLoading(false)
     }
   }
 
-  const planPricing = {
+  const copyLoginUrl = async () => {
+    if (!result?.loginUrl) return
+    try {
+      await navigator.clipboard.writeText(result.loginUrl)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // clipboard unavailable
+    }
+  }
+
+  const planPricing: Record<PlanId, { price: number; label: string }> = {
     trial: { price: 0, label: 'Trial Period (14 Days)' },
-    starter: { price: 4500, label: 'Starter Single Till' },
-    professional: { price: 12500, label: 'Retail Professional (Multi-Till)' },
-    enterprise: { price: 34500, label: 'Hypermarket Enterprise' },
+    basic: { price: 4500, label: 'Basic Single Till' },
+    standard: { price: 12500, label: 'Standard (Multi-Till)' },
+    premium: { price: 34500, label: 'Premium Enterprise' },
+  }
+
+  if (result) {
+    return (
+      <div className="max-w-2xl mx-auto py-10 space-y-6">
+        <div className="bg-[#131b2e] border border-[#6bd8cb]/40 rounded-xl p-8 shadow-xl space-y-5 text-center">
+          <CheckCircle2 className="w-14 h-14 text-[#4fdbc8] mx-auto" />
+          <div>
+            <h1 className="text-2xl font-bold text-white">Tenant Provisioned</h1>
+            <p className="text-xs text-[#bcc9c6] mt-1">
+              <strong className="text-white">{result.vendor.name}</strong> is live with a default warehouse, POS counter and owner account.
+            </p>
+          </div>
+
+          <div className="bg-[#060e20] border border-[#2d3449] rounded-lg p-4 text-left font-mono text-xs space-y-3">
+            <div className="flex justify-between gap-4">
+              <span className="text-[#879391] uppercase text-[10px]">Tenant login URL</span>
+              <button
+                type="button"
+                onClick={copyLoginUrl}
+                className="flex items-center gap-1 text-[#6bd8cb] hover:underline"
+              >
+                <Copy className="w-3 h-3" />
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+            <a
+              href={result.loginUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="block text-[#4fdbc8] font-bold break-all hover:underline"
+            >
+              {result.loginUrl}
+            </a>
+            <div className="pt-3 border-t border-[#2d3449] grid grid-cols-1 sm:grid-cols-2 gap-2 text-[#bcc9c6]">
+              <div>
+                <div className="text-[#879391] uppercase text-[10px]">Owner email</div>
+                <div className="text-white">{result.owner.email}</div>
+              </div>
+              <div>
+                <div className="text-[#879391] uppercase text-[10px]">Credentials</div>
+                <div className="text-white">
+                  {result.inviteSent ? 'Invite email sent (owner sets password)' : 'Password as entered in wizard'}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <Link
+              href={`/sys-control/vendors/${result.vendor.id}`}
+              className="flex items-center gap-2 px-5 py-2 bg-[#6bd8cb] hover:bg-[#89f5e7] text-[#003732] font-bold text-xs rounded-lg"
+            >
+              <Store className="w-4 h-4" />
+              Open Vendor Dossier
+            </Link>
+            <a
+              href={result.loginUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 px-5 py-2 bg-[#222a3d] hover:bg-[#2d3449] text-white font-semibold text-xs rounded-lg"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Open Login Page
+            </a>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -250,6 +371,7 @@ export default function CreateVendorWizardPage() {
                     type="text"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Lanka Agro Mart (Pvt) Ltd"
                     required
                     className="w-full bg-[#060e20] border border-[#2d3449] rounded-lg px-3.5 py-2 text-white font-medium text-sm focus:border-[#6bd8cb] outline-none"
                   />
@@ -262,14 +384,14 @@ export default function CreateVendorWizardPage() {
                   </label>
                   <select
                     value={businessType}
-                    onChange={(e) => setBusinessType(e.target.value)}
+                    onChange={(e) => setBusinessType(e.target.value as BusinessTypeId)}
                     className="w-full bg-[#060e20] border border-[#2d3449] rounded-lg px-3.5 py-2 text-white text-sm outline-none font-medium"
                   >
+                    <option value="retail">General Retail (incl. Pharmacy)</option>
                     <option value="supermarket">Supermarket / Grocery Chain</option>
-                    <option value="retail">General Retail &amp; Marine</option>
                     <option value="restaurant">Restaurant / F&amp;B Quick Serve</option>
-                    <option value="auto_care">Automotive Workshop &amp; Spares</option>
-                    <option value="pharmacy">Pharmacy &amp; Health Stores</option>
+                    <option value="auto_service">Automotive Workshop &amp; Spares</option>
+                    <option value="dealership">Vehicle Dealership</option>
                   </select>
                 </div>
 
@@ -365,7 +487,7 @@ export default function CreateVendorWizardPage() {
                     </div>
                   </div>
                   <div className="text-[11px] text-[#879391]">
-                    URL will be: <span className="text-[#4fdbc8]">https://poslanka.lk/c/{slug || 'vendor'}/pos</span>
+                    Login URL will be: <span className="text-[#4fdbc8]">/c/{slug || 'vendor'}/login</span>
                   </div>
                 </div>
 
@@ -442,6 +564,69 @@ export default function CreateVendorWizardPage() {
                     />
                   </div>
                 </div>
+
+                {/* Owner Account */}
+                <div className="pt-4 border-t border-[#2d3449]/60 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <KeyRound className="w-4 h-4 text-[#6bd8cb]" />
+                    <div>
+                      <h3 className="font-bold text-sm text-white">Owner Account</h3>
+                      <p className="text-[11px] text-[#bcc9c6]">
+                        The first login for this tenant (role: owner). Defaults to the administrative email.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <label className="block font-mono text-[11px] uppercase text-[#bcc9c6] font-semibold">
+                        Owner Full Name *
+                      </label>
+                      <input
+                        type="text"
+                        value={ownerName}
+                        onChange={(e) => setOwnerName(e.target.value)}
+                        placeholder="e.g. Nimal Perera"
+                        className="w-full bg-[#060e20] border border-[#2d3449] rounded-lg px-3.5 py-2 text-white text-sm focus:border-[#6bd8cb] outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block font-mono text-[11px] uppercase text-[#bcc9c6] font-semibold">
+                        Owner Login Email (optional)
+                      </label>
+                      <input
+                        type="email"
+                        value={ownerEmail}
+                        onChange={(e) => setOwnerEmail(e.target.value)}
+                        placeholder={email || 'Same as administrative email'}
+                        className="w-full bg-[#060e20] border border-[#2d3449] rounded-lg px-3.5 py-2 text-white font-mono text-sm focus:border-[#6bd8cb] outline-none"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="block font-mono text-[11px] uppercase text-[#bcc9c6] font-semibold">
+                        Owner Password {sendInvite ? '(not needed)' : '* (min 8 chars)'}
+                      </label>
+                      <input
+                        type="password"
+                        value={ownerPassword}
+                        onChange={(e) => setOwnerPassword(e.target.value)}
+                        disabled={sendInvite}
+                        autoComplete="new-password"
+                        className="w-full bg-[#060e20] border border-[#2d3449] rounded-lg px-3.5 py-2 text-white font-mono text-sm focus:border-[#6bd8cb] outline-none disabled:opacity-40"
+                      />
+                    </div>
+                    <div className="flex items-center pt-6">
+                      <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-white">
+                        <input
+                          type="checkbox"
+                          checked={sendInvite}
+                          onChange={(e) => setSendInvite(e.target.checked)}
+                          className="rounded bg-[#060e20] border-[#2d3449] text-[#6bd8cb] w-4 h-4"
+                        />
+                        <span>Email an invite instead (owner sets own password)</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div className="flex justify-between pt-4 border-t border-[#2d3449]/50">
@@ -492,30 +677,30 @@ export default function CreateVendorWizardPage() {
                     desc: 'Full access for evaluation and pilot counter launch.',
                   },
                   {
-                    id: 'starter',
-                    name: 'Starter Single Till',
+                    id: 'basic',
+                    name: 'Basic Single Till',
                     price: 'LKR 4,500 / mo',
                     desc: 'Single checkout till for small retail and boutique shops.',
                   },
                   {
-                    id: 'professional',
-                    name: 'Retail Professional',
+                    id: 'standard',
+                    name: 'Standard Multi-Till',
                     price: 'LKR 12,500 / mo',
-                    desc: 'Multi-counter supermarket with warehouse and LankaQR.',
+                    desc: 'Multi-counter retail with warehouse and reporting.',
                     popular: true,
                   },
                   {
-                    id: 'enterprise',
-                    name: 'Hypermarket Enterprise',
+                    id: 'premium',
+                    name: 'Premium Enterprise',
                     price: 'LKR 34,500 / mo',
-                    desc: 'Unlimited tills, RAMIS priority stream, multi-branch mesh.',
+                    desc: 'Unlimited tills, priority support, multi-branch.',
                   },
                 ].map((p) => {
                   const selected = plan === p.id
                   return (
                     <div
                       key={p.id}
-                      onClick={() => setPlan(p.id as typeof plan)}
+                      onClick={() => setPlan(p.id as PlanId)}
                       className={`p-4 rounded-xl border cursor-pointer transition-all relative ${
                         selected
                           ? 'bg-[#29a195]/20 border-[#6bd8cb] shadow-lg'
@@ -693,9 +878,10 @@ export default function CreateVendorWizardPage() {
           <div className="space-y-3 font-mono text-xs">
             <div className="bg-[#060e20] p-3 rounded-lg border border-[#2d3449]/50 space-y-2">
               <div className="text-[10px] text-[#879391] uppercase">MERCHANT IDENTITY</div>
-              <div className="font-sans font-bold text-white text-sm truncate">{name}</div>
-              <div className="text-[#4fdbc8]">{slug}.poslanka.lk</div>
-              <div className="text-[11px] text-[#bcc9c6]">{email}</div>
+              <div className="font-sans font-bold text-white text-sm truncate">{name || 'Company name'}</div>
+              <div className="text-[#4fdbc8]">/c/{slug || 'slug'}</div>
+              <div className="text-[11px] text-[#bcc9c6]">{email || 'admin email'}</div>
+              <div className="text-[11px] text-[#bcc9c6]">Owner: {ownerName || '—'}</div>
             </div>
 
             <div className="bg-[#060e20] p-3 rounded-lg border border-[#2d3449]/50 space-y-1.5">
@@ -705,7 +891,7 @@ export default function CreateVendorWizardPage() {
               </div>
               <div className="flex justify-between">
                 <span className="text-[#879391]">BRN:</span>
-                <span className="text-white">{brn}</span>
+                <span className="text-white">{brn || 'Pending'}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-[#879391]">RAMIS TIN:</span>

@@ -11,6 +11,8 @@ export const updateUserSchema = z.object({
   role: userRoleSchema.optional(),
   isActive: z.boolean().optional(),
   password: passwordSchema.optional(),
+  /** 4-6 digit POS PIN; empty string clears it */
+  pin: z.union([z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 digits'), z.literal('')]).optional(),
 }).merge(optimisticLockSchema)
 
 // POST /api/users (invite or add user)
@@ -22,12 +24,26 @@ export const createInviteSchema = z.object({
 })
 
 // PUT /api/tenant
+export const scaleBarcodeSchema = z.object({
+  enabled: z.boolean(),
+  prefixes: z.array(z.string().regex(/^\d{1,3}$/)).min(1).max(10),
+  pluStart: z.coerce.number().int().min(1).max(11),
+  pluLength: z.coerce.number().int().min(1).max(10),
+  valueStart: z.coerce.number().int().min(1).max(11),
+  valueLength: z.coerce.number().int().min(1).max(10),
+  valueType: z.enum(['weight', 'price']),
+  valueDecimals: z.coerce.number().int().min(0).max(4),
+  checkDigit: z.boolean().optional(),
+})
+
 export const updateTenantSchema = z.object({
   businessType: businessTypeSchema.optional(),
   timezone: z.string().max(100).optional(),
   aiEnabled: z.boolean().optional(),
   taxRate: z.coerce.number().min(0).max(100).optional(),
   taxInclusive: z.boolean().optional(),
+  /** Weighing-scale barcode layout (stored in tenants.settings.scaleBarcode) */
+  scaleBarcode: scaleBarcodeSchema.optional(),
 })
 
 // PUT /api/print-settings

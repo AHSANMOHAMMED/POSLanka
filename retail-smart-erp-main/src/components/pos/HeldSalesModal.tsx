@@ -3,6 +3,7 @@
 import { Clock, X, Play, Trash2 } from 'lucide-react'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { HeldSale } from './types'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface HeldSalesModalProps {
   isOpen: boolean
@@ -14,6 +15,8 @@ interface HeldSalesModalProps {
 
 export function HeldSalesModal({ isOpen, onClose, heldSales, onRecall, onDelete }: HeldSalesModalProps) {
   const { currency: currencyCode } = useCurrency()
+  useEscapeKey(isOpen, onClose)
+
   if (!isOpen) return null
 
   return (

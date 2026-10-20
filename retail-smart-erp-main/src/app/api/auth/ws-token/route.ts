@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authWithCompany } from '@/lib/auth'
 import { accountAuth } from '@/lib/auth/account-auth'
 import jwt from 'jsonwebtoken'
 import { logError } from '@/lib/ai/error-logger'
@@ -12,8 +12,9 @@ export async function GET() {
       return NextResponse.json({ error: 'Server configuration error' }, { status: 500 })
     }
 
-    // Try company auth first (tenant-mode token)
-    const session = await auth()
+    // Try company auth first (tenant-mode token). authWithCompany also accepts
+    // Authorization: Bearer <mobile JWT> so the Expo app can open realtime sockets.
+    const session = await authWithCompany()
     if (session?.user?.tenantId) {
       const token = jwt.sign(
         {

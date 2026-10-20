@@ -4,6 +4,7 @@ import { Search, X, Package, Loader2 } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { SaleForReturn } from './types'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface ReturnLookupModalProps {
   isOpen: boolean
@@ -27,6 +28,8 @@ export function ReturnLookupModal({
   searchingReturns,
 }: ReturnLookupModalProps) {
   const { currency: currencyCode } = useCurrency()
+  useEscapeKey(isOpen, onClose)
+
   if (!isOpen) return null
 
   return (

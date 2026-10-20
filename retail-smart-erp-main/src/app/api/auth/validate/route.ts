@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { auth } from '@/lib/auth'
+import { authWithCompany } from '@/lib/auth'
 import { db, withTenant } from '@/lib/db'
 import { tenants, users } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
@@ -14,7 +14,7 @@ const INACTIVITY_LIMIT_MS = 3 * 60 * 60 * 1000 // 3 hours
  */
 export async function GET() {
   try {
-    const session = await auth()
+    const session = await authWithCompany()
 
     if (!session?.user) {
       return NextResponse.json({ valid: false }, { status: 401 })

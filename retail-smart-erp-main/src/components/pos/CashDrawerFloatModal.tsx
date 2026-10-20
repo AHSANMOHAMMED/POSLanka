@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { Wallet, X, Plus, Minus, CheckCircle2 } from 'lucide-react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 interface CashDrawerFloatModalProps {
   isOpen: boolean
@@ -38,6 +39,8 @@ export function CashDrawerFloatModal({
   })
   const [reason, setReason] = useState('Opening Shift Float Allocation')
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  useEscapeKey(isOpen, onClose)
 
   if (!isOpen) return null
 

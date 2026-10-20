@@ -22,13 +22,15 @@ import {
 
 export default function AdminLoginPage() {
   const router = useRouter()
-  const [email, setEmail] = useState('root.admin@poslanka.lk')
-  const [password, setPassword] = useState('sys-super-omega-7734-alpha')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [totpDigits, setTotpDigits] = useState(['8', '4', '2', '1', '9', '0'])
   const [totpSeconds, setTotpSeconds] = useState(24)
   const [sessionSeconds, setSessionSeconds] = useState(299)
   const [error, setError] = useState('')
+  const [totpCode, setTotpCode] = useState('')
+  const [requires2fa, setRequires2fa] = useState(false)
   const [loading, setLoading] = useState(false)
   const [authStatus, setAuthStatus] = useState<string | null>(null)
   const [breakGlassOpen, setBreakGlassOpen] = useState(false)
@@ -84,10 +86,18 @@ export default function AdminLoginPage() {
       const res = await fetch('/api/sys-control/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, totpCode: totpCode || undefined }),
       })
 
       const data = await res.json()
+
+      if (res.status === 428 || data?.requires2fa) {
+        setRequires2fa(true)
+        setError(res.status === 428 ? '' : (data.error || 'Invalid two-factor code'))
+        setAuthStatus(null)
+        setLoading(false)
+        return
+      }
 
       if (!res.ok) {
         setError(data.error || 'Authentication failed. Unauthorized access logged.')
@@ -297,6 +307,24 @@ export default function AdminLoginPage() {
                   </button>
                 </div>
               </div>
+
+              {requires2fa && (
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] uppercase font-semibold tracking-wider text-[#bcc9c6]">
+                    Two-factor code
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    autoFocus
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="6-digit code from your authenticator app"
+                    className="w-full bg-[#060e20] border border-[#2d3449] text-white font-mono text-[13px] rounded-lg px-3 py-2.5 tracking-widest focus:border-[#6bd8cb] focus:ring-1 focus:ring-[#6bd8cb] outline-none transition-all"
+                  />
+                </div>
+              )}
 
               {/* Field 3: 6-Digit TOTP with Live Countdown Wheel */}
               <div className="space-y-2 pt-1">

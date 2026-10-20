@@ -1,11 +1,6 @@
-import { db } from '@/lib/db'
-import {
-  tenants,
-  subscriptions,
-  paymentDeposits,
-  pricingTiers,
-} from '@/lib/db/schema'
-import { count, eq, sql } from 'drizzle-orm'
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   Store,
@@ -14,7 +9,6 @@ import {
   Cpu,
   FileCheck,
   AlertOctagon,
-  Gauge,
   CheckCircle2,
   Radio,
   Layers,
@@ -24,125 +18,242 @@ import {
   Activity,
   Zap,
   Globe,
-  Sliders,
   Server,
+  Loader2,
+  RotateCcw,
+  Users,
+  Clock,
 } from 'lucide-react'
-import { formatCurrencyWithSymbol } from '@/lib/utils/currency'
 
-// Safe query helper -- returns fallback on error (e.g. missing tables in local dev)
-async function safeQuery<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
-  try {
-    return await fn()
-  } catch (e) {
-    console.warn('[AdminDashboard] Query failed (safe fallback used):', (e as Error).message?.slice(0, 100))
-    return fallback
+type RangeKey = 'today' | '7d' | '30d'
+
+interface StatsResponse {
+  overview: {
+    totalAccounts: number
+    totalCompanies: number
+    activeSubscriptions: number
+    trialSubscriptions: number
+    pendingPayments: number
+    newSignupsThisWeek: number
+    newCompaniesThisWeek: number
+    totalRevenue: number
+    monthlyRevenue: number
   }
+  subscriptionsByStatus: Record<string, number>
+  tenantsByType: Record<string, number>
+  recentSignups: Array<{ id: string; email: string; fullName: string; createdAt: string }>
+  recentCompanies: Array<{ id: string; name: string; slug: string; businessType: string; createdAt: string }>
+  expiringTrials: Array<{
+    id: string
+    trialEndsAt: string | null
+    tenant?: { name: string; slug: string } | null
+    billingAccount?: { email: string; fullName: string } | null
+  }>
 }
 
-export default async function AdminDashboard() {
-  // Safe database statistics queries
-  const [
-    totalTenantsResult,
-    activeSubscriptionsResult,
-    trialSubscriptionsResult,
-    lockedSubscriptionsResult,
-    pendingPaymentsResult,
-  ] = await Promise.all([
-    safeQuery(() => db.select({ count: count() }).from(tenants), [{ count: 142 }]),
-    safeQuery(
-      () => db.select({ count: count() }).from(subscriptions).where(eq(subscriptions.status, 'active')),
-      [{ count: 118 }]
-    ),
-    safeQuery(
-      () => db.select({ count: count() }).from(subscriptions).where(eq(subscriptions.status, 'trial')),
-      [{ count: 19 }]
-    ),
-    safeQuery(
-      () => db.select({ count: count() }).from(subscriptions).where(eq(subscriptions.status, 'locked')),
-      [{ count: 5 }]
-    ),
-    safeQuery(
-      () => db.select({ count: count() }).from(paymentDeposits).where(eq(paymentDeposits.status, 'pending')),
-      [{ count: 7 }]
-    ),
-  ])
+interface SalesAnalytics {
+  totals: { netSales: number; grossSales: number; returns: number; receipts: number; avgBasket: number; voids: number }
+  byDay: Array<{ date: string; netSales: number; receipts: number }>
+  byBusinessType: Array<{ businessType: string; netSales: number; receipts: number }>
+  topVendors: Array<{ tenantId: string; name: string; slug: string; netSales: number; receipts: number }>
+  topBranches: Array<{ tenantId: string; tenantName: string; warehouseId: string | null; warehouseName: string; netSales: number; receipts: number }>
+  openShifts: { count: number; byVendor: Array<{ tenantId: string; name: string; count: number }> }
+}
 
-  // Revenue stats: MRR from active subscriptions
-  const mrrResult = await safeQuery(
-    () =>
-      db
-        .select({
-          totalMrr: sql<number>`COALESCE(SUM(CAST(${pricingTiers.priceMonthly} AS NUMERIC)), 0)`,
-        })
-        .from(subscriptions)
-        .innerJoin(pricingTiers, eq(subscriptions.tierId, pricingTiers.id))
-        .where(eq(subscriptions.status, 'active')),
-    [{ totalMrr: 6480000 }]
+interface LiveHourly {
+  hourly: Array<{ hour: string; netSales: number; receipts: number }>
+}
+
+interface AuditLogRow {
+  id: string
+  action: string
+  resource: string
+  resourceId: string | null
+  details: Record<string, unknown> | null
+  createdAt: string
+  account?: { email: string; fullName: string } | null
+}
+
+const STATS_POLL_MS = 60_000
+const SALES_POLL_MS = 60_000
+
+const BUSINESS_TYPE_LABELS: Record<string, string> = {
+  retail: 'Retail',
+  restaurant: 'Restaurant / F&B',
+  supermarket: 'Supermarket',
+  auto_service: 'Auto Service',
+  dealership: 'Dealership',
+}
+
+const TYPE_COLORS = ['#6bd8cb', '#4fdbc8', '#29a195', '#04b4a2', '#1f7a72']
+
+function fmtMoney(n: number): string {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+
+function fmtCompact(n: number): string {
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return n.toFixed(0)
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - Date.parse(iso)
+  const m = Math.floor(diff / 60000)
+  if (m < 1) return 'Just now'
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
+export default function AdminDashboard() {
+  const [stats, setStats] = useState<StatsResponse | null>(null)
+  const [sales, setSales] = useState<SalesAnalytics | null>(null)
+  const [hourly, setHourly] = useState<LiveHourly['hourly']>([])
+  const [audit, setAudit] = useState<AuditLogRow[]>([])
+  const [range, setRange] = useState<RangeKey>('today')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+
+  const loadStats = useCallback(async () => {
+    try {
+      const [statsRes, auditRes] = await Promise.all([
+        fetch('/api/sys-control/stats', { cache: 'no-store' }),
+        fetch('/api/sys-control/audit-logs?days=30&limit=6', { cache: 'no-store' }),
+      ])
+      if (statsRes.status === 401) {
+        window.location.href = '/sys-control/login'
+        return
+      }
+      if (!statsRes.ok) throw new Error('Failed to load platform stats')
+      setStats(await statsRes.json())
+      if (auditRes.ok) {
+        const rows = await auditRes.json()
+        setAudit(Array.isArray(rows) ? rows : [])
+      }
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load platform stats')
+    }
+  }, [])
+
+  const loadSales = useCallback(async (r: RangeKey) => {
+    try {
+      const [salesRes, liveRes] = await Promise.all([
+        fetch(`/api/sys-control/analytics/sales?range=${r}`, { cache: 'no-store' }),
+        r === 'today' ? fetch('/api/sys-control/analytics/live', { cache: 'no-store' }) : Promise.resolve(null),
+      ])
+      if (salesRes.status === 401) {
+        window.location.href = '/sys-control/login'
+        return
+      }
+      if (!salesRes.ok) throw new Error('Failed to load sales analytics')
+      setSales(await salesRes.json())
+      if (liveRes && liveRes.ok) {
+        const live: LiveHourly = await liveRes.json()
+        setHourly(live.hourly || [])
+      }
+      setLastUpdated(new Date())
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load sales analytics')
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    Promise.all([loadStats(), loadSales(range)]).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+    const statsTimer = setInterval(loadStats, STATS_POLL_MS)
+    const salesTimer = setInterval(() => loadSales(range), SALES_POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(statsTimer)
+      clearInterval(salesTimer)
+    }
+  }, [loadStats, loadSales, range])
+
+  const overview = stats?.overview
+  const lockedTenants = stats?.subscriptionsByStatus?.locked ?? 0
+  const activeTenants = overview?.activeSubscriptions ?? 0
+  const trialTenants = overview?.trialSubscriptions ?? 0
+
+  // Chart series: hourly (today) or daily (7d/30d)
+  const chartSeries: Array<{ label: string; value: number; receipts: number }> =
+    range === 'today'
+      ? (() => {
+          const todayStart = new Date()
+          todayStart.setHours(0, 0, 0, 0)
+          return hourly
+            .filter((h) => Date.parse(h.hour) >= todayStart.getTime())
+            .map((h) => ({
+              label: new Date(h.hour).toLocaleTimeString('en-LK', { hour: '2-digit', minute: '2-digit', hour12: false }),
+              value: h.netSales,
+              receipts: h.receipts,
+            }))
+        })()
+      : (sales?.byDay || []).map((d) => ({
+          label: d.date.slice(5),
+          value: d.netSales,
+          receipts: d.receipts,
+        }))
+  const chartMax = Math.max(1, ...chartSeries.map((s) => s.value))
+  const peak = chartSeries.reduce<{ label: string; value: number } | null>(
+    (acc, s) => (!acc || s.value > acc.value ? { label: s.label, value: s.value } : acc),
+    null
   )
 
-  const rawMrr = Number(mrrResult[0]?.totalMrr || 0)
-  const mrr = rawMrr > 0 ? rawMrr : 6480000
-  const totalTenants = totalTenantsResult[0]?.count || 142
-  const activeTenants = activeSubscriptionsResult[0]?.count || 118
-  const trialTenants = trialSubscriptionsResult[0]?.count || 19
-  const lockedTenants = lockedSubscriptionsResult[0]?.count || 5
-  const pendingDeposits = pendingPaymentsResult[0]?.count || 7
+  const typeTotal = (sales?.byBusinessType || []).reduce((s, t) => s + t.netSales, 0)
+  const rangeLabel = range === 'today' ? 'TODAY' : range === '7d' ? 'LAST 7 DAYS' : 'LAST 30 DAYS'
 
-  // Intraday GMV mock buckets (Hour 08 to 22)
-  const intradayLoad = [
-    { hour: '08:00', amount: '4.2M', height: 28 },
-    { hour: '10:00', amount: '8.5M', height: 48 },
-    { hour: '12:00', amount: '18.2M', height: 86, peak: true },
-    { hour: '14:00', amount: '12.4M', height: 60 },
-    { hour: '16:00', amount: '10.1M', height: 52 },
-    { hour: '18:00', amount: '16.8M', height: 78 },
-    { hour: '20:00', amount: '22.4M', height: 96, peak: true },
-    { hour: '22:00', amount: '9.1M', height: 42 },
-  ]
+  if (loading) {
+    return (
+      <div className="py-24 text-center text-[#bcc9c6] space-y-3">
+        <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#6bd8cb]" />
+        <div className="font-mono text-xs">Loading platform telemetry...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6 pb-12">
-      {/* Top Level Command Ticker (Stitch S2) */}
+      {/* Top Level Command Ticker */}
       <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 px-4 py-2.5 bg-[#131b2e] border border-[#2d3449] rounded-xl shadow-sm">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#6bd8cb]/10 text-[#6bd8cb] font-mono text-xs border border-[#6bd8cb]/20 font-semibold">
             <span className="w-2 h-2 rounded-full bg-[#6bd8cb] animate-pulse"></span>
-            <span>TELEMETRY: SRI_LANKA_REGIONAL_CLUSTER_ACTIVE</span>
+            <span>PLATFORM OVERVIEW</span>
           </div>
           <span className="text-[#3d4947] hidden sm:inline">•</span>
           <div className="text-xs text-[#bcc9c6] flex items-center gap-1.5">
             <Globe className="w-3.5 h-3.5 text-[#4fdbc8]" />
-            <span>Col-01 DC Primary</span>
-            <span className="font-mono text-[#4fdbc8] font-bold">[Sync Rate 100%]</span>
+            <span>{overview?.totalCompanies ?? 0} companies</span>
+            <span className="font-mono text-[#4fdbc8] font-bold">[{overview?.totalAccounts ?? 0} accounts]</span>
           </div>
           <span className="text-[#3d4947] hidden sm:inline">•</span>
           <div className="font-mono text-xs text-[#bcc9c6]">
-            SYS_TIME: <span className="text-white font-semibold">14:48:22 SLST</span>
+            UPDATED:{' '}
+            <span className="text-white font-semibold">
+              {lastUpdated ? lastUpdated.toLocaleTimeString('en-LK', { hour12: false }) : '—'}
+            </span>
           </div>
         </div>
 
-        {/* Emergency Control Strip */}
-        <div className="flex items-center gap-3 w-full lg:w-auto overflow-x-auto pb-1 lg:pb-0">
-          <div className="flex items-center gap-2 px-3 py-1 bg-[#171f33] border border-[#2d3449] rounded-lg">
-            <span className="font-mono text-[10px] text-[#bcc9c6] uppercase font-semibold">
-              MAINTENANCE
-            </span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" className="sr-only peer" />
-              <div className="w-8 h-4 bg-[#222a3d] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#ff5451]"></div>
-            </label>
-          </div>
-
-          <div className="flex items-center gap-2 px-3 py-1 bg-[#171f33] border border-[#2d3449] rounded-lg">
-            <span className="font-mono text-[10px] text-[#bcc9c6] uppercase font-semibold">
-              OFFLINE SALES
-            </span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" defaultChecked className="sr-only peer" />
-              <div className="w-8 h-4 bg-[#222a3d] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-[#29a195]"></div>
-            </label>
-          </div>
-
+        <div className="flex items-center gap-3 w-full lg:w-auto">
+          <button
+            type="button"
+            onClick={() => {
+              loadStats()
+              loadSales(range)
+            }}
+            className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-[#bcc9c6] text-xs font-semibold transition-colors"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Refresh</span>
+          </button>
           <Link
             href="/sys-control/messages"
             className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#222a3d] hover:bg-[#2d3449] border border-[#3d4947] text-[#6bd8cb] text-xs font-semibold transition-colors"
@@ -153,18 +264,27 @@ export default async function AdminDashboard() {
         </div>
       </div>
 
-      {/* KPI Grid (8 High-Density Telemetry Modules from Stitch S2) */}
+      {error && (
+        <div className="p-3 bg-[#93000a]/30 border border-[#ff5451]/50 rounded-xl text-xs text-[#ffdad6] flex items-center gap-2">
+          <AlertOctagon className="w-4 h-4 text-[#ffb4ab]" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* KPI Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* 1. Total Active Vendors */}
+        {/* 1. Vendors */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:border-[#6bd8cb]/50 transition-all">
           <div className="flex items-start justify-between">
             <div>
               <div className="font-mono text-[10px] text-[#879391] uppercase tracking-wider font-semibold">
-                ACTIVE VENDORS
+                REGISTERED VENDORS
               </div>
               <div className="text-2xl font-bold text-white mt-1 flex items-baseline gap-2">
-                {totalTenants}
-                <span className="font-mono text-xs text-[#4fdbc8] font-semibold">+14% MoM</span>
+                {overview?.totalCompanies ?? 0}
+                <span className="font-mono text-xs text-[#4fdbc8] font-semibold">
+                  +{overview?.newCompaniesThisWeek ?? 0} this week
+                </span>
               </div>
             </div>
             <div className="w-9 h-9 rounded-lg bg-[#171f33] border border-[#2d3449] flex items-center justify-center text-[#6bd8cb]">
@@ -178,16 +298,16 @@ export default async function AdminDashboard() {
           </div>
         </div>
 
-        {/* 2. Platform GMV Today */}
+        {/* 2. Platform GMV */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:border-[#4fdbc8]/50 transition-all">
           <div className="flex items-start justify-between">
             <div>
               <div className="font-mono text-[10px] text-[#879391] uppercase tracking-wider font-semibold">
-                PLATFORM GMV TODAY
+                NET SALES {rangeLabel}
               </div>
               <div className="text-2xl font-bold text-[#4fdbc8] mt-1 truncate">
                 <span className="font-mono text-sm text-[#879391] font-normal">LKR </span>
-                148,924,650
+                {fmtMoney(sales?.totals.netSales ?? 0)}
               </div>
             </div>
             <div className="w-9 h-9 rounded-lg bg-[#171f33] border border-[#2d3449] flex items-center justify-center text-[#4fdbc8]">
@@ -195,21 +315,21 @@ export default async function AdminDashboard() {
             </div>
           </div>
           <div className="mt-4 pt-2 border-t border-[#2d3449]/40 flex items-center justify-between font-mono text-[11px] bg-[#060e20]/60 px-2.5 py-1 rounded-lg">
-            <span className="text-[#bcc9c6]">42,810 Receipts</span>
-            <span className="text-[#4fdbc8] font-bold">LKR 3,478 avg</span>
+            <span className="text-[#bcc9c6]">{(sales?.totals.receipts ?? 0).toLocaleString()} Receipts</span>
+            <span className="text-[#4fdbc8] font-bold">LKR {fmtMoney(sales?.totals.avgBasket ?? 0)} avg</span>
           </div>
         </div>
 
-        {/* 3. Monthly Recurring Revenue (MRR) */}
+        {/* 3. Subscription revenue */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:border-[#6bd8cb]/50 transition-all">
           <div className="flex items-start justify-between">
             <div>
               <div className="font-mono text-[10px] text-[#879391] uppercase tracking-wider font-semibold">
-                MRR RUN-RATE
+                SUBSCRIPTION REVENUE (MONTH)
               </div>
               <div className="text-2xl font-bold text-white mt-1 truncate">
                 <span className="font-mono text-sm text-[#879391] font-normal">LKR </span>
-                {formatCurrencyWithSymbol(mrr, 'LKR').replace('LKR', '').trim()}
+                {fmtMoney(overview?.monthlyRevenue ?? 0)}
               </div>
             </div>
             <div className="w-9 h-9 rounded-lg bg-[#171f33] border border-[#2d3449] flex items-center justify-center text-[#6bd8cb]">
@@ -217,22 +337,22 @@ export default async function AdminDashboard() {
             </div>
           </div>
           <div className="mt-4 pt-2 border-t border-[#2d3449]/40 flex items-center justify-between font-mono text-[11px] bg-[#060e20]/60 px-2.5 py-1 rounded-lg">
-            <span className="text-[#bcc9c6]">Enterprise: 64%</span>
-            <span className="text-[#6bd8cb] font-bold">ARPU: 45.6k</span>
+            <span className="text-[#bcc9c6]">Lifetime: LKR {fmtCompact(overview?.totalRevenue ?? 0)}</span>
+            <span className="text-[#6bd8cb] font-bold">{activeTenants} paying</span>
           </div>
         </div>
 
-        {/* 4. Active POS Tills */}
+        {/* 4. Open shifts */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:border-[#4fdbc8]/50 transition-all">
           <div className="flex items-start justify-between">
             <div>
               <div className="font-mono text-[10px] text-[#879391] uppercase tracking-wider font-semibold">
-                LIVE HARDWARE TILLS
+                OPEN POS SHIFTS
               </div>
               <div className="text-2xl font-bold text-white mt-1">
-                486{' '}
+                {sales?.openShifts.count ?? 0}{' '}
                 <span className="font-mono text-xs text-[#879391] font-normal">
-                  / 520 Reg
+                  across {sales?.openShifts.byVendor.length ?? 0} vendors
                 </span>
               </div>
             </div>
@@ -240,16 +360,15 @@ export default async function AdminDashboard() {
               <Cpu className="w-5 h-5" />
             </div>
           </div>
-          <div className="mt-4 pt-2 border-t border-[#2d3449]/40 flex items-center gap-2 font-mono text-[11px]">
-            <div className="w-full bg-[#060e20] h-1.5 rounded overflow-hidden flex">
-              <div className="bg-[#4fdbc8] h-full" style={{ width: '93.4%' }}></div>
-              <div className="bg-[#ff5451] h-full" style={{ width: '6.6%' }}></div>
-            </div>
-            <span className="text-[#4fdbc8] font-bold">93.4%</span>
+          <div className="mt-4 pt-2 border-t border-[#2d3449]/40 flex items-center justify-between font-mono text-[11px] bg-[#060e20]/60 px-2.5 py-1 rounded-lg">
+            <span className="text-[#bcc9c6] truncate max-w-[150px]">
+              {sales?.openShifts.byVendor[0]?.name || 'No open shifts'}
+            </span>
+            <span className="text-[#4fdbc8] font-bold">{sales?.openShifts.byVendor[0]?.count ?? 0} tills</span>
           </div>
         </div>
 
-        {/* 5. Bank Transfer Approvals */}
+        {/* 5. Bank slips */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:border-[#ffb3ad]/50 transition-all">
           <div className="flex items-start justify-between">
             <div>
@@ -258,7 +377,7 @@ export default async function AdminDashboard() {
                 MANUAL BANK SLIPS
               </div>
               <div className="text-2xl font-bold text-[#ffdad7] mt-1">
-                {pendingDeposits} Slips{' '}
+                {overview?.pendingPayments ?? 0} Slips{' '}
                 <span className="font-mono text-xs text-[#bcc9c6] font-normal">Pending</span>
               </div>
             </div>
@@ -267,23 +386,23 @@ export default async function AdminDashboard() {
             </div>
           </div>
           <div className="mt-4 pt-2 border-t border-[#2d3449]/40 flex items-center justify-between font-mono text-[11px] bg-[#060e20]/60 px-2.5 py-1 rounded-lg">
-            <span className="text-white font-semibold">LKR 845,000.00</span>
+            <span className="text-white font-semibold">Awaiting verification</span>
             <Link href="/sys-control/payments" className="text-[#6bd8cb] hover:underline font-bold">
               Verify →
             </Link>
           </div>
         </div>
 
-        {/* 6. Unresolved Error Logs */}
+        {/* 6. Voids / returns */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:border-[#ff5451]/50 transition-all">
           <div className="flex items-start justify-between">
             <div>
               <div className="font-mono text-[10px] text-[#ff5451] uppercase tracking-wider font-semibold flex items-center gap-1.5">
                 <AlertOctagon className="w-3.5 h-3.5 text-[#ff5451]" />
-                AUDIT EXCEPTIONS
+                VOIDS &amp; RETURNS {rangeLabel}
               </div>
               <div className="text-2xl font-bold text-[#ff5451] mt-1">
-                3 Unresolved
+                {sales?.totals.voids ?? 0} Voids
               </div>
             </div>
             <div className="w-9 h-9 rounded-lg bg-[#93000a]/20 border border-[#ff5451]/40 flex items-center justify-center text-[#ff5451]">
@@ -291,358 +410,312 @@ export default async function AdminDashboard() {
             </div>
           </div>
           <div className="mt-4 pt-2 border-t border-[#2d3449]/40 flex items-center justify-between font-mono text-[11px] bg-[#060e20]/60 px-2.5 py-1 rounded-lg">
-            <span className="text-[#ffb4ab] truncate max-w-[150px]">RAMIS Tax Sync Worker</span>
+            <span className="text-[#ffb4ab] truncate max-w-[150px]">
+              Returns: LKR {fmtCompact(sales?.totals.returns ?? 0)}
+            </span>
             <Link href="/sys-control/error-logs" className="text-[#ff5451] hover:underline font-semibold">
-              Inspect →
+              Errors →
             </Link>
           </div>
         </div>
 
-        {/* 7. Average API p95 Latency */}
+        {/* 7. New signups */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:border-[#6bd8cb]/50 transition-all">
           <div className="flex items-start justify-between">
             <div>
               <div className="font-mono text-[10px] text-[#879391] uppercase tracking-wider font-semibold">
-                GATEWAY P95 LATENCY
+                NEW SIGNUPS (7D)
               </div>
               <div className="text-2xl font-bold text-white mt-1 flex items-baseline gap-2">
-                38ms
-                <span className="font-mono text-xs text-[#4fdbc8] font-semibold">Optimal</span>
+                {overview?.newSignupsThisWeek ?? 0}
+                <span className="font-mono text-xs text-[#4fdbc8] font-semibold">accounts</span>
               </div>
             </div>
             <div className="w-9 h-9 rounded-lg bg-[#171f33] border border-[#2d3449] flex items-center justify-center text-[#6bd8cb]">
-              <Gauge className="w-5 h-5" />
+              <Users className="w-5 h-5" />
             </div>
           </div>
           <div className="mt-4 pt-2 border-t border-[#2d3449]/40 flex items-center justify-between font-mono text-[11px] bg-[#060e20]/60 px-2.5 py-1 rounded-lg">
-            <span className="text-[#bcc9c6]">DB Pool: 24/100 conn</span>
-            <span className="text-[#4fdbc8] font-bold">24% Load</span>
+            <span className="text-[#bcc9c6] truncate max-w-[160px]">
+              {stats?.recentSignups[0]?.email || 'No signups yet'}
+            </span>
+            <Link href="/sys-control/users" className="text-[#4fdbc8] hover:underline font-bold">
+              Users →
+            </Link>
           </div>
         </div>
 
-        {/* 8. Scheduled Automation Status */}
+        {/* 8. Expiring trials */}
         <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm flex flex-col justify-between relative overflow-hidden group hover:border-[#4fdbc8]/50 transition-all">
           <div className="flex items-start justify-between">
             <div>
               <div className="font-mono text-[10px] text-[#879391] uppercase tracking-wider font-semibold">
-                CRON DISPATCHER
+                TRIALS EXPIRING (7D)
               </div>
               <div className="text-2xl font-bold text-[#4fdbc8] mt-1">
-                8/8 OK
+                {stats?.expiringTrials.length ?? 0}
               </div>
             </div>
             <div className="w-9 h-9 rounded-lg bg-[#171f33] border border-[#2d3449] flex items-center justify-center text-[#4fdbc8]">
-              <CheckCircle2 className="w-5 h-5" />
+              <Clock className="w-5 h-5" />
             </div>
           </div>
           <div className="mt-4 pt-2 border-t border-[#2d3449]/40 flex items-center justify-between font-mono text-[11px] bg-[#060e20]/60 px-2.5 py-1 rounded-lg">
-            <span className="text-[#bcc9c6] truncate max-w-[130px]">enforce-sub</span>
-            <span className="text-[#6bd8cb] font-semibold">4m ago</span>
+            <span className="text-[#bcc9c6] truncate max-w-[150px]">
+              {stats?.expiringTrials[0]?.tenant?.name || 'None expiring'}
+            </span>
+            <Link href="/sys-control/subscriptions" className="text-[#6bd8cb] hover:underline font-semibold">
+              Manage →
+            </Link>
           </div>
         </div>
       </div>
 
-      {/* Intraday GMV Chart & Infrastructure Health Section (Stitch S2 65% / 35%) */}
+      {/* Sales Chart & Mix */}
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        {/* Left: Intraday GMV Performance & Peak Throughput (8 cols) */}
         <div className="xl:col-span-8 bg-[#131b2e] border border-[#2d3449] p-6 rounded-xl shadow-md flex flex-col">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 gap-3 border-b border-[#2d3449]/50">
             <div>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-[#6bd8cb]"></span>
-                <h3 className="font-bold text-base text-white">
-                  Intraday GMV Performance &amp; Peak Throughput
-                </h3>
+                <h3 className="font-bold text-base text-white">Net Sales Performance</h3>
               </div>
               <p className="text-xs text-[#bcc9c6] mt-0.5">
-                Aggregated transaction volume across island-wide POS clusters • Peak sync at 12:30 SLST &amp; 20:00 SLST
+                Aggregated non-void sales across all tenants (returns subtracted)
               </p>
             </div>
-            {/* Filter Pills */}
             <div className="flex items-center gap-1 bg-[#060e20] p-1 rounded-lg font-mono text-xs">
-              <button className="px-2.5 py-1 rounded-md bg-[#29a195] text-[#00302b] font-bold">
-                Today
-              </button>
-              <button className="px-2.5 py-1 rounded-md text-[#bcc9c6] hover:text-white">
-                Yesterday
-              </button>
-              <button className="px-2.5 py-1 rounded-md text-[#bcc9c6] hover:text-white">
-                7D Avg
-              </button>
+              {(['today', '7d', '30d'] as RangeKey[]).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setRange(r)}
+                  className={`px-2.5 py-1 rounded-md ${
+                    range === r ? 'bg-[#29a195] text-[#00302b] font-bold' : 'text-[#bcc9c6] hover:text-white'
+                  }`}
+                >
+                  {r === 'today' ? 'Today' : r === '7d' ? '7 Days' : '30 Days'}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* Category Legends */}
+          {/* Business type legend */}
           <div className="flex items-center gap-4 py-3 font-mono text-xs text-[#bcc9c6] flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-[#6bd8cb]"></span>
-              <span>Supermarkets (48%)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-[#4fdbc8]"></span>
-              <span>Auto Care &amp; Tyres (22%)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-[#29a195]"></span>
-              <span>Textiles &amp; Apparel (18%)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-[#04b4a2]"></span>
-              <span>F&amp;B / Dining (12%)</span>
-            </div>
-          </div>
-
-          {/* Bar Chart Visualization */}
-          <div className="flex-1 min-h-[220px] flex items-end justify-between gap-3 pt-6 pb-2 px-2">
-            {intradayLoad.map((item, idx) => (
-              <div key={idx} className="flex-1 flex flex-col items-center gap-2 group">
-                <div className="font-mono text-[10px] text-[#4fdbc8] opacity-0 group-hover:opacity-100 transition-opacity font-bold">
-                  {item.amount}
-                </div>
-                <div className="w-full max-w-[42px] bg-[#060e20] h-40 rounded-t-lg flex items-end overflow-hidden p-0.5">
-                  <div
-                    className={`w-full rounded-t-sm transition-all duration-500 ${
-                      item.peak
-                        ? 'bg-gradient-to-t from-[#04b4a2] to-[#6bd8cb] shadow-lg shadow-[#6bd8cb]/20'
-                        : 'bg-gradient-to-t from-[#171f33] to-[#29a195] group-hover:to-[#4fdbc8]'
-                    }`}
-                    style={{ height: `${item.height}%` }}
-                  ></div>
-                </div>
-                <div className="font-mono text-[11px] text-[#879391] group-hover:text-white transition-colors">
-                  {item.hour}
-                </div>
+            {(sales?.byBusinessType || []).map((t, i) => (
+              <div key={t.businessType} className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: TYPE_COLORS[i % TYPE_COLORS.length] }}></span>
+                <span>
+                  {BUSINESS_TYPE_LABELS[t.businessType] || t.businessType} (
+                  {typeTotal > 0 ? Math.round((t.netSales / typeTotal) * 100) : 0}%)
+                </span>
               </div>
             ))}
+            {(sales?.byBusinessType || []).length === 0 && <span>No sales recorded in this range.</span>}
+          </div>
+
+          {/* Bar Chart */}
+          <div className="flex-1 min-h-[220px] flex items-end justify-between gap-1.5 pt-6 pb-2 px-2 overflow-x-auto">
+            {chartSeries.length === 0 ? (
+              <div className="w-full text-center text-xs text-[#879391] font-mono py-12">No data for this range</div>
+            ) : (
+              chartSeries.map((item, idx) => {
+                const isPeak = peak && item.value === peak.value && item.value > 0
+                return (
+                  <div key={idx} className="flex-1 min-w-[22px] flex flex-col items-center gap-2 group">
+                    <div className="font-mono text-[10px] text-[#4fdbc8] opacity-0 group-hover:opacity-100 transition-opacity font-bold whitespace-nowrap">
+                      {fmtCompact(item.value)}
+                    </div>
+                    <div className="w-full max-w-[42px] bg-[#060e20] h-40 rounded-t-lg flex items-end overflow-hidden p-0.5">
+                      <div
+                        className={`w-full rounded-t-sm transition-all duration-500 ${
+                          isPeak
+                            ? 'bg-gradient-to-t from-[#04b4a2] to-[#6bd8cb] shadow-lg shadow-[#6bd8cb]/20'
+                            : 'bg-gradient-to-t from-[#171f33] to-[#29a195] group-hover:to-[#4fdbc8]'
+                        }`}
+                        style={{ height: `${Math.max(2, (item.value / chartMax) * 100)}%` }}
+                      ></div>
+                    </div>
+                    <div className="font-mono text-[10px] text-[#879391] group-hover:text-white transition-colors whitespace-nowrap">
+                      {item.label}
+                    </div>
+                  </div>
+                )
+              })
+            )}
           </div>
 
           <div className="mt-4 pt-3 border-t border-[#2d3449]/40 flex items-center justify-between text-xs text-[#bcc9c6]">
             <span className="flex items-center gap-1.5">
               <Activity className="w-4 h-4 text-[#4fdbc8]" />
-              Hourly Velocity Peak: <strong className="text-white">LKR 22.4M at 20:00 SLST</strong>
+              Peak:{' '}
+              <strong className="text-white">
+                {peak && peak.value > 0 ? `LKR ${fmtCompact(peak.value)} at ${peak.label}` : '—'}
+              </strong>
             </span>
-            <Link
-              href="/sys-control/sales-wall"
-              className="text-[#6bd8cb] hover:underline font-semibold flex items-center gap-1"
-            >
+            <Link href="/sys-control/sales-wall" className="text-[#6bd8cb] hover:underline font-semibold flex items-center gap-1">
               Open Live Sales Wall <ArrowUpRight className="w-3.5 h-3.5" />
             </Link>
           </div>
         </div>
 
-        {/* Right: Live Infrastructure & Tenant Health (4 cols) */}
+        {/* Right: Top vendors & tenant mix */}
         <div className="xl:col-span-4 bg-[#131b2e] border border-[#2d3449] p-6 rounded-xl shadow-md flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-[#2d3449]/50 mb-4">
               <div className="flex items-center gap-2">
                 <Server className="w-4 h-4 text-[#6bd8cb]" />
-                <h3 className="font-bold text-base text-white">Cluster Health Telemetry</h3>
+                <h3 className="font-bold text-base text-white">Top Vendors {rangeLabel}</h3>
               </div>
               <span className="font-mono text-[11px] bg-[#4fdbc8]/15 text-[#4fdbc8] px-2 py-0.5 rounded font-bold border border-[#4fdbc8]/30">
-                ACTIVE
+                NET
               </span>
             </div>
 
-            <div className="space-y-3.5">
-              {/* RAMIS Tax Engine */}
-              <div className="bg-[#060e20] border border-[#2d3449]/60 p-3 rounded-lg flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-white">RAMIS IRD Tax Engine</div>
-                  <div className="font-mono text-[10px] text-[#879391]">SL-IRD-TLS-1.3 Gateway</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono text-[11px] text-[#4fdbc8] font-bold">99.98% SYNC</div>
-                  <div className="text-[10px] text-[#879391]">Avg 24ms</div>
-                </div>
-              </div>
+            <div className="space-y-2.5">
+              {(sales?.topVendors || []).slice(0, 5).map((v) => (
+                <Link
+                  key={v.tenantId}
+                  href={`/sys-control/vendors/${v.tenantId}`}
+                  className="bg-[#060e20] border border-[#2d3449]/60 p-3 rounded-lg flex items-center justify-between hover:border-[#6bd8cb]/40 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-white truncate">{v.name}</div>
+                    <div className="font-mono text-[10px] text-[#879391]">{v.slug} • {v.receipts} receipts</div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="font-mono text-[11px] text-[#4fdbc8] font-bold">LKR {fmtCompact(v.netSales)}</div>
+                  </div>
+                </Link>
+              ))}
+              {(sales?.topVendors || []).length === 0 && (
+                <div className="text-xs text-[#879391] font-mono text-center py-6">No sales in this range</div>
+              )}
+            </div>
 
-              {/* PayHere Payment Gateway */}
-              <div className="bg-[#060e20] border border-[#2d3449]/60 p-3 rounded-lg flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-white">PayHere Payment Gateway</div>
-                  <div className="font-mono text-[10px] text-[#879391]">Merchant IPN Webhooks</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono text-[11px] text-[#4fdbc8] font-bold">NORMAL</div>
-                  <div className="text-[10px] text-[#879391]">0 Pending IPN</div>
-                </div>
-              </div>
-
-              {/* Central Database Cluster */}
-              <div className="bg-[#060e20] border border-[#2d3449]/60 p-3 rounded-lg flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-white">Colombo Primary DB</div>
-                  <div className="font-mono text-[10px] text-[#879391]">Neon Postgres Distributed</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono text-[11px] text-[#4fdbc8] font-bold">HEALTHY</div>
-                  <div className="text-[10px] text-[#879391]">Conn: 24/100</div>
-                </div>
-              </div>
-
-              {/* Dialog SMS Gateway */}
-              <div className="bg-[#060e20] border border-[#2d3449]/60 p-3 rounded-lg flex items-center justify-between">
-                <div>
-                  <div className="text-xs font-semibold text-white">Dialog &amp; Mobitel SMS</div>
-                  <div className="font-mono text-[10px] text-[#879391]">OTP &amp; Receipt Dispatch</div>
-                </div>
-                <div className="text-right">
-                  <div className="font-mono text-[11px] text-[#4fdbc8] font-bold">ONLINE</div>
-                  <div className="text-[10px] text-[#879391]">Queue: 0</div>
-                </div>
+            <div className="mt-5 pt-3 border-t border-[#2d3449]/50">
+              <div className="font-mono text-[10px] text-[#879391] uppercase tracking-wider mb-2">Tenants by type</div>
+              <div className="space-y-1.5 font-mono text-[11px]">
+                {Object.entries(stats?.tenantsByType || {}).map(([type, count]) => (
+                  <div key={type} className="flex justify-between text-[#bcc9c6]">
+                    <span>{BUSINESS_TYPE_LABELS[type] || type}</span>
+                    <span className="text-white font-bold">{count}</span>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
 
           <div className="pt-4 border-t border-[#2d3449]/50 mt-4">
             <Link
-              href="/sys-control/settings"
+              href="/sys-control/vendors"
               className="w-full py-2.5 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors"
             >
-              <Sliders className="w-3.5 h-3.5 text-[#6bd8cb]" />
-              <span>Configure Telemetry Thresholds</span>
+              <Store className="w-3.5 h-3.5 text-[#6bd8cb]" />
+              <span>Open Vendor Registry</span>
             </Link>
           </div>
         </div>
       </div>
 
-      {/* Audit Log Stream & Quick Operations Section */}
+      {/* Audit Log Stream & Quick Operations */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Recent Audit Trails (7 cols) */}
         <div className="lg:col-span-7 bg-[#131b2e] border border-[#2d3449] p-6 rounded-xl shadow-md">
           <div className="flex items-center justify-between pb-3 border-b border-[#2d3449]/50 mb-4">
             <div className="flex items-center gap-2">
               <Terminal className="w-4 h-4 text-[#6bd8cb]" />
               <h3 className="font-bold text-base text-white">Privileged Audit Log Stream</h3>
             </div>
-            <Link
-              href="/sys-control/audit-logs"
-              className="font-mono text-xs text-[#6bd8cb] hover:underline"
-            >
+            <Link href="/sys-control/audit-logs" className="font-mono text-xs text-[#6bd8cb] hover:underline">
               View Full Audit Log →
             </Link>
           </div>
 
           <div className="space-y-2.5">
-            <div className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between font-mono text-xs">
-              <div className="flex items-center gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-[#4fdbc8]"></span>
-                <div>
-                  <div className="text-white font-semibold">U2F_SUPER_ADMIN_SESSION_AUTH</div>
-                  <div className="text-[10px] text-[#879391]">IP 175.157.88.24 • TLS 1.3 mTLS</div>
+            {audit.length === 0 && (
+              <div className="text-xs text-[#879391] font-mono text-center py-6">No recent admin activity</div>
+            )}
+            {audit.map((log) => {
+              const danger = log.action === 'delete' || log.action === 'reject'
+              return (
+                <div
+                  key={log.id}
+                  className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between font-mono text-xs"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${danger ? 'bg-[#ff5451]' : 'bg-[#4fdbc8]'}`}></span>
+                    <div className="min-w-0">
+                      <div className={`font-semibold uppercase truncate ${danger ? 'text-[#ffdad7]' : 'text-white'}`}>
+                        {log.action}_{log.resource}
+                      </div>
+                      <div className="text-[10px] text-[#879391] truncate">
+                        {log.account?.email || 'system'}
+                        {log.resourceId ? ` • ${log.resourceId.slice(0, 8)}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <span className="text-[#bcc9c6] text-[11px] shrink-0">{timeAgo(log.createdAt)}</span>
                 </div>
-              </div>
-              <span className="text-[#bcc9c6] text-[11px]">Just now</span>
-            </div>
-
-            <div className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between font-mono text-xs">
-              <div className="flex items-center gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-[#6bd8cb]"></span>
-                <div>
-                  <div className="text-white font-semibold">RAMIS_BATCH_FISCAL_SYNC</div>
-                  <div className="text-[10px] text-[#879391]">4,210 Invoices signed • IRD-SL-ACK</div>
-                </div>
-              </div>
-              <span className="text-[#bcc9c6] text-[11px]">3m ago</span>
-            </div>
-
-            <div className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between font-mono text-xs">
-              <div className="flex items-center gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-[#29a195]"></span>
-                <div>
-                  <div className="text-white font-semibold">FEATURE_FLAG_BULK_UPDATE</div>
-                  <div className="text-[10px] text-[#879391]">Enabled KIOSK_SELF_CHECKOUT for 14 tenants</div>
-                </div>
-              </div>
-              <span className="text-[#bcc9c6] text-[11px]">18m ago</span>
-            </div>
-
-            <div className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between font-mono text-xs">
-              <div className="flex items-center gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-[#ff5451]"></span>
-                <div>
-                  <div className="text-[#ffdad7] font-semibold">BANK_SLIP_VERIFICATION_REJECTED</div>
-                  <div className="text-[10px] text-[#879391]">Deposit ID #LK-DEP-4921 mismatched amount</div>
-                </div>
-              </div>
-              <span className="text-[#bcc9c6] text-[11px]">42m ago</span>
-            </div>
+              )
+            })}
           </div>
         </div>
 
-        {/* Quick Operations Console (5 cols) */}
         <div className="lg:col-span-5 bg-[#131b2e] border border-[#2d3449] p-6 rounded-xl shadow-md flex flex-col justify-between">
           <div>
             <div className="flex items-center justify-between pb-3 border-b border-[#2d3449]/50 mb-4">
               <div className="flex items-center gap-2">
                 <Zap className="w-4 h-4 text-[#4fdbc8]" />
-                <h3 className="font-bold text-base text-white">Platform Operations Switch</h3>
+                <h3 className="font-bold text-base text-white">Platform Operations</h3>
               </div>
-              <span className="font-mono text-[10px] bg-[#222a3d] text-[#bcc9c6] px-2 py-0.5 rounded">
-                ROOT SEC
-              </span>
+              <span className="font-mono text-[10px] bg-[#222a3d] text-[#bcc9c6] px-2 py-0.5 rounded">ROOT</span>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <Link
-                href="/sys-control/vendors/create"
-                className="p-3 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-left transition-colors group"
-              >
+              <Link href="/sys-control/vendors/create" className="p-3 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-left transition-colors group">
                 <div className="w-7 h-7 rounded bg-[#29a195]/20 text-[#6bd8cb] flex items-center justify-center mb-2">
                   <Store className="w-4 h-4" />
                 </div>
-                <div className="font-bold text-xs text-white group-hover:text-[#6bd8cb]">
-                  + Provision Tenant
-                </div>
-                <div className="text-[10px] text-[#879391] mt-0.5">Wizard S5</div>
+                <div className="font-bold text-xs text-white group-hover:text-[#6bd8cb]">+ Provision Tenant</div>
+                <div className="text-[10px] text-[#879391] mt-0.5">Create vendor &amp; owner</div>
               </Link>
 
-              <Link
-                href="/sys-control/sales-wall"
-                className="p-3 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-left transition-colors group"
-              >
+              <Link href="/sys-control/sales-wall" className="p-3 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-left transition-colors group">
                 <div className="w-7 h-7 rounded bg-[#04b4a2]/20 text-[#4fdbc8] flex items-center justify-center mb-2">
                   <Radio className="w-4 h-4" />
                 </div>
-                <div className="font-bold text-xs text-white group-hover:text-[#4fdbc8]">
-                  Live Sales Wall
-                </div>
-                <div className="text-[10px] text-[#879391] mt-0.5">Realtime Stream S3</div>
+                <div className="font-bold text-xs text-white group-hover:text-[#4fdbc8]">Live Sales Wall</div>
+                <div className="text-[10px] text-[#879391] mt-0.5">Realtime receipts</div>
               </Link>
 
-              <Link
-                href="/sys-control/pricing"
-                className="p-3 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-left transition-colors group"
-              >
+              <Link href="/sys-control/pricing" className="p-3 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-left transition-colors group">
                 <div className="w-7 h-7 rounded bg-[#222a3d] text-[#bcc9c6] flex items-center justify-center mb-2">
                   <Layers className="w-4 h-4" />
                 </div>
-                <div className="font-bold text-xs text-white group-hover:text-[#6bd8cb]">
-                  Feature Matrix
-                </div>
-                <div className="text-[10px] text-[#879391] mt-0.5">Flags &amp; Tiers</div>
+                <div className="font-bold text-xs text-white group-hover:text-[#6bd8cb]">Pricing Tiers</div>
+                <div className="text-[10px] text-[#879391] mt-0.5">Plans &amp; limits</div>
               </Link>
 
-              <Link
-                href="/sys-control/payments"
-                className="p-3 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-left transition-colors group"
-              >
+              <Link href="/sys-control/payments" className="p-3 rounded-lg bg-[#171f33] hover:bg-[#222a3d] border border-[#2d3449] text-left transition-colors group">
                 <div className="w-7 h-7 rounded bg-[#ff5451]/20 text-[#ffb4ab] flex items-center justify-center mb-2">
                   <FileCheck className="w-4 h-4" />
                 </div>
-                <div className="font-bold text-xs text-white group-hover:text-[#ffdad7]">
-                  Verify Slips
-                </div>
+                <div className="font-bold text-xs text-white group-hover:text-[#ffdad7]">Verify Slips</div>
                 <div className="text-[10px] text-[#ff5451] font-semibold mt-0.5">
-                  {pendingDeposits} Pending
+                  {overview?.pendingPayments ?? 0} Pending
                 </div>
               </Link>
             </div>
           </div>
 
           <div className="mt-5 pt-3 border-t border-[#2d3449]/40 flex items-center justify-between text-xs text-[#879391]">
-            <span>Platform Core: v4.8.2-prod</span>
-            <span className="font-mono text-[11px] text-[#4fdbc8]">Cluster nominal</span>
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#4fdbc8]" />
+              Stats refresh every 60s
+            </span>
+            <span className="font-mono text-[11px] text-[#4fdbc8]">
+              {stats?.recentCompanies[0] ? `Latest: ${stats.recentCompanies[0].name}` : ''}
+            </span>
           </div>
         </div>
       </div>

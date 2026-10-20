@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useSession, signOut } from 'next-auth/react'
 import { useRouter, useParams } from 'next/navigation'
 import { Clock, Loader2 } from 'lucide-react'
 import { CustomerFormModal, VehicleModal } from '@/components/modals'
@@ -16,11 +17,17 @@ import {
   ReturnLookupModal,
   VehicleMismatchDialog,
   SaleSuccessModal,
+  SupervisorAuthModal,
+  CashierLockModal,
 } from '@/components/pos'
+import { POS_SEARCH_INPUT_ID } from '@/components/pos/ProductGrid'
+import { publishPosDisplay, createIdlePosDisplayState } from '@/lib/pos/display-channel'
 import { WeightInputModal } from '@/components/pos/WeightInputModal'
 import { OfflineStatusBanner } from '@/components/pos/OfflineStatusBanner'
 import { SerialPickerModal } from '@/components/pos/SerialPickerModal'
 import { ModifierPickerModal } from '@/components/pos/ModifierPickerModal'
+import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
+import { CameraScanModal } from '@/components/pos/CameraScanModal'
 import type {
   Item,
   Category,
@@ -44,6 +51,7 @@ import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { useDebouncedValue } from '@/hooks/useDebounce'
 import { quickPrint } from '@/hooks/usePrint'
+import { usePrinter } from '@/hooks/usePrinter'
 import type { PaperSize } from '@/lib/print/types'
 import { useCurrency } from '@/hooks/useCurrency'
 import { roundCurrency } from '@/lib/utils/currency'
@@ -145,7 +153,7 @@ export default function POSPage() {
   const [splitEnabled, setSplitEnabled] = useState(false)
   const [splitSecondMethod, setSplitSecondMethod] = useState('card')
   const [splitSecondAmount, setSplitSecondAmount] = useState('')
-  const { online, queueSale, cacheCatalog } = useOfflinePos()
+  const { online, queueSale, cacheCatalog, loadCachedCatalog } = useOfflinePos()
   // Gift card state
   const [giftCardNumber, setGiftCardNumber] = useState('')
   const [giftCardInfo, setGiftCardInfo] = useState<GiftCardInfo | null>(null)
@@ -188,6 +196,21 @@ export default function POSPage() {
   const [saleDiscount, setSaleDiscount] = useState<{ type: 'percentage' | 'fixed'; value: number; reason: string }>({ type: 'percentage', value: 0, reason: '' })
   const [showDiscountModal, setShowDiscountModal] = useState(false)
 
+  // Supervisor override + terminal lock
+  const { data: sessionData } = useSession()
+  const cashierName = sessionData?.user?.name || ''
+  type SupervisorRequest =
+    | { type: 'custom_discount'; discount: { type: 'percentage' | 'fixed'; value: number; reason: string } }
+    | { type: 'price_override'; cartLineId: string; newPrice: number; itemName: string; originalPrice: number }
+    | { type: 'cart_void' }
+  const [supervisorRequest, setSupervisorRequest] = useState<SupervisorRequest | null>(null)
+  const [terminalLocked, setTerminalLocked] = useState(false)
+  const [clearCartConfirm, setClearCartConfirm] = useState(false)
+  const lastActivityRef = useRef(Date.now())
+  // One idempotency key per cart: survives retries, reset after a successful sale / clear
+  const clientSaleIdRef = useRef<string>(typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : '')
+  const newClientSaleId = () => { clientSaleIdRef.current = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : '' }
+
   // Supermarket: weighable item state
   const [weightInputItem, setWeightInputItem] = useState<Item | null>(null)
 
@@ -206,6 +229,10 @@ export default function POSPage() {
   // Receipt / tenant info state
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null)
   const [printingReceipt] = useState(false)
+  // Receipt printer (ESC/POS via USB / Bluetooth / print agent) + camera scanner
+  const printer = usePrinter()
+  const [showPrinterSettings, setShowPrinterSettings] = useState(false)
+  const [showCameraScan, setShowCameraScan] = useState(false)
 
   // Sale success modal state
   const [lastSale, setLastSale] = useState<{ invoiceNo: string; total: number; isReturn: boolean } | null>(null)
@@ -289,6 +316,24 @@ export default function POSPage() {
       if (warehouseId) params.set('warehouseId', warehouseId)
       if (categoryId) params.set('categoryId', categoryId)
 
+      // Offline: serve from the cached catalog snapshot
+      const serveFromCache = async () => {
+        const cached = (await loadCachedCatalog()) as Item[]
+        const q = (searchQuery || '').toLowerCase()
+        const filtered = cached.filter(i =>
+          (!categoryId || i.categoryId === categoryId) &&
+          (!q || i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q) || (i.barcode || '').includes(q) || (i.pluCode || '') === q)
+        )
+        setItems(filtered.slice(0, POS_ITEMS_LIMIT))
+        setHasMoreItems(filtered.length > POS_ITEMS_LIMIT)
+        if (cached.length === 0) toast.warning('Offline and no cached catalog yet')
+      }
+
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        await serveFromCache()
+        return
+      }
+
       const res = await fetch(`/api/items?${params.toString()}`)
       if (res.ok) {
         const response = await res.json()
@@ -302,11 +347,45 @@ export default function POSPage() {
       }
     } catch (error) {
       console.error('Error fetching items:', error)
+      // Network failure → fall back to the offline snapshot
+      try {
+        const cached = (await loadCachedCatalog()) as Item[]
+        if (cached.length > 0) {
+          setItems(cached.slice(0, POS_ITEMS_LIMIT))
+          setHasMoreItems(cached.length > POS_ITEMS_LIMIT)
+          toast.warning('Showing cached catalog (offline)')
+          return
+        }
+      } catch { /* ignore */ }
       toast.error('Failed to load items')
     } finally {
       setSearchingItems(false)
     }
-  }, [cacheCatalog])
+  }, [cacheCatalog, loadCachedCatalog])
+
+  // Warm the offline catalog snapshot for this branch in the background (up to 2,000 items)
+  const catalogWarmedFor = useRef<string | null>(null)
+  useEffect(() => {
+    const warehouseId = activeShift?.warehouse?.id
+    if (!warehouseId || !online || catalogWarmedFor.current === warehouseId) return
+    catalogWarmedFor.current = warehouseId
+    let cancelled = false
+    ;(async () => {
+      for (let page = 1; page <= 10 && !cancelled; page++) {
+        try {
+          const res = await fetch(`/api/items?pageSize=200&page=${page}&inStockOnly=true&warehouseId=${warehouseId}`)
+          if (!res.ok) break
+          const body = await res.json()
+          const data: unknown[] = Array.isArray(body) ? body : (body.data || [])
+          if (data.length > 0) await cacheCatalog(data)
+          if (!body.pagination || page >= body.pagination.totalPages) break
+        } catch {
+          break
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [activeShift?.warehouse?.id, online, cacheCatalog])
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -505,7 +584,7 @@ export default function POSPage() {
         const res = await fetch(`/api/items/barcode-lookup?barcode=${encodeURIComponent(barcode)}&warehouseId=${posWarehouse!.id}`)
         if (res.ok) {
           const item: Item = await res.json()
-          addToCart(item)
+          addScannedItem(item)
           setSearch('')
         }
       } catch {
@@ -563,6 +642,29 @@ export default function POSPage() {
     }
 
     addToCartDirect(item)
+  }
+
+  /** Add a scanned item honouring scan-derived quantity/price (weighing-scale labels, GS1 net weight / price). */
+  function addScannedItem(item: Item & { scan?: { quantity?: number; unitPrice?: number; lineTotal?: number; symbology?: string } }) {
+    const scan = item.scan
+    if (scan && typeof scan.quantity === 'number' && scan.quantity > 0 && (scan.symbology === 'scale' || item.isWeighable || scan.symbology === 'gs1')) {
+      if (isReturnMode) { addToCart(item); return }
+      const unitPrice = typeof scan.unitPrice === 'number' && scan.unitPrice > 0 ? scan.unitPrice : parseFloat(item.sellingPrice)
+      const total = roundCurrency(typeof scan.lineTotal === 'number' && scan.lineTotal > 0 ? scan.lineTotal : scan.quantity * unitPrice)
+      setCart(prev => [...prev, {
+        cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        itemId: item.id,
+        name: formatItemLabel(item, company.businessType),
+        quantity: 1,
+        unitPrice: total,
+        total,
+        weight: scan.quantity,
+        isWeighable: true,
+        taxTemplateId: item.taxTemplateId || null,
+      }])
+      return
+    }
+    addToCart(item)
   }
 
   function addToCartWithWeight(item: Item, weight: number) {
@@ -732,9 +834,25 @@ export default function POSPage() {
     setCart(cart.filter(c => c.cartLineId !== cartLineId))
   }
 
+  function applyPrice(cartLineId: string, newPrice: number) {
+    setCart(prev => prev.map(c =>
+      c.cartLineId === cartLineId
+        ? { ...c, unitPrice: newPrice, total: c.quantity * newPrice }
+        : c
+    ))
+  }
+
   function updatePrice(cartLineId: string, newPrice: number) {
     if (isNaN(newPrice) || newPrice <= 0) {
       toast.error('Price must be greater than zero')
+      return
+    }
+    // Counter profile forbids rate changes → a supervisor must approve
+    if (posProfile?.allowRateChange === false) {
+      const line = cart.find(c => c.cartLineId === cartLineId)
+      if (line && line.unitPrice !== newPrice) {
+        setSupervisorRequest({ type: 'price_override', cartLineId, newPrice, itemName: line.name, originalPrice: line.unitPrice })
+      }
       return
     }
     setCart(cart.map(c =>
@@ -754,6 +872,7 @@ export default function POSPage() {
   }
 
   function clearCart() {
+    newClientSaleId()
     setCart([])
     setSelectedCustomer(null)
     setSelectedVehicle(null)
@@ -1210,6 +1329,168 @@ export default function POSPage() {
 
   // ─── Payment / Sale Completion ────────────────────────────────
 
+  // ─── Supervisor PIN override ───────────────────────────────────
+  async function authorizeSupervisor(pin: string, reason: string): Promise<boolean> {
+    if (!supervisorRequest) return false
+    const res = await fetch('/api/auth/verify-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin, scope: 'supervisor', permission: 'manageSales', reason }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.status === 429) throw new Error(data.error || 'Too many attempts')
+    if (!res.ok || !data.ok) return false
+    const approver: string = data.user?.name || 'Supervisor'
+    if (supervisorRequest.type === 'custom_discount') {
+      const d = supervisorRequest.discount
+      setSaleDiscount({ ...d, reason: `${d.reason} — approved by ${approver}` })
+    } else if (supervisorRequest.type === 'price_override') {
+      applyPrice(supervisorRequest.cartLineId, supervisorRequest.newPrice)
+    } else if (supervisorRequest.type === 'cart_void') {
+      clearCart()
+    }
+    toast.success(`Approved by ${approver}`)
+    setSupervisorRequest(null)
+    return true
+  }
+
+  // ─── Terminal lock (F8 / idle) ────────────────────────────────
+  async function unlockTerminal(pin: string): Promise<boolean> {
+    const res = await fetch('/api/auth/verify-pin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin, scope: 'self' }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (res.status === 400 || res.status === 429) throw new Error(data.error || 'PIN check failed')
+    if (!res.ok || !data.ok) return false
+    setTerminalLocked(false)
+    lastActivityRef.current = Date.now()
+    return true
+  }
+
+  useEffect(() => {
+    const bump = () => { lastActivityRef.current = Date.now() }
+    const events: (keyof WindowEventMap)[] = ['mousedown', 'keydown', 'touchstart', 'wheel']
+    events.forEach(ev => window.addEventListener(ev, bump, { passive: true }))
+    const timer = window.setInterval(() => {
+      if (!activeShift || terminalLocked) return
+      let minutes = 10
+      try { minutes = parseInt(localStorage.getItem('poslanka:pos-lock-minutes') || '10', 10) || 10 } catch { /* ignore */ }
+      if (minutes > 0 && Date.now() - lastActivityRef.current > minutes * 60_000) setTerminalLocked(true)
+    }, 15_000)
+    return () => {
+      events.forEach(ev => window.removeEventListener(ev, bump))
+      window.clearInterval(timer)
+    }
+  }, [activeShift, terminalLocked])
+
+  // ─── Scan fast path: Enter in the search box = immediate exact lookup ──
+  function focusSearch() {
+    const el = document.getElementById(POS_SEARCH_INPUT_ID) as HTMLInputElement | null
+    if (el) { el.focus(); el.select() }
+  }
+
+  async function handleScanSubmit(code: string): Promise<boolean> {
+    const trimmed = code.trim()
+    if (!trimmed) return false
+    if (posWarehouse) {
+      try {
+        const res = await fetch(`/api/items/barcode-lookup?barcode=${encodeURIComponent(trimmed)}&warehouseId=${posWarehouse.id}`)
+        if (res.ok) {
+          const item: Item = await res.json()
+          addScannedItem(item)
+          setSearch('')
+          return true
+        }
+      } catch {
+        // fall through to local matching
+      }
+    }
+    const q = trimmed.toLowerCase()
+    const exact = items.filter(i => i.barcode === trimmed || i.pluCode === trimmed || (i.sku || '').toLowerCase() === q)
+    const candidates = exact.length > 0
+      ? exact
+      : items.filter(i => i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q) || (i.barcode || '').includes(trimmed))
+    if (candidates.length === 1) {
+      addToCart(candidates[0])
+      setSearch('')
+      return true
+    }
+    if (candidates.length === 0) toast.error(`No item found for "${trimmed}"`)
+    return false
+  }
+
+  // ─── Keyboard shortcuts ────────────────────────────────────────
+  useEffect(() => {
+    const isTyping = (el: Element | null) =>
+      !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
+    const modalOpen = showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
+      || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || !!supervisorRequest || clearCartConfirm
+
+    function onKey(e: KeyboardEvent) {
+      if (terminalLocked) return
+      switch (e.key) {
+        case 'F1':
+          e.preventDefault(); focusSearch(); break
+        case 'F2':
+          e.preventDefault(); if (!modalOpen && cart.length > 0 && !holdingInProgress) holdSale(); break
+        case 'F3':
+          e.preventDefault(); if (!modalOpen) setShowHeldSalesModal(true); break
+        case 'F4':
+          e.preventDefault(); if (!modalOpen && allowDiscount && cart.length > 0) setShowDiscountModal(true); break
+        case 'F6':
+          e.preventDefault(); if (!modalOpen) { if (cart.length > 0) setReturnModeConfirm(true); else setShowReturnLookupModal(true) } break
+        case 'F8':
+          e.preventDefault(); if (activeShift) setTerminalLocked(true); break
+        case 'F9':
+          e.preventDefault(); if (!modalOpen && cart.length > 0 && activeShift) openPaymentModal(); break
+        case 'Escape':
+          if (!modalOpen && search) { setSearch(''); focusSearch() } break
+        case 'Delete':
+          if (e.ctrlKey && !modalOpen && cart.length > 0) { e.preventDefault(); setClearCartConfirm(true) } break
+        case '/':
+          if (!isTyping(document.activeElement)) { e.preventDefault(); focusSearch() } break
+        default:
+          break
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPayment, showDiscountModal, showHeldSalesModal, showCustomerModal, showVehicleModal, showShiftOpenModal, showShiftCloseModal,
+      showReturnLookupModal, supervisorRequest, clearCartConfirm, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
+
+  // ─── Customer-facing display mirror (/pos/display) ─────────────
+  useEffect(() => {
+    if (lastSale) {
+      publishPosDisplay({
+        ...createIdlePosDisplayState(company.tenantName, cashierName),
+        status: 'paid',
+        total: lastSale.total,
+        invoiceNo: lastSale.invoiceNo,
+        changeDue: paymentMethod === 'cash' ? Math.max(0, (parseFloat(amountPaid) || 0) - lastSale.total) : undefined,
+      })
+      return
+    }
+    if (cart.length === 0) {
+      publishPosDisplay(createIdlePosDisplayState(company.tenantName, cashierName))
+      return
+    }
+    publishPosDisplay({
+      tenantName: company.tenantName,
+      cashierName,
+      items: cart.map(c => ({ id: c.cartLineId, name: c.name, quantity: c.quantity, unitPrice: c.unitPrice, total: c.total })),
+      subtotal,
+      discount: discountAmount,
+      tax,
+      total,
+      status: showPayment ? 'paying' : 'cart',
+      updatedAt: new Date().toISOString(),
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, subtotal, discountAmount, tax, total, showPayment, lastSale, company.tenantName, cashierName])
+
   async function openPaymentModal() {
     let credit = 0
     if (selectedCustomer?.id) {
@@ -1261,6 +1542,7 @@ export default function POSPage() {
             amountPaid: 0,
             creditAmount: 0,
             addOverpaymentToCredit: refundMethod === 'credit',
+            clientSaleId: clientSaleIdRef.current || undefined,
             isReturn: true,
             returnAgainst: returnAgainstSale?.id,
             refundAmount,
@@ -1333,6 +1615,7 @@ export default function POSPage() {
         : undefined
 
     const salePayload = {
+      clientSaleId: clientSaleIdRef.current || undefined,
       customerId: selectedCustomer?.id,
       vehicleId: selectedVehicle?.id,
       warehouseId: posWarehouse?.id,
@@ -1454,6 +1737,21 @@ export default function POSPage() {
   }
 
   async function printReceiptForSale(saleId: string) {
+    // Direct ESC/POS printing (USB / Bluetooth / print agent). Falls back to the HTML path below on failure.
+    if (printer.isRawPrinter) {
+      const printed = await printer.printReceipt(saleId, {
+        header: posProfile?.receiptHeader,
+        footer: posProfile?.receiptFooter,
+        cashier: cashierName || null,
+        counter: posProfile?.name || null,
+      })
+      if (printed) {
+        setLastSale(null)
+        setLastSaleId(null)
+        return
+      }
+      toast.warning(printer.status.message ? `Printer: ${printer.status.message}. Using browser print.` : 'Printer unavailable, using browser print')
+    }
     try {
       const res = await fetch(`/api/sales/${saleId}`)
       if (!res.ok) {
@@ -1629,21 +1927,53 @@ export default function POSPage() {
         <div className="flex items-center gap-2.5">
           <span className="font-extrabold text-white uppercase tracking-wider">{company.tenantName || 'POSLanka'}</span>
           <span className="text-slate-600">•</span>
-          <span className="text-slate-300">{posWarehouse?.name || 'Colombo Store'}</span>
+          <span className="text-slate-300">{posWarehouse?.name || 'No branch'}</span>
           <span className="text-slate-600">•</span>
-          <span className="text-teal-400 font-bold">Register (10&quot; Tablet Terminal)</span>
+          <span className="text-teal-400 font-bold">{posProfile?.name || 'No counter'}</span>
+          {cashierName && (<>
+            <span className="text-slate-600">•</span>
+            <span className="text-slate-300">{cashierName}</span>
+          </>)}
           <span className="text-slate-600">•</span>
-          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 font-bold border border-emerald-800/80">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            RAMIS Fiscal Engine v2.4
+          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded font-bold border ${online ? 'bg-emerald-950 text-emerald-400 border-emerald-800/80' : 'bg-red-950 text-red-300 border-red-800/80'}`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
+            {online ? 'Online' : 'Offline'}
           </span>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-amber-400 font-bold">
-            Shift #{activeShift?.id?.slice(0, 8).toUpperCase() || 'ACTIVE'}
+            {activeShift ? `Shift ${activeShift.entryNumber}` : 'No open shift'}
           </span>
-          <span className="text-slate-600">•</span>
-          <span className="text-slate-400">Printer: Ready (ESC/POS)</span>
+          <span className="text-slate-600 hidden xl:inline">•</span>
+          <span className="text-slate-500 hidden xl:inline" title="Keyboard shortcuts">
+            F1 Search · F2 Hold · F3 Held · F4 Discount · F6 Return · F8 Lock · F9 Pay · Enter Scan
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowCameraScan(true)}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700"
+            title="Scan barcode with camera"
+          >
+            Camera
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowPrinterSettings(true)}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700"
+            title={`Printer: ${printer.transportLabel}${printer.deviceName ? ` (${printer.deviceName})` : ''}`}
+          >
+            Printer: {printer.transportLabel}
+          </button>
+          {activeShift && (
+            <button
+              type="button"
+              onClick={() => setTerminalLocked(true)}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700"
+              title="Lock terminal (F8)"
+            >
+              Lock
+            </button>
+          )}
         </div>
       </div>
       <div className="flex flex-1 overflow-hidden">
@@ -1667,6 +1997,7 @@ export default function POSPage() {
         onReturnModeConfirm={() => setReturnModeConfirm(true)}
         config={config}
         businessType={company.businessType}
+        onScanSubmit={handleScanSubmit}
       />
 
       <CartPanel
@@ -1895,6 +2226,49 @@ export default function POSPage() {
         subtotal={Math.abs(subtotal)}
         maxDiscountPercent={maxDiscountPct}
         allowDiscount={allowDiscount}
+        onRequestOverride={(discount) => setSupervisorRequest({ type: 'custom_discount', discount })}
+      />
+
+      {/* Supervisor PIN override (discount over limit, locked price, cart void) */}
+      <SupervisorAuthModal
+        isOpen={!!supervisorRequest}
+        onClose={() => setSupervisorRequest(null)}
+        onAuthorize={authorizeSupervisor}
+        actionType={supervisorRequest?.type || 'custom_discount'}
+        title="Supervisor Approval Required"
+        contextDetails={{
+          cashierName,
+          ticketNumber: activeShift?.entryNumber,
+          ...(supervisorRequest?.type === 'custom_discount'
+            ? {
+                discountPercent: supervisorRequest.discount.type === 'percentage'
+                  ? supervisorRequest.discount.value
+                  : Math.abs(subtotal) > 0 ? (supervisorRequest.discount.value / Math.abs(subtotal)) * 100 : 0,
+              }
+            : supervisorRequest?.type === 'price_override'
+              ? { itemName: supervisorRequest.itemName, originalPrice: supervisorRequest.originalPrice, requestedPrice: supervisorRequest.newPrice }
+              : {}),
+        }}
+      />
+
+      {/* Terminal lock screen */}
+      <CashierLockModal
+        isOpen={terminalLocked}
+        cashierName={cashierName || 'Cashier'}
+        terminalName={posProfile?.name || posWarehouse?.name || 'POS'}
+        shiftNumber={activeShift?.entryNumber || ''}
+        onUnlock={unlockTerminal}
+        onSwitchUser={() => signOut({ callbackUrl: `/c/${params.slug}/login` })}
+      />
+
+      <ConfirmModal
+        isOpen={clearCartConfirm}
+        onClose={() => setClearCartConfirm(false)}
+        onConfirm={() => { clearCart(); setClearCartConfirm(false) }}
+        title="Clear Cart"
+        message="Remove all items from the current sale?"
+        confirmText="Clear"
+        variant="danger"
       />
 
       {/* Supermarket: Weight Input Modal */}
@@ -1924,6 +2298,16 @@ export default function POSPage() {
         itemName={modifierPickerItem?.name || ''}
         onClose={() => { setShowModifierPicker(false); setModifierPickerItem(null) }}
         onConfirm={addToCartWithModifiers}
+      />
+
+      {/* Receipt printer settings (per terminal) */}
+      <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} />
+
+      {/* Camera barcode scanner (tablets / laptops without a hardware scanner) */}
+      <CameraScanModal
+        isOpen={showCameraScan}
+        onClose={() => setShowCameraScan(false)}
+        onDetected={handleScanSubmit}
       />
       </div>
     </div>

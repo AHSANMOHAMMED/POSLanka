@@ -4,7 +4,7 @@
 CREATE TYPE "public"."activity_action" AS ENUM('create', 'update', 'delete', 'status_change', 'submit', 'approve', 'reject', 'cancel', 'convert', 'login', 'logout', 'print', 'export');--> statement-breakpoint
 
 -- Insurance Estimate Revisions
-CREATE TABLE "insurance_estimate_revisions" (
+CREATE TABLE IF NOT EXISTS "insurance_estimate_revisions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"tenant_id" uuid NOT NULL,
 	"estimate_id" uuid NOT NULL,
@@ -61,9 +61,15 @@ CREATE TABLE "insurance_estimate_attachments" (
 );--> statement-breakpoint
 
 -- Foreign Keys
-ALTER TABLE "insurance_estimate_revisions" ADD CONSTRAINT "insurance_estimate_revisions_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "insurance_estimate_revisions" ADD CONSTRAINT "insurance_estimate_revisions_estimate_id_insurance_estimates_id_fk" FOREIGN KEY ("estimate_id") REFERENCES "public"."insurance_estimates"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "insurance_estimate_revisions" ADD CONSTRAINT "insurance_estimate_revisions_changed_by_users_id_fk" FOREIGN KEY ("changed_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "insurance_estimate_revisions" ADD CONSTRAINT "insurance_estimate_revisions_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null; END $$;--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "insurance_estimate_revisions" ADD CONSTRAINT "insurance_estimate_revisions_estimate_id_insurance_estimates_id_fk" FOREIGN KEY ("estimate_id") REFERENCES "public"."insurance_estimates"("id") ON DELETE cascade ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null; END $$;--> statement-breakpoint
+DO $$ BEGIN
+ ALTER TABLE "insurance_estimate_revisions" ADD CONSTRAINT "insurance_estimate_revisions_changed_by_users_id_fk" FOREIGN KEY ("changed_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION WHEN duplicate_object THEN null; END $$;--> statement-breakpoint
 
 ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "activity_logs" ADD CONSTRAINT "activity_logs_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

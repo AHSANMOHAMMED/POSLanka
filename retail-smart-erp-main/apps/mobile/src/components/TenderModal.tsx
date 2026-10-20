@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import {
   Modal,
   View,
@@ -12,48 +12,153 @@ import {
   Alert,
 } from 'react-native'
 import { THEME, formatLKR } from '../lib/theme'
-import { apiFetch } from '../lib/api'
-import { CartLine } from './CartDrawerModal'
+import { apiGet, apiPost, isNetworkError } from '../lib/api'
+import { enqueueSale, isQueueablePayload } from '../lib/offlineQueue'
+import { calculateCartTax, roundCurrency, type TaxConfig } from '../lib/tax'
+import { shiftCounterName, shiftWarehouseName, type Shift } from '../lib/shift'
+import { getPrinterSettings, isPrintingEnabled, TRANSPORT_LABELS, type PrinterSettings } from '../lib/printer'
+import { receiptFromSale, type BusinessInfo } from '../lib/receipt'
+import type { ReceiptInput } from '../lib/escpos'
+import type { CartLine } from './CartDrawerModal'
+import type { Customer } from './CustomerPickerModal'
+
+export interface SaleResultData {
+  invoiceNo: string
+  total: number
+  change: number
+  tenderMethod: string
+  queued?: boolean
+  isReturn?: boolean
+  /** Printable receipt document (built from the POST /api/sales response). */
+  receipt?: ReceiptInput | null
+  /** Cashier's choice on the tender screen; falls back to the printer setting. */
+  autoPrint?: boolean
+}
 
 interface TenderModalProps {
   visible: boolean
   onClose: () => void
   cart: CartLine[]
-  onSaleComplete: (saleData: { invoiceNo: string; total: number; change: number; tenderMethod: string }) => void
+  shift: Shift
+  customer: Customer | null
+  /** Idempotency key for this cart; generated once per cart by the POS screen. */
+  clientSaleId: string
+  taxConfig: TaxConfig
+  online: boolean
+  /** Business block for the printed receipt (GET /api/tenant). */
+  business?: BusinessInfo | null
+  cashierName?: string | null
+  onSaleComplete: (saleData: SaleResultData) => void
 }
 
-type PaymentMethodType = 'cash' | 'card' | 'lankaqr' | 'loyalty'
+/** UI tender options mapped onto the server's payment method enum. */
+type TenderOption = 'cash' | 'card' | 'lankaqr' | 'credit'
+
+const TENDER_LABELS: Record<TenderOption, string> = {
+  cash: 'CASH',
+  card: 'CARD',
+  lankaqr: 'LANKAQR',
+  credit: 'CREDIT',
+}
+
+interface SaleResponse {
+  id: string
+  invoiceNo: string
+  total: string | number
+  subtotal?: string | number
+  discountAmount?: string | number
+  taxAmount?: string | number
+  paidAmount?: string | number
+  createdAt?: string
+  items?: Array<{ itemName: string; quantity: string | number; unitPrice: string | number; total?: string | number }>
+  payments?: Array<{ method: string; amount: string | number; reference?: string | null }>
+}
 
 export function TenderModal({
   visible,
   onClose,
   cart,
+  shift,
+  customer,
+  clientSaleId,
+  taxConfig,
+  online,
+  business,
+  cashierName,
   onSaleComplete,
 }: TenderModalProps) {
-  if (!visible) return null
-
-  const subtotal = cart.reduce(
-    (sum, line) => sum + Number(line.sellingPrice) * line.quantity,
-    0
+  const subtotal = useMemo(() => roundCurrency(cart.reduce((sum, line) => sum + Number(line.sellingPrice) * line.quantity, 0)), [cart])
+  const taxResult = useMemo(
+    () =>
+      calculateCartTax(
+        cart.map((l) => ({ lineTotal: roundCurrency(Number(l.sellingPrice) * l.quantity), taxTemplateId: l.taxTemplateId })),
+        taxConfig,
+        customer?.taxExempt === true
+      ),
+    [cart, taxConfig, customer]
   )
-  const ssclTax = subtotal * 0.025
-  const netPayable = subtotal + ssclTax
+  const tax = taxResult.tax
+  const grossPayable = roundCurrency(taxResult.hasInclusiveTax ? subtotal : subtotal + tax)
 
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodType>('cash')
-  const [cashTendered, setCashTendered] = useState<string>(netPayable.toFixed(2))
-  const [autoPrint, setAutoPrint] = useState(true)
-  const [whatsAppSlip, setWhatsAppSlip] = useState(false)
-  const [phone, setPhone] = useState('')
+  // Loyalty program (conversion factor + tier redeem rate), same maths as the web POS
+  type LoyaltyProgram = { conversionFactor?: string | number | null; tiers?: { tier: string; redeemRate?: string | number | null; isActive?: boolean }[] }
+  const [loyaltyProgram, setLoyaltyProgram] = useState<LoyaltyProgram | null>(null)
+  const [loyaltyPoints, setLoyaltyPoints] = useState('')
+  const loyaltyPts = Math.max(0, Math.floor(parseFloat(loyaltyPoints) || 0))
+  const availablePoints = customer?.loyaltyPoints ?? null
+  const loyaltyRedeemValue = useMemo(() => {
+    if (!customer || loyaltyPts <= 0 || !loyaltyProgram) return 0
+    const factor = Number(loyaltyProgram.conversionFactor) || 0
+    const tier = loyaltyProgram.tiers?.find((t) => t.tier === (customer.loyaltyTier || 'bronze') && t.isActive !== false)
+    const rate = tier && tier.redeemRate != null ? Number(tier.redeemRate) || 1 : 1
+    return Math.min(grossPayable, roundCurrency(loyaltyPts * factor * rate))
+  }, [customer, loyaltyPts, loyaltyProgram, grossPayable])
+  const netPayable = roundCurrency(Math.max(0, grossPayable - loyaltyRedeemValue))
+
+  const [tender, setTender] = useState<TenderOption>('cash')
+  const [cashTendered, setCashTendered] = useState<string>('')
+  const [reference, setReference] = useState('')
+  const [autoPrint, setAutoPrint] = useState(false)
+  const [printer, setPrinter] = useState<PrinterSettings | null>(null)
   const [busy, setBusy] = useState(false)
 
-  // Quick preset calculations
+  // Reset the form each time the modal opens for a (possibly new) cart.
+  useEffect(() => {
+    if (visible) {
+      setTender('cash')
+      setCashTendered(netPayable.toFixed(2))
+      setReference('')
+      setLoyaltyPoints('')
+      setBusy(false)
+      getPrinterSettings().then((s) => {
+        setPrinter(s)
+        setAutoPrint(isPrintingEnabled(s) && s.autoPrint)
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, clientSaleId])
+
+  useEffect(() => {
+    if (!visible || !customer?.id) { setLoyaltyProgram(null); return }
+    let cancelled = false
+    apiGet<LoyaltyProgram | null>('/api/loyalty-programs').then((res) => {
+      if (!cancelled) setLoyaltyProgram(res.ok && res.data ? res.data : null)
+    })
+    return () => { cancelled = true }
+  }, [visible, customer?.id])
+
+  // Keep the cash field in sync when loyalty redemption changes the payable amount
+  useEffect(() => {
+    if (visible && tender === 'cash') setCashTendered(netPayable.toFixed(2))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [netPayable])
+
   const presets = useMemo(() => {
     const exact = netPayable
     const roundNext50 = Math.ceil(netPayable / 50) * 50
     const roundNext100 = Math.ceil(netPayable / 100) * 100
     const next1000 = Math.ceil(netPayable / 1000) * 1000
     const next5000 = Math.ceil(netPayable / 5000) * 5000 || 5000
-
     return [
       { label: 'Exact', value: exact },
       { label: roundNext50 > exact ? `+${(roundNext50 - exact).toFixed(2)}` : 'Round', value: roundNext50 > exact ? roundNext50 : roundNext100 },
@@ -63,94 +168,220 @@ export function TenderModal({
   }, [netPayable])
 
   const numericTendered = parseFloat(cashTendered) || 0
-  const changeDue = numericTendered - netPayable
-  const isTenderSufficient = paymentMethod !== 'cash' || changeDue >= -0.009
+  const changeDue = roundCurrency(numericTendered - netPayable)
+  const isTenderSufficient = tender !== 'cash' || changeDue >= -0.009
+  const creditAllowed = !!customer && shift.posProfile?.allowCreditSale !== false
+  if (!visible) return null
+
+  function buildPayload(): Record<string, unknown> {
+    const cartItems = cart.map((c, idx) => ({
+      itemId: c.itemId || c.id,
+      name: c.name,
+      sku: c.sku || undefined,
+      quantity: c.quantity,
+      unitPrice: Number(c.sellingPrice),
+      discount: 0,
+      taxRate: taxResult.perLine[idx]?.effectiveRate || undefined,
+      taxAmount: taxResult.perLine[idx]?.totalTax || undefined,
+      taxBreakdown: taxResult.perLine[idx]?.breakdown?.length ? taxResult.perLine[idx].breakdown : undefined,
+      taxTemplateId: c.taxTemplateId || undefined,
+    }))
+
+    let paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'credit'
+    let amountPaid: number
+    let creditAmount = 0
+    let paymentSplits: Array<{ method: string; amount: number; reference?: string }> | undefined
+
+    switch (tender) {
+      case 'cash':
+        paymentMethod = 'cash'
+        amountPaid = roundCurrency(numericTendered)
+        break
+      case 'card':
+        paymentMethod = 'card'
+        amountPaid = netPayable
+        break
+      case 'lankaqr':
+        // LankaQR settles to the bank account -> bank_transfer with the QR reference.
+        paymentMethod = 'bank_transfer'
+        amountPaid = netPayable
+        paymentSplits = [{ method: 'bank_transfer', amount: netPayable, reference: reference.trim() || undefined }]
+        break
+      case 'credit':
+        // Sell on customer credit: nothing received now.
+        paymentMethod = 'credit'
+        amountPaid = 0
+        creditAmount = 0
+        break
+    }
+
+    return {
+      clientSaleId,
+      cartItems,
+      paymentMethod,
+      paymentSplits,
+      subtotal,
+      discount: 0,
+      tax,
+      taxBreakdown: taxResult.breakdown.length > 0 ? taxResult.breakdown : undefined,
+      total: netPayable,
+      amountPaid,
+      creditAmount,
+      addOverpaymentToCredit: false,
+      customerId: customer?.id || undefined,
+      customerName: customer?.name || undefined,
+      warehouseId: shift.warehouseId,
+      posOpeningEntryId: shift.id,
+      loyaltyPointsRedeemed: customer && loyaltyPts > 0 && loyaltyRedeemValue > 0 ? loyaltyPts : undefined,
+    }
+  }
 
   async function handleCompleteSale() {
     if (!isTenderSufficient) {
       Alert.alert('Insufficient Tender', 'Tendered cash is less than the net amount payable.')
       return
     }
+    if (tender === 'credit' && !customer) {
+      Alert.alert('Customer Required', 'Link a customer before selling on credit.')
+      return
+    }
+    if (loyaltyPts > 0 && !customer) {
+      Alert.alert('Customer Required', 'Link a customer to redeem loyalty points.')
+      return
+    }
+    if (loyaltyPts > 0 && availablePoints != null && loyaltyPts > availablePoints) {
+      Alert.alert('Not Enough Points', `${customer?.name} has ${availablePoints} points available.`)
+      return
+    }
+
+    const payload = buildPayload()
+    const tenderMethod = TENDER_LABELS[tender]
+    const change = tender === 'cash' ? Math.max(0, changeDue) : 0
 
     setBusy(true)
     try {
-      const cartItems = cart.map((c) => ({
-        itemId: c.id,
-        name: c.name,
-        quantity: c.quantity,
-        unitPrice: Number(c.sellingPrice),
-      }))
+      const res = await apiPost<SaleResponse>('/api/sales', payload)
+      const businessInfo: BusinessInfo = business || { name: 'POSLanka' }
+      const splits = payload.paymentSplits as Array<{ method: string; amount: number; reference?: string }> | undefined
+      const fallbackPayment = splits?.[0] || { method: String(payload.paymentMethod), amount: Number(payload.amountPaid) || netPayable }
 
-      const payload = {
-        cartItems,
-        paymentMethod: paymentMethod === 'loyalty' ? 'customer_credit' : paymentMethod,
-        subtotal,
-        discount: 0,
-        tax: ssclTax,
-        total: netPayable,
-        amountPaid: paymentMethod === 'cash' ? numericTendered : netPayable,
-        phone: whatsAppSlip ? phone : undefined,
-        autoPrint,
-      }
-
-      const res = await apiFetch('/api/sales', {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      })
-      const data = await res.json()
-
-      if (!res.ok) {
-        Alert.alert('Checkout Failed', data.error || 'Server error occurred during sale.')
+      if (res.ok) {
+        const sale = res.data || ({} as SaleResponse)
+        const receipt = receiptFromSale(
+          {
+            ...sale,
+            invoiceNo: sale.invoiceNo || 'Sale recorded',
+            total: sale.total ?? netPayable,
+            subtotal: sale.subtotal ?? subtotal,
+            taxAmount: sale.taxAmount ?? tax,
+            createdAt: sale.createdAt || new Date().toISOString(),
+            taxBreakdown: taxResult.breakdown.length ? taxResult.breakdown.map((b) => ({ taxName: b.taxName, amount: b.amount })) : null,
+            items: sale.items?.length
+              ? sale.items
+              : cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: roundCurrency(Number(c.sellingPrice) * c.quantity), unit: c.unit })),
+          },
+          { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, change, fallbackPayment }
+        )
+        onSaleComplete({
+          invoiceNo: sale.invoiceNo || 'Sale recorded',
+          total: Number(sale.total ?? netPayable) || netPayable,
+          change,
+          tenderMethod,
+          receipt,
+          autoPrint,
+        })
         return
       }
 
-      const invoiceNo = data.invoiceNo || data.sale?.invoiceNo || `#INV-${Date.now().toString().slice(-6)}`
-      onSaleComplete({
-        invoiceNo,
-        total: netPayable,
-        change: paymentMethod === 'cash' ? Math.max(0, changeDue) : 0,
-        tenderMethod: paymentMethod.toUpperCase(),
-      })
-    } catch (e) {
-      Alert.alert('Network Error', e instanceof Error ? e.message : 'Sale submission failed')
+      if (isNetworkError(res)) {
+        if (!isQueueablePayload(payload)) {
+          Alert.alert(
+            'No Connection',
+            'Credit, gift card and loyalty sales cannot be saved offline. Reconnect and try again, or switch to cash/card.'
+          )
+          return
+        }
+        await enqueueSale(payload)
+        const offlineNo = `Offline ${clientSaleId.slice(0, 8).toUpperCase()}`
+        const receipt = receiptFromSale(
+          {
+            invoiceNo: offlineNo,
+            total: netPayable,
+            subtotal,
+            taxAmount: tax,
+            createdAt: new Date().toISOString(),
+            taxBreakdown: taxResult.breakdown.length ? taxResult.breakdown.map((b) => ({ taxName: b.taxName, amount: b.amount })) : null,
+            items: cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: roundCurrency(Number(c.sellingPrice) * c.quantity), unit: c.unit })),
+          },
+          { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, change, fallbackPayment }
+        )
+        onSaleComplete({
+          invoiceNo: offlineNo,
+          total: netPayable,
+          change,
+          tenderMethod,
+          queued: true,
+          receipt,
+          autoPrint,
+        })
+        return
+      }
+
+      Alert.alert('Checkout Failed', res.error)
     } finally {
       setBusy(false)
     }
   }
 
+  const methodCards: Array<{ id: TenderOption; emoji: string; title: string; sub: string; disabled?: boolean }> = [
+    { id: 'cash', emoji: '💵', title: 'Cash', sub: 'Physical tender' },
+    { id: 'card', emoji: '💳', title: 'Card POS', sub: 'Visa / Master / LankaPay' },
+    { id: 'lankaqr', emoji: '📱', title: 'LankaQR', sub: 'Bank transfer with reference' },
+    { id: 'credit', emoji: '🧾', title: 'Customer Credit', sub: customer ? `Bill to ${customer.name}` : 'Link a customer first', disabled: !creditAllowed },
+  ]
+
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
       <View style={styles.container}>
-        {/* Header */}
         <View style={styles.header}>
-          <Pressable style={styles.backBtn} onPress={onClose}>
+          <Pressable style={styles.backBtn} onPress={onClose} disabled={busy}>
             <Text style={styles.backBtnText}>←</Text>
           </Pressable>
           <View style={styles.headerTitleCol}>
             <Text style={styles.headerTitle}>Payment Tender</Text>
-            <Text style={styles.headerSub}>Colombo Main Branch ▸ Counter 02</Text>
+            <Text style={styles.headerSub} numberOfLines={1}>
+              {shiftWarehouseName(shift) || 'Branch'} ▸ {shiftCounterName(shift) || 'Counter'}
+            </Text>
           </View>
-          <View style={styles.liveIndicator}>
-            <View style={styles.pulsingDot} />
-            <Text style={styles.liveText}>Ready</Text>
+          <View style={[styles.liveIndicator, !online && styles.liveIndicatorOffline]}>
+            <View style={[styles.pulsingDot, !online && { backgroundColor: THEME.colors.error }]} />
+            <Text style={[styles.liveText, !online && { color: THEME.colors.error }]}>{online ? 'Ready' : 'Offline'}</Text>
           </View>
         </View>
 
-        <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
-          {/* Hero Net Amount Payable Display */}
+        <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
           <View style={styles.heroBox}>
             <Text style={styles.heroLabel}>Net Amount Payable</Text>
             <Text style={styles.heroAmount}>{formatLKR(netPayable)}</Text>
             <View style={styles.heroMetaRow}>
-              <Text style={styles.heroMetaText}>Includes SSCL (2.5%) & VAT</Text>
-              <Text style={styles.heroItemCountBadge}>
-                {cart.reduce((c, i) => c + i.quantity, 0)} Items
+              <Text style={styles.heroMetaText}>
+                Subtotal {formatLKR(subtotal)}
+                {tax > 0 ? ` • Tax ${formatLKR(tax)}${taxResult.hasInclusiveTax ? ' (incl.)' : ''}` : taxConfig.unavailable ? ' • Tax per server' : ' • No tax'}
               </Text>
+              <Text style={styles.heroItemCountBadge}>{cart.reduce((c, i) => c + i.quantity, 0)} Items</Text>
             </View>
+            {customer ? <Text style={styles.heroCustomer}>👤 {customer.name}</Text> : null}
           </View>
 
-          {/* Quick Cash Presets (for cash transactions) */}
-          {paymentMethod === 'cash' && (
+          {!online && (
+            <View style={styles.offlineBanner}>
+              <Text style={styles.offlineBannerText}>
+                No connection. Cash, card and LankaQR sales will be saved on this device and synced automatically.
+              </Text>
+            </View>
+          )}
+
+          {tender === 'cash' && (
             <View style={styles.section}>
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.sectionTitle}>Quick Cash Denominations</Text>
@@ -160,17 +391,9 @@ export function TenderModal({
                 {presets.map((preset, idx) => {
                   const isSelected = Math.abs(numericTendered - preset.value) < 0.01
                   return (
-                    <Pressable
-                      key={idx}
-                      style={[styles.presetCard, isSelected && styles.presetCardActive]}
-                      onPress={() => setCashTendered(preset.value.toFixed(2))}
-                    >
-                      <Text style={[styles.presetSub, isSelected && styles.presetSubActive]}>
-                        {preset.label}
-                      </Text>
-                      <Text style={[styles.presetVal, isSelected && styles.presetValActive]}>
-                        {formatLKR(preset.value).replace('LKR ', '')}
-                      </Text>
+                    <Pressable key={idx} style={[styles.presetCard, isSelected && styles.presetCardActive]} onPress={() => setCashTendered(preset.value.toFixed(2))}>
+                      <Text style={[styles.presetSub, isSelected && styles.presetSubActive]}>{preset.label}</Text>
+                      <Text style={[styles.presetVal, isSelected && styles.presetValActive]}>{formatLKR(preset.value).replace('LKR ', '')}</Text>
                     </Pressable>
                   )
                 })}
@@ -178,78 +401,43 @@ export function TenderModal({
             </View>
           )}
 
-          {/* Payment Method Matrix */}
           <View style={styles.section}>
             <View style={styles.sectionHeaderRow}>
               <Text style={styles.sectionTitle}>Payment Instrument</Text>
               <Text style={styles.lankaPayBadge}>✓ LankaPay Ready</Text>
             </View>
             <View style={styles.methodGrid}>
-              {/* Cash */}
-              <Pressable
-                style={[styles.methodCard, paymentMethod === 'cash' && styles.methodCardActive]}
-                onPress={() => setPaymentMethod('cash')}
-              >
-                <View style={styles.methodIconRow}>
-                  <Text style={styles.methodEmoji}>💵</Text>
-                  {paymentMethod === 'cash' && <View style={styles.checkCircle}><Text style={styles.checkText}>✓</Text></View>}
-                </View>
-                <Text style={styles.methodTitle}>Cash</Text>
-                <Text style={styles.methodSub}>Physical Tender</Text>
-              </Pressable>
-
-              {/* Card */}
-              <Pressable
-                style={[styles.methodCard, paymentMethod === 'card' && styles.methodCardActive]}
-                onPress={() => {
-                  setPaymentMethod('card')
-                  setCashTendered(netPayable.toFixed(2))
-                }}
-              >
-                <View style={styles.methodIconRow}>
-                  <Text style={styles.methodEmoji}>💳</Text>
-                  {paymentMethod === 'card' && <View style={styles.checkCircle}><Text style={styles.checkText}>✓</Text></View>}
-                </View>
-                <Text style={styles.methodTitle}>Card POS</Text>
-                <Text style={styles.methodSub}>Visa / Master / LankaPay</Text>
-              </Pressable>
-
-              {/* LankaQR */}
-              <Pressable
-                style={[styles.methodCard, paymentMethod === 'lankaqr' && styles.methodCardActive]}
-                onPress={() => {
-                  setPaymentMethod('lankaqr')
-                  setCashTendered(netPayable.toFixed(2))
-                }}
-              >
-                <View style={styles.methodIconRow}>
-                  <Text style={styles.methodEmoji}>📱</Text>
-                  {paymentMethod === 'lankaqr' && <View style={styles.checkCircle}><Text style={styles.checkText}>✓</Text></View>}
-                </View>
-                <Text style={styles.methodTitle}>LankaQR</Text>
-                <Text style={styles.methodSub}>FriMi • Genie • iPay</Text>
-              </Pressable>
-
-              {/* Loyalty */}
-              <Pressable
-                style={[styles.methodCard, paymentMethod === 'loyalty' && styles.methodCardActive]}
-                onPress={() => {
-                  setPaymentMethod('loyalty')
-                  setCashTendered(netPayable.toFixed(2))
-                }}
-              >
-                <View style={styles.methodIconRow}>
-                  <Text style={styles.methodEmoji}>⭐</Text>
-                  {paymentMethod === 'loyalty' && <View style={styles.checkCircle}><Text style={styles.checkText}>✓</Text></View>}
-                </View>
-                <Text style={styles.methodTitle}>Loyalty</Text>
-                <Text style={styles.methodSub}>Customer Points</Text>
-              </Pressable>
+              {methodCards.map((m) => {
+                const active = tender === m.id
+                return (
+                  <Pressable
+                    key={m.id}
+                    style={[styles.methodCard, active && styles.methodCardActive, m.disabled && styles.methodCardDisabled]}
+                    disabled={m.disabled}
+                    onPress={() => {
+                      setTender(m.id)
+                      if (m.id !== 'cash') setCashTendered(netPayable.toFixed(2))
+                    }}
+                  >
+                    <View style={styles.methodIconRow}>
+                      <Text style={styles.methodEmoji}>{m.emoji}</Text>
+                      {active && (
+                        <View style={styles.checkCircle}>
+                          <Text style={styles.checkText}>✓</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.methodTitle}>{m.title}</Text>
+                    <Text style={styles.methodSub} numberOfLines={1}>
+                      {m.sub}
+                    </Text>
+                  </Pressable>
+                )
+              })}
             </View>
           </View>
 
-          {/* Cash Tendered Input & Live Change Box */}
-          {paymentMethod === 'cash' && (
+          {tender === 'cash' && (
             <View style={styles.section}>
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.sectionTitle}>Cash Tendered by Customer</Text>
@@ -259,76 +447,92 @@ export function TenderModal({
               </View>
               <View style={styles.tenderInputRow}>
                 <Text style={styles.tenderCurrencyPrefix}>LKR</Text>
-                <TextInput
-                  style={styles.tenderInput}
-                  keyboardType="numeric"
-                  value={cashTendered}
-                  onChangeText={setCashTendered}
-                  placeholder="0.00"
-                />
+                <TextInput style={styles.tenderInput} keyboardType="decimal-pad" value={cashTendered} onChangeText={setCashTendered} placeholder="0.00" />
               </View>
 
-              {/* Live Change Result Banner */}
               <View style={[styles.changeBox, changeDue < -0.009 ? styles.changeBoxError : styles.changeBoxSuccess]}>
-                <View>
+                <View style={{ flex: 1 }}>
                   <Text style={[styles.changeLabel, changeDue < -0.009 ? styles.changeLabelError : styles.changeLabelSuccess]}>
                     {changeDue >= -0.009 ? 'Change Due to Customer' : 'Deficit / Short Tender'}
                   </Text>
-                  <Text style={styles.changeSub}>
-                    {changeDue >= -0.009 ? 'Cash drawer 01 auto-triggers on completion' : 'Collect remaining cash from customer'}
-                  </Text>
+                  <Text style={styles.changeSub}>{changeDue >= -0.009 ? 'Hand back to customer on completion' : 'Collect remaining cash from customer'}</Text>
                 </View>
-                <Text style={[styles.changeAmount, changeDue < -0.009 ? styles.changeAmountError : styles.changeAmountSuccess]}>
-                  {formatLKR(Math.abs(changeDue))}
-                </Text>
+                <Text style={[styles.changeAmount, changeDue < -0.009 ? styles.changeAmountError : styles.changeAmountSuccess]}>{formatLKR(Math.abs(changeDue))}</Text>
               </View>
             </View>
           )}
 
-          {/* Peripheral Toggles: Print & WhatsApp */}
+          {tender === 'lankaqr' && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>LankaQR / Transfer Reference</Text>
+              <TextInput
+                style={styles.phoneInput}
+                placeholder="Transaction reference (optional)"
+                placeholderTextColor={THEME.colors.textSubtle}
+                value={reference}
+                onChangeText={setReference}
+                autoCapitalize="characters"
+              />
+            </View>
+          )}
+
+          {tender === 'credit' && customer && (
+            <View style={[styles.section, { backgroundColor: THEME.colors.secondaryLight }]}>
+              <Text style={[styles.sectionTitle, { color: THEME.colors.onSecondaryContainer }]}>Credit Sale</Text>
+              <Text style={styles.creditText}>
+                {formatLKR(netPayable)} will be added to {customer.name}'s outstanding balance
+                {customer.balance != null ? ` (current ${formatLKR(customer.balance)})` : ''}
+                {customer.creditLimit != null ? `, limit ${formatLKR(customer.creditLimit)}` : ''}.
+              </Text>
+            </View>
+          )}
+
+          {customer && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>⭐ Redeem Loyalty Points</Text>
+                <Text style={styles.sectionHint}>{availablePoints != null ? `${availablePoints} available` : ''}</Text>
+              </View>
+              <TextInput
+                style={styles.phoneInput}
+                placeholder="Points to redeem (optional)"
+                placeholderTextColor={THEME.colors.textSubtle}
+                keyboardType="number-pad"
+                value={loyaltyPoints}
+                onChangeText={setLoyaltyPoints}
+              />
+              {loyaltyPts > 0 && (
+                <Text style={[styles.toggleSub, { fontWeight: '700', color: loyaltyRedeemValue > 0 ? THEME.colors.primary : THEME.colors.error }]}>
+                  {loyaltyRedeemValue > 0
+                    ? `Redeems ${formatLKR(loyaltyRedeemValue)} — payable ${formatLKR(netPayable)}`
+                    : 'No active loyalty program — points will not be redeemed'}
+                </Text>
+              )}
+              <Text style={styles.toggleSub}>Points are deducted from the customer's balance by the server. Sales that redeem points cannot be saved offline.</Text>
+            </View>
+          )}
+
           <View style={styles.section}>
             <View style={styles.toggleRow}>
               <View style={styles.toggleInfo}>
                 <Text style={styles.toggleTitle}>🖨️ Auto-print Receipt</Text>
-                <Text style={styles.toggleSub}>58mm Thermal ESC/POS (Counter Slip)</Text>
+                <Text style={styles.toggleSub}>
+                  {printer && isPrintingEnabled(printer)
+                    ? `${printer.paperWidth}mm ESC/POS via ${TRANSPORT_LABELS[printer.transport]}`
+                    : 'No printer set up — open Printer settings from the POS screen'}
+                </Text>
               </View>
               <Switch
                 value={autoPrint}
                 onValueChange={setAutoPrint}
+                disabled={!printer || !isPrintingEnabled(printer)}
                 trackColor={{ false: THEME.colors.border, true: THEME.colors.primary }}
               />
             </View>
-
-            <View style={[styles.toggleRow, { marginTop: 12 }]}>
-              <View style={styles.toggleInfo}>
-                <Text style={styles.toggleTitle}>💬 WhatsApp Digital Slip</Text>
-                <Text style={styles.toggleSub}>Direct e-Receipt dispatch via WhatsApp API</Text>
-              </View>
-              <Switch
-                value={whatsAppSlip}
-                onValueChange={setWhatsAppSlip}
-                trackColor={{ false: THEME.colors.border, true: THEME.colors.primary }}
-              />
-            </View>
-
-            {whatsAppSlip && (
-              <TextInput
-                style={styles.phoneInput}
-                placeholder="+94 7X XXX XXXX"
-                keyboardType="phone-pad"
-                value={phone}
-                onChangeText={setPhone}
-              />
-            )}
           </View>
 
-          {/* Action Trigger Button */}
           <View style={styles.footer}>
-            <Pressable
-              style={[styles.completeBtn, (!isTenderSufficient || busy) && styles.completeBtnDisabled]}
-              onPress={handleCompleteSale}
-              disabled={!isTenderSufficient || busy}
-            >
+            <Pressable style={[styles.completeBtn, (!isTenderSufficient || busy) && styles.completeBtnDisabled]} onPress={handleCompleteSale} disabled={!isTenderSufficient || busy}>
               {busy ? (
                 <ActivityIndicator color="#FFF" />
               ) : (
@@ -350,7 +554,8 @@ export function TenderModal({
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: THEME.colors.background },
   header: {
-    height: 64,
+    paddingTop: 44,
+    height: 100,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
@@ -358,144 +563,52 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.border,
   },
-  backBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 8,
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-  },
+  backBtn: { width: 38, height: 38, borderRadius: 8, backgroundColor: THEME.colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   backBtnText: { fontSize: 20, fontWeight: '700', color: THEME.colors.text },
   headerTitleCol: { flex: 1 },
   headerTitle: { fontSize: 17, fontWeight: '700', color: THEME.colors.text },
   headerSub: { fontSize: 11, color: THEME.colors.textMuted },
-  liveIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: THEME.colors.tertiaryLight,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    gap: 4,
-  },
+  liveIndicator: { flexDirection: 'row', alignItems: 'center', backgroundColor: THEME.colors.tertiaryLight, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 12, gap: 4 },
+  liveIndicatorOffline: { backgroundColor: THEME.colors.errorLight },
   pulsingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: THEME.colors.tertiary },
   liveText: { fontSize: 10, fontWeight: '700', color: THEME.colors.tertiary },
   scroll: { flex: 1, padding: 16 },
-  heroBox: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 20,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
-    marginBottom: 16,
-  },
+  heroBox: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: THEME.colors.border, marginBottom: 16 },
   heroLabel: { fontSize: 11, fontWeight: '700', color: THEME.colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
   heroAmount: { fontSize: 32, fontWeight: '800', color: THEME.colors.primary, marginVertical: 4 },
-  heroMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  heroMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },
   heroMetaText: { fontSize: 12, color: THEME.colors.textMuted },
-  heroItemCountBadge: {
-    backgroundColor: THEME.colors.surfaceContainerHigh,
-    color: THEME.colors.text,
-    fontSize: 11,
-    fontWeight: '700',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  section: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-  },
-  sectionHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
+  heroItemCountBadge: { backgroundColor: THEME.colors.surfaceContainerHigh, color: THEME.colors.text, fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+  heroCustomer: { marginTop: 8, fontSize: 12, fontWeight: '700', color: THEME.colors.text },
+  offlineBanner: { backgroundColor: THEME.colors.secondaryLight, padding: 12, borderRadius: 10, marginBottom: 14 },
+  offlineBannerText: { fontSize: 12, fontWeight: '600', color: THEME.colors.onSecondaryContainer },
+  section: { backgroundColor: '#FFFFFF', borderRadius: 14, padding: 16, marginBottom: 14, borderWidth: 1, borderColor: THEME.colors.border },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 12, fontWeight: '700', color: THEME.colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
   sectionHint: { fontSize: 11, fontWeight: '700', color: THEME.colors.primary },
   clearText: { fontSize: 12, fontWeight: '600', color: THEME.colors.error },
   lankaPayBadge: { fontSize: 11, fontWeight: '700', color: THEME.colors.tertiary },
   presetsGrid: { flexDirection: 'row', gap: 8 },
-  presetCard: {
-    flex: 1,
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    borderRadius: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-  },
-  presetCardActive: {
-    backgroundColor: THEME.colors.primary,
-    borderColor: THEME.colors.primary,
-  },
+  presetCard: { flex: 1, paddingVertical: 10, paddingHorizontal: 4, backgroundColor: THEME.colors.surfaceContainerLow, borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: THEME.colors.border },
+  presetCardActive: { backgroundColor: THEME.colors.primary, borderColor: THEME.colors.primary },
   presetSub: { fontSize: 10, fontWeight: '700', color: THEME.colors.textMuted },
   presetSubActive: { color: THEME.colors.onPrimaryContainer },
   presetVal: { fontSize: 13, fontWeight: '800', color: THEME.colors.text, marginTop: 2 },
   presetValActive: { color: '#FFF' },
   methodGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  methodCard: {
-    width: '48%',
-    padding: 12,
-    borderRadius: 12,
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    borderWidth: 1.5,
-    borderColor: THEME.colors.border,
-  },
-  methodCardActive: {
-    backgroundColor: '#FFFFFF',
-    borderColor: THEME.colors.primary,
-    shadowColor: THEME.colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 3,
-  },
+  methodCard: { width: '48%', padding: 12, borderRadius: 12, backgroundColor: THEME.colors.surfaceContainerLow, borderWidth: 1.5, borderColor: THEME.colors.border },
+  methodCardActive: { backgroundColor: '#FFFFFF', borderColor: THEME.colors.primary },
+  methodCardDisabled: { opacity: 0.45 },
   methodIconRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   methodEmoji: { fontSize: 22 },
-  checkCircle: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: THEME.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  checkCircle: { width: 20, height: 20, borderRadius: 10, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center' },
   checkText: { color: '#FFF', fontSize: 12, fontWeight: '700' },
   methodTitle: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
   methodSub: { fontSize: 10, color: THEME.colors.textMuted, marginTop: 2 },
-  tenderInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: THEME.colors.border,
-    paddingHorizontal: 16,
-    height: 56,
-  },
+  tenderInputRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: THEME.colors.surfaceContainerLow, borderRadius: 12, borderWidth: 1.5, borderColor: THEME.colors.border, paddingHorizontal: 16, height: 56 },
   tenderCurrencyPrefix: { fontSize: 18, fontWeight: '800', color: THEME.colors.textMuted, marginRight: 8 },
   tenderInput: { flex: 1, fontSize: 24, fontWeight: '800', color: THEME.colors.text, textAlign: 'right' },
-  changeBox: {
-    marginTop: 12,
-    padding: 14,
-    borderRadius: 12,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
+  changeBox: { marginTop: 12, padding: 14, borderRadius: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   changeBoxSuccess: { backgroundColor: THEME.colors.tertiaryLight },
   changeBoxError: { backgroundColor: THEME.colors.errorLight },
   changeLabel: { fontSize: 12, fontWeight: '800', textTransform: 'uppercase' },
@@ -505,42 +618,16 @@ const styles = StyleSheet.create({
   changeAmount: { fontSize: 20, fontWeight: '900' },
   changeAmountSuccess: { color: THEME.colors.tertiary },
   changeAmountError: { color: THEME.colors.error },
+  creditText: { fontSize: 12, color: THEME.colors.onSecondaryContainer, marginTop: 6 },
   toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   toggleInfo: { flex: 1, marginRight: 12 },
   toggleTitle: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
-  toggleSub: { fontSize: 11, color: THEME.colors.textMuted, marginTop: 2 },
-  phoneInput: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: '#FFFFFF',
-    fontSize: 14,
-  },
+  toggleSub: { fontSize: 11, color: THEME.colors.textMuted, marginTop: 6 },
+  phoneInput: { marginTop: 10, borderWidth: 1, borderColor: THEME.colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#FFFFFF', fontSize: 14, color: THEME.colors.text },
   footer: { marginTop: 10, marginBottom: 20 },
-  completeBtn: {
-    height: 56,
-    backgroundColor: THEME.colors.primary,
-    borderRadius: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    shadowColor: THEME.colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
+  completeBtn: { height: 56, backgroundColor: THEME.colors.primary, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
   completeBtnDisabled: { opacity: 0.5 },
   completeBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
-  completeBtnPill: {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
+  completeBtnPill: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
   completeBtnPillText: { color: '#FFFFFF', fontSize: 14, fontWeight: '800' },
 })
