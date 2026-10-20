@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant, db } from '@/lib/db'
-import { pricingTiers } from '@/lib/db/schema'
+import { pricingTiers, subscriptions } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 
@@ -15,8 +15,10 @@ export async function GET() {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (tenantDb) => {
-      // Get subscription (RLS scopes to tenant)
-      const subscription = await tenantDb.query.subscriptions.findFirst()
+      // Get subscription (explicit filter; RLS also scopes reads to the tenant)
+      const subscription = await tenantDb.query.subscriptions.findFirst({
+        where: eq(subscriptions.tenantId, session.user.tenantId),
+      })
 
       if (!subscription) {
         return NextResponse.json({ error: 'Subscription not found' }, { status: 404 })

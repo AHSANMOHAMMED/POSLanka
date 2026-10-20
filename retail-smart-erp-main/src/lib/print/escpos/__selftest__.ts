@@ -12,7 +12,13 @@ import {
   wrapText,
   formatMoney,
   type ReceiptInput,
+  encodeCp1252,
+  hasUnencodable,
 } from './encoder'
+import { buildReceiptEscPosFromModel } from './receipt-from-model'
+import { buildReceiptModel, SAMPLE_RECEIPT_SALE } from '../receipt-model'
+import { resolveReceiptSettings, DEFAULT_RECEIPT_SETTINGS } from '../receipt-settings'
+import { renderReceiptHtml } from '../receipt-html'
 
 let failures = 0
 let passes = 0
@@ -194,5 +200,66 @@ assert(indexOfSeq(z, Array.from(encodeCp437('SHIFT-0007'))) >= 0, 'z report: ent
 const tp = buildTestPageEscPos({ paperWidth: 58 })
 assert(tp[0] === 0x1b && tp[1] === 0x40 && eq(tp.slice(-3), [0x1d, 0x56, 1]), 'test page: init + cut')
 
-console.log(`  ${passes} passed, ${failures} failed`)
-if (failures > 0) process.exit(1)
+// ─── W7: code page, logo, model-based receipts ──────────────────────────
+for (const pw of [58, 80] as const) {
+  const bytes = buildReceiptEscPos(receipt, { paperWidth: pw, drawerKick: true })
+  assert(indexOfSeq(bytes, [0x1b, 0x74, 0]) === 7, `receipt ${pw}: ESC t 0 (CP437) right after init + drawer kick`)
+}
+const cp1252 = buildReceiptEscPos(receipt, { paperWidth: 80, codePage: 'cp1252' })
+assert(indexOfSeq(cp1252, [0x1b, 0x74, 16]) === 2, 'cp1252: ESC t 16 after init')
+assert(eq(encodeCp1252('é€'), [0xe9, 0x80]), 'encodeCp1252 maps é and €')
+assert(hasUnencodable('café', 'cp437') && !hasUnencodable('café', 'cp1252'), 'hasUnencodable per code page')
+assert(hasUnencodable('සිංහල', 'cp1252'), 'Sinhala unencodable in cp1252')
+assert(eq(new EscPosBuilder({ codePage: 'cp1252' }).text('é').build(), [0xe9]), 'builder text uses code page')
+
+// packed logo raster (GS v 0 from server bitmap)
+const logo = { width: 16, height: 2, data: new Uint8Array([0x80, 0x01, 0xff, 0x00]) }
+const withLogo = buildReceiptEscPos(receipt, { paperWidth: 80, logoRaster: logo })
+assert(indexOfSeq(withLogo, [0x1d, 0x76, 0x30, 0, 2, 0, 2, 0, 0x80, 0x01, 0xff, 0x00]) >= 0, 'logoRaster emitted as GS v 0 verbatim')
+const wideLogo = { width: 640, height: 1, data: new Uint8Array(80).fill(0xaa) }
+const cropped = new EscPosBuilder({ columns: 32, widthDots: 384 }).packedRaster(wideLogo).build()
+assert(cropped[4] === 48 && cropped.length === 8 + 48, 'packedRaster crops to head width (384 dots = 48 bytes)')
+
+// model-based receipt
+const settings = resolveReceiptSettings({ invoiceCode: 'barcode', returnPolicy: 'Returns within 7 days with receipt', footerLines: ['Come again'] }, {
+  receiptHeader: 'Counter header',
+  showLogoOnReceipt: true,
+  receiptSettings: { showBrn: false },
+})
+assert(settings.invoiceCode === 'barcode' && settings.headerLines[0] === 'Counter header' && settings.showBrn === false, 'resolveReceiptSettings layering')
+assert(resolveReceiptSettings({ logoWidthPct: 5, bogus: 1 }).logoWidthPct === DEFAULT_RECEIPT_SETTINGS.logoWidthPct, 'invalid stored values dropped')
+const model = buildReceiptModel({
+  sale: { ...SAMPLE_RECEIPT_SALE, invoiceNo: 'OFF-ABC123' },
+  tenant: { name: 'Test Shop', legalName: 'Test Shop (Pvt) Ltd', taxId: '123456789-7000', brn: 'PV 1234', website: 'shop.lk', email: 'a@shop.lk', logoUrl: 'https://cdn/x.png', currency: 'LKR' },
+  settings,
+  cashier: 'Nimal',
+  counter: 'Counter 1',
+})
+assert(model.business.lines.includes('Test Shop (Pvt) Ltd') && model.business.lines.includes('VAT/TIN: 123456789-7000'), 'model: legal name + tax id')
+assert(!model.business.lines.some((l) => l.startsWith('BRN')), 'model: BRN hidden by profile override')
+assert(model.invoiceCode.type === 'barcode' && model.invoiceCode.value === 'OFF-ABC123', 'model: invoice code for offline ref')
+const mBytes = buildReceiptEscPosFromModel(model, { paperWidth: 80, logoRaster: logo, drawerKick: true })
+assert(indexOfSeq(mBytes, [0x1b, 0x74, 0]) >= 0, 'model receipt: ESC t 0')
+assert(indexOfSeq(mBytes, [0x1d, 0x76, 0x30, 0, 2, 0, 2, 0]) >= 0, 'model receipt: logo printed')
+assert(indexOfSeq(mBytes, [0x1d, 0x6b, 73]) >= 0, 'model receipt: CODE128 printed')
+assert(indexOfSeq(mBytes, [0x1d, 0x28, 0x6b, 3, 0, 49, 81, 48]) === -1, 'model receipt: no QR when invoiceCode=barcode')
+assert(indexOfSeq(mBytes, Array.from(encodeCp437('Returns within 7 days'))) >= 0, 'model receipt: return policy')
+assert(indexOfSeq(mBytes, Array.from(encodeCp437('Counter header'))) >= 0, 'model receipt: header line')
+const noLogo = buildReceiptEscPosFromModel({ ...model, logo: { ...model.logo, show: false } }, { paperWidth: 58, logoRaster: logo })
+assert(indexOfSeq(noLogo, [0x1d, 0x76, 0x30]) === -1, 'model receipt: logo suppressed when showLogo=false')
+const large = buildReceiptEscPosFromModel({ ...model, fontSize: 'large' }, { paperWidth: 80 })
+assert(indexOfSeq(large, [0x1d, 0x21, 0x01]) >= 0, 'model receipt: large font = double height')
+
+async function htmlTests() {
+  const html = await renderReceiptHtml({ ...model, invoiceCode: { type: 'both', value: 'INV-1' } }, 80, { logoSrc: 'data:image/png;base64,AAAA' })
+  assert(html.includes('<img src="data:image/png;base64,AAAA"'), 'html: logo img')
+  assert((html.match(/<svg/g) || []).length === 2, 'html: barcode + QR svgs')
+  assert(html.includes('Test Shop (Pvt) Ltd') && html.includes('Returns within 7 days'), 'html: business + policy')
+  const evil = await renderReceiptHtml({ ...model, business: { name: '<script>x</script>', lines: [] } }, 58, { logoSrc: 'javascript:alert(1)' })
+  assert(!evil.includes('<script>') && !evil.includes('javascript:'), 'html: escaping + unsafe logo src dropped')
+}
+
+htmlTests().then(() => {
+  console.log(`  ${passes} passed, ${failures} failed`)
+  if (failures > 0) process.exit(1)
+})

@@ -38,6 +38,8 @@ const saleCartItemSchema = cartItemSchema.extend({
   serialNumberIds: z.array(uuidSchema).optional(),
   batchId: optionalUuid,
   notes: z.string().max(500).optional(),
+  /** Returns: the original sale line being returned (W8). */
+  originalSaleItemId: optionalUuid,
 })
 
 const paymentSplitSchema = z.object({
@@ -83,6 +85,11 @@ export const createSaleSchema = z.object({
   giftCardId: optionalUuid,
   /** Offline sync idempotency key */
   clientSaleId: z.string().uuid().optional(),
+  /** Receipt number printed while offline ('OFF-<device>-<seq>'), unique per tenant */
+  offlineRef: z.string().trim().min(1).max(40).optional(),
+  /** Returns: reason code (required for returns without an original invoice) */
+  returnReason: z.string().trim().max(50).optional(),
+  returnNotes: z.string().max(1000).optional(),
 }).superRefine((data, ctx) => {
   if (!data.isReturn) {
     if (data.subtotal < 0) ctx.addIssue({ code: 'custom', path: ['subtotal'], message: 'Subtotal cannot be negative' })
@@ -168,4 +175,50 @@ export const createSalesInvoiceSchema = z.object({
   fulfilledQuantities: z.record(z.string().uuid(), z.coerce.number().min(0)).optional(),
   notes: z.string().max(2000).optional(),
   costCenterId: optionalUuid,
+})
+
+// ==================== W8: RETURNS / EXCHANGE / LOOKUP ====================
+
+// GET /api/sales/lookup?code=INV-000123 | RTN-000004 | OFF-DEV1-17
+export const salesLookupSchema = z.object({
+  code: z.string().trim().min(1).max(60),
+})
+
+const returnLineSchema = z.object({
+  originalSaleItemId: z.string().uuid(),
+  quantity: z.coerce.number().positive('Quantity must be greater than zero'),
+  serialNumberIds: z.array(uuidSchema).optional(),
+})
+
+// POST /api/sales/exchange
+export const exchangeSaleSchema = z.object({
+  originalSaleId: z.string().uuid(),
+  returnLines: z.array(returnLineSchema).min(1, 'Select at least one line to return').max(200),
+  newCartItems: z.array(saleCartItemSchema).min(1, 'Add at least one new item').max(200),
+  paymentMethod: paymentMethodSchema.optional(),
+  paymentSplits: z.array(paymentSplitSchema).max(10).optional(),
+  /** Money received from the customer when the new sale costs more than the refund */
+  amountPaid: z.coerce.number().min(0).optional(),
+  /** How the difference is paid back when the refund is larger than the new sale */
+  refundMethod: z.enum(['cash', 'card', 'credit']).optional(),
+  warehouseId: optionalUuid,
+  posOpeningEntryId: optionalUuid,
+  customerId: optionalUuid,
+  clientSaleId: z.string().uuid().optional(),
+  reason: z.string().trim().max(50).optional(),
+  notes: z.string().max(1000).optional(),
+})
+
+// POST /api/sales/[id]/remove-lines
+export const removeSaleLinesSchema = z.object({
+  lines: z.array(z.object({
+    saleItemId: z.string().uuid(),
+    quantity: z.coerce.number().positive('Quantity must be greater than zero'),
+    serialNumberIds: z.array(uuidSchema).optional(),
+  })).min(1).max(200),
+  reason: z.string().trim().min(1, 'A reason is required').max(50),
+  notes: z.string().max(1000).optional(),
+  refundMethod: z.enum(['cash', 'card', 'credit']).default('cash'),
+  refundAmount: z.coerce.number().min(0).optional(),
+  posOpeningEntryId: optionalUuid,
 })

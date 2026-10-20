@@ -107,21 +107,26 @@ interface StoredUsbDevice {
   name?: string
 }
 
-function readStoredUsb(): StoredUsbDevice | null {
+/** Per-printer storage key; '' / undefined = legacy single-printer key. */
+function usbKey(deviceKey?: string): string {
+  return deviceKey ? `${USB_STORAGE_KEY}:${deviceKey}` : USB_STORAGE_KEY
+}
+
+function readStoredUsb(deviceKey?: string): StoredUsbDevice | null {
   try {
-    const raw = localStorage.getItem(USB_STORAGE_KEY)
+    const raw = localStorage.getItem(usbKey(deviceKey))
     return raw ? (JSON.parse(raw) as StoredUsbDevice) : null
   } catch {
     return null
   }
 }
 
-function storeUsb(d: UsbDeviceLike | null) {
+function storeUsb(d: UsbDeviceLike | null, deviceKey?: string) {
   try {
-    if (!d) localStorage.removeItem(USB_STORAGE_KEY)
+    if (!d) localStorage.removeItem(usbKey(deviceKey))
     else
       localStorage.setItem(
-        USB_STORAGE_KEY,
+        usbKey(deviceKey),
         JSON.stringify({
           vendorId: d.vendorId,
           productId: d.productId,
@@ -134,8 +139,8 @@ function storeUsb(d: UsbDeviceLike | null) {
   }
 }
 
-export function getStoredUsbDeviceName(): string | null {
-  const s = readStoredUsb()
+export function getStoredUsbDeviceName(deviceKey?: string): string | null {
+  const s = readStoredUsb(deviceKey)
   if (!s) return null
   return s.name || `USB ${s.vendorId.toString(16).padStart(4, '0')}:${s.productId.toString(16).padStart(4, '0')}`
 }
@@ -146,6 +151,8 @@ export class WebUsbTransport implements PrinterTransport {
   private ifaceNumber = -1
   private outEndpoint = -1
   private chunkSize = 4096
+
+  constructor(private readonly deviceKey: string = '') {}
 
   private get usb(): UsbLike | null {
     if (!supportsWebUsb()) return null
@@ -169,7 +176,7 @@ export class WebUsbTransport implements PrinterTransport {
     }
     await this.close()
     this.device = dev
-    storeUsb(dev)
+    storeUsb(dev, this.deviceKey)
     await this.open()
     return this.describe()
   }
@@ -180,7 +187,7 @@ export class WebUsbTransport implements PrinterTransport {
     const usb = this.usb
     if (!usb) throw new TransportError('WebUSB is not available in this browser.', 'unsupported')
     if (!this.device) {
-      const stored = readStoredUsb()
+      const stored = readStoredUsb(this.deviceKey)
       const devices = await usb.getDevices()
       const match =
         (stored &&
@@ -263,13 +270,13 @@ export class WebUsbTransport implements PrinterTransport {
   /** Forget the remembered device. */
   async forget(): Promise<void> {
     await this.close()
-    storeUsb(null)
+    storeUsb(null, this.deviceKey)
   }
 
   describe(): string {
     const d = this.device
     if (d) return d.productName || `USB ${d.vendorId.toString(16)}:${d.productId.toString(16)}`
-    return getStoredUsbDeviceName() || 'USB printer'
+    return getStoredUsbDeviceName(this.deviceKey) || 'USB printer'
   }
 }
 
@@ -317,9 +324,13 @@ const BLE_SERVICES: Array<{ service: string; characteristic: string }> = [
   { service: '0000ff00-0000-1000-8000-00805f9b34fb', characteristic: '0000ff02-0000-1000-8000-00805f9b34fb' },
 ]
 
-export function getStoredBleDeviceName(): string | null {
+function bleKey(deviceKey?: string): string {
+  return deviceKey ? `${BT_STORAGE_KEY}:${deviceKey}` : BT_STORAGE_KEY
+}
+
+export function getStoredBleDeviceName(deviceKey?: string): string | null {
   try {
-    const raw = localStorage.getItem(BT_STORAGE_KEY)
+    const raw = localStorage.getItem(bleKey(deviceKey))
     if (!raw) return null
     const s = JSON.parse(raw) as { id: string; name?: string }
     return s.name || 'Bluetooth printer'
@@ -334,6 +345,8 @@ export class WebBluetoothTransport implements PrinterTransport {
   private characteristic: BtCharacteristicLike | null = null
   private chunkSize = 100
   private chunkDelayMs = 20
+
+  constructor(private readonly deviceKey: string = '') {}
 
   private get bluetooth(): BluetoothLike | null {
     if (!supportsWebBluetooth()) return null
@@ -359,7 +372,7 @@ export class WebBluetoothTransport implements PrinterTransport {
     await this.close()
     this.device = dev
     try {
-      localStorage.setItem(BT_STORAGE_KEY, JSON.stringify({ id: dev.id, name: dev.name }))
+      localStorage.setItem(bleKey(this.deviceKey), JSON.stringify({ id: dev.id, name: dev.name }))
     } catch {
       /* ignore */
     }
@@ -375,7 +388,7 @@ export class WebBluetoothTransport implements PrinterTransport {
       // Silent reconnect only works where getDevices() is enabled (chrome://flags or enterprise policy).
       let stored: { id: string } | null = null
       try {
-        const raw = localStorage.getItem(BT_STORAGE_KEY)
+        const raw = localStorage.getItem(bleKey(this.deviceKey))
         stored = raw ? JSON.parse(raw) : null
       } catch {
         /* ignore */
@@ -443,14 +456,14 @@ export class WebBluetoothTransport implements PrinterTransport {
   async forget(): Promise<void> {
     await this.close()
     try {
-      localStorage.removeItem(BT_STORAGE_KEY)
+      localStorage.removeItem(bleKey(this.deviceKey))
     } catch {
       /* ignore */
     }
   }
 
   describe(): string {
-    return this.device?.name || getStoredBleDeviceName() || 'Bluetooth printer'
+    return this.device?.name || getStoredBleDeviceName(this.deviceKey) || 'Bluetooth printer'
   }
 }
 
@@ -671,19 +684,20 @@ export interface TransportConfig {
   agentUrl?: string
   agentTarget?: string
   paperWidth?: 58 | 80
+  /** Distinguishes several USB / Bluetooth printers ('' = legacy single printer). */
+  deviceKey?: string
 }
 
-const singletons: { usb?: WebUsbTransport; ble?: WebBluetoothTransport } = {}
+const usbSingletons = new Map<string, WebUsbTransport>()
+const bleSingletons = new Map<string, WebBluetoothTransport>()
 
 /** Returns a (cached for USB/BLE) transport for the given config. */
 export function getTransport(cfg: TransportConfig, browserOptions?: BrowserPrintOptions): PrinterTransport {
   switch (cfg.transport) {
     case 'webusb':
-      if (!singletons.usb) singletons.usb = new WebUsbTransport()
-      return singletons.usb
+      return getUsbTransport(cfg.deviceKey)
     case 'webbluetooth':
-      if (!singletons.ble) singletons.ble = new WebBluetoothTransport()
-      return singletons.ble
+      return getBleTransport(cfg.deviceKey)
     case 'agent':
       return new PrintAgentTransport(cfg.agentUrl || DEFAULT_AGENT_URL, cfg.agentTarget || '')
     case 'browser':
@@ -692,14 +706,22 @@ export function getTransport(cfg: TransportConfig, browserOptions?: BrowserPrint
   }
 }
 
-export function getUsbTransport(): WebUsbTransport {
-  if (!singletons.usb) singletons.usb = new WebUsbTransport()
-  return singletons.usb
+export function getUsbTransport(deviceKey = ''): WebUsbTransport {
+  let t = usbSingletons.get(deviceKey)
+  if (!t) {
+    t = new WebUsbTransport(deviceKey)
+    usbSingletons.set(deviceKey, t)
+  }
+  return t
 }
 
-export function getBleTransport(): WebBluetoothTransport {
-  if (!singletons.ble) singletons.ble = new WebBluetoothTransport()
-  return singletons.ble
+export function getBleTransport(deviceKey = ''): WebBluetoothTransport {
+  let t = bleSingletons.get(deviceKey)
+  if (!t) {
+    t = new WebBluetoothTransport(deviceKey)
+    bleSingletons.set(deviceKey, t)
+  }
+  return t
 }
 
 export const TRANSPORT_LABELS: Record<TransportKind, string> = {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, canModifyUser } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { users, userWarehouses, warehouses, posProfileUsers } from '@/lib/db/schema'
 import { eq, and, inArray } from 'drizzle-orm'
@@ -93,6 +93,11 @@ export async function PUT(
 
       if (!user) {
         return NextResponse.json({ error: 'User not found' }, { status: 404 })
+      }
+
+      // Role hierarchy: cannot change branches of users above your level (or an owner)
+      if (!canModifyUser(session!.user.role, user.role)) {
+        return NextResponse.json({ error: 'You cannot modify this user' }, { status: 403 })
       }
 
       // Verify all warehouses exist (RLS scopes to tenant)

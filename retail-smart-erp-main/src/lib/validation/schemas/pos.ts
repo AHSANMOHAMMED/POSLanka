@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { receiptSettingsPatchSchema } from '@/lib/print/receipt-settings'
 import { uuidSchema, optionalUuid, paymentMethodSchema } from './common'
 
 // GET /api/pos-opening-entries
@@ -89,6 +90,7 @@ export const createPosProfileSchema = z.object({
   showLogoOnReceipt: z.boolean().default(true),
   receiptHeader: z.string().max(2000).nullish(),
   receiptFooter: z.string().max(2000).nullish(),
+  receiptSettings: receiptSettingsPatchSchema.optional(),
   // Payment
   defaultPaymentMethod: z.string().max(50).default('cash'),
   allowCreditSale: z.boolean().default(true),
@@ -126,6 +128,7 @@ export const updatePosProfileSchema = z.object({
   showLogoOnReceipt: z.boolean().optional(),
   receiptHeader: z.string().max(2000).nullish(),
   receiptFooter: z.string().max(2000).nullish(),
+  receiptSettings: receiptSettingsPatchSchema.optional(),
   defaultPaymentMethod: z.string().max(50).optional(),
   allowCreditSale: z.boolean().optional(),
   status: z.enum(['active', 'inactive']).optional(),

@@ -3,7 +3,7 @@ import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { restaurantOrders, restaurantOrderItems, kitchenOrders, kitchenOrderItems, restaurantTables, sales, saleItems, payments, recipes, warehouseStock, stockMovements } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { triggerNotification } from '@/lib/notifications/auto-trigger'
 import { logError } from '@/lib/ai/error-logger'
@@ -12,6 +12,7 @@ import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateRestaurantOrderSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 
 // Status workflow: open -> closed -> completed OR cancelled
 const validStatusTransitions: Record<string, string[]> = {
@@ -221,16 +222,8 @@ export async function PUT(
               updateData.total = String(total)
             } else {
               // Default flow: auto-create sale record (standalone restaurant orders page)
-              // Generate sale invoice number with advisory lock to prevent duplicates
-              await tx.execute(sql`SELECT pg_advisory_xact_lock(1)`)
-              const [maxSaleResult] = await tx
-                .select({ maxNo: sql<string>`MAX(${sales.invoiceNo})` })
-                .from(sales)
-                .where(sql`${sales.invoiceNo} LIKE 'INV-%'`)
-
-              const lastSaleNo = maxSaleResult?.maxNo
-              const nextSaleNumber = lastSaleNo ? parseInt(lastSaleNo.replace(/\D/g, '')) + 1 : 1
-              const invoiceNo = `INV-${String(nextSaleNumber).padStart(6, '0')}`
+              // Sale invoice number from the per-tenant sequence (shared with POS sales)
+              const invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
 
               // Create sale record with tax template data
               const saleResult = await tx.insert(sales).values({

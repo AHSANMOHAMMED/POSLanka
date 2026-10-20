@@ -184,8 +184,12 @@ export async function POST(
       })
 
       // Update/create diagram view for backward compat
+      // Only the tenant's own view row: shared (tenant_id IS NULL) views are read-only
       const existingView = await db.query.vehicleTypeDiagramViews.findFirst({
-        where: eq(vehicleTypeDiagramViews.vehicleTypeId, id),
+        where: and(
+          eq(vehicleTypeDiagramViews.vehicleTypeId, id),
+          eq(vehicleTypeDiagramViews.tenantId, session.user.tenantId),
+        ),
       })
 
       if (existingView) {

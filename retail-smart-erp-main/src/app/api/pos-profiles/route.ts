@@ -33,7 +33,8 @@ export async function GET(request: NextRequest) {
               paymentMethods: true,
               defaultCustomer: true,
               costCenter: true,
-              users: { with: { user: true } },
+              // Never expose password/PIN hashes of assigned users
+              users: { with: { user: { columns: { id: true, fullName: true, email: true, role: true, isActive: true } } } },
             },
             orderBy: (p, { desc }) => [desc(p.isDefault), desc(p.createdAt)],
           })
@@ -130,6 +131,7 @@ export async function POST(request: NextRequest) {
       showLogoOnReceipt,
       receiptHeader,
       receiptFooter,
+      receiptSettings,
       // Payment
       defaultPaymentMethod,
       allowCreditSale,
@@ -182,6 +184,7 @@ export async function POST(request: NextRequest) {
         showLogoOnReceipt,
         receiptHeader: receiptHeader || null,
         receiptFooter: receiptFooter || null,
+        receiptSettings: receiptSettings ?? {},
         defaultPaymentMethod,
         allowCreditSale,
         status: 'active',

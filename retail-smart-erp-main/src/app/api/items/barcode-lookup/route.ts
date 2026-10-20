@@ -88,7 +88,9 @@ export async function GET(request: NextRequest) {
         matchedBy,
         gtinValid: scan.gtinValid,
       }
-      if (scan.scale) {
+      // Scale weight/price only applies when the item was found via the label's PLU,
+      // not when the full code matched an item's own barcode.
+      if (scan.scale && matchedBy === 'plu') {
         if (scan.scale.valueType === 'weight') {
           scanInfo.quantity = scan.scale.value
         } else {

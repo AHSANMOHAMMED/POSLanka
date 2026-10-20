@@ -4,7 +4,7 @@
  * All functions are fire-and-forget safe: they never throw to the caller.
  */
 import { and, eq, inArray, isNotNull } from 'drizzle-orm'
-import { db } from '@/lib/db'
+import { db, withTenant } from '@/lib/db'
 import { userDevices, users } from '@/lib/db/schema'
 import { hasPermission, type Permission } from '@/lib/auth/roles'
 import { logError } from '@/lib/ai/error-logger'
@@ -81,9 +81,11 @@ export async function sendPushToUsers(tenantId: string, userIds: string[], messa
 /** Push to every active tenant user whose role grants `permission` (e.g. approvers). */
 export async function sendPushToPermission(tenantId: string, permission: Permission, message: PushMessage, excludeUserId?: string) {
   try {
-    const tenantUsers = await db.select({ id: users.id, role: users.role, customRoleId: users.customRoleId })
-      .from(users)
-      .where(and(eq(users.tenantId, tenantId), eq(users.isActive, true)))
+    // users is tenant data under RLS: read it in the tenant's context (works for any login role)
+    const tenantUsers = await withTenant(tenantId, (tdb) =>
+      tdb.select({ id: users.id, role: users.role, customRoleId: users.customRoleId })
+        .from(users)
+        .where(and(eq(users.tenantId, tenantId), eq(users.isActive, true))))
     const targets = tenantUsers
       .filter((u) => u.id !== excludeUserId && hasPermission(u.role, permission, tenantId, u.customRoleId))
       .map((u) => u.id)

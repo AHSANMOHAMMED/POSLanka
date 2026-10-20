@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { db as rawDb, withTenant, withTenantTransaction } from '@/lib/db'
-import { warehouses, warehouseStock, items, stockMovements } from '@/lib/db/schema'
+import { warehouses, warehouseStock, items } from '@/lib/db/schema'
 import { eq, and, ilike, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -14,6 +14,15 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams, validateParams } from '@/lib/validation/helpers'
 import { warehouseStockListSchema, adjustWarehouseStockSchema } from '@/lib/validation/schemas/stock'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { applyStockChange } from '@/lib/inventory/apply-stock-change'
+import type { DbTx } from '@/lib/inventory/db-types'
+import { toApiError } from '@/lib/db/errors'
+
+async function currentStockOf(tx: DbTx, warehouseId: string, itemId: string): Promise<number> {
+  const [row] = await tx.select({ currentStock: warehouseStock.currentStock }).from(warehouseStock)
+    .where(and(eq(warehouseStock.warehouseId, warehouseId), eq(warehouseStock.itemId, itemId)))
+  return row ? parseFloat(row.currentStock) : 0
+}
 
 // GET warehouse stock (with pagination)
 export async function GET(
@@ -159,35 +168,21 @@ export async function POST(
         return NextResponse.json({ error: 'Item not found' }, { status: 404 })
       }
 
-      // Get or create stock record with FOR UPDATE lock
-      const [existingStock] = await tx
-        .select()
-        .from(warehouseStock)
-        .where(and(
-          eq(warehouseStock.warehouseId, warehouseId),
-          eq(warehouseStock.itemId, itemId)
-        ))
-        .for('update')
+      const tenantId = session!.user.tenantId
+      const userId = session!.user.id
 
-      let stockRecord = existingStock
-
-      if (!stockRecord) {
-        // Create new stock record
-        const [newStock] = await tx.insert(warehouseStock).values({
-          tenantId: session!.user.tenantId,
+      // If just updating settings (no quantity change)
+      if (quantity === undefined) {
+        if (binLocation === undefined && minStock === undefined && reorderQty === undefined) {
+          return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
+        }
+        await tx.insert(warehouseStock).values({
+          tenantId,
           warehouseId,
           itemId,
           currentStock: '0',
-          minStock: minStock != null ? minStock.toString() : '0',
-          reorderQty: reorderQty != null ? reorderQty.toString() : null,
-          binLocation: binLocation || null,
-        }).returning()
+        }).onConflictDoNothing()
 
-        stockRecord = newStock
-      }
-
-      // If just updating settings (no quantity change)
-      if (quantity === undefined && (binLocation !== undefined || minStock !== undefined || reorderQty !== undefined)) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const updates: any = { updatedAt: new Date() }
         if (binLocation !== undefined) updates.binLocation = binLocation
@@ -196,85 +191,76 @@ export async function POST(
 
         const [updated] = await tx.update(warehouseStock)
           .set(updates)
-          .where(eq(warehouseStock.id, stockRecord.id))
+          .where(and(
+            eq(warehouseStock.warehouseId, warehouseId),
+            eq(warehouseStock.itemId, itemId)
+          ))
           .returning()
 
-        logAndBroadcast(session!.user.tenantId, 'warehouse-stock', 'updated', warehouseId)
+        logAndBroadcast(tenantId, 'warehouse-stock', 'updated', warehouseId, { userId })
         return NextResponse.json(updated)
       }
 
-      // Calculate new stock based on type
-      const currentStockNum = parseFloat(stockRecord.currentStock || '0')
-      const quantityNum = quantity ?? 0
-
-      let newStock: number
-      let movementType: 'in' | 'out' | 'adjustment'
-      let movementQty: number
-
-      switch (type) {
-        case 'set':
-          // Direct set
-          newStock = quantityNum
-          movementType = 'adjustment'
-          movementQty = quantityNum - currentStockNum
-          break
-        case 'add':
-          // Add to current stock
-          newStock = currentStockNum + quantityNum
-          movementType = 'in'
-          movementQty = quantityNum
-          break
-        case 'subtract':
-          // Subtract from current stock
-          newStock = currentStockNum - quantityNum
-          movementType = 'out'
-          movementQty = -quantityNum
-          if (newStock < 0) {
-            return NextResponse.json({
-              error: `Insufficient stock. Current: ${currentStockNum}, Requested: ${quantityNum}`
-            }, { status: 400 })
-          }
-          break
-        default:
-          return NextResponse.json({ error: 'Invalid adjustment type' }, { status: 400 })
+      const quantityNum = quantity
+      if (type !== 'set' && type !== 'add' && type !== 'subtract') {
+        return NextResponse.json({ error: 'Invalid adjustment type' }, { status: 400 })
+      }
+      if ((type === 'add' || type === 'subtract') && quantityNum < 0) {
+        return NextResponse.json({ error: 'Quantity must not be negative' }, { status: 400 })
+      }
+      if (type === 'set' && quantityNum < 0) {
+        return NextResponse.json({ error: 'Stock cannot be set below zero' }, { status: 400 })
       }
 
-      // Update stock record
+      // Single ledger writer: locks the row, records signed qty_change + before/after
+      let change
+      try {
+        change = await applyStockChange(tx, {
+          tenantId,
+          warehouseId,
+          itemId,
+          mode: type === 'set' ? 'set' : 'delta',
+          qty: type === 'subtract' ? -quantityNum : quantityNum,
+          type: type === 'set' ? 'adjustment' : type === 'add' ? 'in' : 'out',
+          referenceType: 'manual_adjustment',
+          notes: notes || `Stock ${type}: ${quantity}`,
+          userId,
+          source: 'manual',
+          costCenterId: costCenterId || null,
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : ''
+        if (message.startsWith('INSUFFICIENT_STOCK:')) {
+          return NextResponse.json({
+            error: `Insufficient stock. Current: ${await currentStockOf(tx, warehouseId, itemId)}, Requested: ${quantityNum}`,
+            code: 'INSUFFICIENT_STOCK',
+          }, { status: 400 })
+        }
+        throw err
+      }
+
+      // Optional settings in the same request
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const updates: any = {
-        currentStock: newStock.toString(),
-        updatedAt: new Date(),
+      const settingUpdates: any = {}
+      if (binLocation !== undefined) settingUpdates.binLocation = binLocation
+      if (minStock !== undefined) settingUpdates.minStock = minStock.toString()
+      if (reorderQty !== undefined) settingUpdates.reorderQty = reorderQty?.toString()
+      if (Object.keys(settingUpdates).length > 0) {
+        await tx.update(warehouseStock)
+          .set({ ...settingUpdates, updatedAt: new Date() })
+          .where(eq(warehouseStock.id, change.warehouseStockId))
       }
-      if (binLocation !== undefined) updates.binLocation = binLocation
-      if (minStock !== undefined) updates.minStock = minStock.toString()
-      if (reorderQty !== undefined) updates.reorderQty = reorderQty?.toString()
-
-      const [updated] = await tx.update(warehouseStock)
-        .set(updates)
-        .where(eq(warehouseStock.id, stockRecord.id))
-        .returning()
-
-      // Record stock movement
-      const [movement] = await tx.insert(stockMovements).values({
-        tenantId: session!.user.tenantId,
-        warehouseId,
-        itemId,
-        type: movementType,
-        quantity: movementQty.toString(),
-        referenceType: 'manual_adjustment',
-        notes: notes || `Stock ${type}: ${quantity}`,
-        createdBy: session!.user.id,
-        costCenterId: costCenterId || null,
-      }).returning()
+      const [updated] = await tx.select().from(warehouseStock)
+        .where(eq(warehouseStock.id, change.warehouseStockId))
 
       // Post stock adjustment to GL (only if item has a cost price)
       const costPrice = parseFloat(item.costPrice || '0')
-      if (costPrice > 0 && movementQty !== 0) {
-        await postStockAdjustmentToGL(tx, session!.user.tenantId, {
-          adjustmentId: movement.id,
-          tenantId: session!.user.tenantId,
+      if (costPrice > 0 && change.delta !== 0 && change.movementId) {
+        await postStockAdjustmentToGL(tx, tenantId, {
+          adjustmentId: change.movementId,
+          tenantId,
           itemName: item.name,
-          quantityChange: movementQty,
+          quantityChange: change.delta,
           costPrice,
           costCenterId: costCenterId || null,
           notes: notes || `Stock ${type}: ${quantity}`,
@@ -282,23 +268,27 @@ export async function POST(
       }
 
       // Broadcast changes
-      logAndBroadcast(session!.user.tenantId, 'warehouse-stock', 'updated', warehouseId)
-      logAndBroadcast(session!.user.tenantId, 'item', 'updated', itemId)
+      logAndBroadcast(tenantId, 'warehouse-stock', 'updated', warehouseId, { userId })
+      logAndBroadcast(tenantId, 'item', 'updated', itemId, { userId })
 
       // AI: Stock anomaly detection (fire-and-forget)
-      checkStockAnomalies(session!.user.tenantId, {
-        id: updated.id,
-        itemId,
-        itemName: item.name,
-        type: movementType,
-        quantity: movementQty,
-        previousStock: currentStockNum,
-        reason: notes || undefined,
-      })
+      if (change.delta !== 0) {
+        checkStockAnomalies(tenantId, {
+          id: updated.id,
+          itemId,
+          itemName: item.name,
+          type: type === 'set' ? 'adjustment' : type === 'add' ? 'in' : 'out',
+          quantity: change.delta,
+          previousStock: change.before,
+          reason: notes || undefined,
+        })
+      }
 
       return NextResponse.json(updated)
     })
   } catch (error) {
+    const mapped = toApiError(error)
+    if (mapped) return mapped
     logError('api/warehouses/[id]/stock', error)
     return NextResponse.json({ error: 'Failed to adjust warehouse stock' }, { status: 500 })
   }

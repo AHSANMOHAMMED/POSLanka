@@ -33,6 +33,7 @@ interface Supplier {
 interface Item {
   id: string
   name: string
+  itemCode?: string | null
   sku: string | null
   barcode: string | null
   categoryId: string | null
@@ -326,6 +327,7 @@ export default function ItemsPage() {
       const matchesSearch = !localSearch ||
         item.name.toLowerCase().includes(searchLower) ||
         item.sku?.toLowerCase().includes(searchLower) ||
+        item.itemCode?.toLowerCase().includes(searchLower) ||
         item.barcode?.toLowerCase().includes(searchLower)
 
       // Low-stock filter - only show items with stock movement history
@@ -407,7 +409,7 @@ export default function ItemsPage() {
       search={isLowStockFilter ? localSearch : search}
       setSearch={isLowStockFilter ? setLocalSearch : setSearch}
       onRefresh={isLowStockFilter ? fetchAllItems : refreshPaginated}
-      searchPlaceholder="Name, SKU, Barcode..."
+      searchPlaceholder="Name, Item Code, SKU, Barcode..."
       filterContent={
         <>
           <WarehouseSelector
@@ -476,6 +478,7 @@ export default function ItemsPage() {
                   aria-label="Select all items"
                 />
               </th>
+              <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600">Item Code</th>
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600">Name</th>
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600">SKU</th>
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600">OEM Part #</th>
@@ -494,7 +497,7 @@ export default function ItemsPage() {
           <tbody>
             {filteredItems.length === 0 ? (
               <tr>
-                <td colSpan={isSupermarket ? 14 : 11} className="px-4 py-8 text-center text-gray-500">
+                <td colSpan={isSupermarket ? 15 : 12} className="px-4 py-8 text-center text-gray-500">
                   {search ? 'No items match your search' : 'No items yet. Add your first item!'}
                 </td>
               </tr>
@@ -515,6 +518,7 @@ export default function ItemsPage() {
                       aria-label={`Select ${item.name}`}
                     />
                   </td>
+                  <td className="px-4 py-3 text-gray-600 font-mono text-xs whitespace-nowrap">{item.itemCode || '-'}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium">{item.name}</div>
                     {(item.isVegetarian || item.isVegan || item.isGlutenFree || (item.allergens && item.allergens.length > 0)) && (

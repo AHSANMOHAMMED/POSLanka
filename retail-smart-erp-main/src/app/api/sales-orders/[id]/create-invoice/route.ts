@@ -12,6 +12,7 @@ import { authWithCompany } from '@/lib/auth'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createSalesInvoiceSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 
 // POST create sales invoice from sales order
 export async function POST(
@@ -155,18 +156,8 @@ export async function POST(
       invoiceTaxBreakdown = taxResult.taxBreakdown
     }
 
-    // Generate invoice number (INV-NNNNNN format)
-    // Use advisory lock to prevent duplicate invoice numbers under concurrency
-    const prefix = 'INV'
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(1)`)
-    const [maxResult] = await tx
-      .select({ maxNo: sql<string>`MAX(${sales.invoiceNo})` })
-      .from(sales)
-      .where(sql`${sales.invoiceNo} LIKE ${prefix + '-%'}`)
-
-    const lastNo = maxResult?.maxNo
-    const nextNumber = lastNo ? parseInt(lastNo.replace(/\D/g, '')) + 1 : 1
-    const invoiceNo = `${prefix}-${String(nextNumber).padStart(6, '0')}`
+    // Invoice number (INV-NNNNNN) from the per-tenant sequence (shared with POS sales)
+    const invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
 
     // Create sales invoice (sale record) with salesOrderId
     const [newSale] = await tx.insert(sales).values({

@@ -52,6 +52,8 @@ import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { useDebouncedValue } from '@/hooks/useDebounce'
 import { quickPrint } from '@/hooks/usePrint'
 import { usePrinter } from '@/hooks/usePrinter'
+import { fetchLogoRaster, loadReceiptModel } from '@/lib/print/receipt-loader'
+import { renderReceiptHtml } from '@/lib/print/receipt-html'
 import type { PaperSize } from '@/lib/print/types'
 import { useCurrency } from '@/hooks/useCurrency'
 import { roundCurrency } from '@/lib/utils/currency'
@@ -61,6 +63,9 @@ import { usePOSBusinessConfig } from '@/hooks/usePOSBusinessConfig'
 import { useOfflinePos } from '@/hooks/useOfflinePos'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel } from '@/lib/utils/item-display'
+
+/** Printed receipt / return / offline receipt numbers scanned at the POS (W8). */
+const RECEIPT_CODE_RE = /^(INV|RTN|OFF)-/i
 
 export default function POSPage() {
   const { currency: currencyCode } = useCurrency()
@@ -176,6 +181,12 @@ export default function POSPage() {
   const [returnSearchResults, setReturnSearchResults] = useState<SaleForReturn[]>([])
   const [searchingReturns, setSearchingReturns] = useState(false)
   const [returnModeConfirm, setReturnModeConfirm] = useState(false)
+  // Exchange (W8): return lines kept as credit while the replacement items are rung up
+  const [exchangeFrom, setExchangeFrom] = useState<{
+    sale: SaleForReturn
+    returnLines: Array<{ originalSaleItemId: string; quantity: number; serialNumberIds?: string[] }>
+    credit: number
+  } | null>(null)
 
   // Confirm dialogs
   const [recallConfirm, setRecallConfirm] = useState<{ open: boolean; heldSale: HeldSale | null }>({ open: false, heldSale: null })
@@ -253,7 +264,6 @@ export default function POSPage() {
   // Derived values
   const posWarehouse = activeShift?.warehouse || null
   const posProfile = activeShift?.posProfile
-  const taxInclusive = tenantInfo?.taxInclusive || false
   const allowDiscount = posProfile?.allowDiscountChange !== false
   const maxDiscountPct = posProfile ? parseFloat(posProfile.maxDiscountPercent) : 100
 
@@ -575,7 +585,7 @@ export default function POSPage() {
 
   // Supermarket: barcode auto-add effect
   useEffect(() => {
-    if (!config.enableBarcodeAutoAdd || !debouncedItemSearch || !posWarehouse || isReturnMode) return
+    if (!config.enableBarcodeAutoAdd || !debouncedItemSearch || !posWarehouse || isReturnMode || RECEIPT_CODE_RE.test(debouncedItemSearch.trim())) return
     const barcode = debouncedItemSearch.trim()
     if (!barcode || barcode.length < 3) return
 
@@ -604,6 +614,15 @@ export default function POSPage() {
       }
       setSearchingReturns(true)
       try {
+        // Receipt codes (INV-/RTN-/OFF-) resolve exactly through the lookup endpoint
+        if (RECEIPT_CODE_RE.test(debouncedReturnSearchQuery.trim())) {
+          const lookupRes = await fetch(`/api/sales/lookup?code=${encodeURIComponent(debouncedReturnSearchQuery.trim())}`)
+          if (lookupRes.ok) {
+            const found = await lookupRes.json()
+            setReturnSearchResults(found?.sale ? [found.sale] : [])
+            return
+          }
+        }
         const res = await fetch(`/api/sales?search=${encodeURIComponent(debouncedReturnSearchQuery)}&status=completed&pageSize=20&all=true`)
         if (res.ok) {
           const data = await res.json()
@@ -810,6 +829,10 @@ export default function POSPage() {
     const newQty = cartItem.quantity + delta
     if (isReturnMode) {
       if (newQty === 0) { removeFromCart(cartLineId); return }
+      if (cartItem.maxReturnQuantity !== undefined && (newQty > 0 || Math.abs(newQty) > cartItem.maxReturnQuantity)) {
+        toast.warning(`Only ${cartItem.maxReturnQuantity} returnable on this invoice line`)
+        return
+      }
     } else {
       if (newQty <= 0) return
     }
@@ -878,6 +901,7 @@ export default function POSPage() {
     setSelectedVehicle(null)
     setIsReturnMode(false)
     setReturnAgainstSale(null)
+    setExchangeFrom(null)
     setSaleDiscount({ type: 'percentage', value: 0, reason: '' })
     setLoyaltyPointsToRedeem('')
     setShowLoyaltyRedeem(false)
@@ -1121,34 +1145,51 @@ export default function POSPage() {
 
   // ─── Return Functions ─────────────────────────────────────────
 
-  function loadSaleForReturn(sale: SaleForReturn) {
+  async function loadSaleForReturn(listed: SaleForReturn) {
+    // Always refresh through the lookup endpoint: remaining quantities + server refund prices
+    let sale: SaleForReturn = listed
+    try {
+      const res = await fetch(`/api/sales/lookup?code=${encodeURIComponent(listed.invoiceNo)}`)
+      if (res.ok) {
+        const found = await res.json()
+        if (found?.sale) sale = found.sale
+      }
+    } catch {
+      // fall back to the listed sale (server still validates everything)
+    }
+
+    // Filter out gift card items — they are non-returnable — and fully returned lines
+    const giftCount = sale.items.filter(item => item.isGiftCard || item.item?.isGiftCard).length
+    const returnableItems = sale.items.filter(item =>
+      !(item.isGiftCard || item.item?.isGiftCard)
+      && parseFloat(item.quantity) > 0
+      && (item.remainingQuantity === undefined || item.remainingQuantity > 0))
+
+    if (returnableItems.length === 0) {
+      toast.error(giftCount > 0 && giftCount === sale.items.length
+        ? 'This sale contains only gift card items which cannot be returned'
+        : `Invoice ${sale.invoiceNo} has already been fully returned`)
+      return
+    }
+
     setCart([])
     setIsReturnMode(true)
     setReturnAgainstSale(sale)
     if (sale.customer) setSelectedCustomer(sale.customer)
 
-    // Filter out gift card items — they are non-returnable
-    const returnableItems = sale.items.filter(item => !item.item?.isGiftCard)
-    const skippedCount = sale.items.length - returnableItems.length
-
-    if (returnableItems.length === 0) {
-      toast.error('This sale contains only gift card items which cannot be returned')
-      setIsReturnMode(false)
-      setReturnAgainstSale(null)
-      return
-    }
-
-    if (skippedCount > 0) {
-      toast.warning(`${skippedCount} gift card item(s) excluded from return — gift cards are non-returnable`)
+    if (giftCount > 0) {
+      toast.warning(`${giftCount} gift card item(s) excluded from return — gift cards are non-returnable`)
     }
 
     const returnItems: CartItem[] = []
     for (const item of returnableItems) {
-      const serialIds = item.serialNumberIds as string[] | undefined
-      if (serialIds?.length) {
-        // Serial-tracked: create one cart line per serial for individual removal
-        const unitPrice = parseFloat(item.unitPrice)
-        for (let i = 0; i < serialIds.length; i++) {
+      const remaining = item.remainingQuantity ?? Math.abs(parseFloat(item.quantity))
+      // Unit refund incl. tax after discounts (server-computed); legacy fallback: line average
+      const unitPrice = item.refundUnitAmount ?? (Math.abs(parseFloat(item.total)) / Math.abs(parseFloat(item.quantity) || 1))
+      const serialIds = item.remainingSerialNumberIds ?? (item.serialNumberIds as string[] | undefined) ?? []
+      if (serialIds.length) {
+        // Serial-tracked: one cart line per serial still on the invoice
+        for (let i = 0; i < Math.min(serialIds.length, remaining); i++) {
           returnItems.push({
             cartLineId: `return-${item.id}-${Date.now()}-${i}`,
             itemId: item.itemId ?? '',
@@ -1157,17 +1198,20 @@ export default function POSPage() {
             unitPrice,
             total: -unitPrice,
             serialNumberIds: [serialIds[i]],
+            originalSaleItemId: item.id,
+            maxReturnQuantity: 1,
           })
         }
       } else {
-        // Non-serial: keep existing behavior
         returnItems.push({
           cartLineId: `return-${item.id}-${Date.now()}-0`,
           itemId: item.itemId ?? '',
           name: item.itemName,
-          quantity: -Math.abs(parseFloat(item.quantity)),
-          unitPrice: parseFloat(item.unitPrice),
-          total: -Math.abs(parseFloat(item.total)),
+          quantity: -remaining,
+          unitPrice,
+          total: -Math.round(remaining * unitPrice * 100) / 100,
+          originalSaleItemId: item.id,
+          maxReturnQuantity: remaining,
         })
       }
     }
@@ -1177,6 +1221,81 @@ export default function POSPage() {
     setReturnSearchQuery('')
     setReturnSearchResults([])
     toast.info(`Loaded invoice ${sale.invoiceNo} for return`)
+  }
+
+  /** Exchange: keep the selected return lines as credit and sell new items against it. */
+  function startExchange() {
+    if (!isReturnMode || !returnAgainstSale) return
+    const lines = cart.filter(l => l.originalSaleItemId && l.quantity !== 0)
+    if (lines.length === 0) {
+      toast.error('Select the items being returned first')
+      return
+    }
+    const byLine = new Map<string, { quantity: number; serialNumberIds: string[] }>()
+    for (const l of lines) {
+      const cur = byLine.get(l.originalSaleItemId!) || { quantity: 0, serialNumberIds: [] }
+      cur.quantity += Math.abs(l.quantity)
+      cur.serialNumberIds.push(...(l.serialNumberIds || []))
+      byLine.set(l.originalSaleItemId!, cur)
+    }
+    setExchangeFrom({
+      sale: returnAgainstSale,
+      returnLines: [...byLine.entries()].map(([originalSaleItemId, v]) => ({
+        originalSaleItemId, quantity: v.quantity, serialNumberIds: v.serialNumberIds.length ? v.serialNumberIds : undefined,
+      })),
+      credit: Math.round(Math.abs(lines.reduce((sum, l) => sum + l.total, 0)) * 100) / 100,
+    })
+    setCart([])
+    setIsReturnMode(false)
+    setReturnAgainstSale(null)
+    toast.info('Exchange: add the replacement items, then take payment for the difference')
+  }
+
+  async function completeExchange() {
+    if (!exchangeFrom) return
+    setProcessing(true)
+    try {
+      const res = await fetch('/api/sales/exchange', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          originalSaleId: exchangeFrom.sale.id,
+          returnLines: exchangeFrom.returnLines,
+          newCartItems: cart.map(c => ({
+            itemId: c.itemId, name: c.name, quantity: c.quantity, unitPrice: c.unitPrice,
+            discount: 0, serialNumberIds: c.serialNumberIds,
+          })),
+          paymentMethod: ['cash', 'card', 'bank_transfer'].includes(paymentMethod) ? paymentMethod : 'cash',
+          amountPaid: parseFloat(amountPaid) || 0,
+          refundMethod: 'cash',
+          warehouseId: posWarehouse?.id,
+          posOpeningEntryId: activeShift?.id,
+          customerId: selectedCustomer?.id,
+          clientSaleId: clientSaleIdRef.current || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to process exchange')
+        return
+      }
+      const diff = Number(data.net?.difference || 0)
+      clearCart()
+      setShowPayment(false)
+      setAmountPaid('')
+      setCreditAmount('')
+      fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
+      toast.success(diff >= 0
+        ? `Exchange done: ${data.returnSale?.invoiceNo} → ${data.sale?.invoiceNo}, collected ${diff.toFixed(2)}`
+        : `Exchange done: ${data.returnSale?.invoiceNo} → ${data.sale?.invoiceNo}, refund ${Math.abs(diff).toFixed(2)}`)
+      setLastSale({ invoiceNo: data.sale?.invoiceNo, total: Math.abs(diff), isReturn: diff < 0 })
+      setLastSaleId(data.sale?.id)
+    } catch (error) {
+      console.error('Error processing exchange:', error)
+      toast.error('Error processing exchange')
+    } finally {
+      setProcessing(false)
+    }
   }
 
   function cancelReturnMode() {
@@ -1394,6 +1513,13 @@ export default function POSPage() {
   async function handleScanSubmit(code: string): Promise<boolean> {
     const trimmed = code.trim()
     if (!trimmed) return false
+    // Receipt barcode (INV-/RTN-/OFF-) → open the return lookup with that sale
+    if (RECEIPT_CODE_RE.test(trimmed)) {
+      setSearch('')
+      setReturnSearchQuery(trimmed.toUpperCase())
+      setShowReturnLookupModal(true)
+      return true
+    }
     if (posWarehouse) {
       try {
         const res = await fetch(`/api/items/barcode-lookup?barcode=${encodeURIComponent(trimmed)}&warehouseId=${posWarehouse.id}`)
@@ -1506,7 +1632,7 @@ export default function POSPage() {
     }
     setCustomerCredit(credit)
     const tip = config.enableTips ? tipAmount : 0
-    const payableTotal = Math.max(0, total - loyaltyRedeemValue + tip)
+    const payableTotal = Math.max(0, total - loyaltyRedeemValue + tip - (exchangeFrom?.credit || 0))
     setAmountPaid(payableTotal.toFixed(2))
     setCreditAmount('')
     setShowPayment(true)
@@ -1521,8 +1647,22 @@ export default function POSPage() {
       return
     }
 
+    if (exchangeFrom) {
+      await completeExchange()
+      return
+    }
+
     if (isReturnMode) {
-      const refundAmount = Math.abs(total)
+      // Returns without an invoice need a reason (server rejects them otherwise)
+      let returnReason: string | undefined
+      if (!returnAgainstSale) {
+        const reason = window.prompt('Reason for return without receipt')?.trim()
+        if (!reason) {
+          toast.error('A reason is required for a return without a receipt')
+          return
+        }
+        returnReason = reason.slice(0, 50)
+      }
       setProcessing(true)
       try {
         const res = await fetch('/api/sales', {
@@ -1545,8 +1685,9 @@ export default function POSPage() {
             clientSaleId: clientSaleIdRef.current || undefined,
             isReturn: true,
             returnAgainst: returnAgainstSale?.id,
-            refundAmount,
+            // refund is priced by the server from the original invoice; it answers with refundAmount
             refundMethod,
+            returnReason,
           }),
         })
 
@@ -1557,7 +1698,7 @@ export default function POSPage() {
           setAmountPaid('')
           setCreditAmount('')
           fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
-          setLastSale({ invoiceNo: sale.invoiceNo, total: refundAmount, isReturn: true })
+          setLastSale({ invoiceNo: sale.invoiceNo, total: Number(sale.refundAmount ?? Math.abs(Number(sale.total))), isReturn: true })
           setLastSaleId(sale.id)
         } else {
           const error = await res.json()
@@ -1732,16 +1873,11 @@ export default function POSPage() {
 
   // ─── Receipt Printing ─────────────────────────────────────────
 
-  function escapeHtml(str: string): string {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-  }
-
   async function printReceiptForSale(saleId: string) {
     // Direct ESC/POS printing (USB / Bluetooth / print agent). Falls back to the HTML path below on failure.
     if (printer.isRawPrinter) {
       const printed = await printer.printReceipt(saleId, {
-        header: posProfile?.receiptHeader,
-        footer: posProfile?.receiptFooter,
+        posProfile: posProfile || null,
         cashier: cashierName || null,
         counter: posProfile?.name || null,
       })
@@ -1753,89 +1889,17 @@ export default function POSPage() {
       toast.warning(printer.status.message ? `Printer: ${printer.status.message}. Using browser print.` : 'Printer unavailable, using browser print')
     }
     try {
-      const res = await fetch(`/api/sales/${saleId}`)
-      if (!res.ok) {
-        toast.error('Failed to load sale for printing')
-        return
-      }
-      const saleData = await res.json()
-
-      const businessName = escapeHtml(tenantInfo?.name || 'Business')
-      const headerLines = [
-        `<p class="font-bold text-sm">${businessName}</p>`,
-        tenantInfo?.address ? `<p class="text-xs">${escapeHtml(tenantInfo.address)}</p>` : '',
-        tenantInfo?.phone ? `<p class="text-xs">${escapeHtml(tenantInfo.phone)}</p>` : '',
-      ].filter(Boolean).join('\n')
-
-      const customFooter = escapeHtml(posProfile?.receiptFooter || 'Thank you for your purchase!')
-
-      // Resolve serial numbers for receipt display
-      const allSerialIds: string[] = []
-      for (const item of (saleData.items || [])) {
-        if (item.serialNumberIds?.length) {
-          allSerialIds.push(...item.serialNumberIds)
-        }
-      }
-      const serialMap = new Map<string, string>()
-      if (allSerialIds.length > 0) {
-        try {
-          const snRes = await fetch(`/api/serial-numbers/by-ids?ids=${allSerialIds.join(',')}`)
-          if (snRes.ok) {
-            const snData: { id: string; serialNumber: string }[] = await snRes.json()
-            for (const sn of snData) serialMap.set(sn.id, sn.serialNumber)
-          }
-        } catch { /* non-critical */ }
-      }
-
-      const receiptItems = (saleData.items || []).map((item: { id: string; itemName: string; quantity: string; unitPrice: string; discount: string; total: string; serialNumberIds?: string[] }) => {
-        const serialNumbers = (item.serialNumberIds || []).map(id => serialMap.get(id)).filter(Boolean)
-        const serialLine = serialNumbers.length > 0
-          ? `<div style="font-size:9px;color:#666;margin-top:1px">S/N: ${serialNumbers.map(s => escapeHtml(s!)).join(', ')}</div>`
-          : ''
-        return `
-        <div style="margin-bottom:4px">
-          <div style="font-weight:500">${escapeHtml(item.itemName)}</div>
-          <div style="display:flex;justify-content:space-between;font-size:10px">
-            <span>${parseFloat(item.quantity)} x ${parseFloat(item.unitPrice).toFixed(2)}</span>
-            <span>${parseFloat(item.total).toFixed(2)}</span>
-          </div>
-          ${parseFloat(item.discount) > 0 ? `<div style="display:flex;justify-content:space-between;font-size:10px;color:#666"><span>Discount</span><span>-${parseFloat(item.discount).toFixed(2)}</span></div>` : ''}
-          ${serialLine}
-        </div>
-      `
-      }).join('')
-
-      const payments = (saleData.payments || []).map((p: { id: string; method: string; amount: string }) => `
-        <div style="display:flex;justify-content:space-between;font-size:10px">
-          <span>${p.method === 'cash' ? 'Cash' : p.method === 'card' ? 'Card' : p.method === 'credit' ? 'Credit' : p.method}</span>
-          <span>${parseFloat(p.amount).toFixed(2)}</span>
-        </div>
-      `).join('')
-
-      const html = `
-        <div style="text-align:center;margin-bottom:8px">${headerLines}</div>
-        ${posProfile?.receiptHeader ? `<div style="text-align:center;font-size:10px;margin-bottom:8px">${escapeHtml(posProfile.receiptHeader)}</div>` : ''}
-        <div style="border-top:1px dashed #999;margin:8px 0"></div>
-        <div style="font-size:10px">
-          <div style="display:flex;justify-content:space-between"><span>Receipt:</span><span style="font-weight:500">${saleData.invoiceNo}</span></div>
-          <div style="display:flex;justify-content:space-between"><span>Date:</span><span>${new Date(saleData.createdAt).toLocaleString()}</span></div>
-          ${saleData.customerName ? `<div style="display:flex;justify-content:space-between"><span>Customer:</span><span>${escapeHtml(saleData.customerName)}</span></div>` : ''}
-        </div>
-        <div style="border-top:1px dashed #999;margin:8px 0"></div>
-        <div style="font-size:11px">${receiptItems}</div>
-        <div style="border-top:1px dashed #999;margin:8px 0"></div>
-        <div style="font-size:10px">
-          <div style="display:flex;justify-content:space-between"><span>Subtotal:</span><span>${parseFloat(saleData.subtotal).toFixed(2)}</span></div>
-          ${parseFloat(saleData.discountAmount) > 0 ? `<div style="display:flex;justify-content:space-between"><span>Discount:</span><span>-${parseFloat(saleData.discountAmount).toFixed(2)}</span></div>` : ''}
-          ${parseFloat(saleData.taxAmount) > 0 ? `<div style="display:flex;justify-content:space-between"><span>Tax${taxInclusive ? ' (incl.)' : ''}:</span><span>${parseFloat(saleData.taxAmount).toFixed(2)}</span></div>` : ''}
-          <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:12px;margin-top:4px;padding-top:4px;border-top:1px solid #ccc"><span>TOTAL:</span><span>${currencyCode} ${parseFloat(saleData.total).toFixed(2)}</span></div>
-        </div>
-        <div style="border-top:1px dashed #999;margin:8px 0"></div>
-        <div style="font-size:10px">${payments}</div>
-        <div style="text-align:center;margin-top:16px;padding-top:8px;border-top:1px dashed #999;font-size:10px">
-          <p>${customFooter}</p>
-        </div>
-      `
+      // Shared receipt model -> branded HTML (logo, business profile, invoice barcode / QR).
+      const { model } = await loadReceiptModel(saleId, {
+        posProfile: posProfile || null,
+        cashier: cashierName || null,
+        counter: posProfile?.name || null,
+      })
+      const paperWidth: 58 | 80 = posProfile?.receiptPrintFormat === '58mm' ? 58 : 80
+      const logo = model.logo.show ? await fetchLogoRaster(paperWidth === 58 ? 384 : 576, model.logo.widthPct, model.logo.url) : null
+      const html = await renderReceiptHtml(model, paperWidth, {
+        logoSrc: logo?.pngBase64 ? `data:image/png;base64,${logo.pngBase64}` : model.logo.url,
+      })
 
       // Map POS profile receiptPrintFormat to PaperSize key
       const formatMap: Record<string, PaperSize> = {
@@ -1847,7 +1911,7 @@ export default function POSPage() {
         ? formatMap[posProfile.receiptPrintFormat]
         : undefined
 
-      await quickPrint('receipt', `Receipt-${saleData.invoiceNo}`, html, { paperSize })
+      await quickPrint('receipt', `Receipt-${model.invoiceNo}`, html, { paperSize })
 
       // Auto-close success modal after print dialog closes
       setLastSale(null)
@@ -1922,6 +1986,25 @@ export default function POSPage() {
   return (
     <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-100 -m-5 overflow-hidden font-sans">
       <OfflineStatusBanner />
+      {exchangeFrom && (
+        <div className="w-full bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between text-sm shrink-0">
+          <span className="text-amber-900">
+            Exchange for <span className="font-semibold">{exchangeFrom.sale.invoiceNo}</span> — credit{' '}
+            <span className="font-mono font-semibold">{exchangeFrom.credit.toFixed(2)}</span>
+            {cart.length > 0 && (
+              <> · {total - exchangeFrom.credit >= 0 ? 'to collect' : 'to refund'}{' '}
+                <span className="font-mono font-semibold">{Math.abs(total - exchangeFrom.credit).toFixed(2)}</span></>
+            )}
+          </span>
+          <button
+            type="button"
+            onClick={() => { setExchangeFrom(null); toast.info('Exchange cancelled') }}
+            className="text-amber-800 hover:text-amber-950 underline text-xs"
+          >
+            Cancel exchange
+          </button>
+        </div>
+      )}
       {/* Stitch "Operational Velocity" Operational Context Bar */}
       <div className="w-full bg-slate-900 text-slate-300 px-4 py-1.5 flex items-center justify-between text-xs font-mono border-b border-slate-800 shrink-0 select-none">
         <div className="flex items-center gap-2.5">
@@ -2019,6 +2102,7 @@ export default function POSPage() {
         onSetQuantityDirectly={setQuantityDirectly}
         onClearCart={clearCart}
         onCancelReturnMode={cancelReturnMode}
+        onStartExchange={returnAgainstSale ? startExchange : undefined}
         subtotal={subtotal}
         itemCount={itemCount}
         discountAmount={discountAmount}
@@ -2058,7 +2142,7 @@ export default function POSPage() {
         setSplitSecondMethod={setSplitSecondMethod}
         splitSecondAmount={splitSecondAmount}
         setSplitSecondAmount={setSplitSecondAmount}
-        total={total}
+        total={exchangeFrom ? Math.max(0, total - exchangeFrom.credit) : total}
         loyaltyRedeemValue={loyaltyRedeemValue}
         selectedCustomer={selectedCustomer}
         processing={processing}

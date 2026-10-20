@@ -4,7 +4,8 @@
  *
  * Tiny local HTTP bridge that receives raw ESC/POS bytes from the browser
  * (which cannot talk to network/shared/serial printers directly) and forwards
- * them to the configured printer. No dependencies; Node 20+.
+ * them to the configured printer (ESC/POS, TSPL, ZPL, EPL - bytes are passed
+ * through untouched). No dependencies; Node 20+.
  *
  *   GET  /health             -> { ok: true, version, targets: [...] }
  *   GET  /printers           -> { printers: [{ name, type, description }] }
@@ -12,6 +13,7 @@
  *
  * Targets are configured in printers.json next to this file (see printers.example.json):
  *   { "default": "counter1",
+ *     "allowedOrigins": ["https://app.example.com", "http://localhost:3000"],
  *     "printers": {
  *       "counter1": { "type": "tcp",    "host": "192.168.1.50", "port": 9100 },
  *       "shared":   { "type": "system", "name": "EPSON_TM_T82" },
@@ -144,12 +146,42 @@ async function dispatch(target, bytes) {
 
 // ─── HTTP ─────────────────────────────────────────────────────────────────
 
-function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*')
+const DEFAULT_ALLOWED_ORIGINS = ['http://localhost:3000']
+
+/**
+ * Allowed browser origins come from printers.json `allowedOrigins` (array of
+ * exact origins, e.g. "https://app.poslanka.lk"; "*" allows any origin) or the
+ * PRINT_AGENT_ALLOWED_ORIGINS env var (comma separated). Default: localhost:3000.
+ */
+function allowedOrigins(cfg) {
+  if (process.env.PRINT_AGENT_ALLOWED_ORIGINS) {
+    return process.env.PRINT_AGENT_ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
+  }
+  if (Array.isArray(cfg.allowedOrigins) && cfg.allowedOrigins.length > 0) {
+    return cfg.allowedOrigins.map((s) => String(s).trim().replace(/\/+$/, '')).filter(Boolean)
+  }
+  return DEFAULT_ALLOWED_ORIGINS
+}
+
+function originAllowed(cfg, origin) {
+  if (!origin) return true // non-browser clients (curl) send no Origin
+  const list = allowedOrigins(cfg)
+  return list.includes('*') || list.includes(origin.replace(/\/+$/, ''))
+}
+
+function cors(req, res, cfg) {
+  const origin = req.headers.origin
+  if (origin && originAllowed(cfg, origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Vary', 'Origin')
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
   res.setHeader('Access-Control-Max-Age', '86400')
-  res.setHeader('Access-Control-Allow-Private-Network', 'true')
+  // Chrome Private Network Access preflight (public/https page -> loopback).
+  if (req.headers['access-control-request-private-network'] === 'true' || origin) {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true')
+  }
 }
 
 function json(res, status, body) {
@@ -176,13 +208,17 @@ function readBody(req) {
 }
 
 const server = http.createServer(async (req, res) => {
-  cors(res)
+  const cfg = loadConfig()
+  cors(req, res, cfg)
+  if (!originAllowed(cfg, req.headers.origin)) {
+    log(`rejected request from origin ${req.headers.origin} (add it to allowedOrigins in printers.json)`)
+    return json(res, 403, { error: `Origin ${req.headers.origin} is not allowed` })
+  }
   if (req.method === 'OPTIONS') {
     res.writeHead(204)
     return res.end()
   }
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
-  const cfg = loadConfig()
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
       return json(res, 200, { ok: true, version: VERSION, platform: process.platform, targets: listTargets(cfg) })
@@ -211,4 +247,5 @@ server.listen(PORT, HOST, () => {
   const cfg = loadConfig()
   log(`POSLanka print agent v${VERSION} listening on http://${HOST}:${PORT}`)
   log(`config: ${CONFIG_PATH} (${Object.keys(cfg.printers).length} target(s), default: ${cfg.default || '-'})`)
+  log(`allowed origins: ${allowedOrigins(cfg).join(', ')}`)
 })

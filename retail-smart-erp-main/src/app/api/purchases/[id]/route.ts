@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { purchases, purchaseItems, purchasePayments, suppliers, warehouses, users, purchaseOrders, purchaseOrderItems, items as itemsTable, warehouseStock, stockMovements, supplierBalanceAudit, itemSerialNumbers, serialNumberMovements, itemSupplierCosts, itemCostHistory } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { purchases, purchaseItems, purchasePayments, suppliers, warehouses, users, purchaseOrders, purchaseOrderItems, items as itemsTable, supplierBalanceAudit, itemSerialNumbers, serialNumberMovements, itemSupplierCosts, itemCostHistory } from '@/lib/db/schema'
+import { eq, and, sql, ne } from 'drizzle-orm'
+import { applyStockChange, notifyStockDecreased } from '@/lib/inventory/apply-stock-change'
+import {
+  applyPurchaseCost, findMovements, getTotalItemStock, reverseMovements, stockErrorResponse,
+  type StockChangeRecord,
+} from '@/lib/purchasing/stock-cost'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { postPurchaseToGL, postVoidToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import { logError } from '@/lib/ai/error-logger'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
-import { parseSerialNumberInput, checkDuplicateSerials } from '@/lib/inventory/serial-numbers'
+import { parseSerialNumberInput, checkDuplicateSerials, allocateSerials } from '@/lib/inventory/serial-numbers'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -140,277 +145,308 @@ export async function PUT(
 
   // Handle cancellation with transaction
   if (status === 'cancelled') {
-    const result = await withAuthTenantTransaction(async (session, tx) => {
-      const permError = requirePermission(session, 'managePurchases')
-      if (permError) return { error: permError }
+    let result
+    try {
+      result = await withAuthTenantTransaction(async (session, tx) => {
+        const permError = requirePermission(session, 'managePurchases')
+        if (permError) return { error: permError }
 
-      // Get current purchase with lock to prevent concurrent cancellation (RLS filters by tenant)
-      const [currentPurchase] = await tx
-        .select()
-        .from(purchases)
-        .where(eq(purchases.id, id))
-        .for('update')
-
-      if (!currentPurchase) {
-        return { error: NextResponse.json({ error: 'Purchase not found' }, { status: 404 }) }
-      }
-
-      // Optimistic locking check
-      if (expectedUpdatedAt) {
-        const clientTime = new Date(expectedUpdatedAt).getTime()
-        const serverTime = currentPurchase.updatedAt ? new Date(currentPurchase.updatedAt).getTime() : 0
-        if (serverTime > clientTime) {
-          return { error: NextResponse.json({
-            error: 'This record was modified by another user. Please refresh and try again.',
-            code: 'CONFLICT'
-          }, { status: 409 }) }
-        }
-      }
-
-      if (currentPurchase.status === 'cancelled') {
-        return { error: NextResponse.json({ error: 'Purchase is already cancelled' }, { status: 400 }) }
-      }
-
-      const updateData: Record<string, unknown> = {
-        status: 'cancelled',
-        cancellationReason: cancellationReason || null,
-        cancelledAt: new Date(),
-        updatedAt: new Date(),
-      }
-
-      // Reverse supplier balance with audit trail (only if invoice was submitted - draft never updated balance)
-      const unpaidAmount = Math.round((parseFloat(currentPurchase.total) - parseFloat(currentPurchase.paidAmount)) * 100) / 100
-      if (currentPurchase.status !== 'draft' && currentPurchase.supplierId && unpaidAmount > 0) {
-        // Get current supplier balance BEFORE update
-        const [currentSupplier] = await tx
-          .select({ balance: suppliers.balance })
-          .from(suppliers)
-          .where(eq(suppliers.id, currentPurchase.supplierId))
+        // Get current purchase with lock to prevent concurrent cancellation (RLS filters by tenant)
+        const [currentPurchase] = await tx
+          .select()
+          .from(purchases)
+          .where(eq(purchases.id, id))
           .for('update')
 
-        const previousBalance = parseFloat(currentSupplier?.balance || '0')
-        const newBalance = Math.round((previousBalance - unpaidAmount) * 100) / 100
+        if (!currentPurchase) {
+          return { error: NextResponse.json({ error: 'Purchase not found' }, { status: 404 }) }
+        }
 
-        await tx.update(suppliers)
-          .set({ balance: newBalance.toString() })
-          .where(eq(suppliers.id, currentPurchase.supplierId))
+        // Optimistic locking check
+        if (expectedUpdatedAt) {
+          const clientTime = new Date(expectedUpdatedAt).getTime()
+          const serverTime = currentPurchase.updatedAt ? new Date(currentPurchase.updatedAt).getTime() : 0
+          if (serverTime > clientTime) {
+            return { error: NextResponse.json({
+              error: 'This record was modified by another user. Please refresh and try again.',
+              code: 'CONFLICT'
+            }, { status: 409 }) }
+          }
+        }
 
-        // Create audit record
-        await tx.insert(supplierBalanceAudit).values({
-          tenantId: session.user.tenantId,
-          supplierId: currentPurchase.supplierId,
-          type: 'cancel',
-          amount: (-unpaidAmount).toString(),
-          previousBalance: previousBalance.toString(),
-          newBalance: newBalance.toString(),
-          referenceType: 'purchase',
-          referenceId: currentPurchase.id,
-          notes: `Purchase ${currentPurchase.purchaseNo} cancelled - unpaid balance reversed`,
-          createdBy: session.user.id,
-        })
-      }
+        if (currentPurchase.status === 'cancelled') {
+          return { error: NextResponse.json({ error: 'Purchase is already cancelled' }, { status: 400 }) }
+        }
 
-      // Check if stock movements exist for this purchase
-      const existingMovements = await tx
-        .select({ id: stockMovements.id })
-        .from(stockMovements)
-        .where(and(
-          eq(stockMovements.referenceType, 'purchase'),
-          eq(stockMovements.referenceId, id),
-          eq(stockMovements.type, 'in')
-        ))
-        .limit(1)
+        const updateData: Record<string, unknown> = {
+          status: 'cancelled',
+          cancellationReason: cancellationReason || null,
+          cancelledAt: new Date(),
+          updatedAt: new Date(),
+        }
 
-      // Reverse stock if there were incoming stock movements
-      if (existingMovements.length > 0) {
-        const purchaseItemsList = await tx
-          .select()
-          .from(purchaseItems)
-          .where(eq(purchaseItems.purchaseId, id))
+        // Reverse supplier balance with audit trail (only if invoice was submitted - draft never updated balance)
+        const unpaidAmount = Math.round((parseFloat(currentPurchase.total) - parseFloat(currentPurchase.paidAmount)) * 100) / 100
+        if (currentPurchase.status !== 'draft' && currentPurchase.supplierId && unpaidAmount > 0) {
+          // Get current supplier balance BEFORE update
+          const [currentSupplier] = await tx
+            .select({ balance: suppliers.balance })
+            .from(suppliers)
+            .where(eq(suppliers.id, currentPurchase.supplierId))
+            .for('update')
 
-        for (const item of purchaseItemsList) {
-          if (item.itemId && currentPurchase.warehouseId) {
+          const previousBalance = parseFloat(currentSupplier?.balance || '0')
+          const newBalance = Math.round((previousBalance - unpaidAmount) * 100) / 100
+
+          await tx.update(suppliers)
+            .set({ balance: newBalance.toString() })
+            .where(eq(suppliers.id, currentPurchase.supplierId))
+
+          // Create audit record
+          await tx.insert(supplierBalanceAudit).values({
+            tenantId: session.user.tenantId,
+            supplierId: currentPurchase.supplierId,
+            type: 'cancel',
+            amount: (-unpaidAmount).toString(),
+            previousBalance: previousBalance.toString(),
+            newBalance: newBalance.toString(),
+            referenceType: 'purchase',
+            referenceId: currentPurchase.id,
+            notes: `Purchase ${currentPurchase.purchaseNo} cancelled - unpaid balance reversed`,
+            createdBy: session.user.id,
+          })
+        }
+
+        // A purchase with active returns cannot be cancelled: the returns already
+        // moved stock / balances and would be reversed twice. Cancel them first.
+        if (!currentPurchase.isReturn) {
+          const [activeReturn] = await tx
+            .select({ id: purchases.id, purchaseNo: purchases.purchaseNo })
+            .from(purchases)
+            .where(and(
+              eq(purchases.returnAgainst, id),
+              eq(purchases.isReturn, true),
+              ne(purchases.status, 'cancelled'),
+            ))
+            .limit(1)
+          if (activeReturn) {
+            return { error: NextResponse.json({
+              error: `Cannot cancel: purchase return ${activeReturn.purchaseNo} exists against this purchase. Cancel the return first.`,
+              code: 'HAS_ACTIVE_RETURNS',
+            }, { status: 400 }) }
+          }
+        }
+
+        // Reverse exactly the stock movements recorded for this document (receipt
+        // 'in' rows for a purchase, 'out' rows for a purchase return). No clamping:
+        // if the stock is no longer there the cancellation fails with 400.
+        const recordedMovements = (await findMovements(tx, session.user.tenantId, 'purchase', id))
+          .filter(m => m.qtyChange !== 0)
+        const addedStock = recordedMovements.some(m => m.qtyChange > 0)
+
+        // Cost reversal (purchases only): undo the weighted-average contribution of
+        // each line, using TOTAL stock across warehouses before the reversal.
+        if (addedStock && !currentPurchase.isReturn) {
+          const purchaseItemsList = (await tx
+            .select()
+            .from(purchaseItems)
+            .where(eq(purchaseItems.purchaseId, id)))
+            .filter(i => i.itemId && parseFloat(i.quantity) > 0)
+            .sort((x, y) => (x.itemId! < y.itemId! ? -1 : x.itemId! > y.itemId! ? 1 : 0))
+
+          // running total stock per item (lines of the same item reverse sequentially)
+          const runningStock = new Map<string, number>()
+          for (const item of purchaseItemsList) {
+            const itemId = item.itemId!
             const qty = parseFloat(item.quantity)
-
-            const [existingStock] = await tx
-              .select()
-              .from(warehouseStock)
-              .where(and(
-                eq(warehouseStock.warehouseId, currentPurchase.warehouseId),
-                eq(warehouseStock.itemId, item.itemId)
-              ))
-              .for('update')
-
-            if (existingStock) {
-              await tx.update(warehouseStock)
-                .set({
-                  currentStock: sql`GREATEST(0, ${warehouseStock.currentStock} - ${qty})`,
-                  updatedAt: new Date(),
-                })
-                .where(eq(warehouseStock.id, existingStock.id))
-            }
-
-            await tx.insert(stockMovements).values({
-              tenantId: session.user.tenantId,
-              warehouseId: currentPurchase.warehouseId,
-              itemId: item.itemId,
-              type: 'out',
-              quantity: qty.toString(),
-              notes: `Purchase ${currentPurchase.purchaseNo} cancelled - reversal`,
-              referenceType: 'purchase',
-              referenceId: currentPurchase.id,
-              createdBy: session.user.id,
-            })
-
-            // Cost reversal: reverse weighted average cost
-            const currentStockBeforeReversal = existingStock ? parseFloat(existingStock.currentStock) : 0
-            const newStockAfterReversal = Math.max(0, currentStockBeforeReversal - qty)
 
             const [currentItem] = await tx
               .select({ costPrice: itemsTable.costPrice })
               .from(itemsTable)
-              .where(eq(itemsTable.id, item.itemId))
+              .where(eq(itemsTable.id, itemId))
               .for('update')
+            if (!currentItem) continue
 
-            if (currentItem) {
-              const currentCost = parseFloat(currentItem.costPrice || '0')
-              const purchasePrice = parseFloat(item.unitPrice)
+            const stockBefore = runningStock.has(itemId)
+              ? runningStock.get(itemId)!
+              : await getTotalItemStock(tx, session.user.tenantId, itemId)
+            const stockAfter = Math.round((stockBefore - qty) * 1000) / 1000
+            runningStock.set(itemId, stockAfter)
 
-              let reversedCost: number
-              if (newStockAfterReversal > 0) {
-                reversedCost = Math.max(0,
-                  Math.round(((currentCost * currentStockBeforeReversal) - (purchasePrice * qty)) / newStockAfterReversal * 100) / 100
-                )
-              } else {
-                reversedCost = 0
-              }
+            const currentCost = parseFloat(currentItem.costPrice || '0')
+            const purchasePrice = parseFloat(item.unitPrice)
+            // With no stock left there is nothing to re-value: keep the current cost
+            // (zeroing it would corrupt later averages and COGS).
+            const reversedCost = stockAfter > 0
+              ? Math.max(0, Math.round(((currentCost * stockBefore) - (purchasePrice * qty)) / stockAfter * 100) / 100)
+              : currentCost
 
-              await tx.update(itemsTable)
-                .set({ costPrice: reversedCost.toString() })
-                .where(eq(itemsTable.id, item.itemId))
+            await tx.update(itemsTable)
+              .set({ costPrice: reversedCost.toString() })
+              .where(eq(itemsTable.id, itemId))
 
-              // Log cost reversal history
-              await tx.insert(itemCostHistory).values({
-                tenantId: session.user.tenantId,
-                itemId: item.itemId,
-                supplierId: currentPurchase.supplierId,
-                source: 'purchase_cancellation',
-                previousCostPrice: currentCost.toString(),
-                newCostPrice: reversedCost.toString(),
-                purchasePrice: item.unitPrice,
-                quantity: item.quantity,
-                stockBefore: currentStockBeforeReversal.toString(),
-                stockAfter: newStockAfterReversal.toString(),
-                referenceId: currentPurchase.id,
-                referenceNo: currentPurchase.purchaseNo,
-                notes: `Cost reversed due to cancellation of ${currentPurchase.purchaseNo}`,
-                createdBy: session.user.id,
-              })
+            // Log cost reversal history
+            await tx.insert(itemCostHistory).values({
+              tenantId: session.user.tenantId,
+              itemId,
+              supplierId: currentPurchase.supplierId,
+              source: 'purchase_cancellation',
+              previousCostPrice: currentCost.toString(),
+              newCostPrice: reversedCost.toString(),
+              purchasePrice: item.unitPrice,
+              quantity: item.quantity,
+              stockBefore: stockBefore.toString(),
+              stockAfter: stockAfter.toString(),
+              referenceId: currentPurchase.id,
+              referenceNo: currentPurchase.purchaseNo,
+              notes: `Cost reversed due to cancellation of ${currentPurchase.purchaseNo}`,
+              createdBy: session.user.id,
+            })
 
-              // Update supplier cost record - decrement total purchased qty
-              if (currentPurchase.supplierId) {
-                await tx.update(itemSupplierCosts)
-                  .set({
-                    totalPurchasedQty: sql`GREATEST(0, ${itemSupplierCosts.totalPurchasedQty} - ${qty})`,
-                    updatedAt: new Date(),
-                  })
-                  .where(and(
-                    eq(itemSupplierCosts.itemId, item.itemId),
-                    eq(itemSupplierCosts.supplierId, currentPurchase.supplierId)
-                  ))
-              }
+            // Update supplier cost record - decrement total purchased qty
+            if (currentPurchase.supplierId) {
+              await tx.update(itemSupplierCosts)
+                .set({
+                  totalPurchasedQty: sql`GREATEST(0, ${itemSupplierCosts.totalPurchasedQty} - ${qty})`,
+                  updatedAt: new Date(),
+                })
+                .where(and(
+                  eq(itemSupplierCosts.itemId, itemId),
+                  eq(itemSupplierCosts.supplierId, currentPurchase.supplierId)
+                ))
             }
           }
         }
-      }
 
-      // Revert linked PO: reverse received quantities and update status
-      let purchaseOrderId: string | null = null
-      if (currentPurchase.purchaseOrderId) {
-        purchaseOrderId = currentPurchase.purchaseOrderId
+        const stockChanges: StockChangeRecord[] = await reverseMovements(tx, recordedMovements, {
+          tenantId: session.user.tenantId,
+          referenceType: 'purchase',
+          referenceId: id,
+          keyPrefix: 'purchase-cancel',
+          notes: `${currentPurchase.isReturn ? 'Purchase return' : 'Purchase'} ${currentPurchase.purchaseNo} cancelled - reversal`,
+          userId: session.user.id,
+          source: currentPurchase.isReturn ? 'purchase_return' : 'purchase',
+          costCenterId: currentPurchase.costCenterId || null,
+        })
 
-        // Get invoice items to know how much to reverse
-        const invoiceItemsList = await tx
-          .select({ itemId: purchaseItems.itemId, quantity: purchaseItems.quantity })
-          .from(purchaseItems)
-          .where(eq(purchaseItems.purchaseId, id))
-
-        // Build a map of itemId → total invoice qty to reverse
-        const reverseMap = new Map<string, number>()
-        for (const ii of invoiceItemsList) {
-          if (ii.itemId) {
-            reverseMap.set(ii.itemId, (reverseMap.get(ii.itemId) || 0) + parseFloat(ii.quantity))
+        // Cancelling a purchase return brings the serials sent back to the supplier
+        // into stock again ('returned' -> 'available').
+        if (currentPurchase.isReturn) {
+          const returnedSerials = await tx
+            .selectDistinct({ id: itemSerialNumbers.id })
+            .from(serialNumberMovements)
+            .innerJoin(itemSerialNumbers, eq(itemSerialNumbers.id, serialNumberMovements.serialNumberId))
+            .where(and(
+              eq(serialNumberMovements.referenceType, 'purchase_return'),
+              eq(serialNumberMovements.referenceId, id),
+              eq(serialNumberMovements.toStatus, 'returned'),
+              eq(itemSerialNumbers.status, 'returned'),
+            ))
+          if (returnedSerials.length > 0) {
+            await allocateSerials(tx, {
+              tenantId: session.user.tenantId,
+              serialNumberIds: returnedSerials.map(r => r.id),
+              newStatus: 'available',
+              referenceType: 'purchase_return_cancel',
+              referenceId: id,
+              changedBy: session.user.id,
+              notes: `Purchase return ${currentPurchase.purchaseNo} cancelled - serial back in stock`,
+            })
           }
         }
 
-        // Get PO items and reverse received quantities
-        const poItems = await tx
-          .select({
-            id: purchaseOrderItems.id,
-            itemId: purchaseOrderItems.itemId,
-            quantity: purchaseOrderItems.quantity,
-            receivedQuantity: purchaseOrderItems.receivedQuantity,
-          })
-          .from(purchaseOrderItems)
-          .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId))
+        // Revert linked PO: reverse received quantities and update status
+        let purchaseOrderId: string | null = null
+        if (currentPurchase.purchaseOrderId) {
+          purchaseOrderId = currentPurchase.purchaseOrderId
 
-        let totalOrdered = 0
-        let totalReceived = 0
+          // Get invoice items to know how much to reverse
+          const invoiceItemsList = await tx
+            .select({ itemId: purchaseItems.itemId, quantity: purchaseItems.quantity })
+            .from(purchaseItems)
+            .where(eq(purchaseItems.purchaseId, id))
 
-        for (const poItem of poItems) {
-          const reverseQty = poItem.itemId ? (reverseMap.get(poItem.itemId) || 0) : 0
-          const currentReceived = parseFloat(poItem.receivedQuantity || '0')
-          const newReceived = Math.max(0, currentReceived - reverseQty)
-
-          // Update the PO item's receivedQuantity
-          if (reverseQty > 0) {
-            await tx.update(purchaseOrderItems)
-              .set({ receivedQuantity: newReceived.toString() })
-              .where(eq(purchaseOrderItems.id, poItem.id))
-
-            // Remove used qty from map so duplicate itemIds are handled one at a time
-            const remaining = reverseQty - (currentReceived - newReceived)
-            if (remaining > 0 && poItem.itemId) {
-              reverseMap.set(poItem.itemId, remaining)
-            } else if (poItem.itemId) {
-              reverseMap.delete(poItem.itemId)
+          // Build a map of itemId → total invoice qty to reverse
+          const reverseMap = new Map<string, number>()
+          for (const ii of invoiceItemsList) {
+            if (ii.itemId) {
+              reverseMap.set(ii.itemId, (reverseMap.get(ii.itemId) || 0) + parseFloat(ii.quantity))
             }
           }
 
-          totalOrdered += parseFloat(poItem.quantity)
-          totalReceived += newReceived
+          // Get PO items and reverse received quantities
+          const poItems = await tx
+            .select({
+              id: purchaseOrderItems.id,
+              itemId: purchaseOrderItems.itemId,
+              quantity: purchaseOrderItems.quantity,
+              receivedQuantity: purchaseOrderItems.receivedQuantity,
+            })
+            .from(purchaseOrderItems)
+            .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId))
+
+          let totalOrdered = 0
+          let totalReceived = 0
+
+          for (const poItem of poItems) {
+            const reverseQty = poItem.itemId ? (reverseMap.get(poItem.itemId) || 0) : 0
+            const currentReceived = parseFloat(poItem.receivedQuantity || '0')
+            const newReceived = Math.max(0, currentReceived - reverseQty)
+
+            // Update the PO item's receivedQuantity
+            if (reverseQty > 0) {
+              await tx.update(purchaseOrderItems)
+                .set({ receivedQuantity: newReceived.toString() })
+                .where(eq(purchaseOrderItems.id, poItem.id))
+
+              // Remove used qty from map so duplicate itemIds are handled one at a time
+              const remaining = reverseQty - (currentReceived - newReceived)
+              if (remaining > 0 && poItem.itemId) {
+                reverseMap.set(poItem.itemId, remaining)
+              } else if (poItem.itemId) {
+                reverseMap.delete(poItem.itemId)
+              }
+            }
+
+            totalOrdered += parseFloat(poItem.quantity)
+            totalReceived += newReceived
+          }
+
+          let revertStatus: 'confirmed' | 'partially_received' | 'fully_received'
+          if (totalReceived >= totalOrdered && totalOrdered > 0) {
+            revertStatus = 'fully_received'
+          } else if (totalReceived > 0) {
+            revertStatus = 'partially_received'
+          } else {
+            revertStatus = 'confirmed'
+          }
+
+          await tx.update(purchaseOrders)
+            .set({ status: revertStatus, updatedAt: new Date() })
+            .where(eq(purchaseOrders.id, purchaseOrderId))
         }
 
-        let revertStatus: 'confirmed' | 'partially_received' | 'fully_received'
-        if (totalReceived >= totalOrdered && totalOrdered > 0) {
-          revertStatus = 'fully_received'
-        } else if (totalReceived > 0) {
-          revertStatus = 'partially_received'
-        } else {
-          revertStatus = 'confirmed'
+        // Reverse GL entries for this purchase (non-blocking)
+        if (currentPurchase.status !== 'draft') {
+          try {
+            await postVoidToGL(tx, session.user.tenantId, 'purchase', id)
+          } catch (glError) {
+            logError('api/purchases/[id]', glError)
+          }
         }
 
-        await tx.update(purchaseOrders)
-          .set({ status: revertStatus, updatedAt: new Date() })
-          .where(eq(purchaseOrders.id, purchaseOrderId))
-      }
+        const [updated] = await tx.update(purchases)
+          .set(updateData)
+          .where(eq(purchases.id, id))
+          .returning()
 
-      // Reverse GL entries for this purchase (non-blocking)
-      if (currentPurchase.status !== 'draft') {
-        try {
-          await postVoidToGL(tx, session.user.tenantId, 'purchase', id)
-        } catch (glError) {
-          logError('api/purchases/[id]', glError)
-        }
-      }
-
-      const [updated] = await tx.update(purchases)
-        .set(updateData)
-        .where(eq(purchases.id, id))
-        .returning()
-
-      return { data: updated, tenantId: session.user.tenantId, userId: session.user.id, supplierId: currentPurchase.supplierId, purchaseOrderId }
-    })
+        return { data: updated, tenantId: session.user.tenantId, userId: session.user.id, supplierId: currentPurchase.supplierId, purchaseOrderId, stockChanges }
+      })
+    } catch (err) {
+      const apiError = stockErrorResponse(err, 'Cannot cancel purchase')
+      if (apiError) return apiError
+      throw err
+    }
 
     if (!result) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -418,6 +454,7 @@ export async function PUT(
     if ('error' in result) {
       return result.error
     }
+    notifyStockDecreased(result.stockChanges)
 
     logAndBroadcast(result.tenantId, 'purchase', 'updated', id, {
       userId: result.userId,
@@ -539,172 +576,125 @@ export async function PUT(
         })
       }
 
-      // Update warehouse stock for each item
+      // Update warehouse stock + weighted-average cost for each line. Lines are
+      // processed in itemId order so concurrent documents lock rows consistently.
       const effectiveWarehouseId = currentPurchase.warehouseId
       if (effectiveWarehouseId) {
-        for (const item of purchaseItemsList) {
-          if (item.itemId) {
-            const qty = parseFloat(item.quantity)
+        const stockLines = purchaseItemsList
+          .map((item, idx) => ({ item, idx }))
+          .filter(({ item }) => item.itemId)
+          .sort((x, y) => (x.item.itemId! < y.item.itemId! ? -1 : x.item.itemId! > y.item.itemId! ? 1 : x.idx - y.idx))
+        for (const { item } of stockLines) {
+          const itemId = item.itemId!
+          const qty = parseFloat(item.quantity)
 
-            // Issue #68: Lock stock row with FOR UPDATE before updating
-            const [existingStock] = await tx
+          // Weighted average over TOTAL stock across all warehouses, read before
+          // this line's stock is added (also writes item_cost_history 'purchase').
+          await applyPurchaseCost(tx, {
+            tenantId: session.user.tenantId,
+            itemId,
+            supplierId: currentPurchase.supplierId,
+            unitPrice: parseFloat(item.unitPrice),
+            qty,
+            referenceId: currentPurchase.id,
+            referenceNo: currentPurchase.purchaseNo,
+            userId: session.user.id,
+          })
+
+          await applyStockChange(tx, {
+            tenantId: session.user.tenantId,
+            warehouseId: effectiveWarehouseId,
+            itemId,
+            mode: 'delta',
+            qty,
+            type: 'in',
+            referenceType: 'purchase',
+            referenceId: currentPurchase.id,
+            notes: `Purchase Invoice ${currentPurchase.purchaseNo} submitted`,
+            userId: session.user.id,
+            source: 'purchase',
+            costCenterId: currentPurchase.costCenterId || null,
+            idempotencyKey: `purchase-in:${currentPurchase.id}:${item.id}`,
+          })
+
+          // Serial number tracking: create serial numbers for serialized items
+          const [itemRecord] = await tx.select({ trackSerialNumbers: itemsTable.trackSerialNumbers })
+            .from(itemsTable)
+            .where(eq(itemsTable.id, itemId))
+            .limit(1)
+
+          if (itemRecord?.trackSerialNumbers && itemSerials[itemId]) {
+            const parsedSerials = parseSerialNumberInput(itemSerials[itemId])
+
+            if (parsedSerials.length > 0) {
+              // Check for duplicates
+              const duplicates = await checkDuplicateSerials(tx, itemId, parsedSerials)
+              if (duplicates.length > 0) {
+                throw new Error(`DUPLICATE_SERIALS:Duplicate serial numbers for ${item.itemName || itemId}: ${duplicates.join(', ')}`)
+              }
+
+              // Create serial number records
+              const serialValues = parsedSerials.map(sn => ({
+                tenantId: session.user.tenantId,
+                itemId,
+                serialNumber: sn,
+                status: 'available' as const,
+                warehouseId: effectiveWarehouseId,
+                createdBy: session.user.id,
+              }))
+
+              const created = await tx.insert(itemSerialNumbers).values(serialValues).returning()
+
+              // Create movement records
+              const movementValues = created.map(sn => ({
+                tenantId: session.user.tenantId,
+                serialNumberId: sn.id,
+                fromStatus: null as null,
+                toStatus: 'available' as const,
+                fromWarehouseId: null as null,
+                toWarehouseId: effectiveWarehouseId,
+                referenceType: 'purchase',
+                referenceId: currentPurchase.id,
+                changedBy: session.user.id,
+                notes: `Purchase ${currentPurchase.purchaseNo}`,
+              }))
+
+              if (movementValues.length > 0) {
+                await tx.insert(serialNumberMovements).values(movementValues)
+              }
+            }
+          }
+
+          // Upsert item-supplier cost record
+          if (currentPurchase.supplierId) {
+            const [existingSupplierCost] = await tx
               .select()
-              .from(warehouseStock)
+              .from(itemSupplierCosts)
               .where(and(
-                eq(warehouseStock.warehouseId, effectiveWarehouseId),
-                eq(warehouseStock.itemId, item.itemId)
+                eq(itemSupplierCosts.itemId, itemId),
+                eq(itemSupplierCosts.supplierId, currentPurchase.supplierId)
               ))
-              .for('update')
 
-            if (existingStock) {
-              await tx.update(warehouseStock)
+            if (existingSupplierCost) {
+              await tx.update(itemSupplierCosts)
                 .set({
-                  currentStock: sql`${warehouseStock.currentStock} + ${qty}`,
+                  lastCostPrice: item.unitPrice,
+                  lastPurchaseDate: new Date(),
+                  lastPurchaseId: currentPurchase.id,
+                  totalPurchasedQty: sql`${itemSupplierCosts.totalPurchasedQty} + ${qty}`,
                   updatedAt: new Date(),
                 })
-                .where(eq(warehouseStock.id, existingStock.id))
+                .where(eq(itemSupplierCosts.id, existingSupplierCost.id))
             } else {
-              await tx.insert(warehouseStock).values({
+              await tx.insert(itemSupplierCosts).values({
                 tenantId: session.user.tenantId,
-                warehouseId: effectiveWarehouseId,
-                itemId: item.itemId,
-                currentStock: qty.toString(),
-              })
-            }
-
-            // Create stock movement record
-            await tx.insert(stockMovements).values({
-              tenantId: session.user.tenantId,
-              warehouseId: effectiveWarehouseId,
-              itemId: item.itemId,
-              type: 'in',
-              quantity: qty.toString(),
-              notes: `Purchase Invoice ${currentPurchase.purchaseNo} submitted`,
-              referenceType: 'purchase',
-              referenceId: currentPurchase.id,
-              createdBy: session.user.id,
-            })
-
-            // Serial number tracking: create serial numbers for serialized items
-            const [itemRecord] = await tx.select({ trackSerialNumbers: itemsTable.trackSerialNumbers })
-              .from(itemsTable)
-              .where(eq(itemsTable.id, item.itemId))
-              .limit(1)
-
-            if (itemRecord?.trackSerialNumbers && itemSerials[item.itemId]) {
-              const parsedSerials = parseSerialNumberInput(itemSerials[item.itemId])
-
-              if (parsedSerials.length > 0) {
-                // Check for duplicates
-                const duplicates = await checkDuplicateSerials(tx, item.itemId, parsedSerials)
-                if (duplicates.length > 0) {
-                  throw new Error(`DUPLICATE_SERIALS:Duplicate serial numbers for ${item.itemName || item.itemId}: ${duplicates.join(', ')}`)
-                }
-
-                // Create serial number records
-                const serialValues = parsedSerials.map(sn => ({
-                  tenantId: session.user.tenantId,
-                  itemId: item.itemId!,
-                  serialNumber: sn,
-                  status: 'available' as const,
-                  warehouseId: effectiveWarehouseId,
-                  createdBy: session.user.id,
-                }))
-
-                const created = await tx.insert(itemSerialNumbers).values(serialValues).returning()
-
-                // Create movement records
-                const movementValues = created.map(sn => ({
-                  tenantId: session.user.tenantId,
-                  serialNumberId: sn.id,
-                  fromStatus: null as null,
-                  toStatus: 'available' as const,
-                  fromWarehouseId: null as null,
-                  toWarehouseId: effectiveWarehouseId,
-                  referenceType: 'purchase',
-                  referenceId: currentPurchase.id,
-                  changedBy: session.user.id,
-                  notes: `Purchase ${currentPurchase.purchaseNo}`,
-                }))
-
-                if (movementValues.length > 0) {
-                  await tx.insert(serialNumberMovements).values(movementValues)
-                }
-              }
-            }
-
-            // Fix #3: Update item costPrice using weighted average
-            // Use old stock from warehouseStock (read before increment above)
-            const [currentItem] = await tx
-              .select({ costPrice: itemsTable.costPrice })
-              .from(itemsTable)
-              .where(eq(itemsTable.id, item.itemId))
-              .for('update')
-
-            if (currentItem) {
-              const oldCostPrice = parseFloat(currentItem.costPrice || '0')
-              const newPurchasePrice = parseFloat(item.unitPrice)
-              const oldStock = existingStock ? parseFloat(existingStock.currentStock) : 0
-              // Weighted average: (oldCost * oldStock + newCost * newQty) / (oldStock + newQty)
-              const totalStock = oldStock + qty
-              const totalValue = Math.round(((oldCostPrice * oldStock) + (newPurchasePrice * qty)) * 100) / 100
-              const weightedAvgCost = totalStock > 0
-                ? Math.round(totalValue / totalStock * 100) / 100
-                : newPurchasePrice
-
-              await tx.update(itemsTable)
-                .set({ costPrice: weightedAvgCost.toString() })
-                .where(eq(itemsTable.id, item.itemId))
-
-              // Log cost change history
-              await tx.insert(itemCostHistory).values({
-                tenantId: session.user.tenantId,
-                itemId: item.itemId,
+                itemId,
                 supplierId: currentPurchase.supplierId,
-                source: 'purchase',
-                previousCostPrice: oldCostPrice.toString(),
-                newCostPrice: weightedAvgCost.toString(),
-                purchasePrice: item.unitPrice,
-                quantity: item.quantity,
-                stockBefore: oldStock.toString(),
-                stockAfter: totalStock.toString(),
-                referenceId: currentPurchase.id,
-                referenceNo: currentPurchase.purchaseNo,
-                createdBy: session.user.id,
+                lastCostPrice: item.unitPrice,
+                lastPurchaseDate: new Date(),
+                lastPurchaseId: currentPurchase.id,
+                totalPurchasedQty: qty.toString(),
               })
-
-              // Upsert item-supplier cost record
-              if (currentPurchase.supplierId) {
-                const [existingSupplierCost] = await tx
-                  .select()
-                  .from(itemSupplierCosts)
-                  .where(and(
-                    eq(itemSupplierCosts.itemId, item.itemId),
-                    eq(itemSupplierCosts.supplierId, currentPurchase.supplierId)
-                  ))
-
-                if (existingSupplierCost) {
-                  await tx.update(itemSupplierCosts)
-                    .set({
-                      lastCostPrice: item.unitPrice,
-                      lastPurchaseDate: new Date(),
-                      lastPurchaseId: currentPurchase.id,
-                      totalPurchasedQty: sql`${itemSupplierCosts.totalPurchasedQty} + ${qty}`,
-                      updatedAt: new Date(),
-                    })
-                    .where(eq(itemSupplierCosts.id, existingSupplierCost.id))
-                } else {
-                  await tx.insert(itemSupplierCosts).values({
-                    tenantId: session.user.tenantId,
-                    itemId: item.itemId,
-                    supplierId: currentPurchase.supplierId,
-                    lastCostPrice: item.unitPrice,
-                    lastPurchaseDate: new Date(),
-                    lastPurchaseId: currentPurchase.id,
-                    totalPurchasedQty: qty.toString(),
-                  })
-                }
-              }
             }
           }
         }
@@ -745,6 +735,8 @@ export async function PUT(
       if (message.startsWith('DUPLICATE_SERIALS:')) {
         return NextResponse.json({ error: message.replace('DUPLICATE_SERIALS:', '') }, { status: 400 })
       }
+      const apiError = stockErrorResponse(err)
+      if (apiError) return apiError
       throw err
     }
 
@@ -871,145 +863,121 @@ export async function DELETE(
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
 
-  const result = await withAuthTenantTransaction(async (session, tx) => {
-    const permError = requirePermission(session, 'managePurchases')
-    if (permError) return { error: permError }
+  let result
+  try {
+    result = await withAuthTenantTransaction(async (session, tx) => {
+      const permError = requirePermission(session, 'managePurchases')
+      if (permError) return { error: permError }
 
-    // Get current purchase with lock (RLS filters by tenant)
-    const [currentPurchase] = await tx
-      .select()
-      .from(purchases)
-      .where(eq(purchases.id, id))
-      .for('update')
-
-    if (!currentPurchase) {
-      return { error: NextResponse.json({ error: 'Purchase not found' }, { status: 404 }) }
-    }
-
-    if (currentPurchase.status !== 'draft' && currentPurchase.status !== 'pending') {
-      return { error: NextResponse.json({ error: 'Only draft or pending purchases can be deleted. Cancel the purchase instead.' }, { status: 400 }) }
-    }
-
-    if (parseFloat(currentPurchase.paidAmount) > 0) {
-      return { error: NextResponse.json({ error: 'Cannot delete purchase with payments. Cancel the purchase instead.' }, { status: 400 }) }
-    }
-
-    // Reverse supplier balance with audit trail (only if submitted, not draft)
-    const total = parseFloat(currentPurchase.total)
-    if (currentPurchase.status !== 'draft' && currentPurchase.supplierId && total > 0) {
-      // Get current supplier balance BEFORE update
-      const [currentSupplier] = await tx
-        .select({ balance: suppliers.balance })
-        .from(suppliers)
-        .where(eq(suppliers.id, currentPurchase.supplierId))
+      // Get current purchase with lock (RLS filters by tenant)
+      const [currentPurchase] = await tx
+        .select()
+        .from(purchases)
+        .where(eq(purchases.id, id))
         .for('update')
 
-      const previousBalance = parseFloat(currentSupplier?.balance || '0')
-      const newBalance = Math.round((previousBalance - total) * 100) / 100
+      if (!currentPurchase) {
+        return { error: NextResponse.json({ error: 'Purchase not found' }, { status: 404 }) }
+      }
 
-      await tx.update(suppliers)
-        .set({ balance: newBalance.toString() })
-        .where(eq(suppliers.id, currentPurchase.supplierId))
+      if (currentPurchase.status !== 'draft' && currentPurchase.status !== 'pending') {
+        return { error: NextResponse.json({ error: 'Only draft or pending purchases can be deleted. Cancel the purchase instead.' }, { status: 400 }) }
+      }
 
-      // Create audit record
-      await tx.insert(supplierBalanceAudit).values({
-        tenantId: session.user.tenantId,
-        supplierId: currentPurchase.supplierId,
-        type: 'delete',
-        amount: (-total).toString(),
-        previousBalance: previousBalance.toString(),
-        newBalance: newBalance.toString(),
-        referenceType: 'purchase',
-        referenceId: currentPurchase.id,
-        notes: `Purchase ${currentPurchase.purchaseNo} deleted - balance reversed`,
-        createdBy: session.user.id,
-      })
-    }
+      if (parseFloat(currentPurchase.paidAmount) > 0) {
+        return { error: NextResponse.json({ error: 'Cannot delete purchase with payments. Cancel the purchase instead.' }, { status: 400 }) }
+      }
 
-    // Reverse stock if items were added to inventory
-    const existingMovements = await tx
-      .select({ id: stockMovements.id })
-      .from(stockMovements)
-      .where(and(
-        eq(stockMovements.referenceType, 'purchase'),
-        eq(stockMovements.referenceId, id),
-        eq(stockMovements.type, 'in')
-      ))
-      .limit(1)
+      // Reverse supplier balance with audit trail (only if submitted, not draft)
+      const total = parseFloat(currentPurchase.total)
+      if (currentPurchase.status !== 'draft' && currentPurchase.supplierId && total > 0) {
+        // Get current supplier balance BEFORE update
+        const [currentSupplier] = await tx
+          .select({ balance: suppliers.balance })
+          .from(suppliers)
+          .where(eq(suppliers.id, currentPurchase.supplierId))
+          .for('update')
 
-    if (existingMovements.length > 0 && currentPurchase.warehouseId) {
-      const purchaseItemsList = await tx
-        .select()
-        .from(purchaseItems)
-        .where(eq(purchaseItems.purchaseId, id))
+        const previousBalance = parseFloat(currentSupplier?.balance || '0')
+        const newBalance = Math.round((previousBalance - total) * 100) / 100
 
-      for (const item of purchaseItemsList) {
-        if (item.itemId) {
-          const qty = parseFloat(item.quantity)
+        await tx.update(suppliers)
+          .set({ balance: newBalance.toString() })
+          .where(eq(suppliers.id, currentPurchase.supplierId))
 
-          const [existingStock] = await tx
-            .select()
-            .from(warehouseStock)
-            .where(and(
-              eq(warehouseStock.warehouseId, currentPurchase.warehouseId),
-              eq(warehouseStock.itemId, item.itemId)
-            ))
-            .for('update')
+        // Create audit record
+        await tx.insert(supplierBalanceAudit).values({
+          tenantId: session.user.tenantId,
+          supplierId: currentPurchase.supplierId,
+          type: 'delete',
+          amount: (-total).toString(),
+          previousBalance: previousBalance.toString(),
+          newBalance: newBalance.toString(),
+          referenceType: 'purchase',
+          referenceId: currentPurchase.id,
+          notes: `Purchase ${currentPurchase.purchaseNo} deleted - balance reversed`,
+          createdBy: session.user.id,
+        })
+      }
 
-          if (existingStock) {
-            await tx.update(warehouseStock)
-              .set({
-                currentStock: sql`GREATEST(0, ${warehouseStock.currentStock} - ${qty})`,
-                updatedAt: new Date(),
-              })
-              .where(eq(warehouseStock.id, existingStock.id))
-          }
-
-          await tx.insert(stockMovements).values({
-            tenantId: session.user.tenantId,
-            warehouseId: currentPurchase.warehouseId,
-            itemId: item.itemId,
-            type: 'out',
-            quantity: qty.toString(),
-            notes: `Purchase ${currentPurchase.purchaseNo} deleted - reversal`,
-            referenceType: 'purchase',
-            referenceId: currentPurchase.id,
-            createdBy: session.user.id,
-          })
+      if (!currentPurchase.isReturn) {
+        const [activeReturn] = await tx
+          .select({ id: purchases.id, purchaseNo: purchases.purchaseNo })
+          .from(purchases)
+          .where(and(eq(purchases.returnAgainst, id), eq(purchases.isReturn, true)))
+          .limit(1)
+        if (activeReturn) {
+          return { error: NextResponse.json({
+            error: `Cannot delete: purchase return ${activeReturn.purchaseNo} references this purchase. Cancel the purchase instead.`,
+            code: 'HAS_RETURNS',
+          }, { status: 400 }) }
         }
       }
-    }
 
-    // Reverse GL entries for this purchase (non-blocking)
-    if (currentPurchase.status !== 'draft') {
-      try {
-        await postVoidToGL(tx, session.user.tenantId, 'purchase', id)
-      } catch (glError) {
-        logError('api/purchases/[id]', glError)
+      // Reverse exactly the stock movements recorded for this purchase (no clamping;
+      // insufficient stock fails the delete with 400). The ledger rows — originals
+      // and reversals — are kept as the audit trail.
+      const recordedMovements = (await findMovements(tx, session.user.tenantId, 'purchase', id))
+        .filter(m => m.qtyChange !== 0)
+      const stockChanges: StockChangeRecord[] = await reverseMovements(tx, recordedMovements, {
+        tenantId: session.user.tenantId,
+        referenceType: 'purchase',
+        referenceId: id,
+        keyPrefix: 'purchase-delete',
+        notes: `Purchase ${currentPurchase.purchaseNo} deleted - reversal`,
+        userId: session.user.id,
+        source: currentPurchase.isReturn ? 'purchase_return' : 'purchase',
+        costCenterId: currentPurchase.costCenterId || null,
+      })
+
+      // Reverse GL entries for this purchase (non-blocking)
+      if (currentPurchase.status !== 'draft') {
+        try {
+          await postVoidToGL(tx, session.user.tenantId, 'purchase', id)
+        } catch (glError) {
+          logError('api/purchases/[id]', glError)
+        }
       }
-    }
 
-    // Delete stock movements for this purchase
-    await tx.delete(stockMovements)
-      .where(and(
-        eq(stockMovements.referenceType, 'purchase'),
-        eq(stockMovements.referenceId, id)
-      ))
+      // Delete items
+      await tx.delete(purchaseItems)
+        .where(eq(purchaseItems.purchaseId, id))
 
-    // Delete items
-    await tx.delete(purchaseItems)
-      .where(eq(purchaseItems.purchaseId, id))
+      // Delete payments (should be none)
+      await tx.delete(purchasePayments)
+        .where(eq(purchasePayments.purchaseId, id))
 
-    // Delete payments (should be none)
-    await tx.delete(purchasePayments)
-      .where(eq(purchasePayments.purchaseId, id))
+      // Delete purchase
+      await tx.delete(purchases)
+        .where(eq(purchases.id, id))
 
-    // Delete purchase
-    await tx.delete(purchases)
-      .where(eq(purchases.id, id))
-
-    return { data: { success: true }, tenantId: session.user.tenantId, supplierId: currentPurchase.supplierId }
-  })
+      return { data: { success: true }, tenantId: session.user.tenantId, supplierId: currentPurchase.supplierId, stockChanges }
+    })
+  } catch (err) {
+    const apiError = stockErrorResponse(err, 'Cannot delete purchase')
+    if (apiError) return apiError
+    throw err
+  }
 
   if (!result) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -1017,6 +985,7 @@ export async function DELETE(
   if ('error' in result) {
     return result.error
   }
+  notifyStockDecreased(result.stockChanges)
 
   logAndBroadcast(result.tenantId, 'purchase', 'deleted', id)
   if (result.supplierId) {

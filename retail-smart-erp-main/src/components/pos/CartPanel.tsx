@@ -31,6 +31,8 @@ interface CartPanelProps {
   onSetQuantityDirectly: (cartLineId: string, qty: number) => void
   onClearCart: () => void
   onCancelReturnMode: () => void
+  /** Return mode against an invoice: turn the selected return lines into an exchange (W8) */
+  onStartExchange?: () => void
 
   subtotal: number
   itemCount: number
@@ -85,6 +87,7 @@ export function CartPanel({
   onSetQuantityDirectly,
   onClearCart,
   onCancelReturnMode,
+  onStartExchange,
   subtotal,
   itemCount,
   discountAmount,
@@ -129,12 +132,23 @@ export function CartPanel({
             )}
           </div>
           {isReturnMode && (
-            <button
-              onClick={onCancelReturnMode}
-              className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm font-medium hover:bg-gray-300"
-            >
-              Cancel
-            </button>
+            <div className="flex items-center gap-2">
+              {onStartExchange && cart.length > 0 && (
+                <button
+                  onClick={onStartExchange}
+                  className="px-3 py-1.5 bg-amber-500 text-white rounded text-sm font-medium hover:bg-amber-600"
+                  title="Return the selected lines and sell replacement items, paying only the difference"
+                >
+                  Exchange
+                </button>
+              )}
+              <button
+                onClick={onCancelReturnMode}
+                className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm font-medium hover:bg-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
           )}
         </div>
 
@@ -238,6 +252,11 @@ export function CartPanel({
                     {isReturnMode && (
                       <span className="inline-block px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded mt-1">
                         Return Item
+                      </span>
+                    )}
+                    {isReturnMode && item.maxReturnQuantity !== undefined && (
+                      <span className="inline-block ml-2 text-xs text-red-600 mt-1">
+                        {item.maxReturnQuantity} returnable
                       </span>
                     )}
                     {item.weight && item.isWeighable && (

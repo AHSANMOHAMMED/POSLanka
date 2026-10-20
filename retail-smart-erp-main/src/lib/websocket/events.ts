@@ -113,6 +113,7 @@ export type EntityType =
   | 'item-supplier-cost'
   | 'item-cost-history'
   | 'label-template'
+  | 'stock-intake'
   // Account-level entity types (not tenant-scoped)
   | 'account-notification'
   | 'account-wallet'

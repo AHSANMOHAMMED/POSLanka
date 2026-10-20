@@ -8,15 +8,17 @@ import { CategoryModal } from './CategoryModal'
 import { SupplierModal } from './SupplierModal'
 import { toast } from '@/components/ui/toast'
 import { isValidPositiveNumber } from '@/lib/utils/validation'
-import { Package, Tag, DollarSign, Boxes, Truck, Ruler, Leaf, Snowflake, Car, Plus, X, Loader2, Upload, Image as ImageIcon, History, ArrowRight } from 'lucide-react'
+import { Package, Tag, DollarSign, Boxes, Truck, Ruler, Leaf, Snowflake, Car, Plus, X, Loader2, Upload, Image as ImageIcon, History, ArrowRight, Clock } from 'lucide-react'
 import { Pagination } from '@/components/ui/pagination'
 import { useTerminology, useSmartWarnings } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 import { SmartWarningBanner } from '@/components/ai/SmartWarningBanner'
 import { VehicleMakeModal } from './VehicleMakeModal'
 import { VehicleModelModal } from './VehicleModelModal'
+import { ItemHistoryPanel } from './ItemHistoryPanel'
+import { formatDateTime } from '@/lib/utils/date-format'
 
-type TabType = 'basic' | 'pricing' | 'inventory' | 'supplier' | 'physical' | 'dietary' | 'freshness' | 'fits' | 'cost_tracking'
+type TabType = 'basic' | 'pricing' | 'inventory' | 'supplier' | 'physical' | 'dietary' | 'freshness' | 'fits' | 'cost_tracking' | 'history'
 
 interface VehicleMake {
   id: string
@@ -53,6 +55,11 @@ interface Supplier {
 interface Item {
   id: string
   name: string
+  // Auto-generated per-tenant code (ITM-000123) + audit / optimistic lock
+  itemCode?: string | null
+  version?: number
+  updatedAt?: string | null
+  updatedBy?: { id: string; name: string | null } | string | null
   sku: string | null
   barcode: string | null
   categoryId: string | null
@@ -511,6 +518,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     }
     if (editItem) {
       base.push({ key: 'cost_tracking', label: 'Supplier Pricing', icon: <History size={16} /> })
+      base.push({ key: 'history', label: 'History', icon: <Clock size={16} /> })
     }
     return base
   }, [isAutoService, isRestaurant, isSupermarket, businessType, editItem])
@@ -605,6 +613,8 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           isGiftCard: formData.isGiftCard,
           // Tax template
           taxTemplateId: formData.taxTemplateId || null,
+          // Optimistic lock: server answers 409 STALE_ITEM if someone else saved first
+          ...(editItem && typeof editItem.version === 'number' ? { expectedVersion: editItem.version } : {}),
         }),
       })
 
@@ -619,7 +629,14 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
         handleClose()
       } else {
         const data = await res.json()
-        setError(data.error || `Failed to save ${t.item.toLowerCase()}`)
+        if (data.code === 'DUPLICATE' && data.field) {
+          const labels: Record<string, string> = { sku: 'SKU', barcode: 'Barcode', pluCode: 'PLU code', itemCode: 'Item code' }
+          setError(`${labels[data.field] || data.field}${data.value ? ` "${data.value}"` : ''} is already used by another ${t.item.toLowerCase()}`)
+        } else if (data.code === 'STALE_ITEM' || data.code === 'CONFLICT') {
+          setError(`This ${t.item.toLowerCase()} was changed by someone else. Close and reopen it to see the latest version.`)
+        } else {
+          setError(data.error || `Failed to save ${t.item.toLowerCase()}`)
+        }
       }
     } catch {
       setError(`Failed to save ${t.item.toLowerCase()}`)
@@ -662,6 +679,31 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
             {/* Basic Tab */}
             {activeTab === 'basic' && (
               <div className="space-y-4">
+                {editItem && (
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
+                    {editItem.itemCode && (
+                      <span>
+                        Item Code:{' '}
+                        <span className="font-mono font-medium text-gray-700 dark:text-gray-200" title="Auto-generated, read-only">
+                          {editItem.itemCode}
+                        </span>
+                      </span>
+                    )}
+                    {editItem.updatedAt && (
+                      <span>
+                        Last updated
+                        {editItem.updatedBy && typeof editItem.updatedBy === 'object' && editItem.updatedBy.name
+                          ? ` by ${editItem.updatedBy.name}` : ''}
+                        {' on '}{formatDateTime(editItem.updatedAt)}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {!editItem && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Item Code is generated automatically when you save (e.g. ITM-000123). Leave Barcode empty to auto-generate one.
+                  </p>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="md:col-span-2">
                     <FormLabel required>Name</FormLabel>
@@ -1384,6 +1426,11 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                   </>
                 )}
               </div>
+            )}
+
+            {/* History Tab (stock ledger + field / price changes) */}
+            {activeTab === 'history' && editItem && (
+              <ItemHistoryPanel itemId={editItem.id} />
             )}
 
             {/* Supplier Pricing / Cost History Tab */}

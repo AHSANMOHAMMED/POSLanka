@@ -153,6 +153,35 @@ npm run db:seed-admin
 npm run db:indexes
 ```
 
+### Tenant isolation check
+
+Run after every migration (and in CI against a migrated database):
+
+```bash
+DATABASE_URL=postgresql://... DATABASE_APP_ROLE=app_user npm run db:check-isolation
+```
+
+`scripts/check-tenant-isolation.mjs` exits **1** if any `public` table with a `tenant_id` column
+has RLS disabled, has no policy for `app_user`, has a policy that does not reference
+`app.tenant_id`, or has a nullable `tenant_id`; it also switches to `app_user` with a random
+tenant id (rolled back) and fails if any tenant row is visible. Exit code 2 means it could not run.
+Documented exceptions live in the script, not in env vars:
+
+- **global+tenant** (`vehicle_types`, `vehicle_type_diagram_views`, `inspection_templates`,
+  `inspection_categories`, `inspection_checklist_items`): `tenant_id IS NULL` rows are system
+  defaults, readable by every tenant through a SELECT-only policy and never writable by tenant code.
+- **account-level nullable** (`account_sessions`, `user_devices`, `ai_error_logs`):
+  `tenant_id IS NULL` rows belong to an account, a super admin or the platform and are invisible to tenant code.
+
+Platform tables (`account_tenants`, `subscriptions`, `subscription_payments`, `tenant_usage`,
+`account_sessions`, `user_devices`, `ai_error_logs` and the global+tenant tables) also carry a
+`platform_login_access` policy: the plain `db` connection (login role, no `app.tenant_id` set)
+keeps full access so billing, auth, cron and the super-admin console keep working with a
+non-superuser login role. All other tenant tables are visible to the login role only if it is a
+superuser or has `BYPASSRLS` (the super-admin console reads several of them with the plain `db`),
+so grant `ALTER ROLE poslanka_app BYPASSRLS;` if you connect with a dedicated login role —
+`SET ROLE app_user` inside `withTenant()` still enforces RLS because `app_user` has no `BYPASSRLS`.
+
 ---
 
 ## 5. Domain, DNS & SSL Configuration

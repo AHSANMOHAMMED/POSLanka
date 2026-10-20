@@ -201,7 +201,7 @@ export async function generateTemplate(
   for (let colIdx = 0; colIdx < importFields.length; colIdx++) {
     const f = importFields[colIdx]
     if (f.type === 'enum' && f.enumValues && f.enumValues.length > 0) {
-      const colLetter = String.fromCharCode(65 + colIdx)
+      const colLetter = columnLetter(colIdx)
       for (let row = 3; row <= 5002; row++) {
         sheet.getCell(`${colLetter}${row}`).dataValidation = {
           type: 'list',
@@ -214,7 +214,7 @@ export async function generateTemplate(
       }
     }
     if (f.type === 'boolean') {
-      const colLetter = String.fromCharCode(65 + colIdx)
+      const colLetter = columnLetter(colIdx)
       for (let row = 3; row <= 5002; row++) {
         sheet.getCell(`${colLetter}${row}`).dataValidation = {
           type: 'list',
@@ -229,8 +229,24 @@ export async function generateTemplate(
   return Buffer.from(buffer)
 }
 
+/** 0-based column index → Excel column letters (A, B, …, Z, AA, AB, …). */
+function columnLetter(index: number): string {
+  let n = index + 1
+  let out = ''
+  while (n > 0) {
+    const rem = (n - 1) % 26
+    out = String.fromCharCode(65 + rem) + out
+    n = Math.floor((n - 1) / 26)
+  }
+  return out
+}
+
 function getSampleValue(field: EntityFieldConfig): string {
+  if (field.key.startsWith('stock:')) return '0'
   switch (field.key) {
+    case 'openingStock': return '10'
+    case 'minStock': return '2'
+    case 'reorderQty': return '5'
     case 'name': return 'Sample Product'
     case 'sku': return 'SKU-001'
     case 'barcode': return '1234567890'

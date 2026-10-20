@@ -5,9 +5,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db as rawDb, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
 import {
-  purchases, purchaseItems, suppliers, warehouseStock, stockMovements, supplierBalanceAudit,
+  purchases, purchaseItems, suppliers, supplierBalanceAudit, items as itemsTable, itemSerialNumbers,
 } from '@/lib/db/schema'
-import { eq, and, sql, ilike, desc, inArray, ne } from 'drizzle-orm'
+import { eq, and, ilike, desc, inArray, ne } from 'drizzle-orm'
+import { applyStockChanges, notifyStockDecreased, type StockChangeInput } from '@/lib/inventory/apply-stock-change'
+import { allocateSerials } from '@/lib/inventory/serial-numbers'
+import { stockErrorResponse, type StockChangeRecord } from '@/lib/purchasing/stock-cost'
 import { roundCurrency } from '@/lib/utils/currency'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { postPurchaseToGL } from '@/lib/accounting/auto-post'
@@ -81,6 +84,11 @@ export async function POST(
           ne(purchases.status, 'cancelled')
         ))
 
+      // Lines are matched to prior returns by a stable key: the inventory item
+      // when there is one, otherwise the (case-insensitive) name + unit price.
+      const lineKey = (l: { itemId: string | null; itemName: string; unitPrice: string }) =>
+        l.itemId ? `item:${l.itemId}` : `name:${l.itemName.trim().toLowerCase()}|${parseFloat(l.unitPrice).toFixed(2)}`
+
       const alreadyReturnedMap = new Map<string, number>()
       if (existingReturns.length > 0) {
         const existingReturnItems = await tx
@@ -89,26 +97,23 @@ export async function POST(
           .where(inArray(purchaseItems.purchaseId, existingReturns.map(r => r.id)))
 
         for (const eri of existingReturnItems) {
-          if (eri.itemId) {
-            const prev = alreadyReturnedMap.get(eri.itemId) || 0
-            alreadyReturnedMap.set(eri.itemId, prev + Math.abs(parseFloat(eri.quantity)))
-          }
+          const key = lineKey(eri)
+          alreadyReturnedMap.set(key, (alreadyReturnedMap.get(key) || 0) + Math.abs(parseFloat(eri.quantity)))
         }
       }
 
-      // Aggregate total original quantities per itemId (same item may appear on multiple lines)
-      const totalOriginalQtyByItemId = new Map<string, number>()
+      // Aggregate total original quantities per key (same item may appear on multiple lines)
+      const totalOriginalQtyByKey = new Map<string, number>()
       for (const oi of originalItems) {
-        if (oi.itemId) {
-          const prev = totalOriginalQtyByItemId.get(oi.itemId) || 0
-          totalOriginalQtyByItemId.set(oi.itemId, prev + parseFloat(oi.quantity))
-        }
+        const key = lineKey(oi)
+        totalOriginalQtyByKey.set(key, (totalOriginalQtyByKey.get(key) || 0) + parseFloat(oi.quantity))
       }
 
       // Validate return quantities
-      const validatedItems: { item: typeof originalItems[0]; returnQty: number }[] = []
-      // Track return quantities requested in this batch per itemId to prevent over-returning
-      const batchReturnByItemId = new Map<string, number>()
+      const validatedItems: { item: typeof originalItems[0]; returnQty: number; serialNumberIds: string[] }[] = []
+      // Track return quantities requested in this batch per key to prevent over-returning
+      const batchReturnByKey = new Map<string, number>()
+      const round3 = (n: number) => Math.round(n * 1000) / 1000
 
       for (const ri of returnItems) {
         const origItem = originalItemMap.get(ri.purchaseItemId)
@@ -120,34 +125,73 @@ export async function POST(
           return { error: NextResponse.json({ error: 'Return quantity must be positive' }, { status: 400 }) }
         }
 
-        // For items with itemId, validate against total original qty for that item across all lines
-        // This correctly handles the same inventory item appearing on multiple purchase lines
-        if (origItem.itemId) {
-          const totalOriginalQty = totalOriginalQtyByItemId.get(origItem.itemId) || 0
-          const alreadyReturned = alreadyReturnedMap.get(origItem.itemId) || 0
-          const batchReturned = batchReturnByItemId.get(origItem.itemId) || 0
-          const maxReturnable = totalOriginalQty - alreadyReturned - batchReturned
+        // Validate against the total purchased for this key across all lines, minus
+        // everything already returned (prior returns + earlier lines of this request).
+        const key = lineKey(origItem)
+        const totalOriginalQty = totalOriginalQtyByKey.get(key) || 0
+        const alreadyReturned = alreadyReturnedMap.get(key) || 0
+        const batchReturned = batchReturnByKey.get(key) || 0
+        const maxReturnable = round3(totalOriginalQty - alreadyReturned - batchReturned)
 
-          if (ri.returnQuantity > maxReturnable) {
-            return { error: NextResponse.json({
-              error: alreadyReturned > 0
-                ? `Cannot return ${ri.returnQuantity} of ${origItem.itemName}. Only ${maxReturnable} remaining (${alreadyReturned} already returned)`
-                : `Return quantity (${ri.returnQuantity}) exceeds original quantity (${totalOriginalQty}) for ${origItem.itemName}`,
-            }, { status: 400 }) }
-          }
-
-          batchReturnByItemId.set(origItem.itemId, batchReturned + ri.returnQuantity)
-        } else {
-          // For items without itemId, validate against the specific line item quantity only
-          const originalQty = parseFloat(origItem.quantity)
-          if (ri.returnQuantity > originalQty) {
-            return { error: NextResponse.json({
-              error: `Return quantity (${ri.returnQuantity}) exceeds original quantity (${originalQty}) for ${origItem.itemName}`,
-            }, { status: 400 }) }
-          }
+        if (ri.returnQuantity > maxReturnable) {
+          return { error: NextResponse.json({
+            error: alreadyReturned + batchReturned > 0
+              ? `Cannot return ${ri.returnQuantity} of ${origItem.itemName}. Only ${Math.max(0, maxReturnable)} remaining (${round3(alreadyReturned + batchReturned)} already returned)`
+              : `Return quantity (${ri.returnQuantity}) exceeds original quantity (${totalOriginalQty}) for ${origItem.itemName}`,
+          }, { status: 400 }) }
         }
 
-        validatedItems.push({ item: origItem, returnQty: ri.returnQuantity })
+        batchReturnByKey.set(key, round3(batchReturned + ri.returnQuantity))
+        validatedItems.push({ item: origItem, returnQty: ri.returnQuantity, serialNumberIds: [...new Set(ri.serialNumberIds || [])] })
+      }
+
+      // Serial-tracked items: the serials going back to the supplier must be given,
+      // match the quantity, belong to the item and be 'available' in the warehouse.
+      const trackedItemIds = [...new Set(validatedItems.map(v => v.item.itemId).filter((x): x is string => !!x))]
+      const trackedSet = new Set<string>()
+      if (trackedItemIds.length > 0) {
+        const tracked = await tx
+          .select({ id: itemsTable.id })
+          .from(itemsTable)
+          .where(and(inArray(itemsTable.id, trackedItemIds), eq(itemsTable.trackSerialNumbers, true)))
+        for (const t of tracked) trackedSet.add(t.id)
+      }
+      const usedSerials = new Set<string>()
+      for (const v of validatedItems) {
+        const name = v.item.itemName
+        if (!v.item.itemId || !trackedSet.has(v.item.itemId)) {
+          if (v.serialNumberIds.length > 0) {
+            return { error: NextResponse.json({ error: `${name} is not serial-tracked; serial numbers are not allowed` }, { status: 400 }) }
+          }
+          continue
+        }
+        if (!Number.isInteger(v.returnQty) || v.serialNumberIds.length !== v.returnQty) {
+          return { error: NextResponse.json({
+            error: `${name} is serial-tracked: provide exactly ${v.returnQty} serial number(s) to return (got ${v.serialNumberIds.length})`,
+          }, { status: 400 }) }
+        }
+        for (const sid of v.serialNumberIds) {
+          if (usedSerials.has(sid)) {
+            return { error: NextResponse.json({ error: `Serial number listed more than once for ${name}` }, { status: 400 }) }
+          }
+          usedSerials.add(sid)
+        }
+        const serials = await tx
+          .select()
+          .from(itemSerialNumbers)
+          .where(inArray(itemSerialNumbers.id, v.serialNumberIds))
+          .for('update')
+        const bad = v.serialNumberIds.filter(sid => {
+          const s = serials.find(x => x.id === sid)
+          return !s || s.itemId !== v.item.itemId || s.status !== 'available'
+            || (originalPurchase.warehouseId != null && s.warehouseId !== originalPurchase.warehouseId)
+        })
+        if (bad.length > 0) {
+          const labels = bad.map(sid => serials.find(x => x.id === sid)?.serialNumber || sid)
+          return { error: NextResponse.json({
+            error: `Serial numbers not available for return of ${name} in this warehouse: ${labels.join(', ')}`,
+          }, { status: 400 }) }
+        }
       }
 
       // Recalculate tax using templates for the return line items
@@ -232,42 +276,44 @@ export async function POST(
         })
       }
 
-      // Reverse stock for returned items
+      // Reverse stock for returned items (signed ledger rows; never clamps — if the
+      // stock is no longer on hand the return fails with 400)
+      const stockInputs: StockChangeInput[] = []
       if (originalPurchase.warehouseId) {
-        for (const { item, returnQty } of validatedItems) {
-          if (item.itemId) {
-            const [existingStock] = await tx
-              .select()
-              .from(warehouseStock)
-              .where(and(
-                eq(warehouseStock.warehouseId, originalPurchase.warehouseId!),
-                eq(warehouseStock.itemId, item.itemId)
-              ))
-              .for('update')
+        validatedItems.forEach(({ item, returnQty }, idx) => {
+          if (!item.itemId) return
+          stockInputs.push({
+            tenantId: session.user.tenantId,
+            warehouseId: originalPurchase.warehouseId!,
+            itemId: item.itemId,
+            mode: 'delta',
+            qty: -returnQty,
+            type: 'out',
+            referenceType: 'purchase',
+            referenceId: returnPurchase.id,
+            notes: `Purchase return ${returnPurchaseNo} against ${originalPurchase.purchaseNo}`,
+            userId: session.user.id,
+            source: 'purchase_return',
+            costCenterId: originalPurchase.costCenterId || null,
+            idempotencyKey: `purchase-return:${returnPurchase.id}:${idx}`,
+          })
+        })
+      }
+      const stockResults = await applyStockChanges(tx, stockInputs)
+      const stockChanges: StockChangeRecord[] = stockResults.map((result, i) => ({ result, input: stockInputs[i] }))
 
-            if (existingStock) {
-              await tx.update(warehouseStock)
-                .set({
-                  currentStock: sql`GREATEST(0, ${warehouseStock.currentStock} - ${returnQty})`,
-                  updatedAt: new Date(),
-                })
-                .where(eq(warehouseStock.id, existingStock.id))
-            }
-
-            // Create stock movement record
-            await tx.insert(stockMovements).values({
-              tenantId: session.user.tenantId,
-              warehouseId: originalPurchase.warehouseId!,
-              itemId: item.itemId,
-              type: 'out',
-              quantity: returnQty.toString(),
-              notes: `Purchase return ${returnPurchaseNo} against ${originalPurchase.purchaseNo}`,
-              referenceType: 'purchase',
-              referenceId: returnPurchase.id,
-              createdBy: session.user.id,
-            })
-          }
-        }
+      // Serials go back to the supplier: status 'returned', audit trail on the return
+      for (const { serialNumberIds } of validatedItems) {
+        if (serialNumberIds.length === 0) continue
+        await allocateSerials(tx, {
+          tenantId: session.user.tenantId,
+          serialNumberIds,
+          newStatus: 'returned',
+          referenceType: 'purchase_return',
+          referenceId: returnPurchase.id,
+          changedBy: session.user.id,
+          notes: `Returned to supplier on ${returnPurchaseNo} (against ${originalPurchase.purchaseNo})`,
+        })
       }
 
       // Reverse supplier balance
@@ -320,6 +366,7 @@ export async function POST(
         data: returnPurchase,
         tenantId: session.user.tenantId,
         supplierId: originalPurchase.supplierId,
+        stockChanges,
       }
     })
 
@@ -330,6 +377,8 @@ export async function POST(
       return result.error
     }
 
+    notifyStockDecreased(result.stockChanges)
+
     logAndBroadcast(result.tenantId, 'purchase', 'created', result.data.id)
     if (result.supplierId) {
       logAndBroadcast(result.tenantId, 'supplier', 'updated', result.supplierId)
@@ -338,6 +387,8 @@ export async function POST(
 
     return NextResponse.json(result.data, { status: 201 })
   } catch (error) {
+    const apiError = stockErrorResponse(error, 'Cannot return items')
+    if (apiError) return apiError
     logError('api/purchases/[id]/return', error)
     return NextResponse.json({ error: 'Failed to create purchase return' }, { status: 500 })
   }

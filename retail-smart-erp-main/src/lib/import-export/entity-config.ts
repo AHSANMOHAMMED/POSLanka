@@ -38,13 +38,41 @@ export interface EntityConfig {
   importable: boolean                 // Whether import is supported
   fields: EntityFieldConfig[]
   children?: ChildEntityConfig[]
-  uniqueMatchFields?: string[]        // Fields used to match for update mode
+  uniqueMatchFields?: string[]        // Fields used to match existing records (update / upsert), in priority order
+  insertUniqueFields?: string[]       // Fields that must not already exist for an insert (defaults to uniqueMatchFields)
+}
+
+export type ImportMode = 'insert' | 'update' | 'upsert'
+export type BlankPolicy = 'keep'
+export type StockImportMode = 'set' | 'add' | 'none'
+
+/** Literal cell value that clears a field in update mode (blank cells keep the existing value). */
+export const CLEAR_TOKEN = '__CLEAR__'
+
+/** Dynamic per-warehouse stock column prefix: `stock:<WAREHOUSE_CODE>`. */
+export const STOCK_COLUMN_PREFIX = 'stock:'
+
+export function isStockColumnKey(key: string): boolean {
+  return key.toLowerCase().startsWith(STOCK_COLUMN_PREFIX) && key.length > STOCK_COLUMN_PREFIX.length
+}
+
+/** Normalise a header like `Stock: main` to the canonical key `stock:MAIN`. */
+export function stockColumnKey(header: string): string | null {
+  const m = header.trim().match(/^stock\s*:\s*(.+)$/i)
+  if (!m) return null
+  const code = m[1].trim().toUpperCase()
+  return code ? STOCK_COLUMN_PREFIX + code : null
+}
+
+export function stockColumnField(key: string): EntityFieldConfig {
+  return { key, label: key, type: 'decimal', importOnly: true }
 }
 
 // ==================== ENTITY CONFIGURATIONS ====================
 
 const itemFields: EntityFieldConfig[] = [
   { key: 'id', label: 'ID', type: 'string', exportOnly: true },
+  { key: 'itemCode', label: 'Item Code', type: 'string', unique: true, transform: 'uppercase' },
   { key: 'name', label: 'Name', type: 'string', required: true, transform: 'trim' },
   { key: 'sku', label: 'SKU', type: 'string', unique: true, transform: 'trim' },
   { key: 'barcode', label: 'Barcode', type: 'string', unique: true, transform: 'trim' },
@@ -84,9 +112,18 @@ const itemFields: EntityFieldConfig[] = [
   { key: 'shelfLifeDays', label: 'Shelf Life (days)', type: 'number', businessTypes: ['supermarket'] },
   { key: 'storageTemp', label: 'Storage Temp', type: 'string', businessTypes: ['supermarket'] },
   { key: 'expiryDate', label: 'Expiry Date', type: 'date', businessTypes: ['supermarket'] },
-  // Timestamps
+  // Stock (import): opening / target stock in one warehouse, plus thresholds.
+  // Additional per-warehouse columns `stock:<WAREHOUSE_CODE>` are accepted dynamically.
+  { key: 'warehouse', label: 'Warehouse', type: 'string', importOnly: true },
+  { key: 'openingStock', label: 'Opening Stock', type: 'decimal', importOnly: true },
+  { key: 'minStock', label: 'Min Stock', type: 'decimal', importOnly: true },
+  { key: 'reorderQty', label: 'Reorder Qty', type: 'decimal', importOnly: true },
+  // Timestamps / audit
   { key: 'createdAt', label: 'Created At', type: 'datetime', exportOnly: true },
   { key: 'updatedAt', label: 'Updated At', type: 'datetime', exportOnly: true },
+  { key: 'updatedByName', label: 'Updated By', type: 'string', exportOnly: true },
+  // Expands to one `stock:<CODE>` column per warehouse on export
+  { key: 'warehouseStock', label: 'Stock per Warehouse', type: 'decimal', exportOnly: true },
 ]
 
 const customerFields: EntityFieldConfig[] = [
@@ -266,6 +303,9 @@ const stockMovementFields: EntityFieldConfig[] = [
   { key: 'warehouseName', label: 'Warehouse', type: 'string', exportOnly: true },
   { key: 'type', label: 'Type', type: 'string', exportOnly: true },
   { key: 'quantity', label: 'Quantity', type: 'decimal', exportOnly: true },
+  { key: 'qtyChange', label: 'Change (+/-)', type: 'decimal', exportOnly: true },
+  { key: 'stockBefore', label: 'Stock Before', type: 'decimal', exportOnly: true },
+  { key: 'stockAfter', label: 'Stock After', type: 'decimal', exportOnly: true },
   { key: 'referenceType', label: 'Reference Type', type: 'string', exportOnly: true },
   { key: 'notes', label: 'Notes', type: 'string', exportOnly: true },
   { key: 'createdAt', label: 'Date', type: 'datetime', exportOnly: true },
@@ -352,7 +392,8 @@ export const ENTITY_CONFIGS: Record<string, EntityConfig> = {
     permission: 'manageItems',
     importable: true,
     fields: itemFields,
-    uniqueMatchFields: ['sku', 'barcode'],
+    uniqueMatchFields: ['barcode', 'sku', 'itemCode'],
+    insertUniqueFields: ['barcode', 'sku', 'itemCode', 'pluCode'],
   },
   customers: {
     name: 'customers',

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { eq, desc, sql } from 'drizzle-orm'
+import { eq, desc } from 'drizzle-orm'
 import { withAuthTenant } from '@/lib/db/with-auth-tenant'
-import { creditNotes, creditNoteItems } from '@/lib/db/schema'
+import { creditNotes, creditNoteItems, sales } from '@/lib/db/schema'
+import { authWithCompany } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth/roles'
+import { nextSequence } from '@/lib/inventory/item-codes'
+import { logError } from '@/lib/ai/error-logger'
+import { toApiError } from '@/lib/db/errors'
 import { requireTenantFeature } from '@/lib/features/check'
 import { z } from 'zod'
 import { validateBody } from '@/lib/validation/helpers'
@@ -50,55 +55,77 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const result = await withAuthTenant(async (session, db) => {
-    const feature = await requireTenantFeature(session.user.tenantId, 'quotation')
-    if (!feature.ok) {
-      return { error: 'Credit notes disabled', status: 403 as const }
-    }
-    const parsed = await validateBody(request, createSchema)
-    if (!parsed.success) {
-      const details = await parsed.response.json().catch(() => ({ error: 'Invalid request body' }))
-      return { error: details, status: 400 as const }
-    }
+  const authSession = await authWithCompany()
+  if (!authSession) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const permError = requirePermission(authSession, 'manageSales')
+  if (permError) return permError
 
-    const countResult = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(creditNotes)
-      .where(eq(creditNotes.tenantId, session.user.tenantId))
-    const nextNo = `CN-${String((countResult[0]?.count || 0) + 1).padStart(5, '0')}`
+  let result
+  try {
+    result = await withAuthTenant(async (session, db) => {
+      const feature = await requireTenantFeature(session.user.tenantId, 'quotation')
+      if (!feature.ok) {
+        return { error: 'Credit notes disabled', status: 403 as const }
+      }
+      const parsed = await validateBody(request, createSchema)
+      if (!parsed.success) {
+        const details = await parsed.response.json().catch(() => ({ error: 'Invalid request body' }))
+        return { error: details, status: 400 as const }
+      }
 
-    const [note] = await db
-      .insert(creditNotes)
-      .values({
-        tenantId: session.user.tenantId,
-        creditNoteNo: nextNo,
-        saleId: parsed.data.saleId || null,
-        customerId: parsed.data.customerId || null,
-        customerName: parsed.data.customerName || null,
-        reason: parsed.data.reason || null,
-        subtotal: String(parsed.data.subtotal),
-        tax: String(parsed.data.tax),
-        total: String(parsed.data.total),
-        status: parsed.data.status,
-        createdBy: session.user.id,
-      })
-      .returning()
+      // The referenced sale must belong to this tenant (RLS-scoped lookup).
+      if (parsed.data.saleId) {
+        const sale = await db.query.sales.findFirst({
+          where: eq(sales.id, parsed.data.saleId),
+          columns: { id: true },
+        })
+        if (!sale) {
+          return { error: 'Sale not found', status: 400 as const }
+        }
+      }
 
-    await db.insert(creditNoteItems).values(
-      parsed.data.items.map((item) => ({
-        tenantId: session.user.tenantId,
-        creditNoteId: note.id,
-        itemId: item.itemId || null,
-        itemName: item.itemName,
-        quantity: String(item.quantity),
-        unitPrice: String(item.unitPrice),
-        tax: String(item.tax),
-        total: String(item.total),
-      }))
-    )
+      // Race-free numbering: per-tenant sequence allocated inside this transaction.
+      const seq = await nextSequence(db, session.user.tenantId, 'credit_note')
+      const nextNo = `CN-${String(seq).padStart(6, '0')}`
 
-    return { note }
-  })
+      const [note] = await db
+        .insert(creditNotes)
+        .values({
+          tenantId: session.user.tenantId,
+          creditNoteNo: nextNo,
+          saleId: parsed.data.saleId || null,
+          customerId: parsed.data.customerId || null,
+          customerName: parsed.data.customerName || null,
+          reason: parsed.data.reason || null,
+          subtotal: String(parsed.data.subtotal),
+          tax: String(parsed.data.tax),
+          total: String(parsed.data.total),
+          status: parsed.data.status,
+          createdBy: session.user.id,
+        })
+        .returning()
+
+      await db.insert(creditNoteItems).values(
+        parsed.data.items.map((item) => ({
+          tenantId: session.user.tenantId,
+          creditNoteId: note.id,
+          itemId: item.itemId || null,
+          itemName: item.itemName,
+          quantity: String(item.quantity),
+          unitPrice: String(item.unitPrice),
+          tax: String(item.tax),
+          total: String(item.total),
+        }))
+      )
+
+      return { note }
+    })
+  } catch (err) {
+    const apiError = toApiError(err)
+    if (apiError) return apiError
+    logError('api/credit-notes', err)
+    return NextResponse.json({ error: 'Failed to create credit note' }, { status: 500 })
+  }
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if ('error' in result) {

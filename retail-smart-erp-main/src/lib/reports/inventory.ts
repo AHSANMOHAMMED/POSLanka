@@ -88,13 +88,16 @@ export async function getStockMovement(
     sku: items.sku,
     type: stockMovements.type,
     quantity: stockMovements.quantity,
+    qtyChange: stockMovements.qtyChange,
+    stockBefore: stockMovements.stockBefore,
+    stockAfter: stockMovements.stockAfter,
     referenceType: stockMovements.referenceType,
     referenceId: stockMovements.referenceId,
     notes: stockMovements.notes,
   })
     .from(stockMovements)
     .leftJoin(items, eq(stockMovements.itemId, items.id))
-    .where(and(...conditions))
+    .where(and(...conditions, sql`COALESCE(${stockMovements.referenceType}, '') <> 'ledger_baseline'`))
     .orderBy(desc(stockMovements.createdAt))
     .limit(500)
 
@@ -105,9 +108,13 @@ export async function getStockMovement(
     itemName: row.itemName || 'Unknown',
     sku: row.sku || '-',
     type: row.type,
-    qtyIn: row.type === 'in' ? Math.abs(Number(row.quantity)) : (row.type === 'adjustment' && Number(row.quantity) > 0 ? Number(row.quantity) : 0),
-    qtyOut: row.type === 'out' ? Math.abs(Number(row.quantity)) : (row.type === 'adjustment' && Number(row.quantity) < 0 ? Math.abs(Number(row.quantity)) : 0),
-    adjustment: row.type === 'adjustment' ? Number(row.quantity) : 0,
+    // qty_change is the signed ledger quantity (quantity is always the magnitude)
+    qtyChange: Number(row.qtyChange),
+    qtyIn: row.type !== 'adjustment' && Number(row.qtyChange) > 0 ? Number(row.qtyChange) : 0,
+    qtyOut: row.type !== 'adjustment' && Number(row.qtyChange) < 0 ? Math.abs(Number(row.qtyChange)) : 0,
+    adjustment: row.type === 'adjustment' ? Number(row.qtyChange) : 0,
+    stockBefore: row.stockBefore !== null ? Number(row.stockBefore) : null,
+    stockAfter: row.stockAfter !== null ? Number(row.stockAfter) : null,
     referenceType: row.referenceType || '-',
     referenceId: row.referenceId,
     notes: row.notes,

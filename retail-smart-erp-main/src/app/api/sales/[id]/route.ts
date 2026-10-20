@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { sales, saleItems, stockMovements, payments, customers, customerCreditTransactions, warehouseStock, loyaltyTransactions, salesOrders, salesOrderItems } from '@/lib/db/schema'
+import { sales, saleItems, payments, customers, customerCreditTransactions, warehouseStock, loyaltyTransactions, salesOrders, salesOrderItems } from '@/lib/db/schema'
+import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { eq, and, sql } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
@@ -148,63 +149,52 @@ export async function PUT(
           }
         }
 
-        // Restore stock for each item (minus already-returned quantities)
+        // Restore stock for each item (minus already-returned quantities) through the ledger.
+        // returned_quantity is maintained per line by src/lib/sales/returns.ts (and backfilled for
+        // legacy returns); fall back to the per-item map for lines that predate it.
+        const legacyRemaining = new Map(returnedQtyMap)
+        const returnedSerialIds = new Set<string>()
+        for (const returnSale of existingReturns) {
+          for (const returnItem of returnSale.items) {
+            for (const sid of (returnItem.serialNumberIds as string[] | null) || []) returnedSerialIds.add(sid)
+          }
+        }
         for (const saleItem of saleItemsList) {
           const item = Array.isArray(saleItem.item) ? saleItem.item[0] : saleItem.item
-          if (item?.trackStock && sale.warehouseId) {
+          if (item?.trackStock && sale.warehouseId && saleItem.itemId) {
             const originalQty = parseFloat(saleItem.quantity)
-            const alreadyReturned = returnedQtyMap.get(saleItem.itemId!) || 0
+            let alreadyReturned = parseFloat(saleItem.returnedQuantity || '0')
+            if (!(alreadyReturned > 0)) {
+              const pool = legacyRemaining.get(saleItem.itemId) || 0
+              alreadyReturned = Math.min(pool, originalQty)
+              legacyRemaining.set(saleItem.itemId, pool - alreadyReturned)
+            }
             // Only restore the quantity that hasn't already been returned
-            const qty = Math.max(0, originalQty - alreadyReturned)
+            const qty = Math.round(Math.max(0, originalQty - alreadyReturned) * 1000) / 1000
 
-            if (qty <= 0) continue // Fully returned, skip stock restoration
-
-            // Lock and get warehouse stock (RLS scopes the query)
-            const [existingStock] = await tx
-              .select()
-              .from(warehouseStock)
-              .where(and(
-                eq(warehouseStock.itemId, saleItem.itemId!),
-                eq(warehouseStock.warehouseId, sale.warehouseId)
-              ))
-              .for('update')
-
-            if (existingStock) {
-              // Update existing warehouse stock
-              await tx.update(warehouseStock)
-                .set({
-                  currentStock: sql`${warehouseStock.currentStock} + ${qty}`,
-                  updatedAt: new Date(),
-                })
-                .where(eq(warehouseStock.id, existingStock.id))
-            } else {
-              // Create warehouse stock record
-              await tx.insert(warehouseStock).values({
+            if (qty > 0) {
+              const input = {
                 tenantId: session.user.tenantId,
                 warehouseId: sale.warehouseId,
-                itemId: saleItem.itemId!,
-                currentStock: String(qty),
-                minStock: '0',
-              })
+                itemId: saleItem.itemId,
+                mode: 'delta' as const,
+                qty,
+                type: 'in' as const,
+                referenceType: 'sale_void',
+                referenceId: id,
+                notes: `Stock restored from voided sale ${sale.invoiceNo}`,
+                userId,
+                source: 'pos',
+                idempotencyKey: `sale_void:${id}:${saleItem.id}`,
+              }
+              await applyStockChange(tx, input)
             }
-
-            // Create stock movement record
-            await tx.insert(stockMovements).values({
-              tenantId: session.user.tenantId,
-              warehouseId: sale.warehouseId,
-              itemId: saleItem.itemId!,
-              type: 'in',
-              quantity: String(qty),
-              referenceType: 'sale_void',
-              referenceId: id,
-              notes: `Stock restored from voided sale ${sale.invoiceNo}`,
-              createdBy: userId,
-            })
           }
 
-          // Restore serial numbers to 'available' status
-          const serialIds = saleItem.serialNumberIds as string[] | null
-          if (serialIds?.length) {
+          // Restore serial numbers to 'available' status (skip serials already returned — they
+          // were made available by the return and may have been resold since)
+          const serialIds = ((saleItem.serialNumberIds as string[] | null) || []).filter(sid => !returnedSerialIds.has(sid))
+          if (serialIds.length) {
             await allocateSerials(tx, {
               tenantId: session.user.tenantId,
               serialNumberIds: serialIds,

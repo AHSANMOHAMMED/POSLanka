@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
         LEFT JOIN categories c ON c.id = i.category_id
         WHERE sm.tenant_id = ${session.user.tenantId}
           AND sm.type = 'adjustment'
-          AND CAST(sm.quantity AS numeric) < 0
+          AND CAST(sm.qty_change AS numeric) < 0
           AND sm.created_at >= ${fromDate}::date
           AND sm.created_at < (${toDate}::date + interval '1 day')
         ORDER BY sm.created_at DESC

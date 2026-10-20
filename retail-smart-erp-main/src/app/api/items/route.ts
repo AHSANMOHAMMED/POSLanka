@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
-import { withTenant } from '@/lib/db'
-import { items, workOrderParts, workOrders, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, warehouses, stockMovements } from '@/lib/db/schema'
+import { withTenant, withTenantTransaction } from '@/lib/db'
+import { items, users, workOrderParts, workOrders, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, warehouses, stockMovements } from '@/lib/db/schema'
 import { eq, and, sql, or, ilike, inArray, lte, isNotNull } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -10,7 +10,8 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation'
 import { itemsListSchema, createItemSchema } from '@/lib/validation/schemas/items'
-import { generateItemBarcode } from '@/lib/inventory/barcode-generate'
+import { createItem } from '@/lib/inventory/create-item'
+import { toApiError } from '@/lib/db/errors'
 
 // GET all items for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -37,6 +38,7 @@ export async function GET(request: NextRequest) {
         conditions.push(
           or(
             ilike(items.name, `%${escaped}%`),
+            ilike(items.itemCode, `%${escaped}%`),
             ilike(items.sku, `%${escaped}%`),
             ilike(items.barcode, `%${escaped}%`),
             ilike(items.oemPartNumber, `%${escaped}%`),
@@ -281,6 +283,14 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // Resolve audit users (createdBy / updatedBy → { id, name })
+      const auditUserIds = [...new Set(result.flatMap(i => [i.createdBy, i.updatedBy]).filter((v): v is string => !!v))]
+      const auditUsers = auditUserIds.length > 0
+        ? await db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, auditUserIds))
+        : []
+      const auditUserMap = new Map(auditUsers.map(u => [u.id, u]))
+      const userRef = (uid: string | null) => (uid ? (auditUserMap.get(uid) ?? { id: uid, name: null }) : null)
+
       // Add reserved and available stock to each item
       const itemsWithReserved = result.map(item => {
         // Combine work order / held sale / estimate reservations with transfer reservations (8G)
@@ -299,6 +309,8 @@ export async function GET(request: NextRequest) {
 
         return {
           ...item,
+          createdBy: userRef(item.createdBy),
+          updatedBy: userRef(item.updatedBy),
           currentStock: String(current), // Override with warehouse stock if applicable
           reservedStock: String(reserved),
           availableStock: String(available),
@@ -346,7 +358,7 @@ export async function POST(request: NextRequest) {
     const parsed = await validateBody(request, createItemSchema)
     if (!parsed.success) return parsed.response
     const {
-      name, sku, barcode, categoryId, costPrice, sellingPrice, currentStock, minStock, unit, trackStock, trackBatches, trackSerialNumbers,
+      name, itemCode, sku, barcode, categoryId, costPrice, sellingPrice, currentStock, minStock, unit, trackStock, trackBatches, trackSerialNumbers,
       // Auto parts fields
       oemPartNumber, alternatePartNumbers, brand, condition, reorderQty, binLocation,
       supplierId, supplierPartNumber, leadTimeDays, weight, dimensions, warrantyMonths, imageUrl, supersededBy,
@@ -360,58 +372,33 @@ export async function POST(request: NextRequest) {
       taxTemplateId,
     } = parsed.data
 
-    // Execute with RLS tenant context
-    return await withTenant(session!.user.tenantId, async (db) => {
-      // Pre-check SKU uniqueness for fast UX feedback (RLS scopes the query)
-      if (sku) {
-        const existingSku = await db.query.items.findFirst({
-          where: eq(items.sku, sku),
+    const tenantId = session!.user.tenantId
+    const userId = session!.user.id
+
+    // Single creator: allocates item code + barcode atomically, maps duplicates,
+    // writes the change log and books opening stock through the stock ledger.
+    const newItem = await withTenantTransaction(tenantId, async (tx) => {
+      // Opening stock / warehouse settings go to the default warehouse
+      const initialStock = currentStock || 0
+      const wantsStockRow = initialStock > 0 || (minStock || 0) > 0 || !!reorderQty || !!binLocation
+      let defaultWarehouseId: string | null = null
+      if (wantsStockRow) {
+        const defaultWarehouse = await tx.query.warehouses.findFirst({
+          where: and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),
         })
-        if (existingSku) {
-          return NextResponse.json({ error: 'An item with this SKU already exists' }, { status: 400 })
-        }
+        defaultWarehouseId = defaultWarehouse?.id ?? null
       }
 
-      // Pre-check barcode uniqueness for fast UX feedback (RLS scopes the query)
-      if (barcode) {
-        const existingBarcode = await db.query.items.findFirst({
-          where: eq(items.barcode, barcode),
-        })
-        if (existingBarcode) {
-          return NextResponse.json({ error: 'An item with this barcode already exists' }, { status: 400 })
-        }
-      }
-
-      // Create item in transaction with re-verification to prevent race conditions
-      const newItem = await db.transaction(async (tx) => {
-        // Re-verify SKU uniqueness inside transaction
-        if (sku) {
-          const existingSkuInTx = await tx.query.items.findFirst({
-            where: eq(items.sku, sku),
-          })
-          if (existingSkuInTx) {
-            throw new Error('DUPLICATE_SKU')
-          }
-        }
-
-        // Re-verify barcode uniqueness inside transaction
-        if (barcode) {
-          const existingBarcodeInTx = await tx.query.items.findFirst({
-            where: eq(items.barcode, barcode),
-          })
-          if (existingBarcodeInTx) {
-            throw new Error('DUPLICATE_BARCODE')
-          }
-        }
-
-        const finalCategoryId = categoryId || null
-
-        const [item] = await tx.insert(items).values({
-          tenantId: session!.user.tenantId,
+      const { item } = await createItem(tx, {
+        tenantId,
+        userId,
+        source: 'manual',
+        data: {
           name,
+          itemCode: itemCode || null,
           sku: sku || null,
-          barcode: barcode || generateItemBarcode(),
-          categoryId: finalCategoryId,
+          barcode: barcode || null,
+          categoryId: categoryId || null,
           costPrice: costPrice ? String(costPrice) : '0',
           sellingPrice: String(sellingPrice),
           unit: unit || 'pcs',
@@ -451,56 +438,27 @@ export async function POST(request: NextRequest) {
           isGiftCard: isGiftCard || false,
           // Tax template
           taxTemplateId: taxTemplateId || null,
-        }).returning()
-
-        // If initial stock, minStock, reorderQty, or binLocation provided, create warehouseStock entry in default warehouse
-        const initialStock = currentStock || 0
-        const initialMinStock = minStock || 0
-        const initialReorderQty = reorderQty || null
-        const initialBinLocation = binLocation || null
-
-        if (initialStock > 0 || initialMinStock > 0 || initialReorderQty || initialBinLocation) {
-          // Find the default warehouse
-          const defaultWarehouse = await tx.query.warehouses.findFirst({
-            where: and(
-              eq(warehouses.isDefault, true),
-              eq(warehouses.isActive, true)
-            ),
-          })
-
-          if (defaultWarehouse) {
-            await tx.insert(warehouseStock).values({
-              tenantId: session!.user.tenantId,
-              warehouseId: defaultWarehouse.id,
-              itemId: item.id,
-              currentStock: String(initialStock),
-              minStock: String(initialMinStock),
-              reorderQty: initialReorderQty ? String(initialReorderQty) : null,
-              binLocation: initialBinLocation,
-            })
-          }
-        }
-
-        return item
+        },
+        openingStock: defaultWarehouseId ? [{
+          warehouseId: defaultWarehouseId,
+          qty: initialStock,
+          minStock: minStock ?? null,
+          reorderQty: reorderQty ?? null,
+          binLocation: binLocation || null,
+        }] : [],
       })
 
-      // Broadcast the change to connected clients
-      logAndBroadcast(session!.user.tenantId, 'item', 'created', newItem.id)
-
-      return NextResponse.json(newItem)
+      return item
     })
+
+    // Broadcast the change to connected clients
+    logAndBroadcast(tenantId, 'item', 'created', newItem.id, { userId, entityName: newItem.name })
+
+    return NextResponse.json(newItem)
   } catch (error) {
+    const mapped = toApiError(error)
+    if (mapped) return mapped
     logError('api/items', error)
-    const message = error instanceof Error ? error.message : ''
-
-    // Handle specific race condition errors
-    if (message === 'DUPLICATE_SKU') {
-      return NextResponse.json({ error: 'An item with this SKU already exists' }, { status: 400 })
-    }
-    if (message === 'DUPLICATE_BARCODE') {
-      return NextResponse.json({ error: 'An item with this barcode already exists' }, { status: 400 })
-    }
-
     return NextResponse.json({ error: 'Failed to create item' }, { status: 500 })
   }
 }

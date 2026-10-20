@@ -37,6 +37,8 @@ export const ROLE_PERMISSIONS = {
   manageItems: ['owner', 'manager', 'stock_manager'],
   manageCategories: ['owner', 'manager', 'stock_manager'],
   manageInventory: ['owner', 'manager', 'stock_manager'], // Stock transfers, warehouse stock adjustments
+  submitStockIntake: ['owner', 'manager', 'stock_manager', 'cashier', 'pos_user'], // W3: create/scan stock intake batches
+  postStockIntake: ['owner', 'manager', 'stock_manager'], // W3: sync intake batches into stock
 
   // Service configuration (auto_service)
   manageServiceTypes: ['owner', 'manager'],
@@ -122,7 +124,7 @@ export type Permission = keyof typeof ROLE_PERMISSIONS
 export const PERMISSION_CATEGORIES: Record<string, Permission[]> = {
   'Settings & System': ['manageSettings', 'manageTenant', 'manageModuleAccess'],
   'User Management': ['manageUsers'],
-  'Inventory': ['manageItems', 'manageCategories', 'manageInventory'],
+  'Inventory': ['manageItems', 'manageCategories', 'manageInventory', 'submitStockIntake', 'postStockIntake'],
   'Sales': ['createSales', 'voidSales', 'processReturns', 'manageSales', 'managePOS'],
   'Purchases': ['managePurchases', 'createRequisitions', 'approveRequisitions'],
   'Customers': ['manageCustomers', 'manageCustomerCredit'],
@@ -153,6 +155,8 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   manageItems: 'Manage Items',
   manageCategories: 'Manage Categories',
   manageInventory: 'Manage Inventory',
+  submitStockIntake: 'Submit Stock Intake',
+  postStockIntake: 'Post (Sync) Stock Intake',
   manageServiceTypes: 'Manage Service Types',
   manageVehicleTypes: 'Manage Vehicle Types',
   manageInspectionTemplates: 'Manage Inspection Templates',

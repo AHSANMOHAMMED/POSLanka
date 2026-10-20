@@ -69,6 +69,7 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/categories', 'stock'],
   ['/stock-transfers', 'stock'],
   ['/stock-takes', 'stock'],
+  ['/inventory/stock-intake', 'stock'],
   ['/serial-numbers', 'stock'],
   ['/stock-movements', 'stock'],
 
@@ -221,6 +222,7 @@ const DETAIL_PAGE_ROUTES = [
   '/sales/',
   '/stock-transfers/',
   '/stock-takes/',
+  '/inventory/stock-intake/',
   '/work-orders/',
   '/settings/warehouses/',
   '/layaways/',
@@ -301,6 +303,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
       items: [
         { href: '/stock-transfers', label: 'Stock Transfers', icon: 'ArrowRightLeft', permission: 'manageInventory' },
         { href: '/stock-takes', label: 'Stock Takes', icon: 'ClipboardCheck', permission: 'manageInventory' },
+        { href: '/inventory/stock-intake', label: 'Stock Intake', icon: 'FileInput', permission: 'submitStockIntake' },
         { href: '/serial-numbers', label: 'Serial Numbers', icon: 'Hash', permission: 'manageItems' },
       ],
     },

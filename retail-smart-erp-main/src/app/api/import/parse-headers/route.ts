@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { getEntityConfig, getImportFields } from '@/lib/import-export/entity-config'
-import { parseCsv, parseXlsx, mapColumns } from '@/lib/import-export/import-utils'
+import { getEntityConfig } from '@/lib/import-export/entity-config'
+import { parseCsv, parseXlsx, mapColumns, getMappedImportFields } from '@/lib/import-export/import-utils'
 import { logError } from '@/lib/ai/error-logger'
 import { requirePermission, type Permission } from '@/lib/auth/roles'
 
@@ -13,10 +13,10 @@ export async function POST(request: NextRequest) {
     }
 
     const formData = await request.formData()
-    const file = formData.get('file') as File
-    const entityName = formData.get('entity') as string
+    const file = formData.get('file')
+    const entityName = formData.get('entity')
 
-    if (!file || !entityName) {
+    if (!(file instanceof File) || typeof entityName !== 'string' || !entityName) {
       return NextResponse.json({ error: 'File and entity are required' }, { status: 400 })
     }
 
@@ -60,7 +60,8 @@ export async function POST(request: NextRequest) {
 
     const headers = Object.keys(rawRows[0])
     const suggestedMapping = mapColumns(headers, entityConfig, businessType)
-    const importFields = getImportFields(entityConfig, businessType)
+    // Includes dynamic `stock:<WAREHOUSE_CODE>` columns found in the file (items)
+    const importFields = getMappedImportFields(entityConfig, suggestedMapping, businessType)
 
     // Return first few sample values per column for user context
     const sampleData: Record<string, string[]> = {}
@@ -84,7 +85,7 @@ export async function POST(request: NextRequest) {
       })),
     })
   } catch (error) {
-    console.error('POST /api/import/parse-headers error:', error)
+    logError('api/import/parse-headers', error)
     return NextResponse.json({ error: 'Failed to parse file headers' }, { status: 500 })
   }
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { receiptSettingsPatchSchema } from '@/lib/print/receipt-settings'
 import {
   emailSchema, passwordSchema, userRoleSchema, businessTypeSchema,
   optimisticLockSchema,
@@ -17,10 +18,42 @@ export const updateUserSchema = z.object({
 
 // POST /api/users (invite or add user)
 export const createInviteSchema = z.object({
+  mode: z.literal('invite').optional(),
   email: emailSchema,
   role: userRoleSchema,
   fullName: z.string().trim().max(255).optional(),
   warehouseIds: z.array(z.string().uuid()).optional(),
+  posProfileIds: z.array(z.string().uuid()).optional(),
+})
+
+// POST /api/users { mode: 'create' } — create staff directly with a password
+export const createStaffSchema = z.object({
+  mode: z.literal('create'),
+  email: emailSchema,
+  fullName: z.string().trim().min(1, 'Full name is required').max(255),
+  role: userRoleSchema,
+  password: passwordSchema,
+  /** Optional 4-6 digit POS PIN; empty string = none */
+  pin: z.union([z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 digits'), z.literal('')]).optional(),
+  warehouseIds: z.array(z.string().uuid()).max(100).optional(),
+  posProfileIds: z.array(z.string().uuid()).max(100).optional(),
+})
+
+// POST /api/users body: direct creation or email invite (mode omitted = invite)
+export const createUserBodySchema = z.preprocess(
+  (v) => (v && typeof v === 'object' && !Array.isArray(v) && !(v as { mode?: unknown }).mode
+    ? { ...(v as object), mode: 'invite' }
+    : v),
+  z.discriminatedUnion('mode', [
+    createStaffSchema,
+    createInviteSchema.extend({ mode: z.literal('invite') }),
+  ]),
+)
+
+// PUT /api/users/[id]/pos-profiles
+export const updateUserPosProfilesSchema = z.object({
+  posProfileIds: z.array(z.string().uuid()).max(100),
+  defaultPosProfileId: z.string().uuid().optional(),
 })
 
 // PUT /api/tenant
@@ -44,6 +77,16 @@ export const updateTenantSchema = z.object({
   taxInclusive: z.boolean().optional(),
   /** Weighing-scale barcode layout (stored in tenants.settings.scaleBarcode) */
   scaleBarcode: scaleBarcodeSchema.optional(),
+  // Business profile (W7 receipts)
+  name: z.string().trim().min(1).max(255).optional(),
+  legalName: z.string().trim().max(255).nullish(),
+  address: z.string().trim().max(500).nullish(),
+  phone: z.string().trim().max(50).nullish(),
+  email: z.string().trim().email().max(255).optional(),
+  website: z.string().trim().max(255).nullish(),
+  taxId: z.string().trim().max(50).nullish(),
+  brn: z.string().trim().max(50).nullish(),
+  receiptSettings: receiptSettingsPatchSchema.optional(),
 })
 
 // PUT /api/print-settings

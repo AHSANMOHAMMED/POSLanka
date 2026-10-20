@@ -1,9 +1,11 @@
 {
   "default": "counter1",
+  "allowedOrigins": ["http://localhost:3000", "https://your-poslanka-domain.example"],
   "printers": {
     "counter1": { "type": "tcp", "host": "192.168.1.50", "port": 9100, "timeoutMs": 5000 },
     "kitchen": { "type": "tcp", "host": "192.168.1.51", "port": 9100 },
     "shared": { "type": "system", "name": "EPSON_TM_T82" },
-    "serial": { "type": "serial", "path": "/dev/ttyUSB0" }
+    "serial": { "type": "serial", "path": "/dev/ttyUSB0" },
+    "labels": { "type": "tcp", "host": "192.168.1.60", "port": 9100 }
   }
 }

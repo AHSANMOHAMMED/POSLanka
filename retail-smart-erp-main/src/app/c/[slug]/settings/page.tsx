@@ -8,7 +8,7 @@ import {
   ChevronDown, ChevronUp, ChevronRight, Users, Car, ClipboardList,
   Bell, FolderTree, Home, User, CreditCard, Warehouse, Monitor, Gift,
   Loader2, LogOut, DollarSign, ArrowLeftRight, Sparkles,
-  FileText, Bookmark, ShieldCheck, Image, Bot,
+  FileText, Bookmark, ShieldCheck, Image, Bot, Receipt,
 } from 'lucide-react'
 import Link from 'next/link'
 import { DocumentType, PaperSize, PrintSettings, DocumentPrintSettings, DEFAULT_PRINT_SETTINGS, PAPER_SIZES } from '@/lib/print/types'
@@ -221,6 +221,7 @@ export default function SettingsPage() {
   const allNavCards = useMemo(() => {
     const role = session?.user?.role || ''
     const cards: (NavCardProps & { visible: boolean })[] = [
+      { href: `/c/${tenantSlug}/settings/receipt`, icon: <Receipt size={20} className="text-teal-600 dark:text-teal-400" />, iconBg: 'bg-teal-100 dark:bg-teal-900/30', title: 'Business Profile & Receipt', description: 'Business details, logo and receipt layout', visible: hasPermission(role, 'manageSettings') },
       { href: `/c/${tenantSlug}/settings/staff`, icon: <Users size={20} className="text-purple-600 dark:text-purple-400" />, iconBg: 'bg-purple-100 dark:bg-purple-900/30', title: 'Staff', description: 'Manage users and roles', visible: hasPermission(role, 'manageUsers') },
       { href: `/c/${tenantSlug}/settings/role-permissions`, icon: <ShieldCheck size={20} className="text-red-600 dark:text-red-400" />, iconBg: 'bg-red-100 dark:bg-red-900/30', title: 'Role Permissions', description: 'Customize permissions per role', visible: role === 'owner' },
       { href: `/c/${tenantSlug}/settings/commissions`, icon: <DollarSign size={20} className="text-green-600 dark:text-green-400" />, iconBg: 'bg-green-100 dark:bg-green-900/30', title: 'Commissions', description: 'Rates, payouts and tracking', visible: hasPermission(role, 'manageCommissions') },

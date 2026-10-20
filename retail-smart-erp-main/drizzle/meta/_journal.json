@@ -890,6 +890,83 @@
       "when": 1771446337011,
       "tag": "0126_backfill_console_vendor_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1771446337012,
+      "tag": "0127_tenant_sequences_item_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1771446337013,
+      "tag": "0128_stock_movements_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1771446337014,
+      "tag": "0129_item_change_log",
+      "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1771446337015,
+      "tag": "0130_stock_take_relative",
+      "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1771446337016,
+      "tag": "0131_staff_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1771446337017,
+      "tag": "0132_business_profile_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "7",
+      "when": 1771446337018,
+      "tag": "0133_intake_enum_values",
+      "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1771446337019,
+      "tag": "0134_stock_intake",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1771446337020,
+      "tag": "0135_import_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1771446337022,
+      "tag": "0137_sales_offline_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1771446337024,
+      "tag": "0139_rls_isolation_fixes",
+      "breakpoints": true
     }
   ]
 }

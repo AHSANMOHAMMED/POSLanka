@@ -13,7 +13,9 @@ async function runStockAudit(tenantId: string): Promise<AuditFinding[]> {
   return withTenant(tenantId, async (db) => {
     const findings: AuditFinding[] = []
 
-    // 1. Stock vs movements: warehouseStock.currentStock should = sum(in) - sum(out)
+    // 1. Stock vs ledger: warehouseStock.currentStock should equal the latest
+    //    ledger_baseline (stock_after) + SUM(qty_change) of later movements.
+    //    Movements whose sign could not be derived (sign_source='unknown') are ignored.
     const stockMismatches = await db.execute<{
       item_id: string; warehouse_id: string; item_name: string; warehouse_name: string
       current_stock: string; calculated_stock: string
@@ -22,22 +24,27 @@ async function runStockAudit(tenantId: string): Promise<AuditFinding[]> {
         i.name AS item_name,
         w.name AS warehouse_name,
         ws.current_stock,
-        COALESCE(m.calc_stock, 0) AS calculated_stock
+        ROUND(COALESCE(b.stock_after, 0) + COALESCE(m.sum_change, 0), 3) AS calculated_stock
       FROM warehouse_stock ws
       JOIN items i ON i.id = ws.item_id
       JOIN warehouses w ON w.id = ws.warehouse_id
-      LEFT JOIN (
-        SELECT item_id, warehouse_id,
-          ROUND(
-            SUM(CASE WHEN type = 'in' THEN quantity::numeric ELSE 0 END) -
-            SUM(CASE WHEN type = 'out' THEN quantity::numeric ELSE 0 END) +
-            SUM(CASE WHEN type = 'adjustment' THEN quantity::numeric ELSE 0 END),
-          3) AS calc_stock
-        FROM stock_movements
-        WHERE warehouse_id IS NOT NULL
-        GROUP BY item_id, warehouse_id
-      ) m ON m.item_id = ws.item_id AND m.warehouse_id = ws.warehouse_id
-      WHERE ABS(ws.current_stock::numeric - COALESCE(m.calc_stock, 0)) > 0.001
+      LEFT JOIN LATERAL (
+        SELECT sb.id, sb.created_at, sb.stock_after
+        FROM stock_movements sb
+        WHERE sb.tenant_id = ws.tenant_id AND sb.warehouse_id = ws.warehouse_id AND sb.item_id = ws.item_id
+          AND sb.reference_type = 'ledger_baseline'
+        ORDER BY sb.created_at DESC, sb.id DESC
+        LIMIT 1
+      ) b ON true
+      LEFT JOIN LATERAL (
+        SELECT SUM(sm.qty_change) AS sum_change
+        FROM stock_movements sm
+        WHERE sm.tenant_id = ws.tenant_id AND sm.warehouse_id = ws.warehouse_id AND sm.item_id = ws.item_id
+          AND COALESCE(sm.reference_type, '') <> 'ledger_baseline'
+          AND COALESCE(sm.sign_source, '') <> 'unknown'
+          AND (b.id IS NULL OR sm.created_at > b.created_at)
+      ) m ON true
+      WHERE ABS(ws.current_stock::numeric - (COALESCE(b.stock_after, 0) + COALESCE(m.sum_change, 0))) > 0.001
       LIMIT 500
     `)
     for (const r of stockMismatches.rows) {

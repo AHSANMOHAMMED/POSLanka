@@ -3,6 +3,8 @@
 import type { LabelTemplate, LabelItemData, PrintLabelConfig } from './types'
 import { renderLabelHtml, getShapeBorderRadius } from './label-renderer'
 import { executePrint } from '@/lib/print/print-executor'
+import type { PrinterProfile } from '@/lib/print/printer-profiles'
+import type { LabelPrintItem, LabelTemplateLike } from '@/lib/print/label/common'
 
 const PAGE_SIZES: Record<string, { width: number; height: number }> = {
   A4: { width: 210, height: 297 },
@@ -99,4 +101,54 @@ export async function printLabels(
   const content = `<div class="labels-grid">${labelHtmls.join('')}</div>`
 
   return executePrint('Barcode Labels', styles, content)
+}
+
+// ─── Raw label printers (W9: TSPL / ZPL / EPL / ESC/POS raster) ──────────
+
+export interface RawLabelPrintResult {
+  ok: boolean
+  warnings: string[]
+  error?: string
+}
+
+/** True when the profile should receive raw printer commands instead of the browser dialog. */
+export function isRawLabelPrinter(profile: PrinterProfile | null | undefined): profile is PrinterProfile {
+  return !!profile && profile.role === 'label' && profile.label.language !== 'browser' && profile.transport !== 'browser'
+}
+
+/**
+ * Encode labels in the printer's language and send them through its transport
+ * (WebUSB / Web Bluetooth / print agent).
+ */
+export async function printLabelsRaw(
+  profile: PrinterProfile,
+  template: LabelTemplateLike,
+  items: (LabelPrintItem | LabelItemData)[],
+  opts: { currencySymbol?: string; tenantName?: string; codeWord?: string; logoUrl?: string | null; copies?: number } = {}
+): Promise<RawLabelPrintResult> {
+  const language = profile.label.language
+  if (language === 'browser') return { ok: false, warnings: [], error: 'Printer is set to browser printing' }
+  const { encodeLabels } = await import('@/lib/print/label')
+  const { createCanvasLabelRasterizer, createImageElementRasterizer } = await import('@/lib/print/label/canvas-raster')
+  const { sendToPrinter } = await import('@/lib/print/printer-profiles')
+  const res = await encodeLabels(template, items, {
+    language,
+    dpi: profile.label.dpi,
+    copies: opts.copies ?? 1,
+    codeWord: opts.codeWord,
+    currencySymbol: opts.currencySymbol,
+    tenantName: opts.tenantName,
+    gapMm: profile.label.gapMm,
+    darkness: profile.label.darkness,
+    speed: profile.label.speed,
+    rasterizeElement: createImageElementRasterizer(opts.logoUrl),
+    rasterizeLabel: createCanvasLabelRasterizer(opts.logoUrl),
+  })
+  if (res.bytes.length === 0) return { ok: false, warnings: res.warnings, error: 'Nothing to print' }
+  try {
+    await sendToPrinter(profile, res.bytes, { title: 'Labels' })
+    return { ok: true, warnings: res.warnings }
+  } catch (e) {
+    return { ok: false, warnings: res.warnings, error: e instanceof Error ? e.message : String(e) }
+  }
 }

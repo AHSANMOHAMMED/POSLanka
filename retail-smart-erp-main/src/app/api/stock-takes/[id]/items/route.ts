@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { stockTakes, stockTakeItems, items } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { stockTakes, stockTakeItems, items, warehouseStock } from '@/lib/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateStockTakeItemsSchema } from '@/lib/validation/schemas/stock'
@@ -46,10 +46,20 @@ export async function PUT(
         .where(eq(stockTakeItems.id, update.itemId))
 
       if (!item || item.stockTakeId !== id) continue
+      if (item.appliedAt) continue // already applied to stock; immutable
 
-      const expectedQty = parseFloat(item.expectedQuantity)
+      // Capture the live system quantity at the moment the count is entered.
+      // Completion applies (counted - systemQtyAtCount), so sales/receipts that
+      // happen between counting and completion are preserved.
+      const [live] = await tx.select({ currentStock: warehouseStock.currentStock })
+        .from(warehouseStock)
+        .where(and(
+          eq(warehouseStock.warehouseId, stockTake.warehouseId),
+          eq(warehouseStock.itemId, item.itemId),
+        ))
+      const systemQty = live ? parseFloat(live.currentStock) : 0
       const countedQty = update.countedQuantity
-      const variance = countedQty - expectedQty
+      const variance = Math.round((countedQty - systemQty) * 1000) / 1000
 
       // Use stored costPrice; if 0, look up current cost from items table
       let costPrice = parseFloat(item.costPrice || '0')
@@ -65,6 +75,7 @@ export async function PUT(
       await tx.update(stockTakeItems)
         .set({
           countedQuantity: countedQty.toString(),
+          systemQtyAtCount: systemQty.toString(),
           variance: variance.toString(),
           varianceValue: String(varianceValue),
           costPrice: costPrice.toString(),
@@ -98,7 +109,7 @@ export async function PUT(
       })
       .where(eq(stockTakes.id, id))
 
-    logAndBroadcast(session.user.tenantId, 'stock-take', 'updated', id)
+    logAndBroadcast(session.user.tenantId, 'stock-take', 'updated', id, { userId: session.user.id })
     return { data: { success: true, itemsCounted: countedCount, varianceCount, totalVarianceValue } }
   })
 

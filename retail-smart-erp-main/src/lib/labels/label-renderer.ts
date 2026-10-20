@@ -71,7 +71,7 @@ export function calculateAutoFitFontSize(
 /**
  * Resolve a dynamic field value from item data
  */
-function resolveField(
+export function resolveField(
   field: DynamicField,
   item: LabelItemData | null,
   customValue?: string,

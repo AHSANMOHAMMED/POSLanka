@@ -1,11 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { toast } from '@/components/ui/toast'
 import { Edit2, Eye, EyeOff, Loader2, X, Warehouse, Check, Clock, Mail, RefreshCw, Trash2 } from 'lucide-react'
-import { hasPermission, canModifyUser, type UserRole } from '@/lib/auth/roles'
+import { hasPermission, canModifyUser, getRolesForBusinessType, ROLE_HIERARCHY, type UserRole } from '@/lib/auth/roles'
 import { PermissionGuard } from '@/components/auth/PermissionGuard'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 
@@ -18,6 +18,34 @@ interface User {
   lastLoginAt: string | null
   createdAt: string
   updatedAt: string
+  warehouses?: Array<{ warehouseId: string; warehouse: { id: string; name: string; code: string } }>
+  posProfiles?: Array<{ posProfileId: string; name: string; warehouseId: string | null; isDefault: boolean }>
+}
+
+interface CounterOption {
+  id: string
+  name: string
+  code: string | null
+  warehouseId: string | null
+  status?: string
+}
+
+type CreateMode = 'create' | 'invite'
+
+const PASSWORD_RULE = 'At least 8 characters with an uppercase letter, a lowercase letter and a number'
+
+function passwordProblem(pw: string): string | null {
+  if (pw.length < 8) return 'Password must be at least 8 characters'
+  if (!/[a-z]/.test(pw)) return 'Password must contain a lowercase letter'
+  if (!/[A-Z]/.test(pw)) return 'Password must contain an uppercase letter'
+  if (!/[0-9]/.test(pw)) return 'Password must contain a number'
+  return null
+}
+
+function roleLabel(role: string): string {
+  if (role === 'pos_user') return 'POS User'
+  if (role === 'hr_manager') return 'HR Manager'
+  return role.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
 }
 
 interface PendingInvite {
@@ -76,6 +104,12 @@ export default function StaffPage() {
     pin: '',
     role: 'cashier' as UserRole,
   })
+  const [createMode, setCreateMode] = useState<CreateMode>('create')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [formWarehouseIds, setFormWarehouseIds] = useState<Set<string>>(new Set())
+  const [formCounterIds, setFormCounterIds] = useState<Set<string>>(new Set())
+  const [branchOptions, setBranchOptions] = useState<WarehouseOption[]>([])
+  const [counterOptions, setCounterOptions] = useState<CounterOption[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [toggling, setToggling] = useState<string | null>(null)
   const [resending, setResending] = useState<string | null>(null)
@@ -92,7 +126,7 @@ export default function StaffPage() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await fetch('/api/users')
+      const res = await fetch('/api/users?includeWarehouses=true')
       if (res.ok) {
         const data = await res.json()
         setUsers(data)
@@ -119,13 +153,52 @@ export default function StaffPage() {
     }
   }, [])
 
+  // Branches + counters for the create/edit forms
+  const fetchOptions = useCallback(async () => {
+    try {
+      const [whRes, ppRes] = await Promise.all([
+        fetch('/api/warehouses?all=true&activeOnly=true'),
+        fetch('/api/pos-profiles?all=true'),
+      ])
+      if (whRes.ok) {
+        const data = await whRes.json()
+        setBranchOptions(Array.isArray(data) ? data : data.data || [])
+      }
+      if (ppRes.ok) {
+        const data = await ppRes.json()
+        const list: CounterOption[] = Array.isArray(data) ? data : data.profiles || []
+        setCounterOptions(list.filter(c => !c.status || c.status === 'active'))
+      }
+    } catch (err) {
+      console.error('Error fetching branches/counters:', err)
+    }
+  }, [])
+
   // Real-time updates via WebSocket
   useRealtimeData(fetchUsers, { entityType: 'user', refreshOnMount: false })
 
   useEffect(() => {
     fetchUsers()
     fetchInvites()
-  }, [fetchUsers, fetchInvites])
+    fetchOptions()
+  }, [fetchUsers, fetchInvites, fetchOptions])
+
+  const actorRole = session?.user?.role || ''
+  const businessType = (session?.user as { businessType?: string } | undefined)?.businessType || ''
+
+  // Roles the current user may assign: relevant to the business type, never owner,
+  // and not above the actor's own level (ROLE_HIERARCHY via canModifyUser)
+  const assignableRoles = useMemo(() => {
+    return getRolesForBusinessType(businessType)
+      .filter(r => r !== 'owner' && canModifyUser(actorRole, r, r))
+      .sort((a, b) => ROLE_HIERARCHY[b] - ROLE_HIERARCHY[a])
+  }, [actorRole, businessType])
+
+  // Counters available for the selected branches (all counters if no branch picked)
+  const visibleCounters = useMemo(() => {
+    if (formWarehouseIds.size === 0) return counterOptions
+    return counterOptions.filter(c => !c.warehouseId || formWarehouseIds.has(c.warehouseId))
+  }, [counterOptions, formWarehouseIds])
 
   // Check permission
   if (session && !hasPermission(session.user.role, 'manageUsers')) {
@@ -140,7 +213,12 @@ export default function StaffPage() {
 
   function openCreateModal() {
     setEditingUser(null)
-    setFormData({ fullName: '', email: '', password: '', pin: '', role: 'cashier' })
+    const defaultRole: UserRole = assignableRoles.includes('cashier') ? 'cashier' : (assignableRoles[0] || 'cashier')
+    setFormData({ fullName: '', email: '', password: '', pin: '', role: defaultRole })
+    setCreateMode('create')
+    setConfirmPassword('')
+    setFormWarehouseIds(new Set(branchOptions.length === 1 ? [branchOptions[0].id] : []))
+    setFormCounterIds(new Set())
     setShowModal(true)
   }
 
@@ -153,6 +231,9 @@ export default function StaffPage() {
       pin: '',
       role: user.role,
     })
+    setConfirmPassword('')
+    setFormWarehouseIds(new Set((user.warehouses || []).map(w => w.warehouseId)))
+    setFormCounterIds(new Set((user.posProfiles || []).map(p => p.posProfileId)))
     setShowModal(true)
   }
 
@@ -160,6 +241,45 @@ export default function StaffPage() {
     setShowModal(false)
     setEditingUser(null)
     setFormData({ fullName: '', email: '', password: '', pin: '', role: 'cashier' })
+    setConfirmPassword('')
+    setFormWarehouseIds(new Set())
+    setFormCounterIds(new Set())
+  }
+
+  function toggleInSet(set: Set<string>, id: string): Set<string> {
+    const next = new Set(set)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  }
+
+  function toggleFormBranch(id: string) {
+    const next = toggleInSet(formWarehouseIds, id)
+    setFormWarehouseIds(next)
+    // Drop counters that no longer belong to a selected branch
+    if (next.size > 0) {
+      setFormCounterIds(prev => new Set(Array.from(prev).filter(cid => {
+        const c = counterOptions.find(o => o.id === cid)
+        return !c || !c.warehouseId || next.has(c.warehouseId)
+      })))
+    }
+  }
+
+  async function saveCounters(user: User): Promise<boolean> {
+    const before = new Set((user.posProfiles || []).map(p => p.posProfileId))
+    const same = before.size === formCounterIds.size && Array.from(formCounterIds).every(id => before.has(id))
+    if (same) return true
+    const res = await fetch(`/api/users/${user.id}/pos-profiles`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ posProfileIds: Array.from(formCounterIds) }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      toast.error(data.error || 'Failed to update counters')
+      return false
+    }
+    return true
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -175,19 +295,40 @@ export default function StaffPage() {
         toast.error('Email is required')
         return
       }
-      if (formData.password && formData.password.length < 8) {
-        toast.error('Password must be at least 8 characters')
-        return
+      if (formData.password) {
+        const problem = passwordProblem(formData.password)
+        if (problem) {
+          toast.error(problem)
+          return
+        }
       }
       if (formData.pin && !/^\d{4,6}$/.test(formData.pin)) {
         toast.error('POS PIN must be 4-6 digits')
         return
       }
     } else {
-      // Create mode — only email + role required
       if (!formData.email.trim()) {
         toast.error('Email is required')
         return
+      }
+      if (createMode === 'create') {
+        if (!formData.fullName.trim()) {
+          toast.error('Full name is required')
+          return
+        }
+        const problem = passwordProblem(formData.password)
+        if (problem) {
+          toast.error(problem)
+          return
+        }
+        if (formData.password !== confirmPassword) {
+          toast.error('Passwords do not match')
+          return
+        }
+        if (formData.pin && !/^\d{4,6}$/.test(formData.pin)) {
+          toast.error('POS PIN must be 4-6 digits')
+          return
+        }
       }
     }
 
@@ -221,8 +362,11 @@ export default function StaffPage() {
         }
 
         if (res.ok) {
-          toast.success('Staff member updated')
-          closeModal()
+          const countersOk = await saveCounters(editingUser)
+          if (countersOk) {
+            toast.success('Staff member updated')
+            closeModal()
+          }
           fetchUsers()
         } else {
           const data = await res.json()
@@ -233,15 +377,33 @@ export default function StaffPage() {
         const res = await fetch('/api/users', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: formData.email,
-            role: formData.role,
-          }),
+          body: JSON.stringify(createMode === 'create'
+            ? {
+                mode: 'create',
+                email: formData.email,
+                fullName: formData.fullName,
+                role: formData.role,
+                password: formData.password,
+                pin: formData.pin || undefined,
+                warehouseIds: Array.from(formWarehouseIds),
+                posProfileIds: Array.from(formCounterIds),
+              }
+            : {
+                mode: 'invite',
+                email: formData.email,
+                role: formData.role,
+                fullName: formData.fullName || undefined,
+                warehouseIds: Array.from(formWarehouseIds),
+                posProfileIds: Array.from(formCounterIds),
+              }),
         })
 
         if (res.ok) {
           const data = await res.json()
-          if (data.mode === 'added') {
+          if (data.mode === 'created') {
+            toast.success(`${data.user?.fullName || 'Staff member'} can now sign in`)
+            fetchUsers()
+          } else if (data.mode === 'added') {
             toast.success('Staff member added successfully')
             fetchUsers()
           } else if (data.mode === 'invited') {
@@ -250,8 +412,8 @@ export default function StaffPage() {
           }
           closeModal()
         } else {
-          const data = await res.json()
-          toast.error(data.error || 'Failed to add staff member')
+          const data = await res.json().catch(() => ({}))
+          toast.error(data.details?.[0]?.message || data.error || 'Failed to add staff member')
         }
       }
     } catch {
@@ -425,6 +587,7 @@ export default function StaffPage() {
       if (res.ok) {
         toast.success('Warehouse assignments updated')
         closeWarehouseModal()
+        fetchUsers()
       } else {
         const data = await res.json()
         toast.error(data.error || 'Failed to update warehouse assignments')
@@ -542,7 +705,7 @@ export default function StaffPage() {
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Role</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Last Login</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Status</th>
-                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Warehouses</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Branches &amp; Counters</th>
                 <th className="px-4 py-3 text-right text-sm font-medium text-gray-600">Actions</th>
               </tr>
             </thead>
@@ -583,6 +746,24 @@ export default function StaffPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1 mb-1 max-w-xs">
+                      {user.role === 'owner' ? (
+                        <span className="text-xs text-purple-600">All branches</span>
+                      ) : (user.warehouses || []).length === 0 ? (
+                        <span className="text-xs text-gray-400">No branch</span>
+                      ) : (
+                        (user.warehouses || []).map(w => (
+                          <span key={w.warehouseId} className="px-1.5 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                            {w.warehouse.name}
+                          </span>
+                        ))
+                      )}
+                      {(user.posProfiles || []).map(p => (
+                        <span key={p.posProfileId} className="px-1.5 py-0.5 rounded text-xs bg-blue-50 text-blue-700" title="POS counter">
+                          {p.name}{p.isDefault && (user.posProfiles || []).length > 1 ? ' ★' : ''}
+                        </span>
+                      ))}
+                    </div>
                     <button
                       onClick={() => openWarehouseModal(user)}
                       className="flex items-center gap-1.5 px-2 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded transition-colors"
@@ -631,7 +812,7 @@ export default function StaffPage() {
     {/* Create/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-md w-full max-w-md mx-4 shadow-xl">
+          <div className="bg-white rounded-md w-full max-w-lg mx-4 shadow-xl max-h-[90vh] flex flex-col">
             <div className="flex items-center justify-between p-4 border-b">
               <h2 className="text-lg font-semibold">
                 {editingUser ? 'Edit Staff Member' : 'Add Staff Member'}
@@ -643,7 +824,7 @@ export default function StaffPage() {
                 <X size={20} />
               </button>
             </div>
-            <form onSubmit={handleSubmit} className="p-4 space-y-4">
+            <form onSubmit={handleSubmit} className="p-4 space-y-4 overflow-y-auto">
               {editingUser ? (
                 <>
                   {/* Edit mode — full form */}
@@ -683,7 +864,7 @@ export default function StaffPage() {
                       minLength={8}
                       placeholder="Leave blank to keep current"
                     />
-                    <p className="text-xs text-gray-500 mt-1">Minimum 8 characters</p>
+                    <p className="text-xs text-gray-500 mt-1">{PASSWORD_RULE}</p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -702,7 +883,31 @@ export default function StaffPage() {
                 </>
               ) : (
                 <>
-                  {/* Add mode — email + role only */}
+                  {/* Add mode — create with password (default) or send an email invite */}
+                  <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 rounded">
+                    {(['create', 'invite'] as const).map(m => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setCreateMode(m)}
+                        className={`px-3 py-1.5 text-sm rounded ${createMode === m ? 'bg-white shadow font-medium text-gray-900' : 'text-gray-600'}`}
+                      >
+                        {m === 'create' ? 'Create with password' : 'Send email invite'}
+                      </button>
+                    ))}
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Full Name {createMode === 'create' ? '*' : ''}
+                    </label>
+                    <input
+                      type="text"
+                      value={formData.fullName}
+                      onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                      className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required={createMode === 'create'}
+                    />
+                  </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       Email *
@@ -716,11 +921,55 @@ export default function StaffPage() {
                       required
                     />
                   </div>
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded">
-                    <p className="text-sm text-blue-800">
-                      If this person already has an account, they&apos;ll be added immediately. Otherwise, an invitation email will be sent.
-                    </p>
-                  </div>
+                  {createMode === 'create' ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                          <input
+                            type="password"
+                            autoComplete="new-password"
+                            value={formData.password}
+                            onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                            className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Confirm *</label>
+                          <input
+                            type="password"
+                            autoComplete="new-password"
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <p className={`text-xs -mt-2 ${formData.password && passwordProblem(formData.password) ? 'text-amber-600' : 'text-gray-500'}`}>
+                        {PASSWORD_RULE}
+                        {confirmPassword && confirmPassword !== formData.password ? ' — passwords do not match' : ''}
+                      </p>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">POS PIN (optional, 4-6 digits)</label>
+                        <input
+                          type="password"
+                          inputMode="numeric"
+                          value={formData.pin}
+                          onChange={(e) => setFormData({ ...formData, pin: e.target.value.replace(/\D/g, '').slice(0, 6) })}
+                          className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          placeholder="Used to unlock the POS terminal"
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded">
+                      <p className="text-sm text-blue-800">
+                        If this person already has an account, they&apos;ll be added immediately. Otherwise, an invitation email will be sent and the branches/counters below are applied when they accept.
+                      </p>
+                    </div>
+                  )}
                 </>
               )}
               <div>
@@ -735,40 +984,74 @@ export default function StaffPage() {
                 >
                   {/* Owner role cannot be created/changed via POS - only through account dashboard */}
                   {editingUser?.role === 'owner' && <option value="owner">Owner</option>}
-                  {/* Only show roles the current user is allowed to assign */}
-                  {canModifyUser(session?.user?.role || '', 'manager', 'manager') && (
-                    <option value="manager">Manager</option>
+                  {/* Only roles for this business type at/below the current user's level */}
+                  {editingUser && editingUser.role !== 'owner' && !assignableRoles.includes(editingUser.role) && (
+                    <option value={editingUser.role}>{roleLabel(editingUser.role)}</option>
                   )}
-                  <option value="cashier">Cashier</option>
-                  <option value="technician">Technician</option>
-                  <option value="chef">Chef</option>
-                  <option value="waiter">Waiter</option>
-                  {canModifyUser(session?.user?.role || '', 'system_manager', 'system_manager') && (
-                    <option value="system_manager">System Manager</option>
-                  )}
-                  {canModifyUser(session?.user?.role || '', 'accounts_manager', 'accounts_manager') && (
-                    <option value="accounts_manager">Accounts Manager</option>
-                  )}
-                  {canModifyUser(session?.user?.role || '', 'sales_manager', 'sales_manager') && (
-                    <option value="sales_manager">Sales Manager</option>
-                  )}
-                  {canModifyUser(session?.user?.role || '', 'purchase_manager', 'purchase_manager') && (
-                    <option value="purchase_manager">Purchase Manager</option>
-                  )}
-                  {canModifyUser(session?.user?.role || '', 'hr_manager', 'hr_manager') && (
-                    <option value="hr_manager">HR Manager</option>
-                  )}
-                  {canModifyUser(session?.user?.role || '', 'stock_manager', 'stock_manager') && (
-                    <option value="stock_manager">Stock Manager</option>
-                  )}
-                  <option value="pos_user">POS User</option>
-                  <option value="report_user">Report User</option>
-                  <option value="dealer_sales">Dealer Sales</option>
+                  {assignableRoles.map(r => (
+                    <option key={r} value={r}>{roleLabel(r)}</option>
+                  ))}
                 </select>
                 {editingUser?.id === session?.user?.id && (
                   <p className="text-xs text-amber-600 mt-1">You cannot change your own role</p>
                 )}
               </div>
+              {!editingUser && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Branches</label>
+                  {branchOptions.length === 0 ? (
+                    <p className="text-xs text-gray-500">No branches found.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {branchOptions.map(b => {
+                        const on = formWarehouseIds.has(b.id)
+                        return (
+                          <button
+                            key={b.id}
+                            type="button"
+                            onClick={() => toggleFormBranch(b.id)}
+                            className={`px-2.5 py-1 text-sm rounded border flex items-center gap-1 ${on ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-700'}`}
+                          >
+                            {on && <Check size={12} />}
+                            {b.name}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">If none is chosen and there is only one branch, it is assigned automatically.</p>
+                </div>
+              )}
+              {editingUser?.role !== 'owner' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">POS Counters</label>
+                  {visibleCounters.length === 0 ? (
+                    <p className="text-xs text-gray-500">No counters for the selected branches.</p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {visibleCounters.map(c => {
+                        const on = formCounterIds.has(c.id)
+                        const branch = branchOptions.find(b => b.id === c.warehouseId)
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            onClick={() => setFormCounterIds(toggleInSet(formCounterIds, c.id))}
+                            className={`px-2.5 py-1 text-sm rounded border flex items-center gap-1 ${on ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-700'}`}
+                          >
+                            {on && <Check size={12} />}
+                            {c.name}
+                            {branch && formWarehouseIds.size !== 1 && <span className="text-xs text-gray-400">· {branch.name}</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <p className="text-xs text-gray-500 mt-1">
+                    {editingUser ? 'A counter\'s branch is added to the user automatically.' : 'Cashiers get the branch\'s only counter automatically if none is chosen.'}
+                  </p>
+                </div>
+              )}
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"
@@ -783,7 +1066,7 @@ export default function StaffPage() {
                   className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
                 >
                   {submitting && <Loader2 size={16} className="animate-spin" />}
-                  {editingUser ? 'Update' : 'Add'}
+                  {editingUser ? 'Update' : createMode === 'create' ? 'Create' : 'Send Invite'}
                 </button>
               </div>
             </form>

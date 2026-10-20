@@ -2,12 +2,15 @@ import { useEffect } from 'react'
 import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { startAutoSync } from '../src/lib/offlineQueue'
+import { startIntakeAutoSync } from '../src/lib/intakeStore'
 import { installNotificationHandlers } from '../src/lib/notifications'
 
 export default function RootLayout() {
   useEffect(() => {
     // Replays queued offline sales whenever connectivity returns.
     startAutoSync()
+    // Uploads stock intake scans saved while offline.
+    startIntakeAutoSync()
     // Foreground notification toasts + deep links (data.screen).
     return installNotificationHandlers()
   }, [])
@@ -25,6 +28,8 @@ export default function RootLayout() {
         <Stack.Screen name="summary" />
         <Stack.Screen name="printer" />
         <Stack.Screen name="admin" />
+        <Stack.Screen name="staff" />
+        <Stack.Screen name="intake" />
       </Stack>
     </>
   )

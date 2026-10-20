@@ -11,7 +11,7 @@ export function generateItemBarcode(prefix = '2'): string {
   return body + ean13CheckDigit(body)
 }
 
-function ean13CheckDigit(twelveDigits: string): string {
+export function ean13CheckDigit(twelveDigits: string): string {
   const digits = twelveDigits.padStart(12, '0').slice(0, 12).split('').map(Number)
   let sum = 0
   for (let i = 0; i < 12; i++) {

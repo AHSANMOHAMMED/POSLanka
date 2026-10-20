@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
-import { withTenant } from '@/lib/db'
-import { items, saleItems, workOrderParts, heldSales, layawayItems, purchaseItems, purchaseOrderItems, stockMovements, warehouseStock, itemCostHistory } from '@/lib/db/schema'
-import { eq, and, sql, ne } from 'drizzle-orm'
+import { withTenant, withTenantTransaction } from '@/lib/db'
+import { items, saleItems, workOrderParts, heldSales, layawayItems, purchaseItems, purchaseOrderItems, stockMovements, warehouseStock, itemCostHistory, users } from '@/lib/db/schema'
+import { eq, and, sql, ne, inArray } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { checkPriceChangeAnomalies } from '@/lib/ai/anomaly-detector'
 import { logError } from '@/lib/ai/error-logger'
@@ -13,6 +13,15 @@ import { deleteFromR2, keyFromUrl } from '@/lib/files'
 import { deleteFilesByDocument } from '@/lib/utils/file-cleanup'
 import { adjustFileStorage } from '@/lib/db/storage-quota'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { DuplicateError, toApiError } from '@/lib/db/errors'
+import { recordItemChange } from '@/lib/inventory/item-audit'
+import { bumpItemCodeSequence } from '@/lib/inventory/item-codes'
+
+class StaleItemError extends Error {
+  constructor(public readonly currentVersion: number) {
+    super('STALE_ITEM')
+  }
+}
 
 // GET single item
 export async function GET(
@@ -52,8 +61,16 @@ export async function GET(
         .from(warehouseStock)
         .where(eq(warehouseStock.itemId, id))
 
+      const userIds = [item.createdBy, item.updatedBy].filter((v): v is string => !!v)
+      const userRows = userIds.length > 0
+        ? await db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, userIds))
+        : []
+      const userById = new Map(userRows.map((u) => [u.id, u]))
+
       return NextResponse.json({
         ...item,
+        createdBy: item.createdBy ? (userById.get(item.createdBy) ?? { id: item.createdBy, name: null }) : null,
+        updatedBy: item.updatedBy ? (userById.get(item.updatedBy) ?? { id: item.updatedBy, name: null }) : null,
         currentStock: stockData?.totalStock || '0',
         minStock: stockData?.maxMinStock || '0',
       })
@@ -80,7 +97,7 @@ export async function PUT(
     const parsed = await validateBody(request, updateItemSchema)
     if (!parsed.success) return parsed.response
     const {
-      name, sku, barcode, categoryId, costPrice, sellingPrice, unit, isActive, trackStock, trackSerialNumbers, expectedUpdatedAt,
+      name, itemCode, sku, barcode, categoryId, costPrice, sellingPrice, unit, isActive, trackStock, trackSerialNumbers, expectedUpdatedAt, expectedVersion,
       // Auto parts fields
       oemPartNumber, alternatePartNumbers, brand, condition,
       supplierId, supplierPartNumber, leadTimeDays, weight, dimensions, warrantyMonths, imageUrl, supersededBy,
@@ -94,14 +111,16 @@ export async function PUT(
       taxTemplateId,
     } = parsed.data
 
-    // Execute with RLS tenant context
-    return await withTenant(session!.user.tenantId, async (db) => {
-      // Capture old prices before transaction for anomaly detection
-      let oldSellingPrice = 0
-      let oldCostPrice = 0
+    const tenantId = session!.user.tenantId
+    const userId = session!.user.id
 
-      // Use transaction with FOR UPDATE to prevent race conditions
-      const result = await db.transaction(async (tx) => {
+    // Capture old prices for anomaly detection
+    let oldSellingPrice = 0
+    let oldCostPrice = 0
+
+    // Single transaction with FOR UPDATE to prevent race conditions
+    {
+      const result = await withTenantTransaction(tenantId, async (tx) => {
         // Lock and get current item (RLS scopes the query)
         const [currentItem] = await tx
           .select()
@@ -116,6 +135,11 @@ export async function PUT(
         // Store old prices for post-update anomaly detection
         oldSellingPrice = parseFloat(currentItem.sellingPrice || '0')
         oldCostPrice = parseFloat(currentItem.costPrice || '0')
+
+        // Optimistic locking (version) - preferred
+        if (expectedVersion !== undefined && currentItem.version !== expectedVersion) {
+          throw new StaleItemError(currentItem.version)
+        }
 
         // Optimistic locking - check if record was modified since client fetched it
         if (expectedUpdatedAt) {
@@ -135,7 +159,7 @@ export async function PUT(
             ),
           })
           if (existingSku) {
-            throw new Error('DUPLICATE_SKU')
+            throw new DuplicateError('sku', existingSku.id, sku)
           }
         }
 
@@ -148,13 +172,20 @@ export async function PUT(
             ),
           })
           if (existingBarcode) {
-            throw new Error('DUPLICATE_BARCODE')
+            throw new DuplicateError('barcode', existingBarcode.id, barcode)
           }
+        }
+
+        // Item code: keep unless explicitly changed; user-typed ITM-n codes bump the sequence
+        const newItemCode = itemCode && itemCode.trim() ? itemCode.trim().toUpperCase() : currentItem.itemCode
+        if (newItemCode !== currentItem.itemCode) {
+          await bumpItemCodeSequence(tx, tenantId, newItemCode)
         }
 
         const [updated] = await tx.update(items)
           .set({
             name,
+            itemCode: newItemCode,
             sku: sku || null,
             barcode: barcode || null,
             categoryId: categoryId || null,
@@ -196,10 +227,23 @@ export async function PUT(
             isGiftCard: isGiftCard !== undefined ? isGiftCard : undefined,
             // Tax template
             taxTemplateId: taxTemplateId !== undefined ? (taxTemplateId || null) : undefined,
+            updatedBy: userId,
+            version: sql`${items.version} + 1`,
             updatedAt: new Date(),
           })
           .where(eq(items.id, id))
           .returning()
+
+        await recordItemChange(tx, {
+          tenantId,
+          itemId: id,
+          userId,
+          source: 'manual',
+          action: currentItem.isActive && updated.isActive === false ? 'deactivate'
+            : !currentItem.isActive && updated.isActive ? 'activate' : 'update',
+          before: currentItem as unknown as Record<string, unknown>,
+          after: updated as unknown as Record<string, unknown>,
+        })
 
         // Log cost change if costPrice was manually adjusted
         const newCostPriceVal = parseFloat(costPrice ? String(costPrice) : '0')
@@ -213,7 +257,7 @@ export async function PUT(
           const totalStock = parseFloat(stockData?.totalStock || '0')
 
           await tx.insert(itemCostHistory).values({
-            tenantId: session!.user.tenantId,
+            tenantId,
             itemId: id,
             source: 'manual_adjustment',
             previousCostPrice: oldCostPrice.toString(),
@@ -221,7 +265,7 @@ export async function PUT(
             stockBefore: totalStock.toString(),
             stockAfter: totalStock.toString(),
             notes: 'Manual cost price adjustment',
-            createdBy: session!.user.id,
+            createdBy: userId,
           })
         }
 
@@ -229,7 +273,7 @@ export async function PUT(
       })
 
       // Broadcast the change to connected clients
-      logAndBroadcast(session!.user.tenantId, 'item', 'updated', id)
+      logAndBroadcast(tenantId, 'item', 'updated', id, { userId, entityName: result.name })
 
       // AI: Price change anomaly detection (fire-and-forget)
       const newSellingPrice = parseFloat(String(sellingPrice))
@@ -247,8 +291,17 @@ export async function PUT(
       }
 
       return NextResponse.json(result)
-    })
+    }
   } catch (error) {
+    if (error instanceof StaleItemError) {
+      return NextResponse.json({
+        error: 'This item was modified by another user. Please refresh and try again.',
+        code: 'STALE_ITEM',
+        currentVersion: error.currentVersion,
+      }, { status: 409 })
+    }
+    const mapped = toApiError(error)
+    if (mapped) return mapped
     logError('api/items/[id]', error)
     const message = error instanceof Error ? error.message : ''
 
@@ -261,13 +314,6 @@ export async function PUT(
         code: 'CONFLICT'
       }, { status: 409 })
     }
-    if (message === 'DUPLICATE_SKU') {
-      return NextResponse.json({ error: 'An item with this SKU already exists' }, { status: 400 })
-    }
-    if (message === 'DUPLICATE_BARCODE') {
-      return NextResponse.json({ error: 'An item with this barcode already exists' }, { status: 400 })
-    }
-
     return NextResponse.json({ error: 'Failed to update item' }, { status: 500 })
   }
 }
@@ -364,10 +410,9 @@ export async function DELETE(
         }, { status: 400 })
       }
 
-      // Get item before deletion to clean up R2 files
+      // Get item before deletion to clean up R2 files (and for the audit trail)
       const item = await db.query.items.findFirst({
         where: eq(items.id, id),
-        columns: { id: true, imageUrl: true, imageSize: true },
       })
 
       if (!item) {
@@ -381,6 +426,16 @@ export async function DELETE(
       if (!deleted) {
         return NextResponse.json({ error: 'Item not found' }, { status: 404 })
       }
+
+      await recordItemChange(db, {
+        tenantId,
+        itemId: id,
+        userId: session!.user.id,
+        source: 'manual',
+        action: 'delete',
+        before: item as unknown as Record<string, unknown>,
+        after: null,
+      })
 
       // Clean up item image from R2
       if (item.imageUrl) {
@@ -399,11 +454,13 @@ export async function DELETE(
       deleteFilesByDocument(tenantId, 'item', id, session!.user.tenantSlug).catch(() => {})
 
       // Broadcast the change to connected clients
-      logAndBroadcast(tenantId, 'item', 'deleted', id)
+      logAndBroadcast(tenantId, 'item', 'deleted', id, { userId: session!.user.id, entityName: item.name })
 
       return NextResponse.json({ success: true })
     })
   } catch (error) {
+    const mapped = toApiError(error)
+    if (mapped) return mapped
     logError('api/items/[id]', error)
     return NextResponse.json({ error: 'Failed to delete item' }, { status: 500 })
   }

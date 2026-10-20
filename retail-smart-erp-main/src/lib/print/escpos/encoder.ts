@@ -1,7 +1,7 @@
 /**
  * Pure ESC/POS byte builder. No DOM access: safe to run in Node (self-test),
- * web workers and the browser. Text is encoded as CP437 (ASCII subset); any
- * non-ASCII character becomes '?' unless a `TextRasterizer` is supplied, in
+ * web workers and the browser. Text is encoded as CP437 (ASCII subset, ESC t 0)
+ * or Windows-1252 (ESC t 16); any unencodable character becomes '?' unless a `TextRasterizer` is supplied, in
  * which case lines containing non-ASCII (Sinhala / Tamil ...) are rendered as a
  * bitmap via `rasterImage` (GS v 0).
  */
@@ -43,7 +43,22 @@ export type TextRasterizer = (
   opts: { widthDots: number; bold: boolean; size: 1 | 2; align: Align }
 ) => RasterImageData | null
 
+/** Supported printer character tables (ESC t n). */
+export type CodePage = 'cp437' | 'cp1252'
+/** ESC t n values (Epson numbering): PC437 = 0, WPC1252 = 16. */
+export const CODE_PAGE_ESC_T: Record<CodePage, number> = { cp437: 0, cp1252: 16 }
+
+/** 1-bit packed raster (GS v 0 layout: rows MSB-first, black = 1). */
+export interface PackedRaster {
+  /** Width in dots (bytes per row = ceil(width / 8)). */
+  width: number
+  height: number
+  data: Uint8Array
+}
+
 export interface EscPosBuilderOptions {
+  /** Character table used to encode text (default cp437). */
+  codePage?: CodePage
   columns?: number
   /** Dot width of the print head; used for bitmap text + image scaling. */
   widthDots?: number
@@ -61,6 +76,55 @@ const NON_ASCII = /[^\x20-\x7e]/
 
 export function hasNonAscii(text: string): boolean {
   return NON_ASCII.test(text.replace(/\n/g, ''))
+}
+
+// Windows-1252 0x80..0x9F (undefined slots map to null).
+const CP1252_HIGH: (number | null)[] = [
+  0x20ac, null, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039, 0x0152, null, 0x017d, null,
+  null, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, null, 0x017e, 0x0178,
+]
+const CP1252_REVERSE = new Map<number, number>()
+CP1252_HIGH.forEach((u, i) => {
+  if (u != null) CP1252_REVERSE.set(u, 0x80 + i)
+})
+
+function cp1252Byte(c: number): number | null {
+  if (c === LF || c === 0x09) return c
+  if (c >= 0x20 && c <= 0x7e) return c
+  if (c >= 0xa0 && c <= 0xff) return c
+  return CP1252_REVERSE.get(c) ?? null
+}
+
+/** Encode to Windows-1252; unmappable characters become '?'. */
+export function encodeCp1252(text: string): Uint8Array {
+  const out = new Uint8Array(text.length)
+  for (let i = 0; i < text.length; i++) out[i] = cp1252Byte(text.charCodeAt(i)) ?? 0x3f
+  return out
+}
+
+/** True when `text` contains characters the code page cannot print natively. */
+export function hasUnencodable(text: string, codePage: CodePage = 'cp437'): boolean {
+  if (codePage === 'cp437') return hasNonAscii(text)
+  const t = text.replace(/\n/g, '')
+  for (let i = 0; i < t.length; i++) if (cp1252Byte(t.charCodeAt(i)) == null) return true
+  return false
+}
+
+export function encodeText(text: string, codePage: CodePage = 'cp437'): Uint8Array {
+  return codePage === 'cp1252' ? encodeCp1252(text) : encodeCp437(text)
+}
+
+/** Decode a base64 string to bytes (Node + browser). */
+export function base64ToBytes(b64: string): Uint8Array {
+  if (typeof atob === 'function') {
+    const bin = atob(b64)
+    const out = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+    return out
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const B = (globalThis as any).Buffer
+  return new Uint8Array(B.from(b64, 'base64'))
 }
 
 /** Encode to CP437 bytes. Only the ASCII range is mapped; the rest becomes '?'. */
@@ -136,8 +200,12 @@ export class EscPosBuilder {
   private curAlign: Align = 'left'
   private curBold = false
   private curSize: 1 | 2 = 1
+  /** GS ! value restored after size changes (0x01 = double height "large" body). */
+  private baseSizeByte = 0
+  readonly codePage: CodePage
 
   constructor(opts: EscPosBuilderOptions = {}) {
+    this.codePage = opts.codePage ?? 'cp437'
     this.columns = opts.columns ?? COLUMNS[80]
     this.widthDots = opts.widthDots ?? (this.columns <= 32 ? DOT_WIDTH[58] : DOT_WIDTH[80])
     this.rasterizer = opts.rasterizer ?? null
@@ -154,9 +222,20 @@ export class EscPosBuilder {
     return this.raw([ESC, 0x40])
   }
 
-  /** Encode text (CP437 / ASCII). Does not append a line feed. */
+  /** ESC t n - select the character table matching `codePage`. */
+  selectCodePage(cp: CodePage = this.codePage): this {
+    return this.raw([ESC, 0x74, CODE_PAGE_ESC_T[cp]])
+  }
+
+  /** Body text size used when sizes are reset (normal or double-height). */
+  baseSize(large: boolean): this {
+    this.baseSizeByte = large ? 0x01 : 0
+    return this.raw([GS, 0x21, this.baseSizeByte])
+  }
+
+  /** Encode text in the builder's code page. Does not append a line feed. */
   text(str: string): this {
-    return this.raw(encodeCp437(str))
+    return this.raw(encodeText(str, this.codePage))
   }
 
   /** Text followed by LF. */
@@ -187,7 +266,8 @@ export class EscPosBuilder {
     const cw = Math.min(8, Math.max(1, w)) - 1
     const ch = Math.min(8, Math.max(1, h)) - 1
     this.curSize = w >= 2 ? 2 : 1
-    return this.raw([GS, 0x21, (cw << 4) | ch])
+    const v = (cw << 4) | ch
+    return this.raw([GS, 0x21, v === 0 ? this.baseSizeByte : v])
   }
 
   /** ESC d n - feed n lines. */
@@ -284,7 +364,7 @@ export class EscPosBuilder {
     const bold = style?.bold ?? this.curBold
     const size = style?.size ?? this.curSize
     const align = style?.align ?? this.curAlign
-    if (this.rasterizer && hasNonAscii(str)) {
+    if (this.rasterizer && hasUnencodable(str, this.codePage)) {
       const img = this.rasterizer(str, { widthDots: this.widthDots, bold, size, align })
       if (img && img.width > 0 && img.height > 0) {
         return this.rasterImage(img, this.widthDots)
@@ -294,7 +374,7 @@ export class EscPosBuilder {
     if (applied) {
       if (style?.align !== undefined) this.raw([ESC, 0x61, align === 'center' ? 1 : align === 'right' ? 2 : 0])
       if (style?.bold !== undefined) this.raw([ESC, 0x45, bold ? 1 : 0])
-      if (style?.size !== undefined) this.raw([GS, 0x21, size === 2 ? 0x11 : 0])
+      if (style?.size !== undefined) this.raw([GS, 0x21, size === 2 ? 0x11 : this.baseSizeByte])
       if (style?.underline !== undefined) this.raw([ESC, 0x2d, style.underline ? 1 : 0])
     }
     this.line(str)
@@ -302,7 +382,7 @@ export class EscPosBuilder {
       // restore
       if (style?.align !== undefined) this.raw([ESC, 0x61, this.curAlign === 'center' ? 1 : this.curAlign === 'right' ? 2 : 0])
       if (style?.bold !== undefined) this.raw([ESC, 0x45, this.curBold ? 1 : 0])
-      if (style?.size !== undefined) this.raw([GS, 0x21, this.curSize === 2 ? 0x11 : 0])
+      if (style?.size !== undefined) this.raw([GS, 0x21, this.curSize === 2 ? 0x11 : this.baseSizeByte])
       if (style?.underline !== undefined) this.raw([ESC, 0x2d, 0])
     }
     return this
@@ -349,6 +429,27 @@ export class EscPosBuilder {
     return this.raw(bitmap)
   }
 
+  /**
+   * GS v 0 from an already-packed 1-bit bitmap (e.g. the server logo raster).
+   * Rows wider than the print head are cropped symmetrically.
+   */
+  packedRaster(img: PackedRaster): this {
+    if (!img || img.width <= 0 || img.height <= 0) return this
+    const srcBpr = Math.ceil(img.width / 8)
+    if (img.data.length < srcBpr * img.height) return this
+    const maxBpr = Math.ceil(this.widthDots / 8)
+    const bpr = Math.min(srcBpr, maxBpr)
+    const skip = Math.floor((srcBpr - bpr) / 2)
+    let data = img.data
+    if (bpr !== srcBpr) {
+      data = new Uint8Array(bpr * img.height)
+      for (let y = 0; y < img.height; y++) data.set(img.data.subarray(y * srcBpr + skip, y * srcBpr + skip + bpr), y * bpr)
+    }
+    const h = img.height
+    this.raw([GS, 0x76, 0x30, 0, bpr & 0xff, (bpr >> 8) & 0xff, h & 0xff, (h >> 8) & 0xff])
+    return this.raw(data.length === bpr * h ? data : data.subarray(0, bpr * h))
+  }
+
   /** Concatenate all chunks. */
   build(): Uint8Array {
     let len = 0
@@ -380,6 +481,9 @@ export interface ReceiptBusiness {
   address?: string | null
   phone?: string | null
   taxId?: string | null
+  brn?: string | null
+  email?: string | null
+  website?: string | null
 }
 
 export interface ReceiptLine {
@@ -429,9 +533,12 @@ export interface ReceiptBuildOptions {
   drawerKick?: boolean
   drawerPin?: 2 | 5
   logoImage?: RasterImageData | null
+  /** Pre-packed logo bitmap (GET /api/settings/logo/raster). Preferred over logoImage. */
+  logoRaster?: PackedRaster | null
   /** Omit the final cut (e.g. when printing several copies). */
   noCut?: boolean
   decimals?: number
+  codePage?: CodePage
 }
 
 function money(n: number, decimals: number) {
@@ -453,8 +560,14 @@ function methodLabel(method: string): string {
   return map[method] || method.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 
-function builderFor(opts: { paperWidth: PaperWidth; unicodeAsBitmap?: boolean; rasterizer?: TextRasterizer | null }) {
+export function builderFor(opts: {
+  paperWidth: PaperWidth
+  unicodeAsBitmap?: boolean
+  rasterizer?: TextRasterizer | null
+  codePage?: CodePage
+}) {
   return new EscPosBuilder({
+    codePage: opts.codePage,
     columns: COLUMNS[opts.paperWidth],
     widthDots: DOT_WIDTH[opts.paperWidth],
     rasterizer: opts.unicodeAsBitmap ? opts.rasterizer ?? null : null,
@@ -469,17 +582,24 @@ export function buildReceiptEscPos(input: ReceiptInput, opts: ReceiptBuildOption
 
   b.init()
   if (opts.drawerKick) b.drawerKick(opts.drawerPin ?? 2)
+  b.selectCodePage()
 
   // Header
   b.align('center')
-  if (opts.logoImage) {
+  if (opts.logoRaster) {
+    b.packedRaster(opts.logoRaster)
+    b.feed(1)
+  } else if (opts.logoImage) {
     b.rasterImage(opts.logoImage, Math.min(b.widthDots, 384))
     b.feed(1)
   }
   b.styledLine(input.business.name, { bold: true, size: 2, align: 'center' })
   if (input.business.address) b.paragraph(input.business.address, { align: 'center' })
   if (input.business.phone) b.styledLine(`Tel: ${input.business.phone}`, { align: 'center' })
+  if (input.business.email) b.styledLine(input.business.email, { align: 'center' })
+  if (input.business.website) b.styledLine(input.business.website, { align: 'center' })
   if (input.business.taxId) b.styledLine(`VAT/TIN: ${input.business.taxId}`, { align: 'center' })
+  if (input.business.brn) b.styledLine(`BRN: ${input.business.brn}`, { align: 'center' })
   if (input.header) b.paragraph(input.header, { align: 'center' })
   if (input.isReturn) b.styledLine('*** RETURN ***', { bold: true, align: 'center' })
   if (input.copyLabel) b.styledLine(`*** ${input.copyLabel} ***`, { align: 'center' })
@@ -594,6 +714,7 @@ export interface ZReportBuildOptions {
   rasterizer?: TextRasterizer | null
   noCut?: boolean
   decimals?: number
+  codePage?: CodePage
 }
 
 export function buildZReportEscPos(input: ZReportInput, opts: ZReportBuildOptions): Uint8Array {
@@ -601,6 +722,7 @@ export function buildZReportEscPos(input: ZReportInput, opts: ZReportBuildOption
   const dec = opts.decimals ?? 2
   const cols = b.columns
   b.init()
+  b.selectCodePage()
   b.align('center')
   b.styledLine(input.business.name, { bold: true, size: 2, align: 'center' })
   if (input.business.address) b.paragraph(input.business.address, { align: 'center' })
@@ -672,10 +794,16 @@ export function buildZReportEscPos(input: ZReportInput, opts: ZReportBuildOption
 // ─── Small utilities ──────────────────────────────────────────────────────
 
 /** A short test page exercising text, barcode and QR. */
-export function buildTestPageEscPos(opts: { paperWidth: PaperWidth; businessName?: string; drawerKick?: boolean }): Uint8Array {
-  const b = builderFor({ paperWidth: opts.paperWidth })
+export function buildTestPageEscPos(opts: {
+  paperWidth: PaperWidth
+  businessName?: string
+  drawerKick?: boolean
+  codePage?: CodePage
+}): Uint8Array {
+  const b = builderFor({ paperWidth: opts.paperWidth, codePage: opts.codePage })
   b.init()
   if (opts.drawerKick) b.drawerKick(2)
+  b.selectCodePage()
   b.align('center')
   b.styledLine(opts.businessName || 'POSLanka', { bold: true, size: 2, align: 'center' })
   b.styledLine('Printer test page', { align: 'center' })

@@ -90,17 +90,8 @@ export async function PUT(
         return NextResponse.json({ error: 'Template not found' }, { status: 404 })
       }
 
-      // System defaults (tenantId is null) can only be deactivated
+      // System defaults (tenantId is null) are shared by every company and read-only for tenants (RLS)
       if (!existingTemplate.tenantId) {
-        if (body.isActive !== undefined && Object.keys(body).length === 1) {
-          const [updated] = await db
-            .update(inspectionTemplates)
-            .set({ isActive: body.isActive, updatedAt: new Date() })
-            .where(eq(inspectionTemplates.id, id))
-            .returning()
-
-          return NextResponse.json(updated)
-        }
         return NextResponse.json({ error: 'Cannot modify system default templates' }, { status: 403 })
       }
 

@@ -2,14 +2,14 @@ import crypto from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { db as rawDb, withTenant } from '@/lib/db'
-import { sales, saleItems, items, stockMovements, payments, customers, customerCreditTransactions, workOrders, workOrderParts, insuranceEstimates, insuranceEstimateItems, vehicles, warehouseStock, warehouses, loyaltyPrograms, loyaltyTiers, loyaltyTransactions, refunds, heldSales, salesOrders, posProfiles, posOpeningEntries, giftCards, giftCardTransactions } from '@/lib/db/schema'
+import { sales, saleItems, items, payments, customers, customerCreditTransactions, workOrders, workOrderParts, insuranceEstimates, insuranceEstimateItems, vehicles, warehouseStock, warehouses, loyaltyPrograms, loyaltyTiers, loyaltyTransactions, heldSales, salesOrders, posProfiles, posOpeningEntries, giftCards, giftCardTransactions } from '@/lib/db/schema'
 import { eq, and, desc, sql, or, ilike, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { sendPushToPermission } from '@/lib/notifications/push'
-import { roundCurrency, compareCurrency, currencyEquals, parseCurrency } from '@/lib/utils/currency'
+import { roundCurrency, compareCurrency, parseCurrency } from '@/lib/utils/currency'
 import { postSaleToGL, postGiftCardSaleToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import { checkSaleAnomalies, checkRefundAnomalies, checkDuplicateTransaction } from '@/lib/ai/anomaly-detector'
@@ -22,6 +22,13 @@ import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { type TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { salesListSchema, createSaleSchema } from '@/lib/validation/schemas/sales'
+import { nextDocumentNumber } from '@/lib/inventory/item-codes'
+import { toApiError } from '@/lib/db/errors'
+import { applyStockChanges, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
+import { createReturnInTx, returnStatusOf } from '@/lib/sales/returns'
+import { saleFlowErrorResponse } from '@/lib/sales/route-helpers'
+import type { CompanySession } from '@/lib/auth'
+import type { z } from 'zod'
 
 // GET all sales for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -152,12 +159,15 @@ export async function GET(request: NextRequest) {
             const totalReturned = returns.reduce((sum, r) => sum + Math.abs(parseCurrency(r.total)), 0)
             const originalTotal = parseCurrency(sale.total)
 
-            // RC-1: Use proper currency comparison instead of hardcoded epsilon
-            // Full return if returned amount >= original total (within currency precision)
-            if (compareCurrency(totalReturned, originalTotal) >= 0) {
-              returnStatus = 'full'
-            } else if (totalReturned > 0) {
-              returnStatus = 'partial'
+            // W8: per-line returned_quantity is authoritative; amounts are the fallback for
+            // legacy returns that could not be bound to a line (deleted items).
+            returnStatus = returnStatusOf(sale.items)
+            if (returnStatus === 'none') {
+              if (compareCurrency(totalReturned, originalTotal) >= 0) {
+                returnStatus = 'full'
+              } else if (totalReturned > 0) {
+                returnStatus = 'partial'
+              }
             }
           }
         }
@@ -217,6 +227,7 @@ export async function POST(request: NextRequest) {
   // Kept outside the try so the catch can resolve an idempotent duplicate (racing retries)
   let idemClientSaleId: string | undefined
   let idemTenantId: string | undefined
+  let idemOfflineRef: string | undefined
   try {
     const session = await authWithCompany()
     if (!session) {
@@ -232,7 +243,7 @@ export async function POST(request: NextRequest) {
     const parsed = await validateBody(request, createSaleSchema)
     if (!parsed.success) return parsed.response
 
-    const { clientSaleId, customerId, vehicleId, customerName, vehiclePlate, vehicleDescription, cartItems, paymentMethod, paymentSplits, subtotal, discount, discountType, discountReason, tax, taxRate: _bodyTaxRate, taxInclusive: _bodyTaxInclusive, taxBreakdown: bodyTaxBreakdown, total, amountPaid, creditAmount, addOverpaymentToCredit, isReturn, returnAgainst, refundAmount, refundMethod, warehouseId: providedWarehouseId, posOpeningEntryId, loyaltyPointsRedeemed, costCenterId: providedCostCenterId, workOrderId, restaurantOrderId, tipAmount: _tipAmount, giftCardId } = parsed.data
+    const { clientSaleId, customerId, vehicleId, customerName, vehiclePlate, vehicleDescription, cartItems, paymentMethod, paymentSplits, subtotal, discount, discountType, discountReason, tax, taxRate: _bodyTaxRate, taxInclusive: _bodyTaxInclusive, taxBreakdown: bodyTaxBreakdown, total, amountPaid, creditAmount, addOverpaymentToCredit, isReturn, warehouseId: providedWarehouseId, posOpeningEntryId, loyaltyPointsRedeemed, costCenterId: providedCostCenterId, workOrderId, restaurantOrderId, tipAmount: _tipAmount, giftCardId, offlineRef } = parsed.data
 
     // Check permission: createSales for regular sales, processReturns for returns
     if (isReturn) {
@@ -246,7 +257,7 @@ export async function POST(request: NextRequest) {
 
     // Early client-side discount sanity check (skip for returns)
     // Server-side validation with calculated subtotal happens after cart expansion (line ~492)
-    if (!isReturn && discount && discount < 0) {
+    if (discount && discount < 0) {
       return NextResponse.json({ error: 'Discount cannot be negative' }, { status: 400 })
     }
 
@@ -256,6 +267,13 @@ export async function POST(request: NextRequest) {
 
     idemClientSaleId = clientSaleId
     idemTenantId = session.user.tenantId
+    idemOfflineRef = offlineRef
+
+    // Returns: one shared implementation (locks the original sale, forces original prices,
+    // reverses tax, bounds the refund, restores stock/serials through the ledger).
+    if (isReturn) {
+      return await handleReturnPost(session, userId, parsed.data)
+    }
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -364,105 +382,6 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // For returns, validate the original sale exists and can be returned (RLS scopes)
-      if (isReturn && returnAgainst) {
-        const originalSale = await db.query.sales.findFirst({
-          where: eq(sales.id, returnAgainst),
-          with: {
-            items: true,
-          },
-        })
-        if (!originalSale) {
-          return NextResponse.json({ error: 'Original sale not found' }, { status: 400 })
-        }
-
-        // Issue 16: Prevent returns against voided sales
-        if (originalSale.status === 'void') {
-          return NextResponse.json({ error: 'Cannot process return against a voided sale' }, { status: 400 })
-        }
-
-        // Issue 3 & 6: Check for double returns - calculate already returned amounts (RLS scopes)
-        const existingReturns = await db.query.sales.findMany({
-          where: and(
-            eq(sales.returnAgainst, returnAgainst),
-            eq(sales.isReturn, true)
-          ),
-          with: {
-            items: true,
-          },
-        })
-
-        // RC-2: Build map of already returned quantities per item+price combination
-        // Same item at different prices = separate lines
-        const returnedQuantities: Record<string, number> = {}
-        for (const returnSale of existingReturns) {
-          for (const returnItem of returnSale.items) {
-            const itemId = returnItem.itemId || returnItem.itemName
-            const price = parseCurrency(returnItem.unitPrice)
-            // Key includes both itemId and price for precise matching
-            const key = `${itemId}:${price.toFixed(2)}`
-            const qty = Math.abs(parseFloat(returnItem.quantity))
-            returnedQuantities[key] = (returnedQuantities[key] || 0) + qty
-          }
-        }
-
-        // Issue 17: Validate each return item against original sale
-        for (const cartItem of cartItems) {
-          const returnQty = Math.abs(cartItem.quantity)
-          const returnPrice = parseCurrency(cartItem.unitPrice)
-
-          // RC-2: Match by itemId AND price first (same item, different price = different line)
-          let originalItem = originalSale.items.find(
-            (si: { itemId: string | null; itemName: string; unitPrice: string }) =>
-              (si.itemId === cartItem.itemId || si.itemName === cartItem.name) &&
-              currencyEquals(si.unitPrice, cartItem.unitPrice)
-          )
-
-          // Fallback to itemId only for legacy data without price matching
-          if (!originalItem) {
-            originalItem = originalSale.items.find(
-              (si: { itemId: string | null; itemName: string }) =>
-                si.itemId === cartItem.itemId || si.itemName === cartItem.name
-            )
-          }
-
-          if (!originalItem) {
-            return NextResponse.json({
-              error: `Item "${cartItem.name}" was not in the original sale`
-            }, { status: 400 })
-          }
-
-          const originalQty = Math.abs(parseFloat(originalItem.quantity))
-          // RC-2: Use item+price key for lookup
-          const returnKey = `${cartItem.itemId}:${returnPrice.toFixed(2)}`
-          const legacyKey = cartItem.itemId || cartItem.name
-          const alreadyReturned = returnedQuantities[returnKey] || returnedQuantities[`${legacyKey}:${parseCurrency(originalItem.unitPrice).toFixed(2)}`] || 0
-          const maxReturnable = originalQty - alreadyReturned
-
-          if (returnQty > maxReturnable) {
-            if (maxReturnable <= 0) {
-              return NextResponse.json({
-                error: `Item "${cartItem.name}" has already been fully returned`
-              }, { status: 400 })
-            }
-            return NextResponse.json({
-              error: `Cannot return ${returnQty} of "${cartItem.name}". Only ${maxReturnable} remaining (${alreadyReturned} already returned)`
-            }, { status: 400 })
-          }
-        }
-
-        // Check if entire sale has been fully returned
-        const originalTotal = Math.abs(parseFloat(originalSale.total))
-        const totalAlreadyReturned = existingReturns.reduce(
-          (sum, r) => sum + Math.abs(parseFloat(r.total)), 0
-        )
-        if (totalAlreadyReturned >= originalTotal) {
-          return NextResponse.json({
-            error: 'This sale has already been fully returned'
-          }, { status: 400 })
-        }
-      }
-
       // Verify all items belong to this tenant before processing (RLS scopes)
       // Issue #3: For returns, skip validation for items with null/empty itemId (deleted items)
       const itemIds = cartItems
@@ -474,21 +393,8 @@ export async function POST(request: NextRequest) {
           })
         : []
 
-    if (!isReturn && tenantItems.length !== itemIds.length) {
+    if (tenantItems.length !== itemIds.length) {
       return NextResponse.json({ error: 'Invalid items in cart' }, { status: 400 })
-    }
-
-    // Block returns of gift card items — gift cards are non-returnable
-    if (isReturn) {
-      for (const cartItem of cartItems) {
-        const item = tenantItems.find(i => i.id === cartItem.itemId)
-        if (item?.isGiftCard) {
-          return NextResponse.json({
-            error: `Gift card item "${cartItem.name}" cannot be returned`,
-            code: 'GIFT_CARD_NOT_RETURNABLE'
-          }, { status: 400 })
-        }
-      }
     }
 
     // Build cart items for processing
@@ -507,21 +413,20 @@ export async function POST(request: NextRequest) {
 
     for (const cartItem of cartItems) {
       const item = tenantItems.find(i => i.id === cartItem.itemId)
-      // Issue #3: For returns, allow items with no matching item record (deleted items)
-      if (!item && !isReturn) continue
+      if (!item) continue
 
       const unitPrice = roundCurrency(cartItem.unitPrice)
       const quantity = cartItem.quantity
       const itemDiscount = roundCurrency(cartItem.discount || 0)
 
       // Issue #20: Validate negative prices (only for non-returns)
-      if (!isReturn && unitPrice < 0) {
+      if (unitPrice < 0) {
         return NextResponse.json({ error: `Price cannot be negative for "${cartItem.name}"` }, { status: 400 })
       }
 
       // Issue #15: Validate item-level discount doesn't exceed item subtotal
       const itemSubtotal = roundCurrency(unitPrice * Math.abs(quantity))
-      if (itemDiscount > itemSubtotal && !isReturn) {
+      if (itemDiscount > itemSubtotal) {
         return NextResponse.json({ error: `Discount exceeds item total for "${cartItem.name}"` }, { status: 400 })
       }
 
@@ -547,7 +452,7 @@ export async function POST(request: NextRequest) {
     let serverTaxResult: Awaited<ReturnType<typeof recalculateDocumentTax>> | null = null
 
     // Issue #4: Server-side total validation
-    if (!isReturn) {
+    {
       const calculatedSubtotal = expandedCartItems.reduce((sum, item) => sum + item.total, 0)
       if (Math.abs(calculatedSubtotal - finalSubtotal) > 0.05) {
         return NextResponse.json({
@@ -731,26 +636,20 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // Stock ledger results of this sale (low-stock listeners are notified after commit)
+      let saleStockChanges: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
+
       // Create sale and items in transaction (RLS scopes)
       const result = await db.transaction(async (tx) => {
-        // Generate invoice/return number atomically inside transaction
-        // Use advisory lock to prevent duplicate invoice numbers under concurrency
-        const prefix = isReturn ? 'RTN' : 'INV'
-        const lockKey = isReturn ? 2 : 1 // Different lock keys for INV vs RTN
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(${lockKey})`)
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${sales.invoiceNo})` })
-          .from(sales)
-          .where(sql`${sales.invoiceNo} LIKE ${prefix + '-%'}`)
-
-      const lastNo = maxResult?.maxNo
-      const nextNumber = lastNo ? parseInt(lastNo.replace(/\D/g, '')) + 1 : 1
-      const invoiceNo = `${prefix}-${String(nextNumber).padStart(6, '0')}`
+        // Generate invoice/return number from the per-tenant sequence (row-locked
+        // upsert on tenant_sequences; no global lock, no MAX() scan). Format: INV-000123 / RTN-000004
+        const invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
 
       // Create sale
       const saleResult = await tx.insert(sales).values({
         tenantId: session.user.tenantId,
         clientSaleId: clientSaleId || null,
+        offlineRef: offlineRef || null,
         createdBy: userId,
         customerId: customerId || null,
         vehicleId: vehicleId || null,
@@ -768,12 +667,11 @@ export async function POST(request: NextRequest) {
         taxAmount: String(finalTax),
         taxBreakdown: bodyTaxBreakdown || serverTaxResult?.taxBreakdown || null,
         total: String(finalTotal),
-        paidAmount: String(isReturn ? 0 : actualPaidAmount), // Returns don't have payments received
-        paymentMethod: isReturn ? 'cash' : (creditUsed > 0 && cashCardAmount === 0 ? 'credit' : (paymentMethod || 'cash')),
+        paidAmount: String(actualPaidAmount),
+        paymentMethod: creditUsed > 0 && cashCardAmount === 0 ? 'credit' : (paymentMethod || 'cash'),
         // Issue #13: Differentiate between pending (no payment) and partial payment
-        status: isReturn ? 'completed' : (actualPaidAmount >= totalAmount ? 'completed' : actualPaidAmount > 0 ? 'partial' : 'pending'),
-        isReturn: isReturn || false,
-        returnAgainst: isReturn ? returnAgainst : null,
+        status: actualPaidAmount >= totalAmount ? 'completed' : actualPaidAmount > 0 ? 'partial' : 'pending',
+        isReturn: false,
         costCenterId: costCenterId || null,
         workOrderId: workOrderId || null,
         restaurantOrderId: restaurantOrderId || null,
@@ -782,7 +680,7 @@ export async function POST(request: NextRequest) {
 
       // Split tender (multiple payment methods) or single payment
       const splits = Array.isArray(paymentSplits) ? paymentSplits : null
-      if (splits && splits.length > 0 && !isReturn) {
+      if (splits && splits.length > 0) {
         for (const split of splits) {
           if (split.amount > 0) {
             await tx.insert(payments).values({
@@ -926,17 +824,14 @@ export async function POST(request: NextRequest) {
         }
       }
 
-        // AUTHORITATIVE STOCK CHECK: Create sale items and update stock
-        // This section uses FOR UPDATE locks to prevent race conditions.
-        // Even if the pre-transaction check passed, we re-verify here with exclusive locks.
-        // This ensures consistency even with concurrent bundle sales.
+        // AUTHORITATIVE STOCK CHECK through the stock ledger: sale lines are written first, then
+        // applyStockChanges locks the warehouse_stock rows in a deterministic order, applies the
+        // decrements and records signed movements. Reservations (held sales, draft work orders,
+        // estimates) are re-checked against the locked before-value.
+        const stockInputs: StockChangeInput[] = []
+        const stockLineQty: number[] = []
         for (const cartItem of expandedCartItems) {
-          // Get item info (for trackStock flag) - RLS scopes inside transaction
-          const [lockedItem] = await tx
-            .select()
-            .from(items)
-            .where(eq(items.id, cartItem.itemId))
-            .for('update')
+          const lockedItem = tenantItems.find(i => i.id === cartItem.itemId)
 
         // Calculate per-item tax: use client-provided per-item data or server-computed template data
         const clientCartItem = cartItems.find(ci => ci.itemId === cartItem.itemId)
@@ -946,7 +841,7 @@ export async function POST(request: NextRequest) {
         let itemTaxBreakdown = clientCartItem?.taxBreakdown ?? null
 
         // If client didn't provide per-item tax, use server-computed template results
-        if (!clientCartItem?.taxAmount && serverTaxResult && !isReturn) {
+        if (!clientCartItem?.taxAmount && serverTaxResult) {
           const expandedIdx = expandedCartItems.findIndex(ci => ci.itemId === cartItem.itemId)
           const perItem = expandedIdx >= 0 ? serverTaxResult.perItemTax[expandedIdx] : null
           if (perItem) {
@@ -956,50 +851,25 @@ export async function POST(request: NextRequest) {
         }
 
         // Create sale item
-        await tx.insert(saleItems).values({
+        const [saleItemRow] = await tx.insert(saleItems).values({
           tenantId: session.user.tenantId,
           saleId: newSale.id,
           itemId: cartItem.itemId,
           itemName: cartItem.name,
-          quantity: String(cartItem.quantity), // Negative for returns
+          quantity: String(cartItem.quantity),
           unitPrice: String(cartItem.unitPrice),
           discount: String(cartItem.discount || 0),
           taxRate: String(itemTaxRate),
           taxAmount: String(itemTaxAmount),
           taxTemplateId: itemTaxTemplateId,
           taxBreakdown: itemTaxBreakdown,
-          total: String(cartItem.total), // Negative for returns
+          total: String(cartItem.total),
           serialNumberIds: cartItem.serialNumberIds?.length ? cartItem.serialNumberIds : null,
-        })
+        }).returning({ id: saleItems.id })
 
-          // Update warehouse stock (safe now because row is locked)
           if (lockedItem?.trackStock) {
-            // Lock and get warehouse stock - RLS scopes inside transaction
-            const [lockedStock] = await tx
-              .select()
-              .from(warehouseStock)
-              .where(and(
-                eq(warehouseStock.itemId, cartItem.itemId),
-                eq(warehouseStock.warehouseId, warehouseId)
-              ))
-              .for('update')
-
-          // For returns: quantity is negative, so subtracting negative = adding back
-          // For sales: quantity is positive, so subtracting = reducing stock
-
-          // Skip stock validation for returns (we're adding stock back)
-          if (!isReturn && cartItem.quantity > 0) {
-            const currentStock = lockedStock ? parseFloat(lockedStock.currentStock) : 0
-            const reserved = reservedMap.get(lockedItem.id) || 0
-            const availableStock = currentStock - reserved
-            if (availableStock < cartItem.quantity) {
-              throw new Error(`INSUFFICIENT_STOCK:${cartItem.name} (need: ${cartItem.quantity}, have: ${availableStock})`)
-            }
-          }
-
-          // Serial number tracking
-          if (lockedItem?.trackSerialNumbers && cartItem.serialNumberIds?.length) {
-            if (!isReturn) {
+            // Serial number tracking
+            if (lockedItem.trackSerialNumbers && cartItem.serialNumberIds?.length) {
               // Validate serial count matches quantity
               if (cartItem.serialNumberIds.length !== cartItem.quantity) {
                 throw new Error(`SERIAL_MISMATCH:${cartItem.name} requires ${cartItem.quantity} serial number(s), but ${cartItem.serialNumberIds.length} provided`)
@@ -1014,55 +884,39 @@ export async function POST(request: NextRequest) {
                 referenceId: newSale.id,
                 changedBy: userId,
               })
-            } else {
-              // For returns: mark serials as 'returned' and move back to warehouse
-              await allocateSerials(tx, {
-                tenantId: session.user.tenantId,
-                serialNumberIds: cartItem.serialNumberIds,
-                newStatus: 'returned',
-                referenceType: 'return',
-                referenceId: newSale.id,
-                changedBy: userId,
-              })
             }
-          }
 
-          if (lockedStock) {
-            // Update existing warehouse stock
-            await tx.update(warehouseStock)
-              .set({
-                currentStock: sql`${warehouseStock.currentStock} - ${cartItem.quantity}`,
-                updatedAt: new Date(),
-              })
-              .where(eq(warehouseStock.id, lockedStock.id))
-          } else {
-            // Create warehouse stock record (for returns adding new stock)
-            await tx.insert(warehouseStock).values({
+            stockInputs.push({
               tenantId: session.user.tenantId,
-              warehouseId: warehouseId,
+              warehouseId,
               itemId: cartItem.itemId,
-              currentStock: String(-cartItem.quantity), // Negative of negative = positive for returns
-              minStock: '0',
+              mode: 'delta',
+              qty: -cartItem.quantity,
+              type: 'out',
+              referenceType: 'sale',
+              referenceId: newSale.id,
+              userId,
+              source: 'pos',
+              costCenterId: costCenterId || null,
+              idempotencyKey: `sale:${newSale.id}:${saleItemRow.id}`,
             })
+            stockLineQty.push(cartItem.quantity)
           }
-
-          // Create stock movement
-          // For returns: quantity is negative, stock movement shows items coming back in
-          await tx.insert(stockMovements).values({
-            tenantId: session.user.tenantId,
-            warehouseId: warehouseId,
-            itemId: cartItem.itemId,
-            type: isReturn ? 'in' : 'out',
-            quantity: String(Math.abs(cartItem.quantity)), // Always positive in stock movement
-            referenceType: isReturn ? 'return' : 'sale',
-            referenceId: newSale.id,
-          })
         }
-      }
+
+        const stockResults = stockInputs.length > 0 ? await applyStockChanges(tx, stockInputs) : []
+        stockResults.forEach((r, i) => {
+          const reserved = reservedMap.get(stockInputs[i].itemId) || 0
+          const availableStock = Math.round((r.before - reserved) * 1000) / 1000
+          if (stockLineQty[i] > 0 && availableStock < stockLineQty[i]) {
+            throw new Error(`INSUFFICIENT_STOCK:${r.itemName} (need: ${stockLineQty[i]}, have: ${availableStock})`)
+          }
+        })
+        saleStockChanges = stockResults.map((result, i) => ({ result, input: stockInputs[i] }))
 
         // Auto-create gift cards for gift card items sold
         const generatedGiftCards: { cardNumber: string; balance: number }[] = []
-        if (!isReturn) {
+        {
           for (const cartItem of expandedCartItems) {
             const item = tenantItems.find(i => i.id === cartItem.itemId)
             if (item?.isGiftCard && cartItem.quantity > 0) {
@@ -1089,63 +943,8 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // For returns, handle refund based on method
-        if (isReturn && (refundAmount ?? 0) > 0) {
-          if (refundMethod === 'credit' && customerId) {
-            // Add refund amount to customer credit
-            // Use row lock to prevent race conditions on credit balance update - RLS scopes
-            const [customer] = await tx
-              .select()
-              .from(customers)
-              .where(eq(customers.id, customerId))
-              .for('update')
-
-          if (customer) {
-            const newBalance = parseFloat(customer.balance || '0') + (refundAmount ?? 0)
-            await tx.insert(customerCreditTransactions).values({
-              tenantId: session.user.tenantId,
-              customerId,
-              type: 'refund',
-              amount: String(refundAmount),
-              balanceAfter: String(newBalance),
-              referenceType: 'return',
-              referenceId: newSale.id,
-              notes: `Refund from ${invoiceNo}`,
-              createdBy: userId,
-            })
-
-            await tx.update(customers)
-              .set({
-                balance: String(newBalance),
-                updatedAt: new Date(),
-              })
-              .where(eq(customers.id, customerId))
-          }
-        } else if (refundMethod === 'cash' || refundMethod === 'card') {
-          // Issue 7: Create payment record for cash/card refunds (negative amount for audit trail)
-          await tx.insert(payments).values({
-            tenantId: session.user.tenantId,
-            saleId: newSale.id,
-            amount: String(-(refundAmount ?? 0)), // Negative to indicate money out
-            method: refundMethod,
-            receivedBy: userId,
-          })
-        }
-
-          // 8K: Insert refund audit record
-          await tx.insert(refunds).values({
-            tenantId: session.user.tenantId,
-            saleId: newSale.id,
-            originalSaleId: returnAgainst || null,
-            amount: String(refundAmount),
-            method: refundMethod || 'cash',
-            processedBy: userId,
-            reason: `Return ${newSale.invoiceNo}${returnAgainst ? ' against original sale' : ''}`,
-          })
-      }
-
         // === LOYALTY PROGRAM INTEGRATION ===
-        if (customerId && !isReturn) {
+        if (customerId) {
           // Fetch active loyalty program
           const activeLoyalty = await tx.query.loyaltyPrograms.findFirst({
             where: eq(loyaltyPrograms.status, 'active'),
@@ -1233,57 +1032,6 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Handle loyalty point reversal for returns
-        if (isReturn && returnAgainst && customerId) {
-          // Find loyalty transactions from the original sale
-          const originalLoyaltyTxns = await tx
-            .select()
-            .from(loyaltyTransactions)
-            .where(and(
-              eq(loyaltyTransactions.saleId, returnAgainst),
-              eq(loyaltyTransactions.type, 'earn')
-            ))
-
-          if (originalLoyaltyTxns.length > 0) {
-            const totalEarnedFromOriginal = originalLoyaltyTxns.reduce((sum, t) => sum + t.points, 0)
-            // Issue #17: Calculate proportional reversal based on return amount vs original sale total
-            const [originalSaleData] = await tx
-              .select({ total: sales.total })
-              .from(sales)
-              .where(eq(sales.id, returnAgainst))
-            const originalSaleTotal = originalSaleData ? Math.abs(parseFloat(originalSaleData.total)) : 0
-            const returnProportion = originalSaleTotal > 0 ? Math.abs(finalTotal) / originalSaleTotal : 0
-            const pointsToReverse = Math.min(totalEarnedFromOriginal, Math.floor(totalEarnedFromOriginal * returnProportion))
-
-            if (pointsToReverse > 0) {
-              const [currentCustomer] = await tx
-                .select()
-                .from(customers)
-                .where(eq(customers.id, customerId))
-                .for('update')
-
-              if (currentCustomer) {
-                const newPoints = Math.max(0, (currentCustomer.loyaltyPoints || 0) - pointsToReverse)
-                await tx.insert(loyaltyTransactions).values({
-                  tenantId: session.user.tenantId,
-                  customerId,
-                  type: 'reversal',
-                  points: -pointsToReverse,
-                  balanceAfter: newPoints,
-                  saleId: newSale.id,
-                  notes: `Reversed ${pointsToReverse} points due to return ${invoiceNo}`,
-                })
-                await tx.update(customers)
-                  .set({
-                    loyaltyPoints: newPoints,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(customers.id, customerId))
-              }
-            }
-          }
-        }
-
         // Auto-post to General Ledger
         {
           // Separate gift card items from regular items for GL posting
@@ -1301,7 +1049,7 @@ export async function POST(request: NextRequest) {
           }, 0))
 
           // Post regular items as normal sale
-          if (regularTotal > 0 || isReturn) {
+          if (regularTotal > 0) {
             await postSaleToGL(tx, session.user.tenantId, {
               saleId: newSale.id,
               invoiceNumber: newSale.invoiceNo,
@@ -1314,16 +1062,15 @@ export async function POST(request: NextRequest) {
               creditAmount: creditUsed,
               costOfGoodsSold: totalCOGS,
               paymentMethod: paymentMethod || 'cash',
-              refundMethod: isReturn ? (refundMethod || 'cash') : undefined,
               customerId: customerId || null,
-              isReturn,
+              isReturn: false,
               costCenterId: costCenterId || null,
               taxBreakdown: (bodyTaxBreakdown || serverTaxResult?.taxBreakdown) as TaxBreakdownItem[] | undefined,
             })
           }
 
           // Post gift card items as liability (not revenue)
-          if (giftCardItemTotal > 0 && !isReturn) {
+          if (giftCardItemTotal > 0) {
             await postGiftCardSaleToGL(tx, session.user.tenantId, {
               saleId: newSale.id,
               invoiceNumber: newSale.invoiceNo,
@@ -1339,19 +1086,19 @@ export async function POST(request: NextRequest) {
         return { ...newSale, generatedGiftCards }
       })
 
+      notifyStockDecreased(saleStockChanges)
+
       // Broadcast the change to connected clients
       logAndBroadcast(session.user.tenantId, 'sale', 'created', result.id, {
         userId,
         entityName: result.invoiceNo,
-        description: isReturn
-          ? `Processed return ${result.invoiceNo}${returnAgainst ? ' against original sale' : ''}`
-          : generateActivityDescription('create', 'sale', result.invoiceNo),
+        description: generateActivityDescription('create', 'sale', result.invoiceNo),
       })
       // WS-3: Broadcast specific item stock updates (not 'all')
       const affectedItemIds = [...new Set(expandedCartItems.map(i => i.itemId))]
 
       // Low-stock alert → stock managers (only when a minimum is configured for the branch)
-      if (!isReturn && warehouseId && affectedItemIds.length > 0) {
+      if (warehouseId && affectedItemIds.length > 0) {
         try {
           const low = await db.select({ name: items.name, current: warehouseStock.currentStock, min: warehouseStock.minStock })
             .from(warehouseStock)
@@ -1406,7 +1153,7 @@ export async function POST(request: NextRequest) {
       }
 
       // AI: Anomaly detection (fire-and-forget)
-      if (!isReturn) {
+      {
         checkSaleAnomalies(session.user.tenantId, {
           id: result.id,
           invoiceNo: result.invoiceNo,
@@ -1453,21 +1200,6 @@ export async function POST(request: NextRequest) {
           totalAmount: finalTotal,
           createdAt: new Date(),
         })
-      } else {
-        // AI: Refund anomaly detection (fire-and-forget)
-        if ((refundAmount ?? 0) > 0 && returnAgainst) {
-          checkRefundAnomalies(session.user.tenantId, {
-            id: result.id,
-            saleId: result.id,
-            invoiceNo: result.invoiceNo,
-            refundAmount: refundAmount ?? 0,
-            refundMethod: refundMethod || 'cash',
-            originalSaleTotal: finalTotal,
-            originalSaleDate: new Date().toISOString(),
-            originalPaymentMethod: paymentMethod,
-            cashierName: session.user.name || undefined,
-          })
-        }
       }
 
       return NextResponse.json(result)
@@ -1479,6 +1211,21 @@ export async function POST(request: NextRequest) {
       || (error as { code?: string })?.code
     const constraint = (error as { cause?: { constraint?: string }; constraint?: string })?.cause?.constraint
       || (error as { constraint?: string })?.constraint || ''
+    if (pgCode === '23505' && idemTenantId && idemOfflineRef && constraint.includes('offline_ref')) {
+      try {
+        const tenantId = idemTenantId
+        const ref = idemOfflineRef
+        const existing = await withTenant(tenantId, async (db) =>
+          db.query.sales.findFirst({
+            where: and(eq(sales.tenantId, tenantId), eq(sales.offlineRef, ref)),
+            with: { customer: true, user: true, items: { with: { item: true } } },
+          })
+        )
+        if (existing) return NextResponse.json(existing, { status: 200 })
+      } catch (lookupError) {
+        logError('api/sales', lookupError, { method: 'POST', path: '/api/sales', stage: 'offline-ref-recovery' })
+      }
+    }
     if (pgCode === '23505' && idemClientSaleId && idemTenantId && constraint.includes('client_sale')) {
       try {
         const tenantId = idemTenantId
@@ -1527,6 +1274,133 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Insufficient gift card balance' }, { status: 400 })
     }
 
+    const apiError = toApiError(error)
+    if (apiError) return apiError
+
     return NextResponse.json({ error: 'Failed to create sale' }, { status: 500 })
+  }
+}
+
+type CreateSaleBody = z.infer<typeof createSaleSchema>
+
+/**
+ * POST /api/sales with isReturn=true. Contract (W8):
+ *  - cartItems carry `originalSaleItemId` (legacy: itemId match) and the quantity to return
+ *    (sign ignored); unitPrice / subtotal / tax / total from the client are ignored — the
+ *    server prices the return from the original sale (or the catalogue for manual returns).
+ *  - refundAmount is optional; when sent it must be <= the computed value (else 400).
+ *  - manual returns (no returnAgainst) need returnReason.
+ *  Response: the return sale row + { refundAmount (paid out), refundTotal, returnStatus, lines }.
+ */
+async function handleReturnPost(session: CompanySession, userId: string, body: CreateSaleBody) {
+  const tenantId = session.user.tenantId
+  const acctError = await requireAccountingConfig(rawDb, tenantId, 'sale')
+  if (acctError) return acctError
+
+  try {
+    return await withTenant(tenantId, async (db) => {
+      if (body.clientSaleId) {
+        const existing = await db.query.sales.findFirst({
+          where: and(eq(sales.tenantId, tenantId), eq(sales.clientSaleId, body.clientSaleId)),
+          with: { customer: true, user: true, items: { with: { item: true } } },
+        })
+        if (existing) return NextResponse.json(existing, { status: 200 })
+      }
+
+      if (body.warehouseId) {
+        const warehouse = await db.query.warehouses.findFirst({
+          where: and(eq(warehouses.id, body.warehouseId), eq(warehouses.isActive, true)),
+        })
+        if (!warehouse) {
+          return NextResponse.json({ error: 'Selected warehouse not found or inactive' }, { status: 400 })
+        }
+      }
+      let warehouseId = body.warehouseId || null
+      if (!warehouseId && !body.returnAgainst) {
+        const fallback = await db.query.warehouses.findFirst({
+          where: and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),
+        }) || await db.query.warehouses.findFirst({ where: eq(warehouses.isActive, true) })
+        warehouseId = fallback?.id || null
+      }
+
+      let costCenterId = body.costCenterId || null
+      if (!costCenterId && body.posOpeningEntryId) {
+        const openingEntry = await db.query.posOpeningEntries.findFirst({ where: eq(posOpeningEntries.id, body.posOpeningEntryId) })
+        if (openingEntry) {
+          const profile = await db.query.posProfiles.findFirst({ where: eq(posProfiles.id, openingEntry.posProfileId) })
+          costCenterId = profile?.costCenterId || null
+        }
+      }
+
+      const result = await db.transaction((tx) => createReturnInTx(tx, { tenantId, userId }, {
+        originalSaleId: body.returnAgainst || null,
+        lines: body.cartItems.map((c) => ({
+          originalSaleItemId: c.originalSaleItemId || null,
+          itemId: c.itemId || null,
+          name: c.name,
+          quantity: c.quantity,
+          serialNumberIds: c.serialNumberIds,
+        })),
+        refundMethod: body.refundMethod || 'cash',
+        clientRefundAmount: body.refundAmount ?? null,
+        customerId: body.customerId || null,
+        warehouseId,
+        posOpeningEntryId: body.posOpeningEntryId || null,
+        costCenterId,
+        clientSaleId: body.clientSaleId || null,
+        offlineRef: body.offlineRef || null,
+        reason: body.returnReason || null,
+        notes: body.returnNotes || null,
+      }))
+
+      const ret = result.returnSale
+      logAndBroadcast(tenantId, 'sale', 'created', ret.id, {
+        userId,
+        entityName: ret.invoiceNo,
+        description: `Processed return ${ret.invoiceNo}${result.originalSale ? ` against ${result.originalSale.invoiceNo}` : ' (no receipt)'}`,
+      })
+      if (result.originalSale) logAndBroadcast(tenantId, 'sale', 'updated', result.originalSale.id)
+      for (const itemId of result.affectedItemIds) logAndBroadcast(tenantId, 'item', 'updated', itemId)
+      logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.warehouseId)
+
+      if (result.refundPaidOut > 0 && result.originalSale) {
+        checkRefundAnomalies(tenantId, {
+          id: ret.id,
+          saleId: ret.id,
+          invoiceNo: ret.invoiceNo,
+          refundAmount: result.refundPaidOut,
+          refundMethod: result.refundMethod,
+          originalSaleTotal: Math.abs(parseCurrency(result.originalSale.total)),
+          originalSaleDate: result.originalSale.createdAt.toISOString(),
+          originalPaymentMethod: result.originalSale.paymentMethod || undefined,
+          cashierName: session.user.name || undefined,
+        })
+      }
+
+      return NextResponse.json({
+        ...ret,
+        refundAmount: result.refundPaidOut,
+        refundTotal: result.refundTotal,
+        refundTax: result.refundTax,
+        returnStatus: result.returnStatus,
+        originalInvoiceNo: result.originalSale?.invoiceNo || null,
+        lines: result.lines,
+        generatedGiftCards: [],
+      })
+    })
+  } catch (error) {
+    const pgCode = (error as { cause?: { code?: string } })?.cause?.code || (error as { code?: string })?.code
+    const constraint = (error as { cause?: { constraint?: string } })?.cause?.constraint || (error as { constraint?: string })?.constraint || ''
+    if (pgCode === '23505' && body.clientSaleId && constraint.includes('client_sale')) {
+      const existing = await withTenant(tenantId, (db) => db.query.sales.findFirst({
+        where: and(eq(sales.tenantId, tenantId), eq(sales.clientSaleId, body.clientSaleId!)),
+        with: { customer: true, user: true, items: { with: { item: true } } },
+      }))
+      if (existing) return NextResponse.json(existing, { status: 200 })
+    }
+    const mapped = saleFlowErrorResponse(error)
+    if (mapped) return mapped
+    logError('api/sales', error, { method: 'POST', path: '/api/sales', stage: 'return' })
+    return NextResponse.json({ error: 'Failed to process return' }, { status: 500 })
   }
 }

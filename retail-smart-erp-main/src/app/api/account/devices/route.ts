@@ -72,7 +72,11 @@ export async function DELETE(request: NextRequest) {
     if (!owner) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const parsed = await validateBody(request, unregisterSchema)
     if (!parsed.success) return parsed.response
-    await db.delete(userDevices).where(eq(userDevices.pushToken, parsed.data.pushToken))
+    // Only the caller's own registration can be removed (never another company's/account's device)
+    const ownerFilter = owner.userId
+      ? and(eq(userDevices.tenantId, owner.tenantId!), eq(userDevices.userId, owner.userId))
+      : owner.superAdminId ? eq(userDevices.superAdminId, owner.superAdminId) : eq(userDevices.accountId, owner.accountId!)
+    await db.delete(userDevices).where(and(eq(userDevices.pushToken, parsed.data.pushToken), ownerFilter))
     return NextResponse.json({ ok: true })
   } catch (error) {
     logError('api/account/devices DELETE', error)

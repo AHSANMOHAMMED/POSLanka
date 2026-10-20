@@ -250,6 +250,8 @@ export const addPurchasePaymentSchema = z.object({
 const purchaseReturnItemSchema = z.object({
   purchaseItemId: uuidSchema,
   returnQuantity: z.coerce.number().positive('Return quantity must be greater than zero'),
+  /** Serial numbers sent back to the supplier (required for serial-tracked items). */
+  serialNumberIds: z.array(uuidSchema).max(1000).optional(),
 })
 export const createPurchaseReturnSchema = z.object({
   items: z.array(purchaseReturnItemSchema).min(1, 'At least one item is required').max(200),

@@ -12,6 +12,7 @@ import { validateBody } from '@/lib/validation'
 import { updateUserSchema } from '@/lib/validation/schemas/users'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { isUniqueViolation } from '@/lib/db/errors'
 
 // GET single user by ID
 export async function GET(
@@ -150,7 +151,7 @@ export async function PUT(
 
         // POS PIN: hash on save, empty string clears
         if (pin !== undefined) {
-          updateData.pinHash = pin === '' ? null : await bcrypt.hash(pin, 10)
+          updateData.pinHash = pin === '' ? null : await bcrypt.hash(pin, 12)
         }
 
         // Update user
@@ -208,8 +209,8 @@ export async function PUT(
     if (message === 'INSUFFICIENT_RANK') {
       return NextResponse.json({ error: 'You do not have permission to modify this user' }, { status: 403 })
     }
-    if (message === 'EMAIL_EXISTS') {
-      return NextResponse.json({ error: 'A user with this email already exists' }, { status: 400 })
+    if (message === 'EMAIL_EXISTS' || isUniqueViolation(error, 'users_tenant_email_active_unique')) {
+      return NextResponse.json({ error: 'Another active user already uses this email', code: 'DUPLICATE', field: 'email' }, { status: 409 })
     }
     if (message === 'INVALID_PASSWORD') {
       return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 })

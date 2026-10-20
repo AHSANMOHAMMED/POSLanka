@@ -60,7 +60,7 @@ interface Pagination {
 const PAGE_SIZE = 60
 const BARCODE_RE = /^\d{8,}$/
 /** Receipt QR codes / typed invoice numbers open the returns flow instead of an item lookup. */
-const INVOICE_RE = /^(INV|RTN)-/i
+const INVOICE_RE = /^(INV|RTN|OFF)-/i
 
 /** Extra decoding the server attaches to barcode lookups (scale / price-embedded / GS1 codes). */
 interface ScanInfo {
@@ -464,6 +464,16 @@ export default function PosScreen() {
           {canInventory && (
             <Pressable style={styles.quickNavPill} onPress={() => router.push('/inventory')}>
               <Text style={styles.quickNavPillText}>📦 Stock</Text>
+            </Pressable>
+          )}
+          {hasPermission(user, 'submitStockIntake') && (
+            <Pressable style={styles.quickNavPill} onPress={() => router.push('/intake')}>
+              <Text style={styles.quickNavPillText}>📥 Intake</Text>
+            </Pressable>
+          )}
+          {hasPermission(user, 'manageUsers') && (
+            <Pressable style={styles.quickNavPill} onPress={() => router.push('/staff')}>
+              <Text style={styles.quickNavPillText}>👥 Staff</Text>
             </Pressable>
           )}
           <Pressable style={styles.quickNavPill} onPress={() => router.push('/summary')}>

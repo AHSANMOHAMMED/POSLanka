@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db as rawDb, withAuthTenantTransaction } from '@/lib/db'
 import { layaways, layawayItems, sales, saleItems, payments, items as itemsTable, warehouseStock, stockMovements, warehouses, workOrderParts, workOrders, heldSales, insuranceEstimateItems, insuranceEstimates } from '@/lib/db/schema'
-import { eq, and, sql, desc } from 'drizzle-orm'
+import { eq, and, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
@@ -15,29 +15,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { layawayCompleteSchema } from '@/lib/validation/schemas/layaways'
 import { stripNullValues, validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
-
-// Generate invoice number for the sale
-async function generateInvoiceNo(tx: Parameters<Parameters<typeof withAuthTenantTransaction>[0]>[1]): Promise<string> {
-  const prefix = 'INV-'
-
-  // Use advisory lock (same key as sales/route.ts) to prevent duplicate invoice numbers
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(1)`)
-
-  const existing = await tx
-    .select({ invoiceNo: sales.invoiceNo })
-    .from(sales)
-    .where(sql`${sales.invoiceNo} LIKE ${prefix + '%'}`)
-    .orderBy(desc(sales.invoiceNo))
-    .limit(1)
-
-  let nextNum = 1
-  if (existing.length > 0) {
-    const lastNum = parseInt(existing[0].invoiceNo.replace(/\D/g, '') || '0', 10)
-    nextNum = lastNum + 1
-  }
-
-  return `${prefix}${nextNum.toString().padStart(6, '0')}`
-}
+import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 
 // POST complete a layaway (convert to sale)
 export async function POST(
@@ -244,7 +222,7 @@ export async function POST(
     }
 
     // Generate invoice number
-    const invoiceNo = await generateInvoiceNo(tx)
+    const invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
 
     // Calculate per-item tax using template system for the sale
     const lineItems = layawayItemsData.map(item => ({

@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
-import { getEntityConfig } from '@/lib/import-export/entity-config'
-import { parseCsv, parseXlsx, mapColumns, validateRows } from '@/lib/import-export/import-utils'
+import { withTenant } from '@/lib/db'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
-import { createJob, getJob, updateJob } from '@/lib/import-export/import-job-store'
-import { runImportJob } from '@/lib/import-export/run-import-job'
-import { broadcastAccountChange } from '@/lib/websocket/broadcast'
-import { randomUUID } from 'crypto'
+import { parseImportRequest } from '@/lib/import-export/import-request'
+import { validateImport } from '@/lib/import-export/import-validate'
+import { createImportJob, effectiveStatus } from '@/lib/import-export/import-job-store'
+import { startImportJobInBackground } from '@/lib/import-export/run-import-job'
 
+// POST - Validate the file, persist the job + rows, then apply in the background.
 export async function POST(request: NextRequest) {
   try {
     const session = await authWithCompany()
@@ -17,125 +16,61 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const formData = await request.formData()
-    const file = formData.get('file') as File
-    const entityName = formData.get('entity') as string
-    const mode = (formData.get('mode') as string) || 'insert'
-    const skipErrors = formData.get('skipErrors') === 'true'
+    const parsed = await parseImportRequest(request, session)
+    if (parsed instanceof NextResponse) return parsed
 
-    if (!file || !entityName) {
-      return NextResponse.json({ error: 'File and entity are required' }, { status: 400 })
-    }
-
-    const entityConfig = getEntityConfig(entityName)
-    if (!entityConfig) {
-      return NextResponse.json({ error: `Unknown entity: ${entityName}` }, { status: 400 })
-    }
-
-    if (!entityConfig.importable) {
-      return NextResponse.json({ error: `Import not supported for: ${entityName}` }, { status: 400 })
-    }
-
-    const permError = requirePermission(session, entityConfig.permission as Parameters<typeof requirePermission>[1])
-    if (permError) return permError
-
-    const quotaError = await requireQuota(session.user.tenantId, 'file')
+    const tenantId = session.user.tenantId
+    const quotaError = await requireQuota(tenantId, 'file')
     if (quotaError) return quotaError
 
-    const businessType = session.user.businessType || undefined
+    const validation = await withTenant(tenantId, (db) => validateImport(db, {
+      tenantId,
+      entityConfig: parsed.entityConfig,
+      rawRows: parsed.rawRows,
+      columnMapping: parsed.columnMapping,
+      mode: parsed.mode,
+      options: parsed.options,
+      businessType: parsed.businessType,
+    }))
 
-    // Parse file synchronously before returning response
-    let rawRows: Record<string, string>[]
-    const fileName = file.name.toLowerCase()
-
-    if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-      const buffer = await file.arrayBuffer()
-      rawRows = await parseXlsx(buffer)
-    } else if (fileName.endsWith('.csv')) {
-      const text = await file.text()
-      rawRows = parseCsv(text)
-    } else {
-      return NextResponse.json({ error: 'Unsupported file format. Use CSV or XLSX.' }, { status: 400 })
-    }
-
-    if (rawRows.length === 0) {
-      return NextResponse.json({ error: 'File contains no data rows' }, { status: 400 })
-    }
-
-    // Map columns
-    const headers = Object.keys(rawRows[0])
-    const customMappingStr = formData.get('columnMapping') as string | null
-    let columnMapping: Record<string, string>
-    if (customMappingStr) {
-      try {
-        columnMapping = JSON.parse(customMappingStr)
-      } catch {
-        return NextResponse.json({ error: 'Invalid column mapping format' }, { status: 400 })
-      }
-    } else {
-      columnMapping = mapColumns(headers, entityConfig, businessType)
-    }
-
-    // Validate rows
-    const validation = validateRows(rawRows, entityConfig, columnMapping, mode as 'insert' | 'update', businessType)
-
-    if (!skipErrors && validation.errorCount > 0) {
+    if (!parsed.options.skipErrors && validation.counts.error > 0) {
       return NextResponse.json({
-        error: `${validation.errorCount} rows have validation errors. Fix them or enable "Skip invalid rows".`,
+        error: `${validation.counts.error} rows have validation errors. Fix them or enable "Skip invalid rows".`,
         errors: validation.errors.slice(0, 20),
       }, { status: 400 })
     }
-
-    if (validation.validRows.length === 0) {
-      return NextResponse.json({ error: 'No valid rows to import' }, { status: 400 })
+    if (validation.counts.insert + validation.counts.update === 0) {
+      return NextResponse.json({ error: 'No rows to import', actions: validation.counts }, { status: 400 })
     }
 
-    // Create job and return immediately
-    const jobId = randomUUID()
-    const tenantId = session.user.tenantId
-    const userId = session.user.id
-
-    createJob({
-      jobId,
+    const created = await createImportJob({
       tenantId,
-      userId,
-      entityName,
-      status: 'processing',
-      total: validation.validRows.length,
-      processed: 0,
-      imported: 0,
-      skipped: 0,
-      autoCreated: 0,
-      errors: [],
-      startedAt: Date.now(),
+      userId: session.user.id,
+      entityName: parsed.entityName,
+      mode: parsed.mode,
+      options: { ...parsed.options, matchBy: validation.matchBy },
+      fileName: parsed.fileName,
+      fileHash: parsed.fileHash,
+      rows: validation.rows,
     })
 
-    // Kick off background processing (detached — no await)
-    runImportJob({
-      jobId,
-      tenantId,
-      userId,
-      entityName,
-      entityConfig,
-      businessType,
-      validRows: validation.validRows,
-      mode: mode as 'insert' | 'update',
-      skipErrors,
-    }).catch((err) => {
-      console.error('[ImportJob] Unhandled error:', err)
-      updateJob(jobId, { status: 'error', errorMessage: 'Internal error', completedAt: Date.now() })
-      broadcastAccountChange(userId, 'import-job', 'updated', jobId, {
-        ...getJob(jobId),
-        status: 'error',
-        errorMessage: 'Internal error',
-      })
-      logError('import-job-unhandled', err, { errorSource: 'system', context: { jobId, entityName } })
-    })
+    if (!created.ok) {
+      const existing = created.conflict
+      const status = existing ? effectiveStatus(existing) : 'processing'
+      return NextResponse.json({
+        error: status === 'interrupted'
+          ? 'This file has an interrupted import. Resume it instead of starting again.'
+          : 'This file is already being imported.',
+        jobId: existing?.id ?? null,
+        status,
+      }, { status: 409 })
+    }
 
-    return NextResponse.json({ jobId })
+    startImportJobInBackground(created.job.id, tenantId)
+
+    return NextResponse.json({ jobId: created.job.id, total: created.job.total, actions: validation.counts })
   } catch (error) {
     logError('api/import/execute', error)
-    console.error('POST /api/import/execute error:', error)
     return NextResponse.json({ error: 'Import failed to start' }, { status: 500 })
   }
 }

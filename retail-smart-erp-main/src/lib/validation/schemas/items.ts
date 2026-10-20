@@ -27,6 +27,7 @@ export const createItemSchema = z.object({
   sellingPrice: z.coerce.number().min(0, 'Selling price cannot be negative'),
 
   // Identification
+  itemCode: z.string().trim().max(30).optional(), // auto-generated (ITM-000001) when blank
   sku: z.string().max(100).optional(),
   barcode: z.string().max(100).optional(),
   oemPartNumber: z.string().max(100).optional(),
@@ -168,6 +169,7 @@ export const serialNumbersListSchema = paginatedSearchSchema.extend({
 // PUT /api/items/[id]
 export const updateItemSchema = createItemSchema.merge(optimisticLockSchema).extend({
   isActive: z.boolean().optional(),
+  expectedVersion: z.coerce.number().int().min(1).optional(), // optimistic lock on items.version
 })
 
 // PUT /api/categories/[id]

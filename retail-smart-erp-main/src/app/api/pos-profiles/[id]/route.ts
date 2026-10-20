@@ -111,6 +111,7 @@ export async function PUT(
         showLogoOnReceipt,
         receiptHeader,
         receiptFooter,
+        receiptSettings,
         defaultPaymentMethod,
         allowCreditSale,
         status,
@@ -152,6 +153,7 @@ export async function PUT(
       if (showLogoOnReceipt !== undefined) updateData.showLogoOnReceipt = showLogoOnReceipt
       if (receiptHeader !== undefined) updateData.receiptHeader = receiptHeader || null
       if (receiptFooter !== undefined) updateData.receiptFooter = receiptFooter || null
+      if (receiptSettings !== undefined) updateData.receiptSettings = receiptSettings
       if (defaultPaymentMethod !== undefined) updateData.defaultPaymentMethod = defaultPaymentMethod
       if (allowCreditSale !== undefined) updateData.allowCreditSale = allowCreditSale
       if (status !== undefined) updateData.status = status

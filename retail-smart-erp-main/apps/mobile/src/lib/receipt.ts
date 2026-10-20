@@ -1,38 +1,197 @@
 // Turns server responses (POST /api/sales, shift close) into the printer's
-// ReceiptInput / ZReportInput documents. Business details come from
-// GET /api/tenant (cached for the session), header/footer from the shift's
-// POS profile.
+// ReceiptInput / ZReportInput documents. Business details, receipt settings and
+// the logo raster come from GET /api/tenant + GET /api/settings/logo/raster and
+// are cached in memory and in a JSON file (documentDirectory) so receipts
+// printed offline keep the logo, tax numbers and layout. Header/footer can be
+// overridden per counter by the shift's POS profile.
+import * as FileSystem from 'expo-file-system'
 import { apiGet, getUser } from './api'
-import type { ReceiptInput, ReceiptLine, ReceiptPayment, ZReportInput } from './escpos'
+import type { InvoiceCodeType, ReceiptInput, ReceiptLine, ReceiptLogo, ReceiptPayment, ZReportInput } from './escpos'
+import { getPrinterSettings } from './printer'
 import { shiftCounterName, type Shift } from './shift'
+
+/** Subset of the web ReceiptSettings (src/lib/print/receipt-settings.ts). */
+export interface ReceiptSettingsLite {
+  showLogo: boolean
+  logoWidthPct: number
+  showLegalName: boolean
+  showAddress: boolean
+  showPhone: boolean
+  showEmail: boolean
+  showWebsite: boolean
+  showTaxId: boolean
+  showBrn: boolean
+  headerLines: string[]
+  footerLines: string[]
+  returnPolicy: string
+  invoiceCode: InvoiceCodeType
+  showCashier: boolean
+  showCounter: boolean
+  showCustomer: boolean
+}
+
+export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettingsLite = {
+  showLogo: true,
+  logoWidthPct: 60,
+  showLegalName: true,
+  showAddress: true,
+  showPhone: true,
+  showEmail: true,
+  showWebsite: true,
+  showTaxId: true,
+  showBrn: true,
+  headerLines: [],
+  footerLines: [],
+  returnPolicy: '',
+  invoiceCode: 'both',
+  showCashier: true,
+  showCounter: true,
+  showCustomer: true,
+}
 
 export interface BusinessInfo {
   name: string
+  legalName?: string | null
   address?: string | null
   phone?: string | null
+  email?: string | null
+  website?: string | null
+  taxId?: string | null
+  brn?: string | null
+  logoUrl?: string | null
+  /** Tenant-level receipt settings (effective). */
+  receiptSettings?: Partial<ReceiptSettingsLite> | null
+  /** Logo raster for the configured paper width (+ PNG for HTML receipts). */
+  logo?: ReceiptLogo | null
+  /** Paper dot width the logo was rasterised for. */
+  logoPaperDots?: number
+  fetchedAt?: number
 }
 
 let cachedBusiness: BusinessInfo | null = null
 
-/** GET /api/tenant → { name, address, phone }. Falls back to the login's tenant name. */
+async function cacheFile(): Promise<string> {
+  const user = await getUser()
+  const slug = (user?.tenantSlug || 'default').replace(/[^a-z0-9_-]/gi, '_')
+  return `${FileSystem.documentDirectory || ''}poslanka-business-${slug}.json`
+}
+
+async function readCachedBusiness(): Promise<BusinessInfo | null> {
+  try {
+    const file = await cacheFile()
+    const info = await FileSystem.getInfoAsync(file)
+    if (!info.exists) return null
+    return JSON.parse(await FileSystem.readAsStringAsync(file)) as BusinessInfo
+  } catch {
+    return null
+  }
+}
+
+async function writeCachedBusiness(b: BusinessInfo): Promise<void> {
+  try {
+    await FileSystem.writeAsStringAsync(await cacheFile(), JSON.stringify(b))
+  } catch {
+    // cache is best effort
+  }
+}
+
+interface TenantResponse {
+  name?: string
+  legalName?: string | null
+  address?: string | null
+  phone?: string | null
+  email?: string | null
+  website?: string | null
+  taxId?: string | null
+  brn?: string | null
+  logoUrl?: string | null
+  receiptSettings?: Partial<ReceiptSettingsLite> | null
+}
+
+/**
+ * GET /api/tenant (+ logo raster). Online: refreshes the persistent cache.
+ * Offline: returns the last cached copy, or the login's tenant name.
+ */
 export async function loadBusinessInfo(force = false): Promise<BusinessInfo> {
-  if (cachedBusiness && !force) return cachedBusiness
+  if (cachedBusiness && !force) {
+    // Re-rasterise when the printer's paper width changed since the logo was fetched.
+    const dots = (await getPrinterSettings()).paperWidth === 80 ? 576 : 384
+    if (!cachedBusiness.logo || cachedBusiness.logoPaperDots === dots) return cachedBusiness
+  }
   const user = await getUser()
   const fallback: BusinessInfo = { name: user?.tenantName || 'POSLanka', address: null, phone: null }
-  const res = await apiGet<{ name?: string; address?: string | null; phone?: string | null }>('/api/tenant')
+  const previous = cachedBusiness || (await readCachedBusiness())
+
+  const res = await apiGet<TenantResponse>('/api/tenant')
   if (res.ok && res.data) {
-    cachedBusiness = {
-      name: res.data.name || fallback.name,
-      address: res.data.address || null,
-      phone: res.data.phone || null,
+    const t = res.data
+    const info: BusinessInfo = {
+      name: t.name || fallback.name,
+      legalName: t.legalName || null,
+      address: t.address || null,
+      phone: t.phone || null,
+      email: t.email || null,
+      website: t.website || null,
+      taxId: t.taxId || null,
+      brn: t.brn || null,
+      logoUrl: t.logoUrl || null,
+      receiptSettings: t.receiptSettings || null,
+      logo: null,
+      fetchedAt: Date.now(),
     }
-    return cachedBusiness
+    const settings = { ...DEFAULT_RECEIPT_SETTINGS, ...(info.receiptSettings || {}) }
+    if (info.logoUrl && settings.showLogo !== false) {
+      const paper = (await getPrinterSettings()).paperWidth
+      const dots = paper === 80 ? 576 : 384
+      const pct = Math.min(100, Math.max(40, Math.round(settings.logoWidthPct || 60)))
+      const raster = await apiGet<{ width: number; height: number; data: string; pngBase64?: string }>(
+        `/api/settings/logo/raster?width=${dots}&pct=${pct}`
+      )
+      if (raster.ok && raster.data?.data) {
+        info.logo = { width: raster.data.width, height: raster.data.height, data: raster.data.data, pngBase64: raster.data.pngBase64 || null, widthPct: pct }
+        info.logoPaperDots = dots
+      } else if (raster.status === 0 && previous?.logo && previous.logoUrl === info.logoUrl) {
+        // network blip: keep the previously cached logo
+        info.logo = previous.logo
+        info.logoPaperDots = previous.logoPaperDots
+      }
+    }
+    cachedBusiness = info
+    await writeCachedBusiness(info)
+    return info
+  }
+  if (previous) {
+    cachedBusiness = previous
+    return previous
   }
   return fallback
 }
 
 export function clearBusinessInfoCache() {
   cachedBusiness = null
+}
+
+function textLines(text: string | null | undefined): string[] {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, 5)
+}
+
+/** defaults <- tenant settings <- POS profile legacy header/footer/showLogo <- POS profile overrides. */
+export function resolveReceiptSettings(business: BusinessInfo, shift?: Shift | null): ReceiptSettingsLite {
+  const profile = shift?.posProfile
+  const legacy: Partial<ReceiptSettingsLite> = {}
+  if (profile) {
+    const h = textLines(profile.receiptHeader)
+    const f = textLines(profile.receiptFooter)
+    if (h.length) legacy.headerLines = h
+    if (f.length) legacy.footerLines = f
+    if (profile.showLogoOnReceipt === false) legacy.showLogo = false
+  }
+  const overrides = (profile?.receiptSettings || {}) as Partial<ReceiptSettingsLite>
+  return { ...DEFAULT_RECEIPT_SETTINGS, ...(business.receiptSettings || {}), ...legacy, ...overrides }
 }
 
 function num(v: unknown): number {
@@ -101,16 +260,29 @@ export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): Re
         ? [{ name: 'Tax', amount: taxAmount }]
         : []
 
-  const profile = ctx.shift?.posProfile
+  const settings = resolveReceiptSettings(ctx.business, ctx.shift)
+  const b = ctx.business
+  const customerName = ctx.customerName || sale.customerName || sale.customer?.name
   return {
-    business: ctx.business,
-    header: profile?.receiptHeader || null,
-    footer: profile?.receiptFooter || null,
+    business: {
+      name: b.name,
+      legalName: settings.showLegalName ? b.legalName || null : null,
+      address: settings.showAddress ? b.address || null : null,
+      phone: settings.showPhone ? b.phone || null : null,
+      email: settings.showEmail ? b.email || null : null,
+      website: settings.showWebsite ? b.website || null : null,
+      taxId: settings.showTaxId ? b.taxId || null : null,
+      brn: settings.showBrn ? b.brn || null : null,
+    },
+    headerLines: settings.headerLines,
+    footerLines: settings.footerLines,
+    returnPolicy: settings.returnPolicy || null,
+    logo: settings.showLogo && b.logo ? b.logo : null,
     invoiceNo: sale.invoiceNo,
     dateTime: sale.createdAt || new Date(),
-    cashier: ctx.cashier || null,
-    counter: shiftCounterName(ctx.shift) || null,
-    customer: ctx.customerName || sale.customerName || sale.customer?.name ? { name: ctx.customerName || sale.customerName || sale.customer?.name || '' } : null,
+    cashier: settings.showCashier ? ctx.cashier || null : null,
+    counter: settings.showCounter ? shiftCounterName(ctx.shift) || null : null,
+    customer: settings.showCustomer && customerName ? { name: customerName } : null,
     lines,
     subtotal: num(sale.subtotal),
     discount: num(sale.discountAmount ?? sale.discount),
@@ -119,8 +291,10 @@ export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): Re
     payments,
     change: ctx.change && ctx.change > 0 ? ctx.change : undefined,
     isReturn: Boolean(sale.isReturn) || num(sale.total) < 0,
-    // The QR carries the invoice number so a later return can be started by scanning the slip.
-    qrPayload: /^(INV|RTN)-/i.test(sale.invoiceNo) ? sale.invoiceNo : null,
+    // The barcode / QR carries the invoice number (INV-, RTN- or offline OFF- refs) so a
+    // later return can be started by scanning the slip.
+    qrPayload: sale.invoiceNo || null,
+    invoiceCode: settings.invoiceCode,
   }
 }
 

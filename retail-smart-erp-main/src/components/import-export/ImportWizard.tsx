@@ -4,7 +4,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   Upload, FileSpreadsheet, FileText, Check,
   AlertCircle, CheckCircle, ChevronLeft, ChevronRight, Loader2,
-  ArrowRight, Link2Off,
+  ArrowRight, Link2Off, Download, RotateCcw, XCircle, History,
 } from 'lucide-react'
 import { Modal } from '@/components/ui/modal'
 import { toast } from '@/components/ui/toast'
@@ -18,9 +18,14 @@ interface ImportWizardProps {
   onComplete?: () => void
 }
 
+type ImportMode = 'insert' | 'update' | 'upsert'
+type StockMode = 'none' | 'set' | 'add'
+
 interface PreviewRow {
   row: number
-  status: 'valid' | 'error'
+  status: 'valid' | 'error' | 'skip'
+  action?: 'insert' | 'update' | 'skip' | 'none'
+  error?: string | null
   data: Record<string, unknown>
   errors: { column: string; message: string }[]
   warnings: { column: string; message: string }[]
@@ -30,6 +35,8 @@ interface PreviewData {
   totalRows: number
   validRows: number
   errorRows: number
+  skipRows?: number
+  actions?: { total: number; insert: number; update: number; skip: number; error: number }
   columns: string[]
   mappedColumns: Record<string, string>
   preview: PreviewRow[]
@@ -40,9 +47,13 @@ interface PreviewData {
 interface ImportResult {
   success: boolean
   imported: number
+  inserted?: number
+  updated?: number
   skipped: number
+  failed?: number
   autoCreated?: number
   errors: { row: number; message: string }[]
+  status?: JobStatus
 }
 
 interface ParseHeadersResult {
@@ -53,15 +64,55 @@ interface ParseHeadersResult {
   fields: { key: string; label: string; type: string; required: boolean }[]
 }
 
+type JobStatus = 'queued' | 'validating' | 'processing' | 'done' | 'error' | 'cancelled' | 'interrupted'
+
 interface ImportProgress {
   processed: number
   total: number
   imported: number
+  inserted?: number
+  updated?: number
   skipped: number
+  failed?: number
   autoCreated: number
   errors: { row: number; message: string }[]
-  status: 'processing' | 'done' | 'error'
-  errorMessage?: string
+  status: JobStatus
+  errorMessage?: string | null
+}
+
+interface JobSummary {
+  jobId: string
+  entityName: string
+  mode: string
+  fileName: string | null
+  status: JobStatus
+  total: number
+  processed: number
+  inserted: number
+  updated: number
+  skipped: number
+  failed: number
+  createdAt: string
+  canResume: boolean
+}
+
+const STOCK_HELP = 'Stock columns (items): "Warehouse" (code or name) with "Opening Stock", "Min Stock", "Reorder Qty", or one column per warehouse named stock:<WAREHOUSE_CODE> (e.g. stock:MAIN). New items get exactly that stock (with a ledger entry); existing items follow the stock mode below.'
+
+function progressFromJob(d: Record<string, unknown>): ImportProgress {
+  const n = (k: string) => Number(d[k] || 0)
+  return {
+    processed: n('processed'),
+    total: n('total'),
+    imported: d.imported !== undefined ? n('imported') : n('inserted') + n('updated'),
+    inserted: n('inserted'),
+    updated: n('updated'),
+    skipped: n('skipped'),
+    failed: n('failed'),
+    autoCreated: n('autoCreated'),
+    errors: (d.errors as { row: number; message: string }[]) || [],
+    status: (d.status as JobStatus) || 'processing',
+    errorMessage: (d.errorMessage as string | null) ?? null,
+  }
 }
 
 type Step = 'select' | 'upload' | 'mapping' | 'preview' | 'importing' | 'result'
@@ -69,7 +120,10 @@ type Step = 'select' | 'upload' | 'mapping' | 'preview' | 'importing' | 'result'
 export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: ImportWizardProps) {
   const [step, setStep] = useState<Step>('select')
   const [entity, setEntity] = useState(defaultEntity || '')
-  const [mode, setMode] = useState<'insert' | 'update'>('insert')
+  const [mode, setMode] = useState<ImportMode>('insert')
+  const [matchBy, setMatchBy] = useState<string[]>([])
+  const [stockMode, setStockMode] = useState<StockMode>('none')
+  const [recentJobs, setRecentJobs] = useState<JobSummary[]>([])
   const [file, setFile] = useState<File | null>(null)
   const [previewData, setPreviewData] = useState<PreviewData | null>(null)
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -97,36 +151,93 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
 
   const importableEntities = getImportableEntities()
   const entityConfig = entity ? getEntityConfig(entity) : null
+  const matchFieldOptions = entityConfig?.uniqueMatchFields || []
+  const fieldLabel = (key: string) => entityConfig?.fields.find(f => f.key === key)?.label || key
 
-  // WebSocket listener for import progress
+  // Default match-by order whenever the entity changes
+  useEffect(() => {
+    setMatchBy(entityConfig?.uniqueMatchFields ? [...entityConfig.uniqueMatchFields] : [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity])
+
+  const loadRecentJobs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/import/jobs')
+      if (!res.ok) return
+      const data = await res.json() as { jobs: JobSummary[] }
+      setRecentJobs((data.jobs || []).filter(j => !entity || j.entityName === entity).slice(0, 8))
+    } catch {
+      // non-critical
+    }
+  }, [entity])
+
+  useEffect(() => {
+    if (isOpen && step === 'select') loadRecentJobs()
+  }, [isOpen, step, loadRecentJobs])
+
+  function appendOptions(formData: FormData) {
+    formData.append('mode', mode)
+    if (mode !== 'insert' && matchBy.length > 0) formData.append('matchBy', matchBy.join(','))
+    if (entity === 'items') formData.append('stockMode', stockMode)
+  }
+
+  function openJob(job: { jobId: string } & Partial<Record<string, unknown>>) {
+    setJobId(job.jobId)
+    setImportProgress(progressFromJob(job as Record<string, unknown>))
+    jobCompleteHandled.current = false
+    setLoading(true)
+    setStep('importing')
+  }
+
+  async function resumeJob(id: string) {
+    try {
+      const res = await fetch(`/api/import/jobs/${id}/resume`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || 'Could not resume import')
+        return
+      }
+      toast.success('Import resumed')
+      openJob({ jobId: id, status: 'processing' })
+    } catch {
+      toast.error('Could not resume import')
+    }
+  }
+
+  async function cancelJob(id: string) {
+    try {
+      const res = await fetch(`/api/import/jobs/${id}/cancel`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || 'Could not cancel import')
+        return
+      }
+      setImportProgress(progressFromJob(data))
+      toast.success('Import cancelled')
+    } catch {
+      toast.error('Could not cancel import')
+    }
+  }
+
+  function downloadErrors(id: string) {
+    const a = document.createElement('a')
+    a.href = `/api/import/jobs/${id}/errors`
+    a.download = ''
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
+  // WebSocket listener for import progress (payload = DB job view)
   useDataChange('import-job', (event) => {
     if (!jobId || event.id !== jobId) return
-    const d = event.data as {
-      status: 'processing' | 'done' | 'error'
-      processed: number
-      total: number
-      imported: number
-      skipped: number
-      autoCreated: number
-      errors: { row: number; message: string }[]
-      errorMessage?: string
-    }
+    const d = event.data as Record<string, unknown> | undefined
     if (!d) return
-
-    setImportProgress({
-      processed: d.processed,
-      total: d.total,
-      imported: d.imported,
-      skipped: d.skipped,
-      autoCreated: d.autoCreated,
-      errors: d.errors,
-      status: d.status,
-      errorMessage: d.errorMessage,
-    })
-
-    if (d.status === 'done' || d.status === 'error') {
-      handleJobComplete({ ...d, status: d.status })
-    }
+    const p = progressFromJob(d)
+    // WebSocket payloads carry no row errors; keep the polled ones
+    setImportProgress(prev => ({ ...p, errors: p.errors.length ? p.errors : prev.errors }))
+    if (p.status === 'done' || p.status === 'cancelled') handleJobComplete(p)
+    else if (p.status === 'error' || p.status === 'interrupted') setLoading(false)
   }, [jobId])
 
   // Polling fallback when on 'importing' step
@@ -134,29 +245,22 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
     if (step !== 'importing' || !jobId) return
     jobCompleteHandled.current = false
 
-    pollIntervalRef.current = setInterval(async () => {
+    const poll = async () => {
       if (jobCompleteHandled.current) return
       try {
         const res = await fetch(`/api/import/jobs/${jobId}`)
         if (!res.ok) return
-        const d = await res.json()
-        setImportProgress({
-          processed: d.processed,
-          total: d.total,
-          imported: d.imported,
-          skipped: d.skipped,
-          autoCreated: d.autoCreated,
-          errors: d.errors,
-          status: d.status,
-          errorMessage: d.errorMessage,
-        })
-        if (d.status === 'done' || d.status === 'error') {
-          handleJobComplete(d)
-        }
+        const p = progressFromJob(await res.json())
+        setImportProgress(p)
+        if (p.status === 'done' || p.status === 'cancelled') handleJobComplete(p)
+        else if (p.status === 'error' || p.status === 'interrupted') setLoading(false)
+        else setLoading(true)
       } catch {
         // Silent — next poll will retry
       }
-    }, 2000)
+    }
+    poll()
+    pollIntervalRef.current = setInterval(poll, 2000)
 
     return () => {
       if (pollIntervalRef.current) {
@@ -167,14 +271,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step, jobId])
 
-  function handleJobComplete(d: {
-    status: 'done' | 'error'
-    imported?: number
-    skipped?: number
-    autoCreated?: number
-    errors?: { row: number; message: string }[]
-    errorMessage?: string
-  }) {
+  function handleJobComplete(d: ImportProgress) {
     // Guard against double-completion from WS + polling firing simultaneously
     if (jobCompleteHandled.current) return
     jobCompleteHandled.current = true
@@ -185,21 +282,23 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
     }
     setLoading(false)
 
-    if (d.status === 'error') {
-      toast.error(d.errorMessage || 'Import failed')
-      setStep('preview')
-      return
-    }
-
     setImportResult({
-      success: true,
+      success: d.status === 'done',
       imported: d.imported || 0,
       skipped: d.skipped || 0,
+      failed: d.failed || 0,
+      inserted: d.inserted || 0,
+      updated: d.updated || 0,
       autoCreated: d.autoCreated || 0,
       errors: d.errors || [],
+      status: d.status,
     })
     setStep('result')
-    toast.success(`Import complete: ${d.imported || 0} records imported${(d.skipped || 0) > 0 ? `, ${d.skipped} skipped` : ''}`)
+    if (d.status === 'cancelled') {
+      toast.info('Import cancelled')
+    } else {
+      toast.success(`Import complete: ${d.imported || 0} records imported${(d.skipped || 0) + (d.failed || 0) > 0 ? `, ${(d.skipped || 0) + (d.failed || 0)} not imported` : ''}`)
+    }
     onComplete?.()
   }
 
@@ -208,6 +307,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
     setStep('select')
     setEntity(defaultEntity || '')
     setMode('insert')
+    setStockMode('none')
     setFile(null)
     setPreviewData(null)
     setImportResult(null)
@@ -217,6 +317,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
     setColumnMapping({})
     setJobId(null)
     setImportProgress({ processed: 0, total: 0, imported: 0, skipped: 0, autoCreated: 0, errors: [], status: 'processing' })
+    setRecentJobs([])
     onClose()
   }
 
@@ -306,7 +407,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
       const formData = new FormData()
       formData.append('file', file)
       formData.append('entity', entity)
-      formData.append('mode', mode)
+      appendOptions(formData)
 
       // Send custom column mapping (only mapped columns)
       const activeMapping: Record<string, string> = {}
@@ -330,7 +431,8 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
     } finally {
       setLoading(false)
     }
-  }, [file, entity, mode, columnMapping])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file, entity, mode, matchBy, stockMode, columnMapping])
 
   async function handleImport() {
     if (!file || !entity) return
@@ -339,7 +441,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
       const formData = new FormData()
       formData.append('file', file)
       formData.append('entity', entity)
-      formData.append('mode', mode)
+      appendOptions(formData)
       formData.append('skipErrors', String(skipErrors))
 
       // Send custom column mapping
@@ -355,21 +457,13 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
       if (!res.ok) {
         toast.error(data.error || 'Import failed to start')
         setLoading(false)
+        // Same file already running / interrupted: show that job (Resume is offered there)
+        if (res.status === 409 && data.jobId) openJob({ jobId: data.jobId, status: data.status })
         return
       }
 
-      // Server returned { jobId } — switch to importing step
-      setJobId(data.jobId)
-      setImportProgress({
-        processed: 0,
-        total: previewData?.validRows || 0,
-        imported: 0,
-        skipped: 0,
-        autoCreated: 0,
-        errors: [],
-        status: 'processing',
-      })
-      setStep('importing')
+      // Server returned { jobId } — switch to importing step (progress is read from the DB job)
+      openJob({ jobId: data.jobId, status: 'processing', total: data.total || previewData?.totalRows || 0 })
       // Loading stays true — will be cleared by handleJobComplete
     } catch {
       toast.error('Import failed to start. Please try again.')
@@ -472,42 +566,78 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Import Mode</label>
           <div className="space-y-2">
-            <label className={`flex items-start gap-3 p-3 rounded border-2 cursor-pointer transition-all ${
-              mode === 'insert'
-                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
-            }`}>
-              <input
-                type="radio"
-                checked={mode === 'insert'}
-                onChange={() => setMode('insert')}
-                className="mt-0.5"
-              />
-              <div>
-                <div className="text-sm font-medium text-gray-900 dark:text-white">Insert new records</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">Create new records from the file data</div>
-              </div>
-            </label>
-            <label className={`flex items-start gap-3 p-3 rounded border-2 cursor-pointer transition-all ${
-              mode === 'update'
-                ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
-            }`}>
-              <input
-                type="radio"
-                checked={mode === 'update'}
-                onChange={() => setMode('update')}
-                className="mt-0.5"
-              />
-              <div>
-                <div className="text-sm font-medium text-gray-900 dark:text-white">Update existing records</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  Match by {entityConfig?.uniqueMatchFields?.join(' or ') || 'ID'} and update fields
+            {([
+              { value: 'insert', title: 'Insert new records', hint: 'Create new records. Rows that already exist are skipped (never overwritten).' },
+              { value: 'update', title: 'Update existing records', hint: 'Only change records that match. Rows without a match are reported as errors.' },
+              { value: 'upsert', title: 'Insert or update (upsert)', hint: 'Update matching records and create the rest.' },
+            ] as { value: ImportMode; title: string; hint: string }[]).map(opt => (
+              <label key={opt.value} className={`flex items-start gap-3 p-3 rounded border-2 cursor-pointer transition-all ${
+                mode === opt.value
+                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                  : 'border-gray-200 dark:border-gray-600 hover:border-gray-300 dark:hover:border-gray-500'
+              }`}>
+                <input
+                  type="radio"
+                  checked={mode === opt.value}
+                  onChange={() => setMode(opt.value)}
+                  className="mt-0.5"
+                />
+                <div>
+                  <div className="text-sm font-medium text-gray-900 dark:text-white">{opt.title}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">{opt.hint}</div>
                 </div>
-              </div>
-            </label>
+              </label>
+            ))}
           </div>
         </div>
+
+        {mode !== 'insert' && matchFieldOptions.length > 0 && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Match existing records by</label>
+            <div className="flex flex-wrap gap-3">
+              {matchFieldOptions.map(key => (
+                <label key={key} className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={matchBy.includes(key)}
+                    onChange={(e) => setMatchBy(prev => e.target.checked
+                      ? matchFieldOptions.filter(k => k === key || prev.includes(k))
+                      : prev.filter(k => k !== key))}
+                    className="w-4 h-4 rounded border-gray-300 dark:border-gray-600"
+                  />
+                  {fieldLabel(key)}
+                </label>
+              ))}
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Checked in this order; the first value that matches wins.</div>
+          </div>
+        )}
+
+        {mode !== 'insert' && (
+          <div className="p-2.5 bg-blue-50 dark:bg-blue-900/15 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300">
+            Blank cells keep the existing value. To empty a field, put <code className="font-mono">__CLEAR__</code> in the cell.
+          </div>
+        )}
+
+        {entity === 'items' && (
+          <div className="space-y-2">
+            <div className="text-xs text-gray-500 dark:text-gray-400">{STOCK_HELP}</div>
+            {mode !== 'insert' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Stock for existing items</label>
+                <select
+                  value={stockMode}
+                  onChange={(e) => setStockMode(e.target.value as StockMode)}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                >
+                  <option value="none">Ignore stock columns (default)</option>
+                  <option value="set">Set stock to the file quantity</option>
+                  <option value="add">Add the file quantity to current stock</option>
+                </select>
+              </div>
+            )}
+          </div>
+        )}
 
         {entity && (
           <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded border border-gray-200 dark:border-gray-700">
@@ -527,6 +657,43 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
                 <FileText size={14} />
                 CSV Template
               </button>
+            </div>
+          </div>
+        )}
+
+        {recentJobs.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
+              <History size={14} /> Recent imports
+            </div>
+            <div className="border border-gray-200 dark:border-gray-700 rounded divide-y divide-gray-100 dark:divide-gray-700">
+              {recentJobs.map(j => (
+                <div key={j.jobId} className="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+                  <button onClick={() => openJob(j as unknown as { jobId: string } & Record<string, unknown>)} className="min-w-0 text-left hover:underline">
+                    <div className="truncate text-gray-900 dark:text-white">{j.fileName || j.entityName} <span className="text-gray-400">({j.mode})</span></div>
+                    <div className="text-gray-500 dark:text-gray-400">
+                      {new Date(j.createdAt).toLocaleString()} · {j.inserted} new, {j.updated} updated, {j.skipped} skipped, {j.failed} failed
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`px-1.5 py-0.5 rounded ${
+                      j.status === 'done' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                        : j.status === 'interrupted' || j.status === 'error' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                        : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
+                    }`}>{j.status}</span>
+                    {j.canResume && (
+                      <button onClick={() => resumeJob(j.jobId)} className="flex items-center gap-1 px-2 py-1 text-blue-600 dark:text-blue-400 border border-blue-300 dark:border-blue-600 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20">
+                        <RotateCcw size={12} /> Resume
+                      </button>
+                    )}
+                    {j.failed + j.skipped > 0 && (
+                      <button onClick={() => downloadErrors(j.jobId)} title="Download rows that were not imported" className="p-1 text-gray-500 hover:text-gray-700 dark:hover:text-gray-200">
+                        <Download size={14} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -736,12 +903,24 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
       <div className="space-y-4">
         {renderStepIndicator()}
 
-        {/* Summary */}
+        {/* Summary — exactly what the import will do */}
         <div className="flex gap-3">
           <div className="flex-1 p-3 bg-green-50 dark:bg-green-900/20 rounded text-center">
-            <div className="text-xl font-bold text-green-700 dark:text-green-300">{previewData.validRows}</div>
-            <div className="text-xs text-green-600 dark:text-green-400">Valid</div>
+            <div className="text-xl font-bold text-green-700 dark:text-green-300">{previewData.actions?.insert ?? previewData.validRows}</div>
+            <div className="text-xs text-green-600 dark:text-green-400">Will insert</div>
           </div>
+          {(previewData.actions?.update ?? 0) > 0 && (
+            <div className="flex-1 p-3 bg-blue-50 dark:bg-blue-900/20 rounded text-center">
+              <div className="text-xl font-bold text-blue-700 dark:text-blue-300">{previewData.actions?.update}</div>
+              <div className="text-xs text-blue-600 dark:text-blue-400">Will update</div>
+            </div>
+          )}
+          {(previewData.skipRows ?? 0) > 0 && (
+            <div className="flex-1 p-3 bg-amber-50 dark:bg-amber-900/20 rounded text-center">
+              <div className="text-xl font-bold text-amber-700 dark:text-amber-300">{previewData.skipRows}</div>
+              <div className="text-xs text-amber-600 dark:text-amber-400">Skip (exists)</div>
+            </div>
+          )}
           <div className="flex-1 p-3 bg-red-50 dark:bg-red-900/20 rounded text-center">
             <div className="text-xl font-bold text-red-700 dark:text-red-300">{previewData.errorRows}</div>
             <div className="text-xs text-red-600 dark:text-red-400">Errors</div>
@@ -759,7 +938,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
               <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0">
                 <tr>
                   <th className="px-2 py-1.5 text-left font-medium text-gray-600 dark:text-gray-400">Row</th>
-                  <th className="px-2 py-1.5 text-left font-medium text-gray-600 dark:text-gray-400">Status</th>
+                  <th className="px-2 py-1.5 text-left font-medium text-gray-600 dark:text-gray-400">Action</th>
                   {importFields.slice(0, 5).map(f => (
                     <th key={f.key} className="px-2 py-1.5 text-left font-medium text-gray-600 dark:text-gray-400 max-w-[120px] truncate">
                       {f.label}
@@ -770,12 +949,16 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
               <tbody>
                 {previewData.preview.slice(0, 50).map((row) => (
                   <tr key={row.row} className={`border-t border-gray-100 dark:border-gray-700 ${
-                    row.status === 'error' ? 'bg-red-50 dark:bg-red-900/10' : ''
-                  }`}>
+                    row.status === 'error' ? 'bg-red-50 dark:bg-red-900/10' : row.status === 'skip' ? 'bg-amber-50 dark:bg-amber-900/10' : ''
+                  }`} title={row.error || undefined}>
                     <td className="px-2 py-1.5 text-gray-500">{row.row}</td>
                     <td className="px-2 py-1.5">
                       {row.status === 'valid' ? (
-                        <CheckCircle size={14} className="text-green-500" />
+                        <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400">
+                          <CheckCircle size={14} /> {row.action === 'update' ? 'update' : 'insert'}
+                        </span>
+                      ) : row.status === 'skip' ? (
+                        <span className="text-amber-600 dark:text-amber-400">skip</span>
                       ) : (
                         <AlertCircle size={14} className="text-red-500" />
                       )}
@@ -846,27 +1029,38 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
   }
 
   function renderImportingStep() {
-    const { processed, total, imported, skipped, autoCreated } = importProgress
+    const { processed, total, imported, skipped, autoCreated, status, errorMessage } = importProgress
+    const failed = importProgress.failed || 0
     const pct = total > 0 ? Math.round((processed / total) * 100) : 0
+    const stalled = status === 'interrupted' || status === 'error'
 
     return (
       <div className="space-y-6 py-4">
         {renderStepIndicator()}
 
         <div className="text-center space-y-2">
-          <Loader2 size={40} className="mx-auto text-blue-500 animate-spin" />
+          {stalled ? (
+            <AlertCircle size={40} className="mx-auto text-amber-500" />
+          ) : (
+            <Loader2 size={40} className="mx-auto text-blue-500 animate-spin" />
+          )}
           <div className="text-base font-medium text-gray-900 dark:text-white">
-            Importing...
+            {status === 'interrupted' ? 'Import interrupted' : status === 'error' ? 'Import stopped' : 'Importing...'}
           </div>
           <div className="text-sm text-gray-500 dark:text-gray-400">
             {processed.toLocaleString()} / {total.toLocaleString()} rows ({pct}%)
           </div>
+          {stalled && (
+            <div className="text-xs text-amber-600 dark:text-amber-400">
+              {errorMessage || 'The server stopped processing this job.'} Rows already imported are saved; Resume continues with the remaining rows only.
+            </div>
+          )}
         </div>
 
         {/* Progress bar */}
         <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
           <div
-            className="bg-blue-500 h-3 rounded-full transition-all duration-500 ease-out"
+            className={`${stalled ? 'bg-amber-500' : 'bg-blue-500'} h-3 rounded-full transition-all duration-500 ease-out`}
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -881,6 +1075,10 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
             <div className="font-semibold text-amber-700 dark:text-amber-300">{skipped.toLocaleString()}</div>
             <div className="text-xs text-amber-600 dark:text-amber-400">Skipped</div>
           </div>
+          <div className="flex-1 text-center p-2 bg-red-50 dark:bg-red-900/20 rounded">
+            <div className="font-semibold text-red-700 dark:text-red-300">{failed.toLocaleString()}</div>
+            <div className="text-xs text-red-600 dark:text-red-400">Failed</div>
+          </div>
           {autoCreated > 0 && (
             <div className="flex-1 text-center p-2 bg-blue-50 dark:bg-blue-900/20 rounded">
               <div className="font-semibold text-blue-700 dark:text-blue-300">{autoCreated.toLocaleString()}</div>
@@ -890,7 +1088,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
         </div>
 
         <div className="text-xs text-center text-gray-400 dark:text-gray-500">
-          Please keep this window open. You can minimize the browser tab.
+          Progress is saved on the server — you can close this window and check back under Recent imports.
         </div>
       </div>
     )
@@ -901,7 +1099,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
 
     return (
       <div className="space-y-4 text-center py-4">
-        {importResult.imported > 0 ? (
+        {importResult.imported > 0 || importResult.status === 'done' ? (
           <CheckCircle size={48} className="mx-auto text-green-500" />
         ) : (
           <AlertCircle size={48} className="mx-auto text-red-500" />
@@ -909,7 +1107,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
 
         <div>
           <div className="text-lg font-semibold text-gray-900 dark:text-white">
-            {importResult.imported > 0 ? 'Import Complete' : 'Import Failed'}
+            {importResult.status === 'cancelled' ? 'Import Cancelled' : importResult.imported > 0 || importResult.status === 'done' ? 'Import Complete' : 'Import Failed'}
           </div>
           <div className="text-sm text-gray-500 dark:text-gray-400 mt-1">
             {importResult.imported > 0 && (
@@ -923,12 +1121,29 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
               </span>
             ) : null}
             {importResult.skipped > 0 && (
-              <span className="text-red-600 dark:text-red-400 ml-2">
+              <span className="text-amber-600 dark:text-amber-400 ml-2">
                 {importResult.skipped} skipped
               </span>
             )}
+            {(importResult.failed || 0) > 0 && (
+              <span className="text-red-600 dark:text-red-400 ml-2">
+                {importResult.failed} failed
+              </span>
+            )}
           </div>
+          {importResult.status === 'cancelled' && (
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">Import was cancelled; remaining rows were not imported.</div>
+          )}
         </div>
+
+        {jobId && importResult.skipped + (importResult.failed || 0) > 0 && (
+          <button
+            onClick={() => downloadErrors(jobId)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-600"
+          >
+            <Download size={14} /> Download rows not imported (CSV)
+          </button>
+        )}
 
         {importResult.errors.length > 0 && (
           <div className="text-left border border-red-200 dark:border-red-800 rounded p-3 bg-red-50 dark:bg-red-900/10">
@@ -1020,18 +1235,53 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
             </button>
           </div>
         )
-      case 'importing':
+      case 'importing': {
+        const stalled = importProgress.status === 'interrupted' || importProgress.status === 'error'
         return (
-          <div className="flex justify-end">
+          <div className="flex justify-between gap-2">
             <button
-              disabled
-              className="px-4 py-2 text-sm text-white bg-blue-400 rounded cursor-not-allowed opacity-60"
+              onClick={handleClose}
+              className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
             >
-              <Loader2 size={16} className="inline animate-spin mr-1.5" />
-              Importing...
+              Close
             </button>
+            <div className="flex gap-2">
+              {jobId && (importProgress.skipped + (importProgress.failed || 0)) > 0 && (
+                <button
+                  onClick={() => downloadErrors(jobId)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
+                >
+                  <Download size={16} /> Errors CSV
+                </button>
+              )}
+              {jobId && (
+                <button
+                  onClick={() => cancelJob(jobId)}
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm text-red-600 dark:text-red-400 border border-red-300 dark:border-red-700 rounded hover:bg-red-50 dark:hover:bg-red-900/20"
+                >
+                  <XCircle size={16} /> Cancel
+                </button>
+              )}
+              {stalled && jobId ? (
+                <button
+                  onClick={() => resumeJob(jobId)}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-blue-600 rounded hover:bg-blue-700"
+                >
+                  <RotateCcw size={16} /> Resume
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="px-4 py-2 text-sm text-white bg-blue-400 rounded cursor-not-allowed opacity-60"
+                >
+                  <Loader2 size={16} className="inline animate-spin mr-1.5" />
+                  Importing...
+                </button>
+              )}
+            </div>
           </div>
         )
+      }
       case 'result':
         return (
           <div className="flex justify-end">

@@ -4,7 +4,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Printer, Minus, Plus, X, Search, Tag } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
 import { LabelPreview } from '@/components/labels/LabelPreview'
-import { printLabels } from '@/lib/labels/label-print'
+import { printLabels, printLabelsRaw, isRawLabelPrinter } from '@/lib/labels/label-print'
+import { usePrinters } from '@/hooks/usePrinter'
+import { LABEL_LANGUAGE_LABELS } from '@/lib/print/printer-profiles'
+import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
@@ -30,6 +33,16 @@ export default function BarcodePrintPage() {
 
   const { symbol: currencySymbol } = useTenantCurrency()
   const company = useCompanyOptional()
+
+  // Label printers configured on this terminal (W9). '' = browser print dialog.
+  const { printers } = usePrinters()
+  const labelPrinters = printers.filter((p) => p.role === 'label')
+  const [printerChoice, setPrinterChoice] = useState<string | null>(null)
+  const [showPrinterSettings, setShowPrinterSettings] = useState(false)
+  const [printing, setPrinting] = useState(false)
+  const defaultPrinterId = labelPrinters.find((p) => isRawLabelPrinter(p))?.id || ''
+  const chosenPrinterId = printerChoice ?? defaultPrinterId
+  const chosenPrinter = labelPrinters.find((p) => p.id === chosenPrinterId) || null
 
   // Fetch templates and label settings on mount
   useEffect(() => {
@@ -134,6 +147,24 @@ export default function BarcodePrintPage() {
       toast.error('Please add items to print')
       return
     }
+    if (isRawLabelPrinter(chosenPrinter)) {
+      setPrinting(true)
+      try {
+        const res = await printLabelsRaw(chosenPrinter, selectedTemplate, items, {
+          currencySymbol,
+          tenantName: company?.tenantName,
+          codeWord,
+        })
+        if (res.warnings.length) toast.warning(res.warnings.slice(0, 3).join('; '))
+        if (res.ok) toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${chosenPrinter.name}`)
+        else toast.error(`Label printer: ${res.error || 'failed'}`)
+      } catch {
+        toast.error('Failed to generate labels')
+      } finally {
+        setPrinting(false)
+      }
+      return
+    }
     try {
       const success = await printLabels(
         selectedTemplate,
@@ -161,7 +192,7 @@ export default function BarcodePrintPage() {
         </div>
         <button
           onClick={handlePrint}
-          disabled={!selectedTemplate || items.length === 0}
+          disabled={!selectedTemplate || items.length === 0 || printing}
           className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 font-medium"
         >
           <Printer size={16} />
@@ -273,6 +304,33 @@ export default function BarcodePrintPage() {
           {/* Template selector */}
           <div className="bg-white rounded-lg border p-4 space-y-3">
             <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm font-medium text-gray-700">Printer</label>
+                <button
+                  type="button"
+                  onClick={() => setShowPrinterSettings(true)}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Manage printers
+                </button>
+              </div>
+              <select
+                value={chosenPrinterId}
+                onChange={(e) => setPrinterChoice(e.target.value)}
+                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
+              >
+                <option value="">Browser print dialog</option>
+                {labelPrinters.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} ({LABEL_LANGUAGE_LABELS[p.label.language]}, {p.label.dpi} dpi)
+                  </option>
+                ))}
+              </select>
+              {chosenPrinter && !isRawLabelPrinter(chosenPrinter) && (
+                <p className="text-xs text-gray-500 mt-1">This printer uses the browser print dialog.</p>
+              )}
+            </div>
+            <div>
               <label className="text-sm font-medium text-gray-700 mb-1 block">Template</label>
               <select
                 value={selectedTemplateId}
@@ -302,7 +360,7 @@ export default function BarcodePrintPage() {
                 <option value="Letter">Letter (Sheet)</option>
               </select>
             </div>
-            {config.pageSize !== 'Label' && (
+            {config.pageSize !== 'Label' && !isRawLabelPrinter(chosenPrinter) && (
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-1 block">Gap (mm)</label>
                 <input
@@ -339,6 +397,7 @@ export default function BarcodePrintPage() {
           </div>
         </div>
       </div>
+      <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} />
     </div>
   )
 }

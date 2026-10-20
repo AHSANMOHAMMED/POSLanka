@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   try {
     const parsed = validateSearchParams(request, stockMovementsListSchema)
     if (!parsed.success) return parsed.response
-    const { page, pageSize, search, type, warehouseId, referenceType, startDate, endDate } = parsed.data
+    const { page, pageSize, search, itemId, type, warehouseId, referenceType, startDate, endDate } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
       const permError = requirePermission(session, 'manageInventory')
@@ -32,6 +32,10 @@ export async function GET(request: NextRequest) {
             ilike(items.oemPartNumber, `%${escaped}%`)
           )!
         )
+      }
+
+      if (itemId) {
+        conditions.push(eq(stockMovements.itemId, itemId))
       }
 
       if (type) {
@@ -74,6 +78,10 @@ export async function GET(request: NextRequest) {
           id: stockMovements.id,
           type: stockMovements.type,
           quantity: stockMovements.quantity,
+          qtyChange: stockMovements.qtyChange,
+          stockBefore: stockMovements.stockBefore,
+          stockAfter: stockMovements.stockAfter,
+          source: stockMovements.source,
           referenceType: stockMovements.referenceType,
           referenceId: stockMovements.referenceId,
           notes: stockMovements.notes,
@@ -93,7 +101,7 @@ export async function GET(request: NextRequest) {
         .leftJoin(warehouses, eq(stockMovements.warehouseId, warehouses.id))
         .leftJoin(users, eq(stockMovements.createdBy, users.id))
         .where(whereClause)
-        .orderBy(desc(stockMovements.createdAt))
+        .orderBy(desc(stockMovements.createdAt), desc(stockMovements.id))
         .limit(pageSize)
         .offset(offset)
 

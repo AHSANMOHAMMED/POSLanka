@@ -16,6 +16,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createWorkOrderInvoiceSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 
 // POST convert work order to invoice
 export async function POST(
@@ -257,16 +258,8 @@ export async function POST(
           throw new Error('INVALID_STATUS')
         }
 
-        // Generate invoice number atomically inside transaction with advisory lock
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(1)`)
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${sales.invoiceNo})` })
-          .from(sales)
-          .where(sql`${sales.invoiceNo} LIKE 'INV-%'`)
-
-        const lastInvoiceNo = maxResult?.maxNo
-        const nextNumber = lastInvoiceNo ? parseInt(lastInvoiceNo.replace(/\D/g, '')) + 1 : 1
-        const invoiceNo = `INV-${String(nextNumber).padStart(6, '0')}`
+        // Invoice number from the per-tenant sequence (shared with POS sales)
+        const invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
 
         // Calculate payment amounts
         const totalAmount = parseFloat(workOrder.total)

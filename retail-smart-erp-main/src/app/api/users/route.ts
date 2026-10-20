@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { db } from '@/lib/db'
-import { users, userWarehouses, warehouses, accounts, staffInvites, tenants } from '@/lib/db/schema'
+import { users, userWarehouses, warehouses, accounts, staffInvites, tenants, posProfiles, posProfileUsers } from '@/lib/db/schema'
 import { eq, and, inArray, isNull, gt } from 'drizzle-orm'
 import { requirePermission, canModifyUser } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -11,7 +11,8 @@ import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation'
-import { createInviteSchema } from '@/lib/validation/schemas/users'
+import { createUserBodySchema } from '@/lib/validation/schemas/users'
+import { createStaffUser, resolveStaffAssignments, addUserWarehouses, replaceUserPosProfiles, StaffError } from '@/lib/users/create-staff'
 
 // GET all users for the tenant with optional role filter
 // Query params:
@@ -96,10 +97,36 @@ export async function GET(request: NextRequest) {
           })
         }
 
+        // POS counter assignments
+        const counterRows = await db
+          .select({
+            userId: posProfileUsers.userId,
+            posProfileId: posProfileUsers.posProfileId,
+            isDefault: posProfileUsers.isDefault,
+            name: posProfiles.name,
+            code: posProfiles.code,
+            warehouseId: posProfiles.warehouseId,
+          })
+          .from(posProfileUsers)
+          .innerJoin(posProfiles, eq(posProfileUsers.posProfileId, posProfiles.id))
+          .where(inArray(posProfileUsers.userId, userIds))
+        const countersByUser = new Map<string, Array<{ posProfileId: string; name: string; code: string | null; warehouseId: string | null; isDefault: boolean }>>()
+        for (const c of counterRows) {
+          if (!countersByUser.has(c.userId)) countersByUser.set(c.userId, [])
+          countersByUser.get(c.userId)!.push({
+            posProfileId: c.posProfileId,
+            name: c.name,
+            code: c.code,
+            warehouseId: c.warehouseId,
+            isDefault: !!c.isDefault,
+          })
+        }
+
         // Add to results
         const resultWithWarehouses = result.map(user => ({
           ...user,
           warehouses: assignmentsByUser.get(user.id) || [],
+          posProfiles: countersByUser.get(user.id) || [],
         }))
 
         return NextResponse.json(resultWithWarehouses)
@@ -114,8 +141,12 @@ export async function GET(request: NextRequest) {
 }
 
 // POST create new user or send invite
-// Only requires email + role. If the person has an account, adds them immediately.
-// If not, creates a staff invite and sends an email.
+// Body (see createUserBodySchema):
+//  - { mode: 'create', email, fullName, role, password, pin?, warehouseIds?, posProfileIds? }
+//    → creates the staff user directly with a password (201 { mode: 'created', user })
+//  - { mode?: 'invite', email, role, fullName?, warehouseIds?, posProfileIds? }
+//    → if the person has a global account, adds them immediately; otherwise creates a
+//      staff invite (assignments are applied when the invite is accepted) and emails it.
 export async function POST(request: NextRequest) {
   try {
     const session = await authWithCompany()
@@ -130,9 +161,29 @@ export async function POST(request: NextRequest) {
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return quotaError
 
-    const parsed = await validateBody(request, createInviteSchema)
+    const parsed = await validateBody(request, createUserBodySchema)
     if (!parsed.success) return parsed.response
-    const { email, role, warehouseIds } = parsed.data
+
+    if (parsed.data.mode === 'create') {
+      const body = parsed.data
+      const created = await withTenant(session.user.tenantId, (tenantDb) =>
+        createStaffUser(tenantDb, {
+          tenantId: session.user.tenantId,
+          actorRole: session.user.role,
+          email: body.email,
+          fullName: body.fullName,
+          role: body.role,
+          password: body.password,
+          pin: body.pin || null,
+          warehouseIds: body.warehouseIds,
+          posProfileIds: body.posProfileIds,
+        })
+      )
+      logAndBroadcast(session.user.tenantId, 'user', 'created', created.id, { userId: session.user.id })
+      return NextResponse.json({ mode: 'created', user: created }, { status: 201 })
+    }
+
+    const { email, role, warehouseIds, posProfileIds } = parsed.data
 
     // email is already normalized (lowercased + trimmed) by Zod emailSchema
     const normalizedEmail = email
@@ -155,7 +206,7 @@ export async function POST(request: NextRequest) {
     })
 
     if (existingUser) {
-      return NextResponse.json({ error: 'A user with this email already exists in this company' }, { status: 400 })
+      return NextResponse.json({ error: 'A user with this email already exists in this company' }, { status: 409 })
     }
 
     // Check if a global account exists for this email (accounts table has no RLS)
@@ -185,17 +236,10 @@ export async function POST(request: NextRequest) {
             updatedAt: users.updatedAt,
           })
 
-          // Assign warehouses if provided
-          if (Array.isArray(warehouseIds) && warehouseIds.length > 0) {
-            await tx.insert(userWarehouses).values(
-              warehouseIds.map((warehouseId: string) => ({
-                tenantId: session.user.tenantId,
-                userId: user.id,
-                warehouseId,
-                isActive: true,
-              }))
-            )
-          }
+          // Assign branches + counters (validated against this tenant, auto-filled when unambiguous)
+          const resolved = await resolveStaffAssignments(tx, session.user.tenantId, role, { warehouseIds, posProfileIds })
+          await addUserWarehouses(tx, session.user.tenantId, user.id, resolved.warehouseIds)
+          await replaceUserPosProfiles(tx, session.user.tenantId, user.id, resolved.posProfileIds)
 
           return user
         })
@@ -206,6 +250,11 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({ mode: 'added', user: newUser })
     }
+
+    // Validate assignments now so the invite only carries ids from this tenant
+    const inviteAssignments = await withTenant(session.user.tenantId, (tenantDb) =>
+      resolveStaffAssignments(tenantDb, session.user.tenantId, role, { warehouseIds, posProfileIds }, { autoAssign: false })
+    )
 
     // No account exists — send invite
     // Check for existing pending invite to the same email for this tenant
@@ -239,7 +288,12 @@ export async function POST(request: NextRequest) {
     const [invite] = await db.insert(staffInvites).values({
       email: normalizedEmail,
       token,
-      tenantAssignments: [{ tenantId: session.user.tenantId, role }],
+      tenantAssignments: [{
+        tenantId: session.user.tenantId,
+        role,
+        warehouseIds: inviteAssignments.warehouseIds,
+        posProfileIds: inviteAssignments.posProfileIds,
+      }],
       invitedBy: session.user.accountId,
       expiresAt,
     }).returning()
@@ -270,6 +324,9 @@ export async function POST(request: NextRequest) {
       },
     })
   } catch (error) {
+    if (error instanceof StaffError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     logError('api/users', error)
     return NextResponse.json({ error: 'Failed to create user' }, { status: 500 })
   }

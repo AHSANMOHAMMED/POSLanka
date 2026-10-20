@@ -135,6 +135,26 @@ export class EscPosBuilder {
     return this.raw([LF])
   }
 
+  /**
+   * GS v 0 raster from an already-packed 1-bit bitmap (rows MSB-first, 1 = black),
+   * e.g. the logo from GET /api/settings/logo/raster. Rows wider than the head
+   * (384 dots for 58mm, 576 for 80mm) are cropped symmetrically.
+   */
+  rasterPacked(width: number, height: number, data: Uint8Array): this {
+    if (!width || !height || !data?.length) return this
+    const srcBpr = Math.ceil(width / 8)
+    if (data.length < srcBpr * height) return this
+    const maxBpr = this.cols >= 48 ? 72 : 48
+    const bpr = Math.min(srcBpr, maxBpr)
+    const skip = Math.floor((srcBpr - bpr) / 2)
+    this.raw([GS, 0x76, 0x30, 0x00, bpr & 0xff, (bpr >> 8) & 0xff, height & 0xff, (height >> 8) & 0xff])
+    for (let y = 0; y < height; y++) {
+      const start = y * srcBpr + skip
+      for (let i = 0; i < bpr; i++) this.chunks.push(data[start + i] & 0xff)
+    }
+    return this
+  }
+
   // ------------------------------------------------------------------ tables
 
   /** "label ......... value" on one line; the value is right-aligned. */
@@ -294,8 +314,28 @@ export function qtyText(q: number | string): string {
 // ---------------------------------------------------------------------------
 export interface ReceiptBusiness {
   name: string
+  legalName?: string | null
   address?: string | null
   phone?: string | null
+  email?: string | null
+  website?: string | null
+  /** VAT / TIN number. */
+  taxId?: string | null
+  /** Business registration number. */
+  brn?: string | null
+}
+
+export type InvoiceCodeType = 'barcode' | 'qr' | 'both' | 'none'
+
+/** Logo raster as returned by GET /api/settings/logo/raster (data = base64 packed rows). */
+export interface ReceiptLogo {
+  width: number
+  height: number
+  data: string
+  /** Grayscale PNG (base64) for HTML / PDF receipts. */
+  pngBase64?: string | null
+  /** Logo width in % of the paper (HTML receipts). */
+  widthPct?: number
 }
 
 export interface ReceiptLine {
@@ -329,7 +369,15 @@ export interface ReceiptInput {
   payments: ReceiptPayment[]
   change?: number
   isReturn?: boolean
+  /** Value encoded in the invoice barcode / QR (usually the invoice number, also OFF-... refs). */
   qrPayload?: string | null
+  /** Which invoice codes to print. Undefined = legacy (QR only when qrPayload is set). */
+  invoiceCode?: InvoiceCodeType
+  /** Business-settings driven header / footer lines (take precedence over header/footer). */
+  headerLines?: string[]
+  footerLines?: string[]
+  returnPolicy?: string | null
+  logo?: ReceiptLogo | null
 }
 
 export interface ReceiptOptions {
@@ -356,19 +404,41 @@ export function paymentLabel(method: string): string {
   return METHOD_LABELS[method] || method
 }
 
+/** Which invoice codes to print and with what value (codes only for code-like values). */
+export function invoiceCodeFor(input: Pick<ReceiptInput, 'qrPayload' | 'invoiceCode' | 'invoiceNo'>): { value: string; barcode: boolean; qr: boolean } {
+  const value = sanitizeAscii(input.qrPayload ?? (input.invoiceCode ? input.invoiceNo : '') ?? '').trim()
+  if (!value || !/^[A-Za-z0-9][A-Za-z0-9\-_/.]*$/.test(value)) return { value: '', barcode: false, qr: false }
+  const type: InvoiceCodeType = input.invoiceCode ?? 'qr'
+  return { value, barcode: type === 'barcode' || type === 'both', qr: type === 'qr' || type === 'both' }
+}
+
 export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Array {
   const b = new EscPosBuilder(opts.paperWidth)
   const cols = b.cols
   b.init()
   if (opts.drawerKick && !input.isReturn) b.drawerKick()
+  b.raw([ESC, 0x74, 0x00]) // ESC t 0: CP437 (text is ASCII-only)
+
+  // Logo (pre-rasterised and centered on the paper width by the server)
+  if (input.logo?.data) {
+    const bits = base64ToBytes(input.logo.data)
+    b.align('center').rasterPacked(input.logo.width, input.logo.height, bits).line()
+  }
 
   // Business block
-  b.align('center').bold(true).size(2, 2).line(sanitizeAscii(input.business.name).slice(0, Math.floor(cols / 2))).size(1, 1).bold(false)
-  if (input.business.address) b.centeredBlock(input.business.address)
-  if (input.business.phone) b.centeredBlock(`Tel: ${input.business.phone}`)
-  if (input.header) {
+  const biz = input.business
+  b.align('center').bold(true).size(2, 2).line(sanitizeAscii(biz.name).slice(0, Math.floor(cols / 2))).size(1, 1).bold(false)
+  if (biz.legalName && biz.legalName.trim().toLowerCase() !== biz.name.trim().toLowerCase()) b.centeredBlock(biz.legalName)
+  if (biz.address) b.centeredBlock(biz.address)
+  if (biz.phone) b.centeredBlock(`Tel: ${biz.phone}`)
+  if (biz.email) b.centeredBlock(biz.email)
+  if (biz.website) b.centeredBlock(biz.website)
+  if (biz.taxId) b.centeredBlock(`VAT/TIN: ${biz.taxId}`)
+  if (biz.brn) b.centeredBlock(`BRN: ${biz.brn}`)
+  const headerLines = input.headerLines?.length ? input.headerLines : input.header ? [input.header] : []
+  if (headerLines.length) {
     b.line()
-    b.centeredBlock(input.header)
+    for (const h of headerLines) b.centeredBlock(h)
   }
   b.align('left').rule('=')
 
@@ -416,11 +486,20 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
 
   // Footer
   b.line()
-  if (input.footer) b.centeredBlock(input.footer)
-  else b.centeredBlock('Thank you for shopping with us!')
-  if (input.qrPayload) {
+  const footerLines = input.footerLines?.length ? input.footerLines : [input.footer || 'Thank you for shopping with us!']
+  for (const f of footerLines) b.centeredBlock(f)
+  if (input.returnPolicy) {
     b.line()
-    b.align('center').qr(input.qrPayload, { size: cols >= 48 ? 6 : 4 }).align('left')
+    b.centeredBlock(input.returnPolicy)
+  }
+  const code = invoiceCodeFor(input)
+  if (code.barcode) {
+    b.line()
+    b.align('center').barcodeCode128(code.value, { height: 50, width: cols >= 48 ? 2 : 2 }).align('left')
+  }
+  if (code.qr) {
+    b.line()
+    b.align('center').qr(code.value, { size: cols >= 48 ? 6 : 4 }).align('left')
   }
   b.align('center').line('Powered by POSLanka').align('left')
   b.partialCut()
@@ -532,6 +611,23 @@ export function bytesToBase64(bytes: Uint8Array): string {
     out += '='
   }
   return out
+}
+
+export function base64ToBytes(b64: string): Uint8Array {
+  const clean = String(b64 || '').replace(/[^A-Za-z0-9+/]/g, '')
+  const out: number[] = []
+  let buf = 0
+  let bits = 0
+  for (let i = 0; i < clean.length; i++) {
+    buf = (buf << 6) | B64.indexOf(clean[i])
+    bits += 6
+    if (bits >= 8) {
+      bits -= 8
+      out.push((buf >> bits) & 0xff)
+      buf &= (1 << bits) - 1
+    }
+  }
+  return Uint8Array.from(out)
 }
 
 /** Decodes the raw bytes back to a plain-text preview (control bytes stripped). */

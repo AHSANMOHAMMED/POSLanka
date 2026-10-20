@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
-import { getEntityConfig, getImportFields } from '@/lib/import-export/entity-config'
+import { getEntityConfig, getImportFields, stockColumnField, STOCK_COLUMN_PREFIX } from '@/lib/import-export/entity-config'
+import { withTenant } from '@/lib/db'
+import { loadWarehouses } from '@/lib/import-export/import-validate'
 import { generateTemplate } from '@/lib/import-export/export-utils'
 import { logError } from '@/lib/ai/error-logger'
 
@@ -35,7 +37,16 @@ export async function GET(request: NextRequest) {
     if (permError) return permError
 
     const businessType = session.user.businessType || undefined
-    const importFields = getImportFields(entityConfig, businessType)
+    let importFields = getImportFields(entityConfig, businessType)
+    if (entityName === 'items') {
+      // One `stock:<CODE>` column per active warehouse (same format as the items export)
+      const warehouses = await withTenant(session.user.tenantId, (db) => loadWarehouses(db, session.user.tenantId))
+      const stockFields = warehouses
+        .filter(w => w.isActive)
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .map(w => stockColumnField(STOCK_COLUMN_PREFIX + w.code.trim().toUpperCase()))
+      importFields = [...importFields, ...stockFields]
+    }
     const templateData = await generateTemplate(importFields, format, entityConfig.label, withSampleData)
 
     const dateStr = new Date().toISOString().split('T')[0]

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { sanitizeReceiptSettingsPatch, type InvoiceCodeType, type ReceiptSettingsPatch } from '@/lib/print/receipt-settings'
 import { Modal } from '@/components/ui/modal'
 import { toast } from '@/components/ui/toast'
 import { Loader2, Plus, Trash2, GripVertical } from 'lucide-react'
@@ -65,6 +66,8 @@ interface POSProfile {
   showLogoOnReceipt: boolean
   receiptHeader: string | null
   receiptFooter: string | null
+  /** Per-counter receipt overrides (partial ReceiptSettings). */
+  receiptSettings?: Record<string, unknown> | null
   defaultPaymentMethod: string
   allowCreditSale: boolean
   status: string
@@ -122,6 +125,8 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [formData, setFormData] = useState(initialFormData)
+  // Per-counter receipt overrides stored in pos_profiles.receipt_settings
+  const [receiptOverrides, setReceiptOverrides] = useState<ReceiptSettingsPatch>({})
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>([
     { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
     { paymentMethod: 'card', isDefault: false, allowInReturns: true, sortOrder: 1 },
@@ -180,8 +185,10 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
         })
         setPaymentMethods(editProfile.paymentMethods || [])
         setUserAssignments(editProfile.users || [])
+        setReceiptOverrides(sanitizeReceiptSettingsPatch(editProfile.receiptSettings))
       } else {
         setFormData(initialFormData)
+        setReceiptOverrides({})
         setPaymentMethods([
           { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
           { paymentMethod: 'card', isDefault: false, allowInReturns: true, sortOrder: 1 },
@@ -318,6 +325,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
           maxDiscountPercent: parseFloat(formData.maxDiscountPercent) || 100,
           receiptHeader: formData.receiptHeader || null,
           receiptFooter: formData.receiptFooter || null,
+          receiptSettings: receiptOverrides,
           paymentMethods: paymentMethods.map((pm, i) => ({
             ...pm,
             sortOrder: i,
@@ -629,13 +637,39 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
                 </div>
 
                 <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-gray-300">Invoice barcode / QR</label>
+                  <select
+                    value={receiptOverrides.invoiceCode || ''}
+                    onChange={(e) => {
+                      const v = e.target.value as InvoiceCodeType | ''
+                      setReceiptOverrides((o) => {
+                        const next = { ...o }
+                        if (v) next.invoiceCode = v
+                        else delete next.invoiceCode
+                        return next
+                      })
+                    }}
+                    className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                  >
+                    <option value="">Use business default</option>
+                    <option value="both">Barcode + QR code</option>
+                    <option value="barcode">Barcode only</option>
+                    <option value="qr">QR code only</option>
+                    <option value="none">None</option>
+                  </select>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                    Business details, logo and default layout are set in Settings → Business Profile &amp; Receipt.
+                  </p>
+                </div>
+
+                <div>
                   <label className="block text-sm font-medium mb-1 dark:text-gray-300">Receipt Header</label>
                   <textarea
                     value={formData.receiptHeader}
                     onChange={(e) => setFormData({ ...formData, receiptHeader: e.target.value })}
                     className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
                     rows={2}
-                    placeholder="Custom header text..."
+                    placeholder="Custom header text (one line per row, max 5) - overrides the business default"
                   />
                 </div>
 
@@ -646,7 +680,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
                     onChange={(e) => setFormData({ ...formData, receiptFooter: e.target.value })}
                     className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
                     rows={2}
-                    placeholder="e.g., Thank you for your purchase!"
+                    placeholder="e.g., Thank you for your purchase! (one line per row, max 5)"
                   />
                 </div>
               </div>

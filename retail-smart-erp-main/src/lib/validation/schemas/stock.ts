@@ -26,6 +26,7 @@ export const bulkStockAdjustmentSchema = z.object({
 
 // GET /api/stock-movements
 export const stockMovementsListSchema = paginatedSearchSchema.extend({
+  itemId: z.string().uuid().optional(),
   type: stockMovementTypeSchema.optional(),
   warehouseId: z.string().uuid().optional(),
   referenceType: z.string().max(100).optional(),

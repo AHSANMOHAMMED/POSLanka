@@ -87,18 +87,9 @@ export async function PUT(
         return NextResponse.json({ error: 'Vehicle type not found' }, { status: 404 })
       }
 
-      // System defaults can only be deactivated, not fully edited
-      if (existingType.isSystemDefault) {
-        // Only allow toggling isActive for system defaults
-        if (body.isActive !== undefined && Object.keys(body).length === 1) {
-          const [updated] = await db
-            .update(vehicleTypes)
-            .set({ isActive: body.isActive, updatedAt: new Date() })
-            .where(eq(vehicleTypes.id, id))
-            .returning()
-
-          return NextResponse.json(updated)
-        }
+      // System defaults are shared by every company (tenant_id IS NULL) and are read-only
+      // for tenants (RLS) — toggling them here would change them for all companies.
+      if (existingType.isSystemDefault || !existingType.tenantId) {
         return NextResponse.json({ error: 'Cannot modify system default vehicle types' }, { status: 403 })
       }
 

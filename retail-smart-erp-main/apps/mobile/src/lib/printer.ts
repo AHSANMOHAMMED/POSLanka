@@ -16,6 +16,7 @@ import {
   bytesToPlainText,
   EscPosBuilder,
   formatReceiptDate,
+  invoiceCodeFor,
   money,
   paymentLabel,
   qtyText,
@@ -24,6 +25,7 @@ import {
   type ReceiptInput,
   type ZReportInput,
 } from './escpos'
+import { code128Svg } from './code128'
 
 export type PrinterTransport = 'none' | 'bluetooth' | 'usb' | 'network' | 'system'
 
@@ -386,11 +388,36 @@ export function receiptHtml(input: ReceiptInput): string {
   const payments = (input.payments || [])
     .map((p) => `<tr><td>${escapeHtml(paymentLabel(p.method))}${p.reference ? ` (${escapeHtml(p.reference)})` : ''}</td><td class="r">${money(p.amount)}</td></tr>`)
     .join('')
+  const biz = input.business
+  const bizLines = [
+    biz.legalName && biz.legalName.trim().toLowerCase() !== biz.name.trim().toLowerCase() ? biz.legalName : null,
+    biz.address,
+    biz.phone ? `Tel: ${biz.phone}` : null,
+    biz.email,
+    biz.website,
+    biz.taxId ? `VAT/TIN: ${biz.taxId}` : null,
+    biz.brn ? `BRN: ${biz.brn}` : null,
+  ]
+    .filter(Boolean)
+    .map((l) => `<div class="c">${escapeHtml(String(l))}</div>`)
+    .join('')
+  const headerLines = input.headerLines?.length ? input.headerLines : input.header ? [input.header] : []
+  const footerLines = input.footerLines?.length ? input.footerLines : [input.footer || 'Thank you for shopping with us!']
+  const logo =
+    input.logo?.pngBase64 && /^[A-Za-z0-9+/=]+$/.test(input.logo.pngBase64)
+      ? `<div class="c"><img src="data:image/png;base64,${input.logo.pngBase64}" style="width:${Math.min(100, Math.max(40, input.logo.widthPct || 60))}%;height:auto" alt=""></div>`
+      : ''
+  const code = invoiceCodeFor(input)
+  const codes = [
+    code.barcode ? `<div class="c" style="margin:6px auto 0;width:85%">${code128Svg(code.value, { height: 40 })}</div>` : '',
+    // No QR encoder on device: print the value under the barcode, or as text when QR-only.
+    code.qr && !code.barcode ? `<div class="c" style="margin-top:6px;font-size:10px">${escapeHtml(code.value)}</div>` : '',
+  ].join('')
   return `
-    <div class="c b big">${escapeHtml(input.business.name)}</div>
-    ${input.business.address ? `<div class="c">${escapeHtml(input.business.address)}</div>` : ''}
-    ${input.business.phone ? `<div class="c">Tel: ${escapeHtml(input.business.phone)}</div>` : ''}
-    ${input.header ? `<div class="c">${escapeHtml(input.header).replace(/\n/g, '<br>')}</div>` : ''}
+    ${logo}
+    <div class="c b big">${escapeHtml(biz.name)}</div>
+    ${bizLines}
+    ${headerLines.map((h) => `<div class="c">${escapeHtml(h).replace(/\n/g, '<br>')}</div>`).join('')}
     <hr>
     <div class="b">${input.isReturn ? 'RETURN / CREDIT NOTE' : 'SALES RECEIPT'}</div>
     <table>
@@ -412,8 +439,9 @@ export function receiptHtml(input: ReceiptInput): string {
     <hr>
     <table>${payments}${input.change && input.change > 0.004 ? `<tr><td>Change</td><td class="r">${money(input.change)}</td></tr>` : ''}</table>
     <br>
-    <div class="c">${escapeHtml(input.footer || 'Thank you for shopping with us!').replace(/\n/g, '<br>')}</div>
-    ${input.qrPayload ? `<div class="c" style="margin-top:6px;font-size:10px">${escapeHtml(input.qrPayload)}</div>` : ''}
+    ${footerLines.map((f) => `<div class="c">${escapeHtml(f).replace(/\n/g, '<br>')}</div>`).join('')}
+    ${input.returnPolicy ? `<div class="c" style="margin-top:6px;font-size:10px">${escapeHtml(input.returnPolicy)}</div>` : ''}
+    ${codes}
     <div class="c" style="margin-top:6px">Powered by POSLanka</div>`
 }
 

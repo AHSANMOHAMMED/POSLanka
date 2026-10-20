@@ -1,12 +1,44 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { staffInvites, tenants, accounts, users, accountTenants } from '@/lib/db/schema'
-import { eq, and, isNull, gt, sql } from 'drizzle-orm'
+import { staffInvites, tenants, accounts, users, accountTenants, warehouses, posProfiles } from '@/lib/db/schema'
+import { eq, and, isNull, gt, sql, inArray } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import { logError } from '@/lib/ai/error-logger'
 import { validatePasswordStrength } from '@/lib/utils/validation'
 import { validateBody } from '@/lib/validation'
 import { acceptInviteSchema } from '@/lib/validation/schemas/auth'
+import { addUserWarehouses, replaceUserPosProfiles } from '@/lib/users/create-staff'
+
+type InviteAssignment = {
+  tenantId: string
+  role: string
+  warehouseIds?: string[]
+  posProfileIds?: string[]
+}
+
+/**
+ * Apply the branch/counter assignments stored on the invite to a newly created user.
+ * Ids were validated against the tenant when the invite was issued; rows that no longer
+ * exist are skipped so a deleted counter cannot block the invite.
+ */
+async function applyInviteAssignments(
+  tx: Parameters<typeof addUserWarehouses>[0],
+  assignment: InviteAssignment,
+  userId: string,
+) {
+  const whIds = Array.isArray(assignment.warehouseIds) ? assignment.warehouseIds : []
+  const ppIds = Array.isArray(assignment.posProfileIds) ? assignment.posProfileIds : []
+  if (whIds.length > 0) {
+    const live = await tx.select({ id: warehouses.id }).from(warehouses)
+      .where(and(eq(warehouses.tenantId, assignment.tenantId), inArray(warehouses.id, whIds)))
+    await addUserWarehouses(tx, assignment.tenantId, userId, live.map(w => w.id))
+  }
+  if (ppIds.length > 0) {
+    const live = await tx.select({ id: posProfiles.id }).from(posProfiles)
+      .where(and(eq(posProfiles.tenantId, assignment.tenantId), inArray(posProfiles.id, ppIds)))
+    await replaceUserPosProfiles(tx, assignment.tenantId, userId, live.map(p => p.id))
+  }
+}
 
 // Rate limiting map for accept attempts
 const rateLimitMap = new Map<string, { count: number; firstRequest: number }>()
@@ -73,7 +105,7 @@ export async function POST(
     })
 
     // Create memberships and user records
-    const assignments = invite.tenantAssignments as Array<{ tenantId: string; role: string }>
+    const assignments = invite.tenantAssignments as InviteAssignment[]
 
     if (existingAccount) {
       // Existing account flow: create user + accountTenants (original behavior)
@@ -100,7 +132,7 @@ export async function POST(
                 .where(eq(users.id, existingUser.id))
             }
           } else {
-            await tx.insert(users).values({
+            const [created] = await tx.insert(users).values({
               tenantId: assignment.tenantId,
               accountId: existingAccount.id,
               email: existingAccount.email,
@@ -108,7 +140,8 @@ export async function POST(
               fullName: existingAccount.fullName,
               role: assignment.role as 'owner' | 'manager' | 'cashier' | 'technician',
               isActive: true,
-            })
+            }).returning({ id: users.id })
+            await applyInviteAssignments(tx, assignment, created.id)
           }
 
           // Create or reactivate account-tenant membership
@@ -188,7 +221,7 @@ export async function POST(
             }
           } else {
             // Create user directly — no account, no accountTenants
-            await tx.insert(users).values({
+            const [created] = await tx.insert(users).values({
               tenantId: assignment.tenantId,
               accountId: null,
               email: invite.email,
@@ -196,7 +229,9 @@ export async function POST(
               fullName: fullName.trim(),
               role: assignment.role as 'owner' | 'manager' | 'cashier' | 'technician',
               isActive: true,
-            })
+              passwordChangedAt: new Date(),
+            }).returning({ id: users.id })
+            await applyInviteAssignments(tx, assignment, created.id)
           }
         }
 

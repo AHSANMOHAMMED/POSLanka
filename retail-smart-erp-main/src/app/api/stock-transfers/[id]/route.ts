@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { stockTransfers, stockTransferItems, warehouseStock, stockMovements, warehouses, items as itemsTable, itemSerialNumbers } from '@/lib/db/schema'
+import { stockTransfers, stockTransferItems, warehouseStock, warehouses, items as itemsTable, itemSerialNumbers } from '@/lib/db/schema'
+import { applyStockChange, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
+import { toApiError } from '@/lib/db/errors'
 import { eq, and, sql } from 'drizzle-orm'
 import { transferSerials } from '@/lib/inventory/serial-numbers'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -202,6 +204,14 @@ export async function PUT(
     if (message.startsWith('VALIDATION:')) {
       return NextResponse.json({ error: message.replace('VALIDATION:', '') }, { status: 400 })
     }
+    if (message.startsWith('INSUFFICIENT_STOCK:')) {
+      return NextResponse.json({
+        error: `Insufficient stock for ${message.slice('INSUFFICIENT_STOCK:'.length)}`,
+        code: 'INSUFFICIENT_STOCK',
+      }, { status: 400 })
+    }
+    const apiError = toApiError(error)
+    if (apiError) return apiError
     logError('api/stock-transfers/[id]', error)
     return NextResponse.json({ error: 'Failed to update stock transfer' }, { status: 500 })
   }
@@ -253,6 +263,12 @@ export async function DELETE(
 }
 
 // Helper functions for status transitions
+
+/** Deterministic lock order for multi-line transfers: itemId, then line id. */
+function byItemThenLine(a: { itemId: string; id: string }, b: { itemId: string; id: string }): number {
+  if (a.itemId !== b.itemId) return a.itemId < b.itemId ? -1 : 1
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function handleSubmitForApproval(db: any, session: any, transfer: any) {
@@ -436,6 +452,7 @@ async function handleShip(db: any, session: any, transfer: any, userId: string) 
   }
 
   // Issue #63: Wrap ship in transaction with FOR UPDATE locks
+  const decreased: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const result = await db.transaction(async (tx: any) => {
     // STW-7: Re-validate warehouses are still active
@@ -453,47 +470,57 @@ async function handleShip(db: any, session: any, transfer: any, userId: string) 
       throw new Error('VALIDATION:Destination warehouse is no longer active')
     }
 
-    // Deduct stock from source warehouse with FOR UPDATE locks
-    for (const item of transfer.items) {
-      const [stock] = await tx
-        .select()
-        .from(warehouseStock)
-        .where(and(
-          eq(warehouseStock.warehouseId, transfer.fromWarehouseId),
-          eq(warehouseStock.itemId, item.itemId)
-        ))
-        .for('update')
+    // Lock the transfer row and re-check the status (concurrent ship guard)
+    const [lockedTransfer] = await tx
+      .select()
+      .from(stockTransfers)
+      .where(eq(stockTransfers.id, transfer.id))
+      .for('update')
+    if (!lockedTransfer || lockedTransfer.status !== 'approved') {
+      throw new Error('VALIDATION:Transfer is no longer approved')
+    }
 
-      const currentStock = parseFloat(stock?.currentStock || '0')
+    // Deduct stock from source warehouse (lines in lock order: itemId, then line id)
+    const shipLines = [...transfer.items].sort(byItemThenLine)
+    for (const item of shipLines) {
       const transferQty = parseFloat(item.quantity)
 
-      if (currentStock < transferQty) {
-        throw new Error(`VALIDATION:Insufficient stock for ${item.item.name}. Available: ${currentStock}, Requested: ${transferQty}`)
-      }
-
-      // Update stock and release reservation (8G)
-      if (stock) {
-        await tx.update(warehouseStock)
-          .set({
-            currentStock: (currentStock - transferQty).toString(),
-            reservedStock: sql`GREATEST(0, ${warehouseStock.reservedStock} - ${transferQty})`,
-            updatedAt: new Date(),
-          })
-          .where(eq(warehouseStock.id, stock.id))
-      }
-
-      // Record stock movement
-      await tx.insert(stockMovements).values({
+      const shipInput: StockChangeInput = {
         tenantId: session.user.tenantId,
         warehouseId: transfer.fromWarehouseId,
         itemId: item.itemId,
+        mode: 'delta',
+        qty: -transferQty,
         type: 'out',
-        quantity: transferQty.toString(),
         referenceType: 'stock_transfer',
         referenceId: transfer.id,
         notes: `Transfer to ${transfer.toWarehouse?.name || 'another warehouse'}`,
-        createdBy: userId,
-      })
+        userId,
+        source: 'transfer',
+        costCenterId: transfer.costCenterId || null,
+        idempotencyKey: `transfer-out:${transfer.id}:${item.id}`,
+      }
+      let shipResult: StockChangeResult
+      try {
+        shipResult = await applyStockChange(tx, shipInput)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : ''
+        if (msg.startsWith('INSUFFICIENT_STOCK:')) {
+          const m = msg.match(/have: (-?[\d.]+)\)$/)
+          throw new Error(`VALIDATION:Insufficient stock for ${item.item?.name || 'item'}. Available: ${m ? m[1] : 0}, Requested: ${transferQty}`)
+        }
+        throw err
+      }
+      decreased.push({ result: shipResult, input: shipInput })
+
+      // Release the reservation made at approval (8G). Reserved stock is not
+      // ledgered; current stock above went through applyStockChange.
+      await tx.update(warehouseStock)
+        .set({
+          reservedStock: sql`GREATEST(0, ${warehouseStock.reservedStock} - ${transferQty})`,
+          updatedAt: new Date(),
+        })
+        .where(eq(warehouseStock.id, shipResult.warehouseStockId))
 
       // Serial number tracking: transfer serials from source to destination warehouse
       const itemRecord = await tx.query.items.findFirst({
@@ -545,6 +572,8 @@ async function handleShip(db: any, session: any, transfer: any, userId: string) 
     return updated
   })
 
+  notifyStockDecreased(decreased)
+
   // STW-6: Log status change
   await logStatusChange(db, session.user.tenantId, userId, 'stock_transfer', transfer.id,
     'approved', 'in_transit')
@@ -574,6 +603,16 @@ async function handleReceive(db: any, session: any, transfer: any, receivedItems
   // Issue #64: Wrap receive in transaction with FOR UPDATE locks
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const result = await db.transaction(async (tx: any) => {
+    // Lock the transfer row and re-check the status (concurrent receive guard)
+    const [lockedTransfer] = await tx
+      .select()
+      .from(stockTransfers)
+      .where(eq(stockTransfers.id, transfer.id))
+      .for('update')
+    if (!lockedTransfer || lockedTransfer.status !== 'in_transit') {
+      throw new Error('VALIDATION:Transfer is no longer in transit')
+    }
+
     // STW-7: Re-validate warehouses are still active
     const fromWarehouse = await tx.query.warehouses.findFirst({
       where: and(eq(warehouses.id, transfer.fromWarehouseId), eq(warehouses.isActive, true)),
@@ -589,8 +628,8 @@ async function handleReceive(db: any, session: any, transfer: any, receivedItems
       throw new Error('VALIDATION:Destination warehouse is no longer active')
     }
 
-    // Process each item
-    for (const transferItem of transfer.items) {
+    // Process each item (lock order: itemId, then line id)
+    for (const transferItem of [...transfer.items].sort(byItemThenLine)) {
       // STW-5: Match by transferItem.id (line-item ID) not itemId (product ID)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const receivedItem = receivedItems?.find((r: any) =>
@@ -611,47 +650,24 @@ async function handleReceive(db: any, session: any, transfer: any, receivedItems
         .set({ receivedQuantity: receivedQty.toString() })
         .where(eq(stockTransferItems.id, transferItem.id))
 
-      // Lock and get or create stock record in destination warehouse
-      const [existingDestStock] = await tx
-        .select()
-        .from(warehouseStock)
-        .where(and(
-          eq(warehouseStock.warehouseId, transfer.toWarehouseId),
-          eq(warehouseStock.itemId, transferItem.itemId)
-        ))
-        .for('update')
-
-      if (existingDestStock) {
-        // Update existing stock with SQL addition to avoid race
-        await tx.update(warehouseStock)
-          .set({
-            currentStock: sql`${warehouseStock.currentStock} + ${receivedQty}`,
-            updatedAt: new Date(),
-          })
-          .where(eq(warehouseStock.id, existingDestStock.id))
-      } else {
-        // Create new stock record using ON CONFLICT for safety
-        await tx.insert(warehouseStock).values({
+      // Add the received quantity at the destination (paired with the ship 'out')
+      if (receivedQty > 0) {
+        await applyStockChange(tx, {
           tenantId: session.user.tenantId,
           warehouseId: transfer.toWarehouseId,
           itemId: transferItem.itemId,
-          currentStock: receivedQty.toString(),
-          minStock: '0',
+          mode: 'delta',
+          qty: receivedQty,
+          type: 'in',
+          referenceType: 'stock_transfer',
+          referenceId: transfer.id,
+          notes: `Transfer from ${transfer.fromWarehouse?.name || 'another warehouse'}`,
+          userId,
+          source: 'transfer',
+          costCenterId: transfer.costCenterId || null,
+          idempotencyKey: `transfer-in:${transfer.id}:${transferItem.id}`,
         })
       }
-
-      // Record stock movement
-      await tx.insert(stockMovements).values({
-        tenantId: session.user.tenantId,
-        warehouseId: transfer.toWarehouseId,
-        itemId: transferItem.itemId,
-        type: 'in',
-        quantity: receivedQty.toString(),
-        referenceType: 'stock_transfer',
-        referenceId: transfer.id,
-        notes: `Transfer from ${transfer.fromWarehouse?.name || 'another warehouse'}`,
-        createdBy: userId,
-      })
     }
 
     const [updated] = await tx.update(stockTransfers)
@@ -721,6 +737,7 @@ async function handleCancel(db: any, session: any, transfer: any, reason: string
 
   // Wrap all stock modifications in a transaction with FOR UPDATE locks
   const previousStatus = transfer.status
+  const cancelDecreased: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updated = await db.transaction(async (tx: any) => {
     // Lock transfer row to prevent concurrent cancellation
@@ -753,84 +770,47 @@ async function handleCancel(db: any, session: any, transfer: any, reason: string
     // If in_transit, restore stock to source warehouse
     // STW-4: Also reverse any partial receipts from destination warehouse
     if (lockedTransfer.status === 'in_transit') {
-      for (const item of transfer.items) {
+      for (const item of [...transfer.items].sort(byItemThenLine)) {
         const transferQty = parseFloat(item.quantity)
         const receivedQty = parseFloat(item.receivedQuantity || '0')
 
         // STW-4: If any quantity was already received, reverse it from destination
+        // (no clamping: insufficient destination stock aborts the cancellation)
         if (receivedQty > 0) {
-          const [destStock] = await tx
-            .select()
-            .from(warehouseStock)
-            .where(and(
-              eq(warehouseStock.warehouseId, transfer.toWarehouseId),
-              eq(warehouseStock.itemId, item.itemId)
-            ))
-            .for('update')
-
-          if (destStock) {
-            await tx.update(warehouseStock)
-              .set({
-                currentStock: sql`GREATEST(0, ${warehouseStock.currentStock} - ${receivedQty})`,
-                updatedAt: new Date(),
-              })
-              .where(eq(warehouseStock.id, destStock.id))
-
-            // Record stock movement for destination reversal
-            await tx.insert(stockMovements).values({
-              tenantId: session.user.tenantId,
-              warehouseId: transfer.toWarehouseId,
-              itemId: item.itemId,
-              type: 'out',
-              quantity: receivedQty.toString(),
-              referenceType: 'stock_transfer_cancelled',
-              referenceId: transfer.id,
-              notes: `Cancelled transfer - partially received stock reversed`,
-              createdBy: userId,
-            })
-          }
-        }
-
-        // Lock and get stock record in source warehouse
-        const [sourceStock] = await tx
-          .select()
-          .from(warehouseStock)
-          .where(and(
-            eq(warehouseStock.warehouseId, transfer.fromWarehouseId),
-            eq(warehouseStock.itemId, item.itemId)
-          ))
-          .for('update')
-
-        if (sourceStock) {
-          // Restore stock to source warehouse using SQL to prevent race
-          await tx.update(warehouseStock)
-            .set({
-              currentStock: sql`${warehouseStock.currentStock} + ${transferQty}`,
-              updatedAt: new Date(),
-            })
-            .where(eq(warehouseStock.id, sourceStock.id))
-        } else {
-          // Create stock record if it doesn't exist
-          await tx.insert(warehouseStock).values({
+          const destInput: StockChangeInput = {
             tenantId: session.user.tenantId,
-            warehouseId: transfer.fromWarehouseId,
+            warehouseId: transfer.toWarehouseId,
             itemId: item.itemId,
-            currentStock: transferQty.toString(),
-            minStock: '0',
-          })
+            mode: 'delta',
+            qty: -receivedQty,
+            type: 'out',
+            referenceType: 'stock_transfer_cancelled',
+            referenceId: transfer.id,
+            notes: `Cancelled transfer - partially received stock reversed`,
+            userId,
+            source: 'transfer',
+            costCenterId: transfer.costCenterId || null,
+            idempotencyKey: `transfer-cancel-in:${transfer.id}:${item.id}`,
+          }
+          const destResult = await applyStockChange(tx, destInput)
+          cancelDecreased.push({ result: destResult, input: destInput })
         }
 
-        // Record stock movement (reversal)
-        await tx.insert(stockMovements).values({
+        // Restore the shipped quantity at the source warehouse
+        await applyStockChange(tx, {
           tenantId: session.user.tenantId,
           warehouseId: transfer.fromWarehouseId,
           itemId: item.itemId,
+          mode: 'delta',
+          qty: transferQty,
           type: 'in',
-          quantity: transferQty.toString(),
           referenceType: 'stock_transfer_cancelled',
           referenceId: transfer.id,
           notes: `Cancelled transfer - stock restored from ${transfer.toWarehouse?.name || 'destination'}`,
-          createdBy: userId,
+          userId,
+          source: 'transfer',
+          costCenterId: transfer.costCenterId || null,
+          idempotencyKey: `transfer-cancel-out:${transfer.id}:${item.id}`,
         })
 
         // Serial number tracking: transfer serials back to source warehouse using stored IDs
@@ -861,6 +841,8 @@ async function handleCancel(db: any, session: any, transfer: any, reason: string
 
     return cancelledTransfer
   })
+
+  notifyStockDecreased(cancelDecreased)
 
   // STW-6: Log status change
   await logStatusChange(db, session.user.tenantId, userId, 'stock_transfer', transfer.id,

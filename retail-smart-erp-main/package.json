@@ -14,6 +14,7 @@
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node scripts/migrate.mjs",
+    "db:check-isolation": "node scripts/check-tenant-isolation.mjs",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "db:seed-admin": "npx tsx scripts/create-super-admin.ts",

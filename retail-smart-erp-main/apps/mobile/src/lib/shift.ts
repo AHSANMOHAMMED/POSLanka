@@ -47,6 +47,9 @@ export interface PosProfile {
   /** Printed at the top / bottom of receipts (free text, may contain newlines). */
   receiptHeader?: string | null
   receiptFooter?: string | null
+  showLogoOnReceipt?: boolean | null
+  /** Per-counter receipt overrides (partial receipt settings, see src/lib/receipt.ts). */
+  receiptSettings?: Record<string, unknown> | null
 }
 
 export interface Shift {

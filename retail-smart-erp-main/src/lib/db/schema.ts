@@ -1,5 +1,5 @@
-import { pgTable, uuid, varchar, text, timestamp, decimal, integer, boolean, jsonb, date, time, pgEnum, uniqueIndex, bigint, real } from 'drizzle-orm/pg-core'
-import { relations } from 'drizzle-orm'
+import { pgTable, uuid, varchar, text, timestamp, decimal, integer, boolean, jsonb, date, time, pgEnum, uniqueIndex, bigint, real, primaryKey } from 'drizzle-orm/pg-core'
+import { relations, sql } from 'drizzle-orm'
 
 // ==================== ENUMS ====================
 
@@ -144,7 +144,8 @@ export const supplierQuotationStatusEnum = pgEnum('supplier_quotation_status', [
 
 // Cost change source enum
 export const costChangeSourceEnum = pgEnum('cost_change_source', [
-  'purchase', 'purchase_cancellation', 'manual_adjustment', 'purchase_return'
+  'purchase', 'purchase_cancellation', 'manual_adjustment', 'purchase_return',
+  'stock_intake', 'import', // W3 (drizzle/0133)
 ])
 
 // ==================== HR & PAYROLL ENUMS ====================
@@ -279,6 +280,12 @@ export const tenants = pgTable('tenants', {
   address: text('address'),
   logoUrl: text('logo_url'),
   logoSize: integer('logo_size'), // Logo file size in bytes (for storage tracking)
+  // Business profile (W7 receipts)
+  legalName: varchar('legal_name', { length: 255 }),
+  taxId: varchar('tax_id', { length: 50 }),
+  brn: varchar('brn', { length: 50 }),
+  website: varchar('website', { length: 255 }),
+  receiptSettings: jsonb('receipt_settings').notNull().default({}), // see src/lib/print/receipt-settings.ts
   businessType: businessTypeEnum('business_type').notNull().default('retail'),
   country: varchar('country', { length: 2 }).notNull().default('LK'), // ISO 3166-1 alpha-2
   currency: varchar('currency', { length: 3 }).notNull().default('LKR'), // ISO 4217
@@ -905,6 +912,7 @@ export const posProfiles = pgTable('pos_profiles', {
   showLogoOnReceipt: boolean('show_logo_on_receipt').notNull().default(true),
   receiptHeader: text('receipt_header'),
   receiptFooter: text('receipt_footer'),
+  receiptSettings: jsonb('receipt_settings').notNull().default({}), // per-counter receipt overrides (W7)
 
   // Payment Settings
   defaultPaymentMethod: varchar('default_payment_method', { length: 30 }).notNull().default('cash'),
@@ -1653,6 +1661,12 @@ export const items = pgTable('items', {
   parentItemId: uuid('parent_item_id'),
   variantAttributes: jsonb('variant_attributes').$type<Record<string, string>>().default({}),
 
+  // W2: auto-generated per-tenant item code (ITM-000001) + audit / optimistic lock
+  itemCode: varchar('item_code', { length: 30 }).notNull(),
+  createdBy: uuid('created_by'),
+  updatedBy: uuid('updated_by'),
+  version: integer('version').notNull().default(1),
+
   // Timestamps
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -1670,6 +1684,15 @@ export const stockMovements = pgTable('stock_movements', {
   notes: text('notes'),
   createdBy: uuid('created_by').references(() => users.id),
   costCenterId: uuid('cost_center_id').references(() => costCenters.id),
+  // W2 stock ledger: signed change + running balance (quantity is always >= 0)
+  // NOT NULL in the DB; optional on insert only because the transitional
+  // stock_movements_legacy_fill trigger derives it for legacy writers.
+  qtyChange: decimal('qty_change', { precision: 12, scale: 3 }).notNull().default(sql`NULL`),
+  stockBefore: decimal('stock_before', { precision: 12, scale: 3 }),
+  stockAfter: decimal('stock_after', { precision: 12, scale: 3 }),
+  signSource: varchar('sign_source', { length: 20 }),
+  source: varchar('source', { length: 20 }),
+  idempotencyKey: varchar('idempotency_key', { length: 150 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -2128,6 +2151,12 @@ export const sales = pgTable('sales', {
   status: saleStatusEnum('status').notNull().default('pending'),
   isReturn: boolean('is_return').notNull().default(false),
   returnAgainst: uuid('return_against'),
+  // W8: offline receipt number ('OFF-<device>-<seq>'), unique per tenant when set
+  offlineRef: varchar('offline_ref', { length: 40 }),
+  // W8: on the sale half of an exchange → the linked return (sales.id, FK in drizzle/0137)
+  exchangeOf: uuid('exchange_of'),
+  returnReason: varchar('return_reason', { length: 50 }),
+  returnNotes: text('return_notes'),
   notes: text('notes'),
   voidReason: text('void_reason'),
   voidedAt: timestamp('voided_at'),
@@ -2155,6 +2184,10 @@ export const saleItems = pgTable('sale_items', {
   taxBreakdown: jsonb('tax_breakdown'),
   total: decimal('total', { precision: 12, scale: 2 }).notNull(),
   serialNumberIds: jsonb('serial_number_ids').$type<string[]>(),
+  // W8: quantity of this line already returned (maintained under the original sale's lock)
+  returnedQuantity: decimal('returned_quantity', { precision: 12, scale: 3 }).notNull().default('0'),
+  // W8: on return lines, the original sale line being returned (FK in drizzle/0137)
+  originalSaleItemId: uuid('original_sale_item_id'),
 })
 
 export const payments = pgTable('payments', {
@@ -3157,6 +3190,10 @@ export const stockTakeItems = pgTable('stock_take_items', {
   countedBy: uuid('counted_by').references(() => users.id),
   countedAt: timestamp('counted_at'),
   notes: text('notes'),
+  // W2: system stock captured when the count was entered; completion applies counted - systemQtyAtCount
+  systemQtyAtCount: decimal('system_qty_at_count', { precision: 12, scale: 3 }),
+  appliedMovementId: uuid('applied_movement_id'),
+  appliedAt: timestamp('applied_at'),
 })
 
 // ==================== ITEM BATCHES (LOT/BATCH TRACKING) ====================
@@ -3303,7 +3340,7 @@ export const supplierQuotationItems = pgTable('supplier_quotation_items', {
 
 export const settings = pgTable('settings', {
   id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id').references(() => tenants.id),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
   key: varchar('key', { length: 100 }).notNull(),
   value: text('value'),
   type: varchar('type', { length: 20 }).default('string'),
@@ -5882,3 +5919,147 @@ export const creditNoteItemsRelations = relations(creditNoteItems, ({ one }) => 
   creditNote: one(creditNotes, { fields: [creditNoteItems.creditNoteId], references: [creditNotes.id] }),
   item: one(items, { fields: [creditNoteItems.itemId], references: [items.id] }),
 }))
+
+// ===== W2 inventory core =====
+
+// Per-tenant counters (item codes, generated barcodes, invoice / return numbers)
+export const tenantSequences = pgTable('tenant_sequences', {
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  seqKey: varchar('seq_key', { length: 40 }).notNull(),
+  nextValue: bigint('next_value', { mode: 'number' }).notNull().default(1),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (t) => [primaryKey({ columns: [t.tenantId, t.seqKey] })])
+
+// Field / price change audit trail for items (item_id intentionally has no FK)
+export const itemChangeLog = pgTable('item_change_log', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  itemId: uuid('item_id').notNull(),
+  userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
+  action: varchar('action', { length: 20 }).notNull(), // create | update | delete | deactivate | ...
+  source: varchar('source', { length: 20 }).notNull().default('manual'), // manual | import | intake | api | system
+  changes: jsonb('changes').$type<Record<string, { from: unknown; to: unknown }>>().notNull().default({}),
+  priceChanged: boolean('price_changed').notNull().default(false),
+  importJobId: uuid('import_job_id'),
+  intakeBatchId: uuid('intake_batch_id'),
+  notes: text('notes'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ===== W3 stock intake =====
+
+export const stockIntakeStatusEnum = pgEnum('stock_intake_status', [
+  'draft', 'submitted', 'syncing', 'posted', 'partially_posted', 'cancelled',
+])
+export const stockIntakeLineStatusEnum = pgEnum('stock_intake_line_status', ['pending', 'posted', 'error', 'skipped'])
+export const stockIntakeLineModeEnum = pgEnum('stock_intake_line_mode', ['receive', 'count'])
+
+// Staged stock receipts / counts (scanned on web or mobile), synced into stock via the ledger
+export const stockIntakeBatches = pgTable('stock_intake_batches', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  batchNo: varchar('batch_no', { length: 40 }).notNull(), // INT-000123
+  warehouseId: uuid('warehouse_id').notNull().references(() => warehouses.id),
+  status: stockIntakeStatusEnum('status').notNull().default('draft'),
+  source: varchar('source', { length: 20 }).notNull().default('web'), // web | mobile
+  clientBatchId: uuid('client_batch_id'),
+  notes: text('notes'),
+  supplierId: uuid('supplier_id').references(() => suppliers.id, { onDelete: 'set null' }),
+  updateCost: boolean('update_cost').notNull().default(false),
+  totalLines: integer('total_lines').notNull().default(0),
+  postedLines: integer('posted_lines').notNull().default(0),
+  errorLines: integer('error_lines').notNull().default(0),
+  lastSyncKey: varchar('last_sync_key', { length: 100 }),
+  lastSyncResult: jsonb('last_sync_result').$type<Record<string, unknown>>(),
+  syncStartedAt: timestamp('sync_started_at'),
+  syncAttempts: integer('sync_attempts').notNull().default(0),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  submittedBy: uuid('submitted_by').references(() => users.id, { onDelete: 'set null' }),
+  submittedAt: timestamp('submitted_at'),
+  postedBy: uuid('posted_by').references(() => users.id, { onDelete: 'set null' }),
+  postedAt: timestamp('posted_at'),
+  version: integer('version').notNull().default(1),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('stock_intake_batches_tenant_batch_no_unique').on(t.tenantId, t.batchNo),
+  uniqueIndex('stock_intake_batches_tenant_client_unique').on(t.tenantId, t.clientBatchId).where(sql`client_batch_id IS NOT NULL`),
+])
+
+export const stockIntakeLines = pgTable('stock_intake_lines', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  batchId: uuid('batch_id').notNull().references(() => stockIntakeBatches.id, { onDelete: 'cascade' }),
+  clientLineId: uuid('client_line_id'),
+  mergedClientLineIds: uuid('merged_client_line_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  lineMode: stockIntakeLineModeEnum('line_mode').notNull().default('receive'),
+  barcode: varchar('barcode', { length: 100 }),
+  sku: varchar('sku', { length: 100 }),
+  itemId: uuid('item_id').references(() => items.id, { onDelete: 'set null' }),
+  quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull(),
+  systemQtySnapshot: decimal('system_qty_snapshot', { precision: 12, scale: 3 }),
+  name: varchar('name', { length: 255 }),
+  categoryId: uuid('category_id').references(() => categories.id, { onDelete: 'set null' }),
+  unit: varchar('unit', { length: 50 }),
+  costPrice: decimal('cost_price', { precision: 12, scale: 2 }),
+  sellingPrice: decimal('selling_price', { precision: 12, scale: 2 }),
+  matchType: varchar('match_type', { length: 20 }), // item | barcode | sku | item_code | new | conflict
+  status: stockIntakeLineStatusEnum('status').notNull().default('pending'),
+  errorMessage: text('error_message'),
+  resultItemId: uuid('result_item_id'),
+  resultMovementId: uuid('result_movement_id'),
+  createdItem: boolean('created_item').notNull().default(false),
+  postedAt: timestamp('posted_at'),
+  notes: text('notes'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('stock_intake_lines_batch_client_unique').on(t.batchId, t.clientLineId).where(sql`client_line_id IS NOT NULL`),
+])
+
+// ===== W4 import jobs =====
+
+// Persisted bulk import jobs (resumable; progress survives restarts)
+export const importJobs = pgTable('import_jobs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull(),
+  entityName: varchar('entity_name', { length: 50 }).notNull(),
+  mode: varchar('mode', { length: 10 }).notNull().default('insert'), // insert | update | upsert
+  options: jsonb('options').$type<Record<string, unknown>>().notNull().default({}),
+  status: varchar('status', { length: 20 }).notNull().default('queued'), // queued | validating | processing | done | error | cancelled | interrupted
+  fileName: varchar('file_name', { length: 255 }),
+  fileHash: varchar('file_hash', { length: 64 }),
+  total: integer('total').notNull().default(0),
+  processed: integer('processed').notNull().default(0),
+  inserted: integer('inserted').notNull().default(0),
+  updated: integer('updated').notNull().default(0),
+  skipped: integer('skipped').notNull().default(0),
+  failed: integer('failed').notNull().default(0),
+  autoCreated: integer('auto_created').notNull().default(0),
+  errorMessage: text('error_message'),
+  heartbeatAt: timestamp('heartbeat_at'),
+  startedAt: timestamp('started_at'),
+  completedAt: timestamp('completed_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('import_jobs_active_file_unique').on(t.tenantId, t.fileHash, t.entityName)
+    .where(sql`${t.status} IN ('queued', 'validating', 'processing')`),
+])
+
+// One row per file row: validated action + apply status (exactly-once progress)
+export const importJobRows = pgTable('import_job_rows', {
+  jobId: uuid('job_id').notNull().references(() => importJobs.id, { onDelete: 'cascade' }),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  rowIndex: integer('row_index').notNull(),
+  action: varchar('action', { length: 10 }).notNull().default('insert'), // insert | update | skip | none
+  status: varchar('status', { length: 10 }).notNull().default('pending'), // pending | done | skipped | error
+  payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+  error: text('error'),
+  entityId: uuid('entity_id'),
+}, (t) => [primaryKey({ columns: [t.jobId, t.rowIndex] })])
+
+// ===== W8 returns =====
+// Column additions live in place on `sales` (offline_ref, exchange_of, return_reason, return_notes)
+// and `sale_items` (returned_quantity, original_sale_item_id); see drizzle/0137_sales_offline_returns.sql.

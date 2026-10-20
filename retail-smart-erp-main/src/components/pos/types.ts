@@ -59,6 +59,10 @@ export interface CartItem {
   taxAmount?: number
   taxBreakdown?: TaxBreakdownItem[]
   serialNumberIds?: string[]
+  /** Return mode (W8): the original invoice line this cart line returns */
+  originalSaleItemId?: string
+  /** Return mode (W8): quantity still returnable on that line */
+  maxReturnQuantity?: number
 }
 
 export interface Customer {
@@ -114,7 +118,16 @@ export interface SaleForReturn {
     total: string
     serialNumberIds?: string[] | null
     item?: { isGiftCard?: boolean } | null
+    /** From /api/sales/lookup (W8) */
+    returnedQuantity?: string
+    remainingQuantity?: number
+    refundUnitAmount?: number
+    isGiftCard?: boolean
+    remainingSerialNumberIds?: string[]
   }>
+  /** From /api/sales/lookup (W8) */
+  returnStatus?: 'none' | 'partial' | 'full'
+  refundableTotal?: number
 }
 
 export interface PaymentMethodConfig {
@@ -144,6 +157,8 @@ export interface ActiveShift {
     receiptHeader: string | null
     receiptFooter: string | null
     showLogoOnReceipt: boolean
+    /** Per-counter receipt overrides (partial ReceiptSettings). */
+    receiptSettings?: Record<string, unknown> | null
     paymentMethods?: PaymentMethodConfig[]
   }
   warehouse?: {

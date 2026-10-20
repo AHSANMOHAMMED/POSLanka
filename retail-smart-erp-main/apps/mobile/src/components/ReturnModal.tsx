@@ -1,8 +1,9 @@
-// Minimal returns flow, opened when an invoice number (INV-/RTN- QR or typed) is
-// scanned at the POS. Looks the sale up with GET /api/sales?search=, lets the
-// cashier pick quantities to take back and posts a return with the same payload
-// rules as the web POS: negative quantities / subtotal / total, discount >= 0,
-// isReturn:true, returnAgainst, refundAmount (positive), refundMethod:'cash'.
+// Minimal returns flow, opened when a receipt code (INV-/RTN-/OFF- QR or typed) is
+// scanned at the POS. Receipt codes resolve exactly through GET /api/sales/lookup
+// (RTN- → its original sale, OFF- → the offline receipt); anything else falls back to
+// GET /api/sales?search=. Lines carry originalSaleItemId and the remaining quantity; the
+// server prices the return from the original invoice (incl. tax) and answers with the
+// refund it actually paid (refundAmount), which is what we print.
 import React, { useEffect, useMemo, useState } from 'react'
 import { Modal, View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert } from 'react-native'
 import * as Crypto from 'expo-crypto'
@@ -24,7 +25,18 @@ export interface ReturnableSale {
   customerName?: string | null
   warehouseId?: string | null
   paymentMethod?: string | null
-  items?: Array<{ id?: string; itemId?: string | null; itemName: string; quantity: string | number; unitPrice: string | number; total?: string | number }>
+  items?: Array<{
+    id?: string
+    itemId?: string | null
+    itemName: string
+    quantity: string | number
+    unitPrice: string | number
+    total?: string | number
+    /** from /api/sales/lookup */
+    remainingQuantity?: number
+    refundUnitAmount?: number
+    isGiftCard?: boolean
+  }>
   returnStatus?: 'none' | 'partial' | 'full'
   returns?: Array<{ id: string; invoiceNo: string; total: string }>
 }
@@ -62,8 +74,25 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
     setSelected(null)
     setQty({})
     ;(async () => {
-      // RTN- codes point at a credit note; its original sale is what we return against.
+      // Receipt codes: exact lookup (RTN- resolves to the original sale, OFF- to an offline receipt)
       const code = invoiceQuery.trim()
+      if (/^(INV|RTN|OFF)-/i.test(code)) {
+        const found = await apiGet<any>(`/api/sales/lookup${qs({ code })}`)
+        if (cancelled) return
+        if (found.ok && found.data?.sale) {
+          const sale = found.data.sale as ReturnableSale
+          if (sale.status === 'void') {
+            setError(`Invoice ${sale.invoiceNo} was voided`)
+          } else if (sale.returnStatus === 'full') {
+            setError(`Invoice ${sale.invoiceNo} has already been fully returned`)
+          } else {
+            setMatches([sale])
+            setSelected(sale)
+          }
+          setLoading(false)
+          return
+        }
+      }
       const res = await apiGet<any>(`/api/sales${qs({ search: code, pageSize: 5 })}`)
       if (cancelled) return
       if (!res.ok) {
@@ -83,10 +112,22 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
     }
   }, [visible, invoiceQuery])
 
-  const lines = useMemo(() => (selected?.items || []).map((i) => ({ ...i, maxQty: Math.abs(num(i.quantity)) })), [selected])
+  const lines = useMemo(
+    () =>
+      (selected?.items || [])
+        .filter((i) => !i.isGiftCard && num(i.quantity) > 0)
+        .map((i) => ({
+          ...i,
+          maxQty: i.remainingQuantity ?? Math.abs(num(i.quantity)),
+          // what one unit refunds (incl. tax, after discounts) — server-computed when looked up
+          refundUnit: i.refundUnitAmount ?? num(i.unitPrice),
+        })),
+    [selected]
+  )
 
+  // Preview only: the server recomputes the refund from the original invoice
   const refundAmount = useMemo(
-    () => roundCurrency(lines.reduce((sum, l, idx) => sum + (qty[idx] || 0) * num(l.unitPrice), 0)),
+    () => roundCurrency(lines.reduce((sum, l, idx) => sum + (qty[idx] || 0) * l.refundUnit, 0)),
     [lines, qty]
   )
   const hasAny = Object.values(qty).some((q) => q > 0)
@@ -113,12 +154,13 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
       .map((l, idx) => ({ l, q: qty[idx] || 0 }))
       .filter(({ q }) => q > 0)
       .map(({ l, q }) => ({
+        originalSaleItemId: l.id || undefined,
         itemId: l.itemId || undefined,
         name: l.itemName,
         quantity: -q,
-        unitPrice: num(l.unitPrice),
+        unitPrice: l.refundUnit,
         discount: 0,
-        total: roundCurrency(-q * num(l.unitPrice)),
+        total: roundCurrency(-q * l.refundUnit),
       }))
     const subtotal = roundCurrency(cartItems.reduce((s, c) => s + c.total, 0)) // negative
     const total = subtotal
@@ -138,7 +180,6 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
       addOverpaymentToCredit: false,
       isReturn: true,
       returnAgainst: selected.id,
-      refundAmount: refund,
       refundMethod: 'cash',
       warehouseId: selected.warehouseId || shift.warehouseId,
       posOpeningEntryId: shift.id,
@@ -152,6 +193,7 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
         return
       }
       const sale = res.data || {}
+      const refunded = typeof sale.refundAmount === 'number' ? sale.refundAmount : refund
       const receipt = receiptFromSale(
         { ...sale, invoiceNo: sale.invoiceNo || 'Return recorded', total: sale.total ?? total, items: sale.items?.length ? sale.items : cartItems.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: c.unitPrice, total: c.total })), isReturn: true },
         {
@@ -159,12 +201,12 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
           shift,
           cashier: cashierName,
           customerName: selected.customerName || undefined,
-          fallbackPayment: { method: 'cash', amount: -refund },
+          fallbackPayment: { method: 'cash', amount: -refunded },
         }
       )
       onReturnComplete({
         invoiceNo: sale.invoiceNo || 'Return recorded',
-        total: refund,
+        total: refunded,
         change: 0,
         tenderMethod: 'CASH REFUND',
         isReturn: true,
@@ -262,7 +304,7 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
                           <View style={{ flex: 1 }}>
                             <Text style={styles.lineName}>{l.itemName}</Text>
                             <Text style={styles.muted}>
-                              Sold {l.maxQty} × {formatLKR(l.unitPrice)}
+                              {l.maxQty} returnable × {formatLKR(l.refundUnit)}
                             </Text>
                           </View>
                           <View style={styles.stepper}>

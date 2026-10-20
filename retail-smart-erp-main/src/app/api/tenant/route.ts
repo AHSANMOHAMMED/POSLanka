@@ -9,6 +9,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation'
 import { updateTenantSchema } from '@/lib/validation/schemas/users'
+import { resolveReceiptSettings, sanitizeReceiptSettingsPatch } from '@/lib/print/receipt-settings'
 
 // GET tenant settings (tax rate, currency, etc.)
 export async function GET() {
@@ -36,6 +37,12 @@ export async function GET() {
           address: true,
           email: true,
           settings: true,
+          legalName: true,
+          taxId: true,
+          brn: true,
+          website: true,
+          logoUrl: true,
+          receiptSettings: true,
         },
       })
 
@@ -43,9 +50,16 @@ export async function GET() {
         return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
       }
 
-      const { settings, ...rest } = tenant
+      const { settings, receiptSettings, ...rest } = tenant
       const scaleBarcode = normalizeScaleConfig(((settings || {}) as { scaleBarcode?: Partial<ScaleBarcodeConfig> }).scaleBarcode)
-      return NextResponse.json({ ...rest, scaleBarcode })
+      // receiptSettings = tenant-level effective settings (defaults merged in);
+      // receiptSettingsRaw = what is actually stored (for editors).
+      return NextResponse.json({
+        ...rest,
+        scaleBarcode,
+        receiptSettings: resolveReceiptSettings(receiptSettings),
+        receiptSettingsRaw: sanitizeReceiptSettingsPatch(receiptSettings),
+      })
     })
   } catch (error) {
     logError('api/tenant', error)
@@ -67,6 +81,7 @@ export async function PUT(request: NextRequest) {
     const parsed = await validateBody(request, updateTenantSchema)
     if (!parsed.success) return parsed.response
     const { businessType, timezone, aiEnabled, taxRate, taxInclusive, scaleBarcode } = parsed.data
+    const { name, legalName, address, phone, email, website, taxId, brn, receiptSettings } = parsed.data
 
     // Build update data
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -119,6 +134,23 @@ export async function PUT(request: NextRequest) {
       updateData.settings = settings
     }
 
+    // Business profile fields (empty string clears optional ones)
+    if (name !== undefined) updateData.name = name
+    if (email !== undefined) updateData.email = email
+    if (legalName !== undefined) updateData.legalName = legalName || null
+    if (address !== undefined) updateData.address = address || null
+    if (phone !== undefined) updateData.phone = phone || null
+    if (website !== undefined) updateData.website = website || null
+    if (taxId !== undefined) updateData.taxId = taxId || null
+    if (brn !== undefined) updateData.brn = brn || null
+    if (receiptSettings !== undefined) {
+      // Merge onto stored settings so partial updates don't wipe other keys.
+      const current = await withTenant(session.user.tenantId, async (db) =>
+        db.query.tenants.findFirst({ where: eq(tenants.id, session.user.tenantId), columns: { receiptSettings: true } })
+      )
+      updateData.receiptSettings = { ...sanitizeReceiptSettingsPatch(current?.receiptSettings), ...receiptSettings }
+    }
+
     if (Object.keys(updateData).length <= 1) {
       return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
     }
@@ -131,7 +163,7 @@ export async function PUT(request: NextRequest) {
         .where(eq(tenants.id, session.user.tenantId))
 
       // Broadcast tenant settings update
-      logAndBroadcast(session.user.tenantId, 'tenant', 'updated', session.user.tenantId)
+      logAndBroadcast(session.user.tenantId, 'tenant', 'updated', session.user.tenantId, { userId: session.user.id })
 
       return NextResponse.json({ success: true, ...updateData })
     })

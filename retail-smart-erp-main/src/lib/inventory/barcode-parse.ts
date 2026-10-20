@@ -225,9 +225,11 @@ export function analyseScan(input: string, scaleConfig?: Partial<ScaleBarcodeCon
   // 2. Weighing-scale label
   const scale = parseScaleBarcode(raw, cfg)
   if (scale) {
+    // An item whose stored barcode equals the full code wins over the scale reading
+    // (auto-generated item barcodes also start with '2').
+    push('scale', raw, 'barcode')
     push('scale', scale.plu, 'plu')
     push('scale', scale.plu.padStart(cfg.pluLength, '0'), 'plu')
-    push('scale', raw, 'barcode') // some tenants store the full label as the barcode
     return { symbology: 'scale', normalized: raw, candidates, scale, gtinValid: raw.length === 13 ? isValidGtin(raw) : undefined }
   }
 
