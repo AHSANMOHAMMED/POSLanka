@@ -1,0 +1,46 @@
+# POSLanka on a single DigitalOcean Droplet (Docker) + Managed PostgreSQL + Spaces.
+#   cp .env.production.example .env.production   # fill it in
+#   docker compose run --rm migrate              # first time and after every update
+#   docker compose up -d app caddy
+# Images come from DigitalOcean Container Registry (built by GitHub Actions) or a local build.
+services:
+  app:
+    image: ${POSLANKA_IMAGE:-registry.digitalocean.com/your-registry/poslanka:latest}
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+      SKIP_MIGRATIONS: "true"
+    expose: ["3000"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  migrate:
+    image: ${POSLANKA_IMAGE:-registry.digitalocean.com/your-registry/poslanka:latest}
+    env_file: .env.production
+    profiles: ["tools"]
+    command: sh -c "node scripts/migrate.mjs && node scripts/check-tenant-isolation.mjs && npx tsx scripts/check-schema-drift.ts"
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on: [app]
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN:-poslanka.lk}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@poslanka.lk}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

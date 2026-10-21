@@ -1,8 +1,9 @@
 import { Pool } from 'pg'
+import { pgConnectionConfig, poolMax } from './pg-connection'
 
 // Single shared database connection pool for the entire application.
 // Both db/index.ts (legacy queries) and tenant-context.ts (RLS queries)
-// share this pool to prevent exhausting Railway's connection limit.
+// share this pool to prevent exhausting the database's connection limit (DATABASE_POOL_MAX).
 let pool: Pool | null = null
 
 export function getSharedPool(): Pool {
@@ -11,8 +12,8 @@ export function getSharedPool(): Pool {
       throw new Error('DATABASE_URL environment variable is not set')
     }
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      max: 20,
+      ...pgConnectionConfig(process.env.DATABASE_URL),
+      max: poolMax(),
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
     })

@@ -1,0 +1,22 @@
+# Keep the build context small and secret-free
+node_modules
+.next
+server.js
+.git
+.env
+.env.*
+!.env.example
+apps/mobile/node_modules
+apps/mobile/android
+apps/mobile/ios
+apps/mobile/.expo
+apps/mobile/dist
+coverage
+test-results
+playwright-report
+blob-report
+e2e/.test-state.json
+stress-tests/results
+*.log
+.DS_Store
+docs/screenshots

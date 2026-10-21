@@ -24,11 +24,23 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_user;
 
--- Allow the superuser/owner to switch to this role via SET ROLE
+-- Allow the postgres superuser to switch to this role via SET ROLE
+-- Membership for the login role that runs the app (DigitalOcean: doadmin; self-hosted: postgres).
+-- Managed databases do not allow granting roles to a superuser, so grant to the migrating
+-- user and only additionally to "postgres" where that is permitted.
 DO $$
 BEGIN
-  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN
-    GRANT app_user TO postgres;
+  BEGIN
+    EXECUTE format('GRANT app_user TO %I', current_user);
+  EXCEPTION WHEN others THEN
+    RAISE NOTICE 'could not grant app_user to %: %', current_user, SQLERRM;
+  END;
+  IF current_user <> 'postgres' AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres') THEN
+    BEGIN
+      GRANT app_user TO postgres;
+    EXCEPTION WHEN others THEN
+      RAISE NOTICE 'app_user not granted to postgres (not permitted here): %', SQLERRM;
+    END;
   END IF;
-  EXECUTE format('GRANT app_user TO %I', current_user);
 END $$;
+

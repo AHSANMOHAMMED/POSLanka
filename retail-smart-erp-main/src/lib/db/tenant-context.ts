@@ -64,6 +64,10 @@ export async function withTenant<T>(
         throw new Error(`Invalid DATABASE_APP_ROLE: "${appRole}". Must be alphanumeric/underscores only.`)
       }
       await client.query(`SET LOCAL ROLE ${appRole}`)
+    } else {
+      // No app role (owner_force_rls mode): opt out of the platform_login_access policy
+      // (migrations 0147/0149) so the tenant policies alone decide what this request sees.
+      await client.query(`SELECT set_config('app.rls_strict', 'on', true)`)
     }
 
     // Create a Drizzle instance bound to this client
@@ -116,6 +120,10 @@ export async function withTenantTransaction<T>(
         throw new Error(`Invalid DATABASE_APP_ROLE: "${appRole}". Must be alphanumeric/underscores only.`)
       }
       await client.query(`SET LOCAL ROLE ${appRole}`)
+    } else {
+      // No app role (owner_force_rls mode): opt out of the platform_login_access policy
+      // (migrations 0147/0149) so the tenant policies alone decide what this request sees.
+      await client.query(`SELECT set_config('app.rls_strict', 'on', true)`)
     }
 
     const db = drizzle(client, { schema })

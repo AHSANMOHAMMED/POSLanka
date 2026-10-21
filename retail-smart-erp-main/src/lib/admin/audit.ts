@@ -29,8 +29,9 @@ export async function logAdminAction({
     const ipAddress = forwardedFor?.split(',')[0]?.trim() || realIp || 'unknown'
     const userAgent = headersList.get('user-agent') || undefined
 
+    // Callers pass the super admin's id (super_admins.id), not a customer account id
     await db.insert(adminAuditLogs).values({
-      accountId,
+      superAdminId: accountId,
       action,
       resource,
       resourceId: resourceId || null,

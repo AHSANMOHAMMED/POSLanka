@@ -62,9 +62,9 @@ dup_invs={r[2] for r in res if r[0]==users[0][0] and jobs[res.index(r)][3]==dup}
 print(f'{len(ok)} ok / {len(bad)} failed of {len(res)} in {wall:.1f}s; p50 {statistics.median(lat)}ms p95 {p95}ms max {lat[-1]}ms')
 print('distinct invoices:', len(uniq), '(expected 101 = 100 sales + 1 for the 5 racing duplicates)')
 if bad: print('failures:', bad[:5])
-st,p,_=call('GET',f'/api/items/barcode-lookup?barcode=LOAD{uid}&warehouseId={wh_id}',token=otok); print('stock after:', p.get('availableStock'), '(expected 400)')
+st,p,_=call('GET',f'/api/items/barcode-lookup?barcode=LOAD{uid}&warehouseId={wh_id}',token=otok); print('stock after:', p.get('availableStock'), '(expected 399 = 500 - 101 sales)')
 print('db sales rows:', psql(f"select count(*) from sales where tenant_id='{tenant_id}'"), 'distinct invoice_no:', psql(f"select count(distinct invoice_no) from sales where tenant_id='{tenant_id}'"), 'rows with dup clientSaleId:', psql(f"select count(*) from sales where tenant_id='{tenant_id}' and client_sale_id='{dup}'"))
 for name,tok in users:
-    st,p,_=call('POST',f'/api/pos-opening-entries/{shifts[name]}/close',{'actualAmounts':[{'paymentMethod':'cash','amount':2000+480*(20+(5 if name==users[0][0] else 0) if False else 20)}]},token=tok)
+    st,p,_=call('POST',f'/api/pos-opening-entries/{shifts[name]}/close',{'actualAmounts':[{'paymentMethod':'cash','amount':2000+480*(21 if name==users[0][0] else 20)}]},token=tok)  # owner (users[0]) also rang the de-duplicated sale
     summ=(p or {}).get('summary',{}) if isinstance(p,dict) else {}
     print(f'close {name}: status {st} sales {summ.get("totalSales")} variance {summ.get("totalVariance")}')

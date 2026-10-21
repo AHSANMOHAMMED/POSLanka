@@ -19,6 +19,7 @@
  * Emergency escape hatch (avoid): TENANT_ISOLATION_ALLOW="table_a,table_b" skips tables entirely.
  */
 import pg from 'pg'
+import { pgConnectionConfig } from './pg-connection.mjs'
 
 /**
  * "global+tenant" tables: tenant_id IS NULL marks a system default shared by all companies.
@@ -61,7 +62,7 @@ const allow = new Set((process.env.TENANT_ISOLATION_ALLOW || '').split(',').map(
 const NULL_TENANT_RE = /\btenant_id IS NULL\b/i
 const TENANT_SETTING_RE = /app\.tenant_id/
 
-const client = new pg.Client({ connectionString: url })
+const client = new pg.Client(pgConnectionConfig(url))
 
 try {
   await client.connect()
@@ -107,7 +108,20 @@ try {
     if (policies.length === 0) flag(t, `no policy for ${appRole}`)
     if (!r.tenant_not_null && !isGlobal && !isAccountLevel) flag(t, 'tenant_id nullable')
 
+    // Policies that exclude the app role (current_user <> 'app_user') never apply to vendor
+    // requests; they give the login role (platform code) access on managed databases where
+    // BYPASSRLS is unavailable (migration 0147). Every RLS table needs one.
+    const excludesApp = (p) => new RegExp(`current_user\\s*<>\\s*'${appRole}'(::\\w+)?`, 'i').test(`${p.qual || ''}`)
+    if (r.rls_enabled && !policies.some(excludesApp)) flag(t, 'no platform_login_access policy (platform code sees no rows without BYPASSRLS)')
+
     for (const p of policies) {
+      const fullText = `${p.qual || ''} ${p.check || ''}`
+      // current_setting(...)::uuid must be guarded: pooled connections return '' after a
+      // tenant transaction, and ''::uuid raises on managed databases (migration 0148)
+      if (/current_setting\('app\.tenant_id'/i.test(fullText.replace(/NULLIF\(current_setting\('app\.tenant_id'[^)]*\)[^)]*\)/gi, ''))) {
+        flag(t, `policy ${p.name} casts app.tenant_id without NULLIF (fails on reused connections)`)
+      }
+      if (excludesApp(p)) continue
       const text = `${p.qual || ''} ${p.check || ''}`
       const exposesGlobal = NULL_TENANT_RE.test(text)
       if (exposesGlobal) {

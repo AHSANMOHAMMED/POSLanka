@@ -662,7 +662,8 @@ export const storageAlerts = pgTable('storage_alerts', {
 // Admin audit logs - track all admin actions
 export const adminAuditLogs = pgTable('admin_audit_logs', {
   id: uuid('id').primaryKey().defaultRandom(),
-  accountId: uuid('account_id').notNull().references(() => accounts.id),
+  accountId: uuid('account_id').references(() => accounts.id),
+  superAdminId: uuid('super_admin_id').references(() => superAdmins.id, { onDelete: 'set null' }),
   action: adminAuditActionEnum('action').notNull(),
   resource: varchar('resource', { length: 100 }).notNull(), // e.g., 'payment', 'user', 'subscription'
   resourceId: uuid('resource_id'), // ID of the affected resource
@@ -3681,6 +3682,7 @@ export const paymentDepositsRelations = relations(paymentDeposits, ({ one }) => 
 // Admin audit log relations
 export const adminAuditLogsRelations = relations(adminAuditLogs, ({ one }) => ({
   account: one(accounts, { fields: [adminAuditLogs.accountId], references: [accounts.id] }),
+  superAdmin: one(superAdmins, { fields: [adminAuditLogs.superAdminId], references: [superAdmins.id] }),
 }))
 
 // Admin session relations
