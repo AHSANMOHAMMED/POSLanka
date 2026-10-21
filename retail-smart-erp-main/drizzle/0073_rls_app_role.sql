@@ -24,5 +24,11 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_user;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO app_user;
 
--- Allow the postgres superuser to switch to this role via SET ROLE
-GRANT app_user TO postgres;
+-- Allow the superuser/owner to switch to this role via SET ROLE
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'postgres') THEN
+    GRANT app_user TO postgres;
+  END IF;
+  EXECUTE format('GRANT app_user TO %I', current_user);
+END $$;

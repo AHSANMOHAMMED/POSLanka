@@ -65,9 +65,11 @@ ALTER TABLE "item_supplier_costs" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE "item_cost_history" ENABLE ROW LEVEL SECURITY;
 
 -- RLS policies
+DROP POLICY IF EXISTS "tenant_isolation" ON "item_supplier_costs";
 CREATE POLICY "tenant_isolation" ON "item_supplier_costs"
   USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
 
+DROP POLICY IF EXISTS "tenant_isolation" ON "item_cost_history";
 CREATE POLICY "tenant_isolation" ON "item_cost_history"
   USING (tenant_id = current_setting('app.tenant_id', true)::uuid);
 

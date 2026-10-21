@@ -47,15 +47,15 @@ async function main() {
   await client.query('SELECT pg_advisory_lock(hashtext(\'poslanka_migrations\'))')
   try {
     const { rows } = await client.query(
-      'SELECT created_at FROM "drizzle"."__drizzle_migrations" ORDER BY created_at DESC LIMIT 1'
+      'SELECT id, hash, created_at FROM "drizzle"."__drizzle_migrations" ORDER BY id ASC'
     )
-    const last = rows[0] ? Number(rows[0].created_at) : 0
-    const pending = journal.entries.filter((e) => e.when > last)
+    const appliedCount = rows.length
+    const pending = journal.entries.slice(appliedCount)
     if (pending.length === 0) {
       console.log('Migrations: database is up to date')
       return
     }
-    console.log(`Migrations: ${pending.length} pending (after ${last})`)
+    console.log(`Migrations: ${pending.length} pending (${appliedCount} already applied)`)
 
     for (const entry of pending) {
       const file = join(root, 'drizzle', `${entry.tag}.sql`)
