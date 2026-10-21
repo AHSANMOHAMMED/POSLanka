@@ -1,31 +1,117 @@
-import { authenticator } from 'otplib'
-import QRCode from 'qrcode'
+import crypto from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { superAdmins } from '@/lib/db/schema'
 
-authenticator.options = { window: 1 }
+const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
-export function generateTotpSecret(): string {
-  return authenticator.generateSecret()
+function base32Encode(buffer: Buffer): string {
+  let bits = 0
+  let value = 0
+  let output = ''
+
+  for (let i = 0; i < buffer.length; i++) {
+    value = (value << 8) | buffer[i]
+    bits += 8
+    while (bits >= 5) {
+      output += BASE32_CHARS[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
+  }
+
+  if (bits > 0) {
+    output += BASE32_CHARS[(value << (5 - bits)) & 31]
+  }
+
+  return output
 }
 
-export async function totpQrDataUrl(email: string, secret: string): Promise<{ otpauthUrl: string; qrDataUrl: string }> {
-  const otpauthUrl = authenticator.keyuri(email, 'POSLanka Control', secret)
-  const qrDataUrl = await QRCode.toDataURL(otpauthUrl, { margin: 1, width: 220 })
-  return { otpauthUrl, qrDataUrl }
+function base32Decode(input: string): Buffer {
+  const clean = input.toUpperCase().replace(/=+$/, '').replace(/\s+/g, '')
+  let bits = 0
+  let value = 0
+  const bytes: number[] = []
+
+  for (let i = 0; i < clean.length; i++) {
+    const idx = BASE32_CHARS.indexOf(clean[i])
+    if (idx === -1) continue
+    value = (value << 5) | idx
+    bits += 5
+    if (bits >= 8) {
+      bytes.push((value >>> (bits - 8)) & 255)
+      bits -= 8
+    }
+  }
+
+  return Buffer.from(bytes)
+}
+
+function getTotpCode(secretBytes: Buffer, timeStepIndex: number): string {
+  const counterBuffer = Buffer.alloc(8)
+  counterBuffer.writeBigInt64BE(BigInt(timeStepIndex))
+
+  const hmac = crypto.createHmac('sha1', secretBytes).update(counterBuffer).digest()
+  const offset = hmac[hmac.length - 1] & 0x0f
+  const codeInt =
+    (((hmac[offset] & 0x7f) << 24) |
+      ((hmac[offset + 1] & 0xff) << 16) |
+      ((hmac[offset + 2] & 0xff) << 8) |
+      (hmac[offset + 3] & 0xff)) %
+    1000000
+
+  return codeInt.toString().padStart(6, '0')
+}
+
+export function generateTotpSecret(): string {
+  return base32Encode(crypto.randomBytes(20))
+}
+
+export async function totpQrDataUrl(
+  email: string,
+  secret: string
+): Promise<{ otpauthUrl: string; qrDataUrl: string }> {
+  const issuer = 'POSLanka Control'
+  const encodedIssuer = encodeURIComponent(issuer)
+  const encodedEmail = encodeURIComponent(email)
+  const otpauthUrl = `otpauth://totp/${encodedIssuer}:${encodedEmail}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`
+
+  try {
+    const bwipjs = await import('bwip-js/node')
+    const svg = bwipjs.toSVG({
+      bcid: 'qrcode',
+      text: otpauthUrl,
+      scale: 3,
+    })
+    const qrDataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`
+    return { otpauthUrl, qrDataUrl }
+  } catch {
+    return { otpauthUrl, qrDataUrl: '' }
+  }
 }
 
 export function verifyTotp(code: string, secret: string): boolean {
   try {
-    return authenticator.check(code.replace(/\s+/g, ''), secret)
+    const cleanCode = code.replace(/\s+/g, '')
+    if (cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) return false
+    const secretBytes = base32Decode(secret)
+    const currentStep = Math.floor(Date.now() / 1000 / 30)
+
+    for (let step = currentStep - 1; step <= currentStep + 1; step++) {
+      if (getTotpCode(secretBytes, step) === cleanCode) {
+        return true
+      }
+    }
+    return false
   } catch {
     return false
   }
 }
 
 /** Returns 'ok' | 'required' | 'invalid' for a login attempt. */
-export async function checkAdminTotp(superAdminId: string, code?: string): Promise<'ok' | 'required' | 'invalid'> {
+export async function checkAdminTotp(
+  superAdminId: string,
+  code?: string
+): Promise<'ok' | 'required' | 'invalid'> {
   const admin = await db.query.superAdmins.findFirst({
     where: eq(superAdmins.id, superAdminId),
     columns: { totpEnabled: true, totpSecret: true },
