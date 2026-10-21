@@ -52,3 +52,5 @@ next-env.d.ts
 
 # Keep example env tracked
 !.env.example
+
+__pycache__/

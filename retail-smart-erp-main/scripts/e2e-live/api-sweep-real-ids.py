@@ -3,7 +3,7 @@ import json, re, subprocess, urllib.request, urllib.error, sys, time
 from concurrent.futures import ThreadPoolExecutor
 BASE = os.environ.get('BASE_URL', 'http://127.0.0.1:3000'); DB=os.environ['PG_DATABASE']
 def psql(q):
-    return subprocess.run(['docker','exec','-i','poslanka-test-pg','psql','-U','postgres','-d',DB,'-tA'],input=q,capture_output=True,text=True).stdout.strip()
+    return subprocess.run(['docker','exec','-i',os.environ.get('PG_CONTAINER','poslanka-test-pg'),'psql','-U',os.environ.get('PG_USER','postgres'),'-d',DB,'-tA'],input=q,capture_output=True,text=True).stdout.strip()
 slug,email=psql("select t.slug||'|'||u.email from tenants t join users u on u.tenant_id=t.id and u.role='owner' where t.slug like 'smoke%' order by t.created_at desc limit 1").split('|')
 T=psql(f"select id from tenants where slug='{slug}'")
 def call(m,p,h):

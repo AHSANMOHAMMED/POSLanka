@@ -220,6 +220,11 @@ async function main() {
         check('login role sees all push devices', dev.rows[0].n === 3)
         check('login role sees global vehicle types', gl.rows[0].n === 1)
         await admin.query(`SELECT set_config('app.tenant_id', $1, true)`, [A.tenantId])
+        // platform transactions (vendor creation, billing, invites) set a tenant but stay unrestricted
+        const subsP = await admin.query(`SELECT count(*)::int AS n FROM subscriptions WHERE billing_account_id = $1`, [accountId])
+        check('login role with tenant ctx (platform transaction) keeps full access', subsP.rows[0].n === 2, `subs=${subsP.rows[0].n}`)
+        // withTenant without an app role marks the transaction strict
+        await admin.query(`SELECT set_config('app.rls_strict', 'on', true)`)
         const subsT = await admin.query(`SELECT count(*)::int AS n FROM subscriptions WHERE billing_account_id = $1`, [accountId])
         const qT = await admin.query(`SELECT count(*)::int AS n FROM quotations WHERE tenant_id = ANY($1)`, [[A.tenantId, B.tenantId]])
         check('login role WITH tenant ctx is restricted (owner_force_rls mode)', subsT.rows[0].n === 1 && qT.rows[0].n === 2, `subs=${subsT.rows[0].n} q=${qT.rows[0].n}`)

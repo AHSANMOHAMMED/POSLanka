@@ -1016,6 +1016,27 @@
       "when": 1771446337031,
       "tag": "0146_saved_reports_table",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1771446337032,
+      "tag": "0147_platform_role_access_admin_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1771446337033,
+      "tag": "0148_guard_empty_tenant_setting",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1771446397033,
+      "tag": "0149_platform_access_strict_tenant_mode",
+      "breakpoints": true
     }
   ]
 }

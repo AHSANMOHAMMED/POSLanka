@@ -17,5 +17,10 @@ node    scripts/e2e-live/ui-day-one.cjs          # browser: split pay, scan-to-r
 python3 scripts/e2e-live/api-sweep.py routes.json out.json   # every API handler, no 5xx allowed
 ```
 
+Super-admin login is rate limited to 5 attempts per 15 minutes per IP (stored in
+`admin_rate_limits`). Running several suites back to back from one machine trips it (HTTP 429
+and a cascade of 401s); on a staging database clear it between runs with
+`DELETE FROM admin_rate_limits;`.
+
 `routes.json` for the sweep is generated with:
 `python3 -c "import os,re,json;print(json.dumps([{'url':'/'+r[len('src/app/'):],'methods':sorted(set(re.findall(r'export\s+(?:async\s+)?function\s+(GET|POST|PUT|PATCH|DELETE)\b',open(os.path.join(r,'route.ts')).read())))} for r,_,f in os.walk('src/app/api') if 'route.ts' in f]))" > routes.json`

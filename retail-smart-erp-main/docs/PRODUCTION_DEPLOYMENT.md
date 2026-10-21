@@ -2,6 +2,8 @@
 
 This guide covers everything required to deploy, secure, and operate **POSLanka** in production for commercial users, businesses, and cashiers.
 
+> **Hosting on DigitalOcean?** Follow [DEPLOY_DIGITALOCEAN.md](DEPLOY_DIGITALOCEAN.md) (App Platform or Droplet, Managed PostgreSQL, Spaces).
+
 ---
 
 ## 1. Architecture & Multi-Tenancy Model

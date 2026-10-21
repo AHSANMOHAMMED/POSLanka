@@ -1,0 +1,28 @@
+# HTTPS for the platform domains and every vendor subdomain (<slug>.poslanka.lk).
+# On-demand TLS only issues a certificate after the app confirms the host is ours
+# (GET /api/tls-check?domain=... returns 200 for platform domains and existing vendor slugs),
+# so nobody can make the server request certificates for arbitrary names.
+{
+	email {$ACME_EMAIL}
+	on_demand_tls {
+		ask http://app:3000/api/tls-check
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	reverse_proxy app:3000 {
+		# WebSockets (realtime POS/kitchen updates) pass through automatically
+		header_up X-Forwarded-Proto {scheme}
+		transport http {
+			read_timeout 0
+		}
+	}
+}
+
+http:// {
+	redir https://{host}{uri} permanent
+}

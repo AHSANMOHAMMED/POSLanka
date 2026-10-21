@@ -1,0 +1,90 @@
+# DigitalOcean App Platform spec for POSLanka.
+# Create:  doctl apps create --spec .do/app.yaml
+# Update:  doctl apps update <APP_ID> --spec .do/app.yaml
+#
+# The image is built ONCE by GitHub Actions (.github/workflows/deploy-digitalocean.yml) and
+# pushed to DigitalOcean Container Registry; App Platform only pulls it (no build here, so the
+# Next.js build never runs out of memory on a small builder).
+#
+# Replace: poslanka.lk (your domain), your-registry (DOCR name). Set every "CHANGE_ME" secret in
+# the App's Settings → Environment Variables (they are encrypted there), never in this file.
+name: poslanka
+region: blr            # Bangalore (closest to Sri Lanka). Use sgp if blr is unavailable.
+
+domains:
+  - domain: poslanka.lk
+    type: PRIMARY
+    zone: poslanka.lk
+  - domain: app.poslanka.lk
+    type: ALIAS
+    zone: poslanka.lk
+  - domain: "*.poslanka.lk"   # every vendor gets <slug>.poslanka.lk
+    type: ALIAS
+    wildcard: true
+    zone: poslanka.lk
+
+databases:
+  - name: poslanka-db
+    engine: PG
+    version: "16"
+    production: true
+    cluster_name: poslanka-db   # create the managed cluster first (same region), then reference it
+
+services:
+  - name: web
+    image:
+      registry_type: DOCR
+      repository: poslanka
+      tag: latest
+      deploy_on_push:
+        enabled: true
+    http_port: 3000
+    # ONE instance: realtime (WebSocket) broadcasts are in-process. Scale UP (bigger size), not OUT.
+    instance_count: 1
+    instance_size_slug: apps-s-2vcpu-4gb
+    health_check:
+      http_path: /api/health
+      initial_delay_seconds: 40
+      period_seconds: 15
+      timeout_seconds: 5
+      failure_threshold: 4
+    envs:
+      - { key: NODE_ENV, value: production, scope: RUN_TIME }
+      - { key: SKIP_MIGRATIONS, value: "true", scope: RUN_TIME }
+      - { key: DATABASE_URL, value: "${poslanka-db.DATABASE_URL}", scope: RUN_TIME, type: SECRET }
+      - { key: DATABASE_CA_CERT, value: "${poslanka-db.CA_CERT}", scope: RUN_TIME, type: SECRET }
+      - { key: DATABASE_APP_ROLE, value: app_user, scope: RUN_TIME }
+      - { key: DATABASE_POOL_MAX, value: "15", scope: RUN_TIME }
+      - { key: NEXTAUTH_URL, value: "https://app.poslanka.lk", scope: RUN_TIME }
+      - { key: NEXTAUTH_URL_INTERNAL, value: "http://127.0.0.1:3000", scope: RUN_TIME }
+      - { key: NEXTAUTH_SECRET, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+      - { key: CRON_SECRET, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+      - { key: ALLOWED_HOSTS, value: "poslanka.lk,app.poslanka.lk,www.poslanka.lk", scope: RUN_TIME }
+      - { key: STORAGE_ENDPOINT, value: "https://sgp1.digitaloceanspaces.com", scope: RUN_TIME }
+      - { key: STORAGE_REGION, value: us-east-1, scope: RUN_TIME }
+      - { key: STORAGE_BUCKET, value: poslanka-uploads, scope: RUN_TIME }
+      - { key: STORAGE_PUBLIC_URL, value: "https://poslanka-uploads.sgp1.cdn.digitaloceanspaces.com", scope: RUN_TIME }
+      - { key: STORAGE_PUBLIC_ACL, value: public-read, scope: RUN_TIME }
+      - { key: STORAGE_ACCESS_KEY_ID, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+      - { key: STORAGE_SECRET_ACCESS_KEY, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+      - { key: RESEND_API_KEY, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+      - { key: SYSTEM_EMAIL_FROM, value: "POSLanka <noreply@poslanka.lk>", scope: RUN_TIME }
+      - { key: PAYHERE_MODE, value: live, scope: RUN_TIME }
+      - { key: PAYHERE_SANDBOX, value: "false", scope: RUN_TIME }
+      - { key: PAYHERE_MERCHANT_ID, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+      - { key: PAYHERE_MERCHANT_SECRET, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+
+jobs:
+  # Runs before every deployment goes live; a failing migration stops the deploy.
+  - name: migrate
+    kind: PRE_DEPLOY
+    image:
+      registry_type: DOCR
+      repository: poslanka
+      tag: latest
+    run_command: node scripts/migrate.mjs && node scripts/check-tenant-isolation.mjs && npx tsx scripts/check-schema-drift.ts
+    instance_size_slug: apps-s-1vcpu-1gb
+    envs:
+      - { key: DATABASE_URL, value: "${poslanka-db.DATABASE_URL}", scope: RUN_TIME, type: SECRET }
+      - { key: DATABASE_CA_CERT, value: "${poslanka-db.CA_CERT}", scope: RUN_TIME, type: SECRET }
+      - { key: DATABASE_APP_ROLE, value: app_user, scope: RUN_TIME }

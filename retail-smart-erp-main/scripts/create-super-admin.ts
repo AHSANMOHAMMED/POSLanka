@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import pg from 'pg';
 import bcrypt from 'bcryptjs';
+import { pgConnectionConfig } from '../src/lib/db/pg-connection';
 
 // Load .env.local first, then .env as fallback
 dotenv.config({ path: '.env.local' });
@@ -9,9 +10,7 @@ dotenv.config();
 const { Pool } = pg;
 
 async function createSuperAdmin() {
-  const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-  });
+  const pool = new Pool(pgConnectionConfig(process.env.DATABASE_URL));
 
   console.log('Creating super admin...');
 

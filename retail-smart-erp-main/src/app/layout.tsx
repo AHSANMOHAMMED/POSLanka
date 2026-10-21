@@ -1,12 +1,14 @@
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
+import localFont from "next/font/local"
 import { ThemeProvider } from "@/components/providers/ThemeProvider"
 import { ErrorCaptureProvider } from "@/components/providers/ErrorCaptureProvider"
 import "./globals.css"
 
-const inter = Inter({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+// Inter (SIL OFL 1.1, see ./fonts/Inter-OFL-LICENSE.txt) is bundled so production builds never
+// depend on downloading fonts from Google at build time.
+const inter = localFont({
+  src: "./fonts/InterVariable-latin.woff2",
+  weight: "100 900",
   variable: "--font-inter",
   display: "swap",
 })

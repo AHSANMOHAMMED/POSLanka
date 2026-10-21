@@ -7,9 +7,10 @@
 import { Client } from 'pg'
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
 import * as schema from '../src/lib/db/schema'
+import { pgConnectionConfig } from '../src/lib/db/pg-connection'
 
 async function main() {
-  const client = new Client({ connectionString: process.env.DATABASE_URL })
+  const client = new Client(pgConnectionConfig(process.env.DATABASE_URL))
   await client.connect()
   const { rows } = await client.query<{ table_name: string; column_name: string; is_nullable: string }>(
     `SELECT table_name, column_name, is_nullable FROM information_schema.columns WHERE table_schema = 'public'`

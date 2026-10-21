@@ -1,0 +1,74 @@
+name: Deploy (DigitalOcean)
+
+# Builds the production image once, pushes it to DigitalOcean Container Registry, then either
+# lets App Platform pick it up (deploy_on_push) or updates a Droplet over SSH.
+# Skips cleanly while the secrets are not configured.
+#
+# Secrets:  DIGITALOCEAN_ACCESS_TOKEN, DOCR_REGISTRY (registry name)
+#           optional DO_APP_ID (App Platform) or DROPLET_HOST + DROPLET_SSH_KEY (Droplet)
+# Variables: NEXT_PUBLIC_BASE_DOMAIN, NEXT_PUBLIC_APP_DOMAIN, NEXT_PUBLIC_LANDING_DOMAIN
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: deploy-digitalocean
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secrets
+        id: check
+        env:
+          TOKEN: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+          REGISTRY: ${{ secrets.DOCR_REGISTRY }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$REGISTRY" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "DIGITALOCEAN_ACCESS_TOKEN / DOCR_REGISTRY not set — skipping"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.skip == 'false'
+
+      - uses: digitalocean/action-doctl@v2
+        if: steps.check.outputs.skip == 'false'
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Build and push image
+        if: steps.check.outputs.skip == 'false'
+        working-directory: retail-smart-erp-main
+        env:
+          REGISTRY: ${{ secrets.DOCR_REGISTRY }}
+        run: |
+          doctl registry login --expiry-seconds 1800
+          IMAGE="registry.digitalocean.com/$REGISTRY/poslanka"
+          docker build \
+            --build-arg NEXT_PUBLIC_BASE_DOMAIN="${{ vars.NEXT_PUBLIC_BASE_DOMAIN }}" \
+            --build-arg NEXT_PUBLIC_APP_DOMAIN="${{ vars.NEXT_PUBLIC_APP_DOMAIN }}" \
+            --build-arg NEXT_PUBLIC_LANDING_DOMAIN="${{ vars.NEXT_PUBLIC_LANDING_DOMAIN }}" \
+            -t "$IMAGE:${GITHUB_SHA::12}" -t "$IMAGE:latest" .
+          docker push "$IMAGE:${GITHUB_SHA::12}"
+          docker push "$IMAGE:latest"
+
+      - name: App Platform deploy
+        if: steps.check.outputs.skip == 'false' && env.DO_APP_ID != ''
+        env:
+          DO_APP_ID: ${{ secrets.DO_APP_ID }}
+        run: doctl apps create-deployment "$DO_APP_ID" --wait
+
+      - name: Droplet deploy
+        if: steps.check.outputs.skip == 'false' && env.DROPLET_HOST != ''
+        env:
+          DROPLET_HOST: ${{ secrets.DROPLET_HOST }}
+          DROPLET_SSH_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && echo "$DROPLET_SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          ssh -o StrictHostKeyChecking=accept-new "root@$DROPLET_HOST" \
+            'cd /opt/poslanka && docker compose pull && docker compose run --rm migrate && docker compose up -d app caddy && docker image prune -f'

@@ -46,12 +46,20 @@ export async function GET(request: NextRequest) {
             fullName: true,
           },
         },
+        superAdmin: {
+          columns: {
+            id: true,
+            email: true,
+            fullName: true,
+          },
+        },
       },
       orderBy: [desc(adminAuditLogs.createdAt)],
       limit,
     })
 
-    return NextResponse.json(logs)
+    // The UI reads `account` for "who did it": that is the super admin for admin actions
+    return NextResponse.json(logs.map((l) => ({ ...l, account: l.superAdmin ?? l.account })))
   } catch (error) {
     logError('api/sys-control/audit-logs', error)
     return NextResponse.json({ error: 'Failed to fetch audit logs' }, { status: 500 })

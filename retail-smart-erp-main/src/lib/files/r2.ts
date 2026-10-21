@@ -8,17 +8,37 @@ import {
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3'
 
+/**
+ * S3-compatible object storage: Cloudflare R2 or DigitalOcean Spaces (or AWS S3).
+ * Provider-neutral STORAGE_* variables win; the original R2_* names keep working.
+ *
+ *   STORAGE_ENDPOINT     R2: https://<account>.r2.cloudflarestorage.com
+ *                        Spaces: https://<region>.digitaloceanspaces.com (e.g. sgp1)
+ *   STORAGE_REGION       R2: auto (default) · Spaces: us-east-1 (SigV4 region Spaces expects)
+ *   STORAGE_ACCESS_KEY_ID / STORAGE_SECRET_ACCESS_KEY / STORAGE_BUCKET
+ *   STORAGE_PUBLIC_URL   public base URL of the bucket (Spaces CDN: https://<bucket>.<region>.cdn.digitaloceanspaces.com)
+ *   STORAGE_PUBLIC_ACL   'public-read' for Spaces/S3: objects outside private/ are uploaded world-readable
+ *                        (R2 serves public files through the bucket's public domain instead; leave unset)
+ */
+const env = (name: string, legacy: string) => process.env[name] || process.env[legacy] || ''
+
 const r2 = new S3Client({
-  region: 'auto',
-  endpoint: process.env.R2_ENDPOINT,
+  region: process.env.STORAGE_REGION || 'auto',
+  endpoint: env('STORAGE_ENDPOINT', 'R2_ENDPOINT') || undefined,
   credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+    accessKeyId: env('STORAGE_ACCESS_KEY_ID', 'R2_ACCESS_KEY_ID'),
+    secretAccessKey: env('STORAGE_SECRET_ACCESS_KEY', 'R2_SECRET_ACCESS_KEY'),
   },
 })
 
-const BUCKET = process.env.R2_BUCKET_NAME || 'retailsmart-uploads'
-const PUBLIC_URL = (process.env.R2_PUBLIC_URL || '').replace(/\/$/, '')
+const BUCKET = env('STORAGE_BUCKET', 'R2_BUCKET_NAME') || 'retailsmart-uploads'
+const PUBLIC_URL = env('STORAGE_PUBLIC_URL', 'R2_PUBLIC_URL').replace(/\/$/, '')
+const PUBLIC_ACL = process.env.STORAGE_PUBLIC_ACL === 'public-read'
+
+/** Private uploads (private/…) are never made world-readable. */
+export function objectAclFor(key: string): 'public-read' | undefined {
+  return PUBLIC_ACL && !key.startsWith('private/') ? 'public-read' : undefined
+}
 
 /**
  * Upload a file to R2 and return its public CDN URL.
@@ -34,6 +54,7 @@ export async function uploadToR2(
       Key: key,
       Body: buffer,
       ContentType: contentType,
+      ACL: objectAclFor(key),
     })
   )
   return cdnUrl(key)
