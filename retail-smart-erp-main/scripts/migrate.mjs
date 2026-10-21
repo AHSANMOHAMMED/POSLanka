@@ -30,8 +30,10 @@ if (!connectionString) {
   process.exit(1)
 }
 
+// Strip Neon pooler if present to avoid PgBouncer session lock limitations during DDL migrations
+const directConnectionString = connectionString.replace('-pooler.', '.')
 const journal = JSON.parse(readFileSync(join(root, 'drizzle/meta/_journal.json'), 'utf8'))
-const client = new pg.Client(pgConnectionConfig(connectionString))
+const client = new pg.Client(pgConnectionConfig(directConnectionString))
 
 function splitStatements(sql) {
   return sql.split('--> statement-breakpoint').map((s) => s.trim()).filter(Boolean)
@@ -44,33 +46,36 @@ async function main() {
     id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)`)
 
   // Serialize concurrent deploys (two instances starting at once)
-  await client.query('SELECT pg_advisory_lock(hashtext(\'poslanka_migrations\'))')
+  let hasLock = false
+  try {
+    const lockRes = await client.query('SELECT pg_try_advisory_lock(hashtext(\'poslanka_migrations\')) AS locked')
+    hasLock = lockRes.rows[0]?.locked === true
+  } catch {
+    // Some poolers/databases do not support advisory locks
+  }
+  try {
+
     // Applied migrations are tracked BY NAME. The journal's "when" values are not unique
     // (37 and 46 migrations share single timestamps) and not monotonic, so the old
     // "when > newest applied" rule silently skipped migrations after an interrupted run.
     await client.query(`CREATE TABLE IF NOT EXISTS "drizzle"."__poslanka_migrations" (
       tag text PRIMARY KEY, hash text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`)
-    let { rows: appliedRows } = await client.query('SELECT tag FROM "drizzle"."__poslanka_migrations"')
-    if (appliedRows.length === 0) {
-      // First run on a database migrated by drizzle-kit / the old runner: adopt what it applied.
-      const { rows } = await client.query(
-        'SELECT max(created_at) AS last FROM "drizzle"."__drizzle_migrations"'
-      )
-      const last = rows[0]?.last ? Number(rows[0].last) : 0
-      const adopted = last > 0 ? journal.entries.filter((e) => e.when <= last) : []
-      for (const e of adopted) {
+    // Adopt any migrations that are recorded in __drizzle_migrations
+    const { rows: drizzleRows } = await client.query('SELECT created_at FROM "drizzle"."__drizzle_migrations"')
+    if (drizzleRows.length > 0) {
+      const drizzleSet = new Set(drizzleRows.map((r) => String(r.created_at)))
+      const matchedTags = journal.entries.filter((e) => drizzleSet.has(String(e.when))).map((e) => e.tag)
+      if (matchedTags.length > 0) {
         await client.query(
-          'INSERT INTO "drizzle"."__poslanka_migrations" (tag, hash) VALUES ($1, $2) ON CONFLICT (tag) DO NOTHING',
-          [e.tag, 'adopted-from-__drizzle_migrations']
+          'INSERT INTO "drizzle"."__poslanka_migrations" (tag, hash) SELECT unnest($1::text[]), $2 ON CONFLICT (tag) DO NOTHING',
+          [matchedTags, 'adopted-from-__drizzle_migrations']
         )
       }
-      if (adopted.length > 0) {
-        console.log(`Migrations: adopted ${adopted.length} previously applied migrations (run "npm run db:check-drift" to confirm the schema is complete)`)
-      }
-      appliedRows = adopted.map((e) => ({ tag: e.tag }))
     }
+    const { rows: appliedRows } = await client.query('SELECT tag FROM "drizzle"."__poslanka_migrations"')
     const applied = new Set(appliedRows.map((r) => r.tag))
     const pending = journal.entries.filter((e) => !applied.has(e.tag))
+
     if (pending.length === 0) {
       console.log('Migrations: database is up to date')
       return
@@ -108,7 +113,9 @@ async function main() {
     }
     console.log('Migrations: complete')
   } finally {
-    await client.query('SELECT pg_advisory_unlock(hashtext(\'poslanka_migrations\'))').catch(() => undefined)
+    if (hasLock) {
+      await client.query('SELECT pg_advisory_unlock(hashtext(\'poslanka_migrations\'))').catch(() => undefined)
+    }
     await client.end()
   }
 }

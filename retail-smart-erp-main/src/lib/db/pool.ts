@@ -17,8 +17,12 @@ export function getSharedPool(): Pool {
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
     })
+    pool.on('error', (err) => {
+      console.warn('[Postgres Pool] Idle client error:', err.message)
+    })
   }
   return pool
+
 }
 
 export async function closeSharedPool(): Promise<void> {

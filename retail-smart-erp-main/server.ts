@@ -34,8 +34,22 @@ if (!process.env.DATABASE_URL) {
 process.on('uncaughtException', (err: Error) => {
   logError('uncaughtException', err)
   console.error('[Server] Uncaught exception:', err)
+  const code = (err as unknown as { code?: string })?.code
+  const msg = err?.message || ''
+  if (
+    code === 'ETIMEDOUT' ||
+    code === 'ECONNRESET' ||
+    code === 'EPIPE' ||
+    code === '57P01' ||
+    msg.includes('Connection terminated unexpectedly')
+  ) {
+    console.warn('[Server] Recoverable network error, continuing...')
+    return
+  }
   setTimeout(() => process.exit(1), 2000)
+
 })
+
 process.on('unhandledRejection', (reason: unknown) => {
   const err = reason instanceof Error ? reason : new Error(String(reason))
   logError('unhandledRejection', err)
