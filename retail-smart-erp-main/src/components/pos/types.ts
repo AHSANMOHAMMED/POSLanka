@@ -194,6 +194,7 @@ export interface ActiveShift {
     netSales: number
     totalTransactions: number
   }
+  notes?: string | null
 }
 
 export interface TenantInfo {

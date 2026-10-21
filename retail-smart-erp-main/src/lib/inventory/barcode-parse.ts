@@ -27,8 +27,8 @@ export interface ScaleBarcodeConfig {
 }
 
 export const DEFAULT_SCALE_CONFIG: ScaleBarcodeConfig = {
-  enabled: false,
-  prefixes: ['2'],
+  enabled: true,
+  prefixes: ['20', '21', '22', '2', '02'],
   pluStart: 2,
   pluLength: 5,
   valueStart: 7,
@@ -42,14 +42,14 @@ export function normalizeScaleConfig(input?: Partial<ScaleBarcodeConfig> | null)
   const c = { ...DEFAULT_SCALE_CONFIG, ...(input || {}) }
   c.prefixes = Array.isArray(c.prefixes) && c.prefixes.length > 0
     ? c.prefixes.map((p) => String(p).replace(/\D/g, '')).filter(Boolean)
-    : ['2']
+    : ['20', '21', '22', '2', '02']
   c.pluStart = clampInt(c.pluStart, 1, 11, 2)
   c.pluLength = clampInt(c.pluLength, 1, 10, 5)
   c.valueStart = clampInt(c.valueStart, 1, 11, 7)
   c.valueLength = clampInt(c.valueLength, 1, 10, 5)
   c.valueDecimals = clampInt(c.valueDecimals, 0, 4, 3)
   c.valueType = c.valueType === 'price' ? 'price' : 'weight'
-  c.enabled = !!c.enabled
+  c.enabled = input?.enabled !== false
   c.checkDigit = c.checkDigit !== false
   return c
 }

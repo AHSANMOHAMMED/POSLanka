@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter, useParams } from 'next/navigation'
-import { Clock, Loader2 } from 'lucide-react'
+import { Clock, Loader2, Tag, Wallet } from 'lucide-react'
 import { CustomerFormModal, VehicleModal } from '@/components/modals'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import {
@@ -19,6 +19,8 @@ import {
   SaleSuccessModal,
   SupervisorAuthModal,
   CashierLockModal,
+  CashDrawerFloatModal,
+  PriceCheckModal,
 } from '@/components/pos'
 import { POS_SEARCH_INPUT_ID } from '@/components/pos/ProductGrid'
 import { publishPosDisplay, createIdlePosDisplayState } from '@/lib/pos/display-channel'
@@ -238,6 +240,40 @@ export default function POSPage() {
 
   // Supermarket: weighable item state
   const [weightInputItem, setWeightInputItem] = useState<Item | null>(null)
+
+  // Supermarket: Float / Safe Drop & Price Check modals
+  const [showFloatModal, setShowFloatModal] = useState(false)
+  const [showPriceCheckModal, setShowPriceCheckModal] = useState(false)
+
+  async function handleFloatConfirm(
+    type: 'float_in' | 'float_out' | 'count',
+    _denominations: Record<string, number>,
+    total: number,
+    reason: string
+  ) {
+    if (!activeShift?.id) {
+      toast.error('No active shift found. Open a shift first.')
+      return
+    }
+    const label = type === 'float_in' ? 'Float In' : type === 'float_out' ? 'Safe Drop / Cash Out' : 'Mid-day Count'
+    const noteLine = `\n[${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}] ${label}: ${currencyCode} ${total.toFixed(2)} - ${reason}`
+
+    try {
+      const res = await fetch(`/api/pos-opening-entries/${activeShift.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: (activeShift.notes || '') + noteLine }),
+      })
+      if (res.ok) {
+        toast.success(`${label} recorded: ${currencyCode} ${total.toFixed(2)}`)
+        setActiveShift(prev => prev ? { ...prev, notes: (prev.notes || '') + noteLine } : null)
+      } else {
+        toast.error('Failed to record cash drawer operation')
+      }
+    } catch {
+      toast.error('Network error recording drawer operation')
+    }
+  }
 
   // Serial number picker state
   const [serialPickerItem, setSerialPickerItem] = useState<Item | null>(null)
@@ -609,10 +645,19 @@ export default function POSPage() {
   useRealtimeData(fetchActiveShift, { entityType: 'pos-shift', refreshOnMount: false })
   useRealtimeData(fetchTables, { entityType: 'table', refreshOnMount: false })
 
-  // Supermarket: barcode auto-add effect
+  // Supermarket: barcode auto-add effect (supports multiplier syntax like 5*barcode or 10xbarcode)
   useEffect(() => {
     if (!config.enableBarcodeAutoAdd || !debouncedItemSearch || !posWarehouse || isReturnMode || RECEIPT_CODE_RE.test(debouncedItemSearch.trim())) return
-    const barcode = debouncedItemSearch.trim()
+    const raw = debouncedItemSearch.trim()
+    if (!raw || raw.length < 3) return
+
+    let scanQty = 1
+    let barcode = raw
+    const multMatch = raw.match(/^([1-9]\d*)\s*[*xX]\s*(.+)$/)
+    if (multMatch) {
+      scanQty = parseInt(multMatch[1], 10)
+      barcode = multMatch[2].trim()
+    }
     if (!barcode || barcode.length < 3) return
 
     async function tryBarcodeAutoAdd() {
@@ -620,7 +665,7 @@ export default function POSPage() {
         const res = await fetch(`/api/items/barcode-lookup?barcode=${encodeURIComponent(barcode)}&warehouseId=${posWarehouse!.id}`)
         if (res.ok) {
           const item: Item = await res.json()
-          addScannedItem(item)
+          addScannedItem(item, scanQty)
           setSearch('')
         }
       } catch {
@@ -666,7 +711,7 @@ export default function POSPage() {
 
   // ─── Cart Functions ───────────────────────────────────────────
 
-  function addToCart(item: Item) {
+  function addToCart(item: Item, quantity = 1) {
     // Serial-tracked items need serial picker first
     if (item.trackSerialNumbers && !isReturnMode) {
       setSerialPickerItem(item)
@@ -686,21 +731,26 @@ export default function POSPage() {
       return
     }
 
-    addToCartDirect(item)
+    addToCartDirect(item, { quantity })
   }
 
-  /** Add a scanned item honouring scan-derived quantity/price (weighing-scale labels, GS1 net weight / price). */
-  function addScannedItem(item: Item & { scan?: { quantity?: number; unitPrice?: number; lineTotal?: number; symbology?: string; batchNo?: string } }) {
+  /** Add a scanned item honouring scan-derived quantity/price (weighing-scale labels, GS1 net weight / price) or scan multiplier. */
+  function addScannedItem(
+    item: Item & { scan?: { quantity?: number; unitPrice?: number; lineTotal?: number; symbology?: string; batchNo?: string } },
+    overrideQty?: number
+  ) {
     const scan = item.scan
+    const effectiveMult = (overrideQty && overrideQty > 0) ? overrideQty : 1
     // D1: GS1 batch (AI 10) on a batch-tracked item → sell that batch
     if (scan?.batchNo && item.trackBatches && !isReturnMode && !item.trackSerialNumbers && !item.isWeighable) {
-      addToCartDirect(item, { batchNumber: scan.batchNo })
+      addToCartDirect(item, { batchNumber: scan.batchNo, quantity: effectiveMult })
       return
     }
     if (scan && typeof scan.quantity === 'number' && scan.quantity > 0 && (scan.symbology === 'scale' || item.isWeighable || scan.symbology === 'gs1')) {
-      if (isReturnMode) { addToCart(item); return }
+      if (isReturnMode) { addToCart(item, effectiveMult); return }
       const unitPrice = typeof scan.unitPrice === 'number' && scan.unitPrice > 0 ? scan.unitPrice : parseFloat(item.sellingPrice)
-      const total = roundCurrency(typeof scan.lineTotal === 'number' && scan.lineTotal > 0 ? scan.lineTotal : scan.quantity * unitPrice)
+      const scaleQty = effectiveMult > 1 ? scan.quantity * effectiveMult : scan.quantity
+      const total = roundCurrency(typeof scan.lineTotal === 'number' && scan.lineTotal > 0 ? (effectiveMult > 1 ? scan.lineTotal * effectiveMult : scan.lineTotal) : scaleQty * unitPrice)
       setCart(prev => [...prev, {
         cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         itemId: item.id,
@@ -708,13 +758,13 @@ export default function POSPage() {
         quantity: 1,
         unitPrice: total,
         total,
-        weight: scan.quantity,
+        weight: scaleQty,
         isWeighable: true,
         taxTemplateId: item.taxTemplateId || null,
       }])
       return
     }
-    addToCart(item)
+    addToCart(item, effectiveMult)
   }
 
   function addToCartWithWeight(item: Item, weight: number) {
@@ -827,12 +877,13 @@ export default function POSPage() {
     }))
   }
 
-  function addToCartDirect(item: Item, opts: { batchNumber?: string } = {}) {
+  function addToCartDirect(item: Item, opts: { batchNumber?: string; quantity?: number } = {}) {
     const price = parseFloat(item.sellingPrice)
     const stock = parseFloat(item.availableStock)
     const newLineId = `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
     // D1: a scanned batch gets its own line; otherwise batch items merge like any other item
     const ownBatchLine = !!(item.trackBatches && opts.batchNumber)
+    const qtyToAdd = (typeof opts.quantity === 'number' && opts.quantity > 0) ? opts.quantity : 1
 
     if (isReturnMode) {
       setCart(prev => {
@@ -840,7 +891,7 @@ export default function POSPage() {
         if (existing) {
           return prev.map(c =>
             c.cartLineId === existing.cartLineId
-              ? { ...c, quantity: c.quantity - 1, total: (c.quantity - 1) * c.unitPrice }
+              ? { ...c, quantity: c.quantity - qtyToAdd, total: (c.quantity - qtyToAdd) * c.unitPrice }
               : c
           )
         } else {
@@ -849,9 +900,9 @@ export default function POSPage() {
             cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             itemId: item.id,
             name: formatItemLabel(item, company.businessType),
-            quantity: -1,
+            quantity: -qtyToAdd,
             unitPrice: price,
-            total: -price,
+            total: -qtyToAdd * price,
           }]
         }
       })
@@ -868,7 +919,7 @@ export default function POSPage() {
         && (!ownBatchLine || (c.batchNumber || '').toUpperCase() === (opts.batchNumber || '').toUpperCase()))
       const totalInCart = prev.filter(c => c.itemId === item.id).reduce((sum, c) => sum + c.quantity, 0)
 
-      if (item.trackStock && totalInCart >= stock) {
+      if (item.trackStock && totalInCart + qtyToAdd > stock) {
         toast.warning('Not enough stock available')
         return prev
       }
@@ -876,7 +927,7 @@ export default function POSPage() {
       if (existing) {
         return prev.map(c =>
           c.cartLineId === existing.cartLineId
-            ? { ...c, quantity: c.quantity + 1, total: (c.quantity + 1) * c.unitPrice }
+            ? { ...c, quantity: c.quantity + qtyToAdd, total: (c.quantity + qtyToAdd) * c.unitPrice }
             : c
         )
       } else {
@@ -884,9 +935,9 @@ export default function POSPage() {
           cartLineId: newLineId,
           itemId: item.id,
           name: formatItemLabel(item, company.businessType),
-          quantity: 1,
+          quantity: qtyToAdd,
           unitPrice: price,
-          total: price,
+          total: qtyToAdd * price,
           taxTemplateId: item.taxTemplateId || null,
           ...(ownBatchLine ? { batchNumber: opts.batchNumber } : {}),
         }]
@@ -1798,21 +1849,31 @@ export default function POSPage() {
   }
 
   async function handleScanSubmit(code: string): Promise<boolean> {
-    const trimmed = code.trim()
-    if (!trimmed) return false
+    const rawTrimmed = code.trim()
+    if (!rawTrimmed) return false
     // Receipt barcode (INV-/RTN-/OFF-) → open the return lookup with that sale
-    if (RECEIPT_CODE_RE.test(trimmed)) {
+    if (RECEIPT_CODE_RE.test(rawTrimmed)) {
       setSearch('')
-      setReturnSearchQuery(trimmed.toUpperCase())
+      setReturnSearchQuery(rawTrimmed.toUpperCase())
       setShowReturnLookupModal(true)
       return true
     }
+
+    // Support multiplier format: e.g. "5*8901234567890" or "12x479..." or "3 * MILK"
+    let scanQty = 1
+    let trimmed = rawTrimmed
+    const multMatch = rawTrimmed.match(/^([1-9]\d*)\s*[*xX]\s*(.+)$/)
+    if (multMatch) {
+      scanQty = parseInt(multMatch[1], 10)
+      trimmed = multMatch[2].trim()
+    }
+
     if (posWarehouse) {
       try {
         const res = await fetch(`/api/items/barcode-lookup?barcode=${encodeURIComponent(trimmed)}&warehouseId=${posWarehouse.id}`)
         if (res.ok) {
           const item: Item = await res.json()
-          addScannedItem(item)
+          addScannedItem(item, scanQty)
           setSearch('')
           return true
         }
@@ -1826,7 +1887,7 @@ export default function POSPage() {
       ? exact
       : items.filter(i => i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q) || (i.barcode || '').includes(trimmed))
     if (candidates.length === 1) {
-      addToCart(candidates[0])
+      addToCart(candidates[0], scanQty)
       setSearch('')
       return true
     }
@@ -1839,7 +1900,8 @@ export default function POSPage() {
     const isTyping = (el: Element | null) =>
       !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
     const modalOpen = showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
-      || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || !!supervisorRequest || clearCartConfirm
+      || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || showFloatModal || showPriceCheckModal
+      || !!supervisorRequest || clearCartConfirm
 
     function onKey(e: KeyboardEvent) {
       if (terminalLocked) return
@@ -1854,10 +1916,14 @@ export default function POSPage() {
           e.preventDefault(); if (!modalOpen && allowDiscount && cart.length > 0) setShowDiscountModal(true); break
         case 'F6':
           e.preventDefault(); if (!modalOpen) { if (cart.length > 0) setReturnModeConfirm(true); else setShowReturnLookupModal(true) } break
+        case 'F7':
+          e.preventDefault(); if (!modalOpen) setShowPriceCheckModal(true); break
         case 'F8':
           e.preventDefault(); if (activeShift) setTerminalLocked(true); break
         case 'F9':
           e.preventDefault(); if (!modalOpen && cart.length > 0 && activeShift) openPaymentModal(); break
+        case 'F10':
+          e.preventDefault(); if (!modalOpen && activeShift) setShowFloatModal(true); break
         case 'Escape':
           if (!modalOpen && search) { setSearch(''); focusSearch() } break
         case 'Delete':
@@ -1872,7 +1938,7 @@ export default function POSPage() {
     return () => window.removeEventListener('keydown', onKey)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPayment, showDiscountModal, showHeldSalesModal, showCustomerModal, showVehicleModal, showShiftOpenModal, showShiftCloseModal,
-      showReturnLookupModal, supervisorRequest, clearCartConfirm, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
+      showReturnLookupModal, showFloatModal, showPriceCheckModal, supervisorRequest, clearCartConfirm, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
 
   // ─── Customer-facing display mirror (/pos/display) ─────────────
   useEffect(() => {
@@ -2315,9 +2381,26 @@ export default function POSPage() {
             {activeShift ? `Shift ${activeShift.entryNumber}` : 'No open shift'}
           </span>
           <span className="text-slate-600 hidden xl:inline">•</span>
-          <span className="text-slate-500 hidden xl:inline" title="Keyboard shortcuts">
-            F1 Search · F2 Hold · F3 Held · F4 Discount · F6 Return · F8 Lock · F9 Pay · Enter Scan
-          </span>
+          <button
+            type="button"
+            onClick={() => setShowPriceCheckModal(true)}
+            className="px-2 py-0.5 rounded bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 font-bold border border-indigo-700/80 flex items-center gap-1"
+            title="Price & Stock Check (F7)"
+          >
+            <Tag className="w-3 h-3" />
+            Price Check
+          </button>
+          {activeShift && (
+            <button
+              type="button"
+              onClick={() => setShowFloatModal(true)}
+              className="px-2 py-0.5 rounded bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 font-bold border border-emerald-700/80 flex items-center gap-1"
+              title="Cash Drawer Float / Safe Drop (F10)"
+            >
+              <Wallet className="w-3 h-3" />
+              Float / Drop
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setShowCameraScan(true)}
@@ -2680,6 +2763,21 @@ export default function POSPage() {
         isOpen={showCameraScan}
         onClose={() => setShowCameraScan(false)}
         onDetected={handleScanSubmit}
+      />
+
+      {/* Supermarket: Cash Drawer Float / Safe Drop Modal */}
+      <CashDrawerFloatModal
+        isOpen={showFloatModal}
+        onClose={() => setShowFloatModal(false)}
+        onConfirm={handleFloatConfirm}
+      />
+
+      {/* Supermarket: Price Check & Stock Inquiry Modal */}
+      <PriceCheckModal
+        isOpen={showPriceCheckModal}
+        onClose={() => setShowPriceCheckModal(false)}
+        warehouseId={posWarehouse?.id}
+        onAddToCart={addToCart}
       />
       </div>
     </div>
