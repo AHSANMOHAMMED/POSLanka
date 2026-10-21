@@ -4,10 +4,12 @@
  * never created — the kind of drift that makes a feature fail only in production.
  *   DATABASE_URL=... npx tsx scripts/check-schema-drift.ts
  */
+import 'dotenv/config'
 import { Client } from 'pg'
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
 import * as schema from '../src/lib/db/schema'
 import { pgConnectionConfig } from '../src/lib/db/pg-connection'
+
 
 async function main() {
   const client = new Client(pgConnectionConfig(process.env.DATABASE_URL))

@@ -29,7 +29,16 @@ function isOurOrigin(origin: string): boolean {
   try {
     const host = new URL(origin).hostname.split(':')[0].toLowerCase()
     const base = BASE_DOMAIN.split(':')[0].toLowerCase()
-    return host === base || host.endsWith(`.${base}`)
+    return (
+      host === base ||
+      host.endsWith(`.${base}`) ||
+      host === 'poslanka.lk' ||
+      host.endsWith('.poslanka.lk') ||
+      host.endsWith('.ondigitalocean.app') ||
+      host.endsWith('.up.railway.app') ||
+      host === 'localhost' ||
+      host === '127.0.0.1'
+    )
   } catch {
     return false
   }
@@ -67,13 +76,22 @@ export async function proxy(request: NextRequest) {
   const isAllowedHost = (host: string): boolean => {
     const clean = host.split(':')[0].toLowerCase()
 
-    // Always allow localhost (development)
-    if (clean === 'localhost' || clean === '127.0.0.1') return true
+    // Always allow localhost (development) & local loopbacks
+    if (clean === 'localhost' || clean === '127.0.0.1' || clean === '0.0.0.0') return true
 
-    // Allow only our specific Railway deployment URLs
+    // Allow raw IPv4 address access (e.g. droplet direct testing)
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(clean)) return true
+
+    // Allow Railway deployment URLs
     if (clean === 'retail-smart-pos-web-production.up.railway.app' || clean.endsWith('.up.railway.app')) return true
 
-    // Allow the base domain and any subdomain of it
+    // Allow DigitalOcean App Platform domains
+    if (clean.endsWith('.ondigitalocean.app')) return true
+
+    // Allow POSLanka official domains
+    if (clean === 'poslanka.lk' || clean.endsWith('.poslanka.lk')) return true
+
+    // Allow the configured base domain and any subdomain of it
     const base = BASE_DOMAIN.toLowerCase()
     if (clean === base || clean.endsWith(`.${base}`)) return true
 
@@ -145,12 +163,17 @@ export async function proxy(request: NextRequest) {
   const extractSubdomain = (host: string): string | null => {
     const cleanHost = host.split(':')[0].toLowerCase() // Remove port and normalize case
 
-    // Check if it's our domain
-    if (cleanHost === baseDomain) return null // Root domain
-    if (cleanHost.endsWith(`.${baseDomain}`)) {
-      const subdomain = cleanHost.replace(`.${baseDomain}`, '')
-      if (subdomain && !RESERVED_SUBDOMAINS.has(subdomain)) {
-        return subdomain
+    const candidateBases = Array.from(new Set([baseDomain, 'poslanka.lk', 'retailsmarterp.com'])).filter(
+      b => b && b !== 'localhost'
+    )
+
+    for (const b of candidateBases) {
+      if (cleanHost === b) return null // Root domain
+      if (cleanHost.endsWith(`.${b}`)) {
+        const subdomain = cleanHost.replace(`.${b}`, '')
+        if (subdomain && !RESERVED_SUBDOMAINS.has(subdomain)) {
+          return subdomain
+        }
       }
     }
     return null
@@ -296,17 +319,22 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  // 4. RAILWAY URL / LOCALHOST (Development)
+  // 4. PLATFORM URLS / DIGITALOCEAN / LOCALHOST / DIRECT IP
   const isRailwayUrl = normalizedHostname.includes('.railway.app')
-  const isLocalhost = normalizedHostname === 'localhost' || normalizedHostname.startsWith('localhost:')
+  const isDigitalOceanApp = normalizedHostname.endsWith('.ondigitalocean.app')
+  const isLocalhostOrIp =
+    normalizedHostname === 'localhost' ||
+    normalizedHostname.startsWith('localhost:') ||
+    normalizedHostname === '127.0.0.1' ||
+    /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(normalizedHostname)
 
   if (isRailwayUrl) {
-    // In production, redirect Railway URL to the main app domain
-    if (isRealDomain) {
+    // In production with custom domain, redirect Railway URL to the main app domain
+    if (isRealDomain && !normalizedHostname.includes(baseDomain)) {
       return NextResponse.redirect(`${protocol}://${APP_DOMAIN}${pathname}`, 301)
     }
 
-    // Dev: maintain backward compatibility for /c/[slug] routes
+    // Maintain backward compatibility for /c/[slug] routes
     if (pathname.startsWith('/c/')) {
       const slugMatch = pathname.match(/^\/c\/([^/]+)/)
       if (slugMatch) {
@@ -320,7 +348,7 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next()
   }
 
-  if (isLocalhost) {
+  if (isDigitalOceanApp || isLocalhostOrIp) {
     if (pathname.startsWith('/c/')) {
       const slugMatch = pathname.match(/^\/c\/([^/]+)/)
       if (slugMatch) {
@@ -329,6 +357,17 @@ export async function proxy(request: NextRequest) {
         response.headers.set('x-tenant-slug', slugMatch[1])
         return response
       }
+    }
+
+    // Allow sys-control, auth, and general routes on IP / dev / direct container platform hosts
+    if (
+      pathname.startsWith('/sys-control') ||
+      pathname.startsWith('/login') ||
+      pathname.startsWith('/register') ||
+      pathname.startsWith('/account') ||
+      pathname === '/'
+    ) {
+      return NextResponse.next()
     }
 
     return NextResponse.next()

@@ -18,8 +18,10 @@
  * Exit code: 0 = OK, 1 = violations found, 2 = could not run.
  * Emergency escape hatch (avoid): TENANT_ISOLATION_ALLOW="table_a,table_b" skips tables entirely.
  */
+import 'dotenv/config'
 import pg from 'pg'
 import { pgConnectionConfig } from './pg-connection.mjs'
+
 
 /**
  * "global+tenant" tables: tenant_id IS NULL marks a system default shared by all companies.
@@ -47,11 +49,13 @@ const ACCOUNT_LEVEL_NULLABLE_TABLES = new Set([
   'ai_error_logs',
 ])
 
-const url = process.env.DATABASE_URL
-if (!url) {
+const rawUrl = process.env.DATABASE_URL
+if (!rawUrl) {
   console.error('DATABASE_URL is required')
   process.exit(2)
 }
+const url = rawUrl.replace('-pooler.', '.')
+
 const appRole = process.env.DATABASE_APP_ROLE || 'app_user'
 if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(appRole)) {
   console.error(`Invalid DATABASE_APP_ROLE "${appRole}"`)

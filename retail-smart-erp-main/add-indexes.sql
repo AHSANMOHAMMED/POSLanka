@@ -124,11 +124,12 @@ CREATE INDEX IF NOT EXISTS idx_insurance_estimate_items_estimate ON insurance_es
 CREATE INDEX IF NOT EXISTS idx_insurance_estimate_items_item ON insurance_estimate_items(item_id) WHERE item_id IS NOT NULL;
 
 -- =====================================================
--- ITEM BUNDLE COMPONENTS TABLE INDEXES
+-- RECIPE INGREDIENTS TABLE INDEXES
 -- =====================================================
 
-CREATE INDEX IF NOT EXISTS idx_item_bundle_components_bundle ON item_bundle_components(bundle_item_id);
-CREATE INDEX IF NOT EXISTS idx_item_bundle_components_component ON item_bundle_components(component_item_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_item ON recipe_ingredients(ingredient_item_id);
+
 
 -- =====================================================
 -- USERS TABLE INDEXES
