@@ -14,6 +14,23 @@ import { THEME, formatLKR } from '../lib/theme'
 import { receiptFromSale, type BusinessInfo } from '../lib/receipt'
 import type { SaleResultData } from './TenderModal'
 
+/**
+ * Refund back to how the customer paid: several methods → 'original' (server splits the refund
+ * across them within what each method paid), a card sale → card, otherwise cash.
+ */
+export function chooseRefundMethod(sale: Pick<ReturnableSale, 'paidByMethod' | 'paymentMethod'>): {
+  method: 'cash' | 'card' | 'original'; description: string; pill: string
+} {
+  const paid = Object.entries(sale.paidByMethod || {})
+    .filter(([m, amt]) => Number(amt) > 0 && !['credit', 'gift_card', 'loyalty'].includes(m))
+  if (paid.length > 1) {
+    return { method: 'original', description: 'Back to the original payment methods', pill: '↩ ' + paid.map(([m]) => m.replace('_', ' ').toUpperCase()).join(' + ') }
+  }
+  const only = paid[0]?.[0] || sale.paymentMethod || 'cash'
+  if (only === 'card') return { method: 'card', description: 'Back to the card used', pill: '💳 CARD' }
+  return { method: 'cash', description: 'Cash from the drawer', pill: '💵 CASH' }
+}
+
 export interface ReturnableSale {
   id: string
   invoiceNo: string
@@ -25,6 +42,8 @@ export interface ReturnableSale {
   customerName?: string | null
   warehouseId?: string | null
   paymentMethod?: string | null
+  /** From /api/sales/lookup: amount paid per method on the original sale */
+  paidByMethod?: Record<string, number>
   items?: Array<{
     id?: string
     itemId?: string | null
@@ -103,8 +122,13 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
       const rows = asList<ReturnableSale>(res.data).filter((s) => !s.isReturn && s.status !== 'void' && s.returnStatus !== 'full')
       setMatches(rows)
       const exact = rows.find((s) => s.invoiceNo.toLowerCase() === code.toLowerCase())
-      if (exact) setSelected(exact)
-      else if (rows.length === 1) setSelected(rows[0])
+      const pick = exact || (rows.length === 1 ? rows[0] : null)
+      if (pick) {
+        // Refresh through the lookup endpoint: remaining quantities, refund prices and the
+        // per-method amounts needed to refund back to the original payment methods
+        const full = await apiGet<any>(`/api/sales/lookup${qs({ code: pick.invoiceNo })}`)
+        setSelected(full.ok && full.data?.sale ? full.data.sale : pick)
+      }
       setLoading(false)
     })()
     return () => {
@@ -166,6 +190,7 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
     const total = subtotal
     const refund = Math.abs(total)
 
+    const refundChoice = chooseRefundMethod(selected)
     const payload = {
       clientSaleId: Crypto.randomUUID(),
       customerId: selected.customerId || undefined,
@@ -180,7 +205,7 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
       addOverpaymentToCredit: false,
       isReturn: true,
       returnAgainst: selected.id,
-      refundMethod: 'cash',
+      refundMethod: refundChoice.method,
       warehouseId: selected.warehouseId || shift.warehouseId,
       posOpeningEntryId: shift.id,
     }
@@ -263,6 +288,8 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
                         style={[styles.matchRow, active && styles.matchRowActive]}
                         onPress={() => {
                           setSelected(s)
+                          // load per-method amounts / remaining quantities for this receipt
+                          apiGet<any>(`/api/sales/lookup${qs({ code: s.invoiceNo })}`).then((full) => { if (full.ok && full.data?.sale) setSelected(full.data.sale) })
                           setQty({})
                         }}
                       >
@@ -328,10 +355,10 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
                   <View style={styles.rowBetween}>
                     <View>
                       <Text style={styles.sectionTitle}>Refund method</Text>
-                      <Text style={styles.muted}>Cash from the drawer</Text>
+                      <Text style={styles.muted}>{chooseRefundMethod(selected).description}</Text>
                     </View>
                     <View style={styles.methodPill}>
-                      <Text style={styles.methodPillText}>💵 CASH</Text>
+                      <Text style={styles.methodPillText}>{chooseRefundMethod(selected).pill}</Text>
                     </View>
                   </View>
                   <View style={[styles.refundBox]}>

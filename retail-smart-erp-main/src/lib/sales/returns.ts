@@ -51,7 +51,8 @@ import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 
 export type SaleRow = typeof sales.$inferSelect
 export type SaleItemRow = typeof saleItems.$inferSelect
-export type RefundMethod = 'cash' | 'card' | 'credit'
+/** 'original' = split the refund across the original sale's own payment methods */
+export type RefundMethod = 'cash' | 'card' | 'credit' | 'original'
 export type ReturnStatus = 'none' | 'partial' | 'full'
 
 /** Business-rule failure with an HTTP status; routes map it with `saleFlowErrorResponse`. */
@@ -206,6 +207,8 @@ export interface CreateReturnResult {
   /** Payment method used for the exchange offset rows. */
   offsetMethod: 'cash' | 'card'
   refundMethod: RefundMethod
+  /** Per-method payout when refunding to the original payment methods */
+  refundSplits: Array<{ method: string; amount: number }>
   /** Return status of the original sale after this return. */
   returnStatus: ReturnStatus
   stockChanges: Array<{ result: StockChangeResult; input: StockChangeInput }>
@@ -426,29 +429,71 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
 
   const offsetAmount = roundCurrency(Math.min(Math.max(0, input.offsetAmount || 0), refundTotal))
   const refundPaidOut = roundCurrency(refundTotal - offsetAmount)
-  const refundMethod = input.refundMethod
+  const requestedRefundMethod = input.refundMethod
+  /** Refund split across the original payment methods (refundMethod 'original') */
+  let refundSplits: Array<{ method: string; amount: number }> = []
   /** method of the internal offset rows (exchange): the payout method, or cash when nothing is paid out */
-  const offsetMethod: 'cash' | 'card' = refundPaidOut > 0 && refundMethod === 'card' ? 'card' : 'cash'
+  const offsetMethod: 'cash' | 'card' = refundPaidOut > 0 && requestedRefundMethod === 'card' ? 'card' : 'cash'
   const customerId = input.customerId || original?.customerId || null
 
   // 4. refund bounds
-  if (refundPaidOut > 0) {
-    if (refundMethod === 'credit') {
+  if (refundPaidOut > 0 && requestedRefundMethod === 'original') {
+    if (!original) throw new SaleFlowError(400, 'ORIGINAL_SALE_REQUIRED', 'Refund to original payment methods needs the original invoice')
+    // Remaining refundable per method = paid by that method on the sale − earlier refunds by it.
+    // Store credit used / gift cards are not paid back in cash; those go to store credit.
+    const paidRows = rows<{ method: string; paid: string }>(await tx.execute(sql`
+      SELECT method::text AS method, COALESCE(SUM(amount), 0) AS paid FROM payments
+      WHERE sale_id = ${original.id} AND voided_at IS NULL AND amount > 0
+        AND method::text NOT IN ('credit', 'gift_card', 'loyalty') AND COALESCE(reference, '') <> 'EXCHANGE'
+      GROUP BY method::text
+    `))
+    const refundedRows = rows<{ method: string; refunded: string }>(await tx.execute(sql`
+      SELECT method::text AS method, COALESCE(SUM(amount), 0) AS refunded FROM refunds
+      WHERE original_sale_id = ${original.id} GROUP BY method::text
+    `))
+    const refundedBy = new Map(refundedRows.map((r) => [r.method, num(r.refunded)]))
+    const caps = paidRows
+      .map((r) => ({ method: r.method, cap: roundCurrency(Math.max(0, num(r.paid) - (refundedBy.get(r.method) || 0))) }))
+      .filter((c) => c.cap > 0)
+      .sort((a, b) => b.cap - a.cap)
+    const capTotal = roundCurrency(caps.reduce((s, c) => s + c.cap, 0))
+    if (capTotal + 0.01 < refundPaidOut) {
+      throw new SaleFlowError(400, 'REFUND_METHOD_EXCEEDS_PAID',
+        `Only ${capTotal.toFixed(2)} can still be refunded to the original payment methods. Refund the rest to store credit.`,
+        { allowed: capTotal, method: 'original' })
+    }
+    // Proportional to what is still refundable on each method; rounding remainder on the largest
+    let left = refundPaidOut
+    refundSplits = caps.map((c, i) => {
+      const share = i === caps.length - 1 ? left : roundCurrency(Math.min(c.cap, refundPaidOut * (c.cap / capTotal)))
+      left = roundCurrency(left - share)
+      return { method: c.method, amount: share }
+    })
+    if (left > 0.001) {
+      for (const sp of refundSplits) {
+        const cap = caps.find((c) => c.method === sp.method)!.cap
+        const add = roundCurrency(Math.min(left, cap - sp.amount))
+        if (add > 0) { sp.amount = roundCurrency(sp.amount + add); left = roundCurrency(left - add) }
+      }
+    }
+    refundSplits = refundSplits.filter((s) => s.amount > 0)
+  } else if (refundPaidOut > 0) {
+    if (requestedRefundMethod === 'credit') {
       if (!customerId) throw new SaleFlowError(400, 'CUSTOMER_REQUIRED', 'Select a customer to refund to store credit')
     } else if (original) {
       const [paid] = rows<{ paid: string | null }>(await tx.execute(sql`
         SELECT COALESCE(SUM(amount), 0) AS paid FROM payments
-        WHERE sale_id = ${original.id} AND method = ${refundMethod} AND voided_at IS NULL AND amount > 0
+        WHERE sale_id = ${original.id} AND method = ${requestedRefundMethod} AND voided_at IS NULL AND amount > 0
       `))
       const [refunded] = rows<{ refunded: string | null }>(await tx.execute(sql`
         SELECT COALESCE(SUM(amount), 0) AS refunded FROM refunds
-        WHERE original_sale_id = ${original.id} AND method = ${refundMethod}
+        WHERE original_sale_id = ${original.id} AND method = ${requestedRefundMethod}
       `))
       const allowed = roundCurrency(Math.max(0, num(paid?.paid) - num(refunded?.refunded)))
       if (refundPaidOut > allowed + 0.01) {
         throw new SaleFlowError(400, 'REFUND_METHOD_EXCEEDS_PAID',
-          `Only ${allowed.toFixed(2)} can be refunded by ${refundMethod} (paid by ${refundMethod} on the original sale, minus earlier refunds). Refund the rest to store credit or another method.`,
-          { allowed, method: refundMethod })
+          `Only ${allowed.toFixed(2)} can be refunded by ${requestedRefundMethod} (paid by ${requestedRefundMethod} on the original sale, minus earlier refunds). Refund the rest to store credit or to the original payment methods.`,
+          { allowed, method: requestedRefundMethod })
       }
     }
   }
@@ -467,6 +512,11 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
   const quarantine = restockMode === 'quarantine'
   const stockWarehouseId = quarantine ? await getOrCreateQuarantineWarehouse(tx, tenantId) : warehouseId
 
+  /** Method stored on the return document / single-method paths */
+  const refundMethod: Exclude<RefundMethod, 'original'> =
+    requestedRefundMethod === 'original'
+      ? ((refundSplits[0]?.method as Exclude<RefundMethod, 'original'>) || 'cash')
+      : requestedRefundMethod
   // 5. return document
   const invoiceNo = await nextDocumentNumber(tx, tenantId, 'return')
   const returnReason = original ? (input.reason?.trim() || null) : 'no_receipt'
@@ -614,7 +664,23 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
       reference: 'EXCHANGE', receivedBy: userId,
     })
   }
-  if (refundPaidOut > 0) {
+  if (refundPaidOut > 0 && refundSplits.length > 0) {
+    // Refund to the original payment methods: one payout row + refund record per method
+    for (const sp of refundSplits) {
+      await tx.insert(payments).values({
+        tenantId, saleId: returnSale.id, amount: String(-sp.amount), method: sp.method as typeof payments.$inferInsert.method, receivedBy: userId,
+      })
+      await tx.insert(refunds).values({
+        tenantId,
+        saleId: returnSale.id,
+        originalSaleId: original?.id || null,
+        amount: String(sp.amount),
+        method: sp.method as typeof refunds.$inferInsert.method,
+        processedBy: userId,
+        reason: `Return ${invoiceNo}${original ? ` against ${original.invoiceNo}` : ''} (original payment methods)${input.reason ? `: ${input.reason}` : ''}`,
+      })
+    }
+  } else if (refundPaidOut > 0) {
     if (refundMethod === 'credit' && customerId) {
       const [customer] = await tx.select().from(customers).where(eq(customers.id, customerId)).for('update')
       if (!customer) throw new SaleFlowError(400, 'CUSTOMER_NOT_FOUND', 'Customer not found')
@@ -678,6 +744,7 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
     costOfGoodsSold: cogs,
     paymentMethod: refundMethod,
     refundMethod: offsetAmount > 0 ? offsetMethod : refundMethod,
+    paymentSplits: refundSplits.length > 0 ? refundSplits : undefined,
     customerId,
     isReturn: true,
     costCenterId: input.costCenterId || original?.costCenterId || null,
@@ -703,6 +770,7 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
     offsetAmount,
     offsetMethod,
     refundMethod,
+    refundSplits,
     returnStatus,
     stockChanges: stockResults.map((result, i) => ({ result, input: stockInputs[i] })),
     affectedItemIds: [...new Set(planned.map((p) => p.itemId).filter((x): x is string => !!x))],

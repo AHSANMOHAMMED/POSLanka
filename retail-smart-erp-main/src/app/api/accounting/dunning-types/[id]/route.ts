@@ -33,7 +33,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     const parsed = await validateBody(request, updateDunningTypeSchema)
     if (!parsed.success) return parsed.response
     const body = parsed.data
-    const updateData: Record<string, unknown> = { updatedAt: new Date() }
+    const updateData: Record<string, unknown> = {}
 
     if (body.name !== undefined) updateData.name = body.name
     if (body.startDay !== undefined) updateData.startDay = body.startDay
@@ -43,6 +43,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     if (body.bodyText !== undefined) updateData.bodyText = body.bodyText || null
     if (body.isActive !== undefined) updateData.isActive = body.isActive
 
+    if (Object.keys(updateData).length === 0) return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
     const [updated] = await db.update(dunningTypes).set(updateData).where(eq(dunningTypes.id, id)).returning()
     if (!updated) return NextResponse.json({ error: 'Dunning type not found' }, { status: 404 })
 

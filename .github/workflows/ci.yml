@@ -96,6 +96,9 @@ jobs:
       - name: Tenant isolation check
         run: npm run db:check-isolation
 
+      - name: Schema drift (every table/column the code uses exists)
+        run: npm run db:check-drift
+
       - name: Pure self-tests (printing, labels, barcodes)
         run: |
           npx tsx src/lib/print/escpos/__selftest__.ts
@@ -136,6 +139,8 @@ jobs:
         run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/d3-platform.ts
       - name: Split-payment GL & batches in every sale path
         run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/e1-final.ts
+      - name: Refund to original payment methods
+        run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/f1-refund-original.ts
 
   build:
     name: Production build

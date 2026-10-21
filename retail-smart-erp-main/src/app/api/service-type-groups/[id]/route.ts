@@ -67,6 +67,10 @@ export async function PUT(
     if (!parsed.success) return parsed.response
     const { name, description, isActive } = parsed.data
 
+    if (!name && description === undefined && isActive === undefined) {
+      return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
+    }
+
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       const [updated] = await db.update(serviceTypeGroups)

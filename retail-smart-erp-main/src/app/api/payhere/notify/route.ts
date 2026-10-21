@@ -7,12 +7,14 @@ import { getNextPeriodDates } from '@/lib/billing/proration'
 import { logError } from '@/lib/ai/error-logger'
 import { activateCompanyFromPending } from '@/lib/billing/activate-company'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
+import { readFormData } from '@/lib/api/form-data'
 
 // POST /api/payhere/notify - PayHere webhook (server-to-server)
 // This is called by PayHere's servers, not by the user's browser
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData()
+    const formData = await readFormData(request)
+    if (formData instanceof NextResponse) return formData
 
     const orderId = formData.get('order_id') as string
     const payhereAmount = formData.get('payhere_amount') as string

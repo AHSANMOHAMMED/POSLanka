@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota, invalidateStorageCache } from '@/lib/db/storage-quota'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { readFormData } from '@/lib/api/form-data'
 
 // GET list all versions of a file
 export async function GET(
@@ -82,7 +83,8 @@ export async function POST(
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
-    const formData = await request.formData()
+    const formData = await readFormData(request)
+    if (formData instanceof NextResponse) return formData
     const file = formData.get('file') as File | null
     const changeDescription = formData.get('changeDescription') as string | null
 

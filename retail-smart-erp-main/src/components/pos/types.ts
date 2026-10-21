@@ -120,6 +120,8 @@ export interface HeldSale {
 
 export interface SaleForReturn {
   id: string
+  /** From /api/sales/lookup: amount paid per payment method on the original sale */
+  paidByMethod?: Record<string, number>
   invoiceNo: string
   customerId: string | null
   customer: Customer | null

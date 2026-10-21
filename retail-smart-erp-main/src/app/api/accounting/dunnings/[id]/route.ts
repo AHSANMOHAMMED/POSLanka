@@ -66,6 +66,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     }
     if (body.sentAt !== undefined) updateData.sentAt = body.sentAt ? new Date(body.sentAt) : null
 
+    if (Object.keys(updateData).length === 0) return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
     const [updated] = await db.update(dunnings).set(updateData).where(eq(dunnings.id, id)).returning()
     if (!updated) return NextResponse.json({ error: 'Dunning not found' }, { status: 404 })
 

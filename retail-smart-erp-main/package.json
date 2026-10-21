@@ -38,7 +38,8 @@
     "test:e2e:ui-workflows": "npx playwright test --project=ui-workflows",
     "ci": "npm run lint && npm run validate:migrations && npm run build",
     "postinstall": "patch-package && node scripts/patch-next-app-route-context.js",
-    "db:migrate:drizzle": "drizzle-kit migrate"
+    "db:migrate:drizzle": "drizzle-kit migrate",
+    "db:check-drift": "tsx scripts/check-schema-drift.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.990.0",

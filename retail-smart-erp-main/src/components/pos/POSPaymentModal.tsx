@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo } from 'react'
-import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle } from 'lucide-react'
+import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle, RotateCcw } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
 import { getCurrencyNotes } from '@/lib/utils/countries'
@@ -14,6 +14,7 @@ const PAYMENT_METHOD_META: Record<string, { icon: typeof Banknote; label: string
   credit: { icon: Wallet, label: 'Credit' },
   gift_card: { icon: Gift, label: 'Gift Card' },
   mobile_payment: { icon: Smartphone, label: 'Mobile' },
+  original: { icon: RotateCcw, label: 'Original methods' },
 }
 
 interface POSPaymentModalProps {

@@ -12,6 +12,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota, invalidateStorageCache } from '@/lib/db/storage-quota'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { filesListSchema } from '@/lib/validation/schemas/files'
+import { readFormData } from '@/lib/api/form-data'
 
 // GET list files with filters
 export async function GET(request: NextRequest) {
@@ -132,7 +133,9 @@ export async function POST(request: NextRequest) {
     const permError = requirePermission(session, 'uploadFiles')
     if (permError) return permError
 
-    const formData = await request.formData()
+    const formData = await readFormData(request)
+
+    if (formData instanceof NextResponse) return formData
     const file = formData.get('file') as File | null
     const isPrivate = formData.get('isPrivate') === 'true'
     const folderId = formData.get('folderId') as string | null

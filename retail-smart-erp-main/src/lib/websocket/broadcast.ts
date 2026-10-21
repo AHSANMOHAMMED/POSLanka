@@ -135,6 +135,8 @@ interface LogAndBroadcastOptions {
  * Combined broadcast + activity logging (drop-in replacement for broadcastChange).
  * Broadcasts immediately, then fire-and-forget logs the activity via RLS-scoped INSERT.
  */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export function logAndBroadcast(
   tenantId: string,
   entityType: EntityType,
@@ -157,8 +159,9 @@ export function logAndBroadcast(
       userId: options?.userId || undefined,
       action: activityAction,
       entityType: storageEntityType,
-      entityId: id === 'bulk' ? undefined : id,
-      entityName: options?.entityName,
+      // activity_logs.entity_id is a uuid: labels like 'bulk', '' or 'alerts' go into entityName instead
+      entityId: UUID_RE.test(id) ? id : undefined,
+      entityName: options?.entityName ?? (UUID_RE.test(id) || id === '' ? undefined : id),
       description: options?.description,
       metadata: options?.metadata,
     })

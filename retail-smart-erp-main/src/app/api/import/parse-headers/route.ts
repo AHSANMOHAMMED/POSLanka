@@ -4,6 +4,7 @@ import { getEntityConfig } from '@/lib/import-export/entity-config'
 import { parseCsv, parseXlsx, mapColumns, getMappedImportFields } from '@/lib/import-export/import-utils'
 import { logError } from '@/lib/ai/error-logger'
 import { requirePermission, type Permission } from '@/lib/auth/roles'
+import { readFormData } from '@/lib/api/form-data'
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,7 +13,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const formData = await request.formData()
+    const formData = await readFormData(request)
+
+    if (formData instanceof NextResponse) return formData
     const file = formData.get('file')
     const entityName = formData.get('entity')
 

@@ -76,7 +76,7 @@ export const createSaleSchema = z.object({
   isReturn: z.boolean().default(false),
   returnAgainst: optionalUuid,
   refundAmount: z.coerce.number().min(0).optional(),
-  refundMethod: z.enum(['cash', 'card', 'credit']).optional(),
+  refundMethod: z.enum(['cash', 'card', 'credit', 'original']).optional(),
   warehouseId: optionalUuid,
   posOpeningEntryId: optionalUuid,
   costCenterId: optionalUuid,
@@ -225,7 +225,7 @@ export const removeSaleLinesSchema = z.object({
   })).min(1).max(200),
   reason: z.string().trim().min(1, 'A reason is required').max(50),
   notes: z.string().max(1000).optional(),
-  refundMethod: z.enum(['cash', 'card', 'credit']).default('cash'),
+  refundMethod: z.enum(['cash', 'card', 'credit', 'original']).default('cash'),
   refundAmount: z.coerce.number().min(0).optional(),
   posOpeningEntryId: optionalUuid,
 })

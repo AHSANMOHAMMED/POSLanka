@@ -53,6 +53,9 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     if (!parsed.success) return parsed.response
     const { name, isActive, items } = parsed.data
 
+    const [existing] = await db.select({ id: paymentTermsTemplates.id }).from(paymentTermsTemplates).where(eq(paymentTermsTemplates.id, id))
+    if (!existing) return NextResponse.json({ error: 'Template not found' }, { status: 404 })
+
     const updateData: Record<string, unknown> = {}
     if (name !== undefined) updateData.name = name
     if (isActive !== undefined) updateData.isActive = isActive

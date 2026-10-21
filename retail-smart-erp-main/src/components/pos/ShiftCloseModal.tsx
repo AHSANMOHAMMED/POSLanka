@@ -49,6 +49,8 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
   const [loadingDetails, setLoadingDetails] = useState(true)
   const [shiftDetails, setShiftDetails] = useState<Shift | null>(null)
   const [actualAmounts, setActualAmounts] = useState<Record<string, number>>({})
+  /** Methods the cashier actually counted (a counted 0 is valid: empty drawer, takings banked) */
+  const [countedMethods, setCountedMethods] = useState<Set<string>>(new Set())
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
 
@@ -97,6 +99,7 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
   }, [isOpen, shift?.id])
 
   const handleActualAmountChange = (paymentMethod: string, amount: number) => {
+    setCountedMethods(prev => new Set(prev).add(paymentMethod))
     setActualAmounts(prev => ({
       ...prev,
       [paymentMethod]: Math.max(0, amount)
@@ -105,6 +108,7 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
 
   function handleClose() {
     setActualAmounts({})
+    setCountedMethods(new Set())
     setNotes('')
     setError('')
     setShiftDetails(null)
@@ -160,7 +164,7 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
   }
 
   // Check if any actual amounts have been entered
-  const hasActualAmounts = Object.values(actualAmounts).some(amount => amount > 0)
+  const hasActualAmounts = countedMethods.size > 0 || Object.values(actualAmounts).some(amount => amount > 0)
 
   return (
     <Modal

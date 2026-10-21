@@ -8,10 +8,12 @@ import { uploadToR2, deleteFromR2, keyFromUrl } from '@/lib/files'
 import { requireQuota, adjustFileStorage } from '@/lib/db/storage-quota'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
+import { readFormData } from '@/lib/api/form-data'
 
 export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData()
+    const formData = await readFormData(request)
+    if (formData instanceof NextResponse) return formData
     const file = formData.get('logo') as File | null
 
     if (!file) {

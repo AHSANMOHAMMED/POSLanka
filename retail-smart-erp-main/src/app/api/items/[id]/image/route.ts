@@ -11,6 +11,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { readFormData } from '@/lib/api/form-data'
 
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp']
 const MAX_SIZE = 5 * 1024 * 1024 // 5MB
@@ -30,7 +31,8 @@ export async function POST(
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
     const { id: itemId } = paramsParsed.data
-    const formData = await request.formData()
+    const formData = await readFormData(request)
+    if (formData instanceof NextResponse) return formData
     const file = formData.get('image') as File | null
 
     if (!file) {

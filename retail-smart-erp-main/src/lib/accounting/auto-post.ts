@@ -213,30 +213,42 @@ export async function postSaleToGL(
 
     // Cr Accounts Receivable / Cash (refund) — resolve from Modes of Payment
     // Use refundMethod (actual refund method) instead of paymentMethod (original sale method)
-    const refundPaymentMethod = data.refundMethod || data.paymentMethod
-    const refundModeAccount = await resolvePaymentAccountFromMode(tx, tenantId, refundPaymentMethod)
-    let refundAccountId: string
-    if (refundModeAccount) {
-      refundAccountId = refundModeAccount
-    } else if (refundPaymentMethod === 'cash') {
-      refundAccountId = config.defaultCashAccountId
-    } else if (refundPaymentMethod === 'bank_transfer' || refundPaymentMethod === 'card') {
-      refundAccountId = config.defaultBankAccountId || config.defaultCashAccountId
-    } else {
-      if (refundPaymentMethod !== 'credit') {
-        console.warn(`[GL] No Mode of Payment found for method "${refundPaymentMethod}" (tenant: ${tenantId}). Using Accounts Receivable for refund.`)
+    const resolveRefundAccount = async (method: string): Promise<string> => {
+      const modeAccount = await resolvePaymentAccountFromMode(tx, tenantId, method)
+      if (modeAccount) return modeAccount
+      if (method === 'cash') return config.defaultCashAccountId!
+      if (method === 'bank_transfer' || method === 'card') return config.defaultBankAccountId || config.defaultCashAccountId!
+      if (method !== 'credit') {
+        console.warn(`[GL] No Mode of Payment found for method "${method}" (tenant: ${tenantId}). Using Accounts Receivable for refund.`)
       }
-      refundAccountId = config.defaultReceivableAccountId
+      return config.defaultReceivableAccountId!
     }
-
-    entries.push({
-      accountId: refundAccountId,
-      credit: data.total,
-      partyType: data.customerId ? 'customer' : null,
-      partyId: data.customerId || null,
-      costCenterId,
-      remarks: 'Refund to customer',
-    })
+    // Refund to the original payment methods: one credit per method; anything not covered by
+    // the splits goes to the single refund method as before.
+    let refundLeft = roundCurrency(data.total)
+    for (const sp of data.paymentSplits || []) {
+      const amt = roundCurrency(Math.min(refundLeft, Number(sp.amount) || 0))
+      if (amt <= 0) continue
+      entries.push({
+        accountId: await resolveRefundAccount(sp.method),
+        credit: amt,
+        partyType: data.customerId ? 'customer' : null,
+        partyId: data.customerId || null,
+        costCenterId,
+        remarks: `Refund to customer (${sp.method})`,
+      })
+      refundLeft = roundCurrency(refundLeft - amt)
+    }
+    if (refundLeft > 0) {
+      entries.push({
+        accountId: await resolveRefundAccount(data.refundMethod || data.paymentMethod),
+        credit: refundLeft,
+        partyType: data.customerId ? 'customer' : null,
+        partyId: data.customerId || null,
+        costCenterId,
+        remarks: 'Refund to customer',
+      })
+    }
 
     // COGS reversal: Dr Stock/Inventory, Cr COGS (returns goods to stock)
     if (data.costOfGoodsSold > 0 && config.defaultCOGSAccountId && config.defaultStockAccountId

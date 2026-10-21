@@ -298,13 +298,20 @@ export default function POSPage() {
     ]
   }, [posProfile?.paymentMethods])
 
+  /** Real payment methods used on the receipt being returned (store credit / gift cards excluded) */
+  const returnPaidMethods = useMemo(() => Object.entries(returnAgainstSale?.paidByMethod || {})
+    .filter(([m, amt]) => amt > 0 && !['credit', 'gift_card', 'loyalty'].includes(m))
+    .map(([m]) => m), [returnAgainstSale])
+
   const enabledRefundMethods = useMemo(() => {
     const methods = enabledPaymentMethods
       .filter(pm => pm.allowInReturns && pm.paymentMethod !== 'gift_card')
       .map(pm => pm.paymentMethod)
     if (!methods.includes('credit')) methods.push('credit')
+    // A receipt paid with several methods can be refunded back to those same methods
+    if (returnPaidMethods.length > 1) methods.unshift('original')
     return methods
-  }, [enabledPaymentMethods])
+  }, [enabledPaymentMethods, returnPaidMethods])
 
   useEffect(() => {
     const defaultMethod = enabledPaymentMethods.find(pm => pm.isDefault)
@@ -1450,6 +1457,12 @@ export default function POSPage() {
     setIsReturnMode(true)
     setReturnAgainstSale(sale)
     if (sale.customer) setSelectedCustomer(sale.customer)
+    // Default refund: back to the original payment method(s)
+    {
+      const paid = Object.entries(sale.paidByMethod || {})
+        .filter(([m, amt]) => amt > 0 && !['credit', 'gift_card', 'loyalty'].includes(m))
+      setRefundMethod(paid.length > 1 ? 'original' : paid[0]?.[0] === 'card' ? 'card' : 'cash')
+    }
 
     if (giftCount > 0) {
       toast.warning(`${giftCount} gift card item(s) excluded from return — gift cards are non-returnable`)
@@ -1948,7 +1961,7 @@ export default function POSPage() {
             costCenterId: posProfile?.costCenterId || null,
             posOpeningEntryId: activeShift?.id,
             cartItems: cart,
-            paymentMethod: refundMethod,
+            paymentMethod: refundMethod === 'original' ? 'cash' : refundMethod,
             subtotal,
             discount: discountAmount,
             tax,

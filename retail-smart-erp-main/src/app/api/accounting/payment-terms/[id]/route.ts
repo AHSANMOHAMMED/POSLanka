@@ -44,6 +44,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     if (body.discountValidityDays !== undefined) updateData.discountValidityDays = body.discountValidityDays || null
     if (body.description !== undefined) updateData.description = body.description || null
     if (body.isActive !== undefined) updateData.isActive = body.isActive
+    if (Object.keys(updateData).length === 0) return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
 
     const [updated] = await db.update(paymentTerms).set(updateData).where(eq(paymentTerms.id, id)).returning()
     if (!updated) return NextResponse.json({ error: 'Payment term not found' }, { status: 404 })
