@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation'
 import { updateTenantSchema } from '@/lib/validation/schemas/users'
 import { resolveReceiptSettings, sanitizeReceiptSettingsPatch } from '@/lib/print/receipt-settings'
+import { resolveBatchSettings, resolveReturnSettings } from '@/lib/sales/return-settings'
 
 // GET tenant settings (tax rate, currency, etc.)
 export async function GET() {
@@ -57,6 +58,8 @@ export async function GET() {
       return NextResponse.json({
         ...rest,
         scaleBarcode,
+        returnSettings: resolveReturnSettings(settings),
+        batchSettings: resolveBatchSettings(settings),
         receiptSettings: resolveReceiptSettings(receiptSettings),
         receiptSettingsRaw: sanitizeReceiptSettingsPatch(receiptSettings),
       })
@@ -80,7 +83,7 @@ export async function PUT(request: NextRequest) {
 
     const parsed = await validateBody(request, updateTenantSchema)
     if (!parsed.success) return parsed.response
-    const { businessType, timezone, aiEnabled, taxRate, taxInclusive, scaleBarcode } = parsed.data
+    const { businessType, timezone, aiEnabled, taxRate, taxInclusive, scaleBarcode, returnSettings, batchSettings } = parsed.data
     const { name, legalName, address, phone, email, website, taxId, brn, receiptSettings } = parsed.data
 
     // Build update data
@@ -125,12 +128,19 @@ export async function PUT(request: NextRequest) {
       }
     }
 
-    if (scaleBarcode) {
+    if (scaleBarcode || returnSettings || batchSettings) {
+      // Merge onto the stored settings JSON so other keys (alerts, …) are kept
       const current = await withTenant(session.user.tenantId, async (db) =>
         db.query.tenants.findFirst({ where: eq(tenants.id, session.user.tenantId), columns: { settings: true } })
       )
       const settings = { ...((current?.settings || {}) as Record<string, unknown>) }
-      settings.scaleBarcode = normalizeScaleConfig(scaleBarcode)
+      if (scaleBarcode) settings.scaleBarcode = normalizeScaleConfig(scaleBarcode)
+      if (returnSettings) {
+        settings.returns = resolveReturnSettings({ returns: { ...resolveReturnSettings(settings), ...returnSettings } })
+      }
+      if (batchSettings) {
+        settings.batches = resolveBatchSettings({ batches: { ...resolveBatchSettings(settings), ...batchSettings } })
+      }
       updateData.settings = settings
     }
 

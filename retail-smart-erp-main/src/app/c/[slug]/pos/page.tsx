@@ -44,6 +44,7 @@ import type {
   RestaurantTable,
   SelectedModifier,
   GiftCardInfo,
+  CartBatchOption,
 } from '@/components/pos/types'
 import { toast } from '@/components/ui/toast'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
@@ -53,6 +54,18 @@ import { useDebouncedValue } from '@/hooks/useDebounce'
 import { quickPrint } from '@/hooks/usePrint'
 import { usePrinter, printKitchenTicket } from '@/hooks/usePrinter'
 import { kitchenModifierLabels } from '@/lib/print/escpos/kitchen-ticket'
+import {
+  applyKitchenPlan,
+  isEmptyKitchenPlan,
+  kitchenOrderItemPayload,
+  kitchenPlanTicketItems,
+  planKitchenSend,
+  roundKitchenQty,
+  type KitchenCartLine,
+  type KitchenOrderItemRef,
+  type KitchenPlan,
+  type KitchenSentMap,
+} from '@/lib/print/kitchen-delta'
 import { fetchLogoRaster, loadReceiptModel } from '@/lib/print/receipt-loader'
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
 import type { PaperSize } from '@/lib/print/types'
@@ -234,12 +247,16 @@ export default function POSPage() {
   const [tables, setTables] = useState<RestaurantTable[]>([])
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null)
   const [restaurantOrderId, setRestaurantOrderId] = useState<string | null>(null)
+  /** Quantities already on a kitchen ticket, per cart line, for the current restaurant order. */
+  const kitchenSentRef = useRef<{ orderId: string | null; sent: KitchenSentMap }>({ orderId: null, sent: {} })
   const [tipAmount, setTipAmount] = useState(0)
   const [showModifierPicker, setShowModifierPicker] = useState(false)
   const [modifierPickerItem, setModifierPickerItem] = useState<Item | null>(null)
 
   // Receipt / tenant info state
   const [tenantInfo, setTenantInfo] = useState<TenantInfo | null>(null)
+  // E1: tenant setting batches.allowExpiredSale (GET /api/tenant → batchSettings)
+  const [allowExpiredBatchSale, setAllowExpiredBatchSale] = useState(false)
   const [printingReceipt] = useState(false)
   // Receipt printer (ESC/POS via USB / Bluetooth / print agent) + camera scanner
   const printer = usePrinter()
@@ -476,6 +493,7 @@ export default function POSPage() {
           taxRate: parseFloat(tenant.taxRate) || 0,
           taxInclusive: tenant.taxInclusive || false,
         })
+        setAllowExpiredBatchSale(tenant.batchSettings?.allowExpiredSale === true)
       }
     } catch (error) {
       console.error('Error fetching tenant info:', error)
@@ -665,8 +683,13 @@ export default function POSPage() {
   }
 
   /** Add a scanned item honouring scan-derived quantity/price (weighing-scale labels, GS1 net weight / price). */
-  function addScannedItem(item: Item & { scan?: { quantity?: number; unitPrice?: number; lineTotal?: number; symbology?: string } }) {
+  function addScannedItem(item: Item & { scan?: { quantity?: number; unitPrice?: number; lineTotal?: number; symbology?: string; batchNo?: string } }) {
     const scan = item.scan
+    // D1: GS1 batch (AI 10) on a batch-tracked item → sell that batch
+    if (scan?.batchNo && item.trackBatches && !isReturnMode && !item.trackSerialNumbers && !item.isWeighable) {
+      addToCartDirect(item, { batchNumber: scan.batchNo })
+      return
+    }
     if (scan && typeof scan.quantity === 'number' && scan.quantity > 0 && (scan.symbology === 'scale' || item.isWeighable || scan.symbology === 'gs1')) {
       if (isReturnMode) { addToCart(item); return }
       const unitPrice = typeof scan.unitPrice === 'number' && scan.unitPrice > 0 ? scan.unitPrice : parseFloat(item.sellingPrice)
@@ -752,9 +775,57 @@ export default function POSPage() {
     setSerialPickerItem(null)
   }
 
-  function addToCartDirect(item: Item) {
+  /** D1: load the item's sellable batches (FEFO order) for a cart line and pick one. */
+  async function loadBatchOptions(itemId: string, cartLineId: string, preferredNumber?: string) {
+    if (!posWarehouse) return
+    try {
+      // Expired batches are offered (marked EXPIRED) only when the tenant allows selling them
+      const res = await fetch(`/api/items/${itemId}/batches?warehouseId=${posWarehouse.id}${allowExpiredBatchSale ? '' : '&status=active'}`)
+      if (!res.ok) return
+      const list = (await res.json()) as Array<{ id: string; batchNumber: string; expiryDate: string | null; currentQuantity: string; status?: string }>
+      const today = new Date().toISOString().slice(0, 10)
+      const options: CartBatchOption[] = list
+        .filter(b => !b.status || b.status === 'active' || b.status === 'expired')
+        .map(b => ({
+          id: b.id, batchNumber: b.batchNumber, expiryDate: b.expiryDate, currentQuantity: parseFloat(b.currentQuantity) || 0,
+          expired: b.status === 'expired' || (!!b.expiryDate && b.expiryDate < today),
+        }))
+        .filter(b => b.currentQuantity > 0 && (allowExpiredBatchSale || !b.expired))
+        .sort((a, b) => (a.expiryDate || '9999-12-31').localeCompare(b.expiryDate || '9999-12-31'))
+      if (options.length === 0) return
+      setCart(prev => prev.map(c => {
+        if (c.cartLineId !== cartLineId) return c
+        if (c.batchId) return { ...c, batchOptions: options }
+        const wanted = c.batchNumber || preferredNumber
+        if (wanted) {
+          // scanned batch: use it when it is sellable here; otherwise keep the number (server validates)
+          const match = options.find(o => o.batchNumber.toUpperCase() === wanted.toUpperCase())
+          return match
+            ? { ...c, batchOptions: options, batchId: match.id, batchNumber: match.batchNumber, batchExpiry: match.expiryDate }
+            : { ...c, batchOptions: options }
+        }
+        const pick = options.find(o => !o.expired) || options[0] // FEFO suggestion (unexpired first)
+        return { ...c, batchOptions: options, batchId: pick.id, batchNumber: pick.batchNumber, batchExpiry: pick.expiryDate }
+      }))
+    } catch {
+      // offline / network: the server allocates FEFO
+    }
+  }
+
+  function changeBatch(cartLineId: string, batchId: string) {
+    setCart(prev => prev.map(c => {
+      if (c.cartLineId !== cartLineId) return c
+      const opt = c.batchOptions?.find(o => o.id === batchId)
+      return opt ? { ...c, batchId: opt.id, batchNumber: opt.batchNumber, batchExpiry: opt.expiryDate } : c
+    }))
+  }
+
+  function addToCartDirect(item: Item, opts: { batchNumber?: string } = {}) {
     const price = parseFloat(item.sellingPrice)
     const stock = parseFloat(item.availableStock)
+    const newLineId = `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    // D1: a scanned batch gets its own line; otherwise batch items merge like any other item
+    const ownBatchLine = !!(item.trackBatches && opts.batchNumber)
 
     if (isReturnMode) {
       setCart(prev => {
@@ -786,7 +857,8 @@ export default function POSPage() {
     }
 
     setCart(prev => {
-      const existing = prev.find(c => c.itemId === item.id && c.unitPrice === price)
+      const existing = prev.find(c => c.itemId === item.id && c.unitPrice === price
+        && (!ownBatchLine || (c.batchNumber || '').toUpperCase() === (opts.batchNumber || '').toUpperCase()))
       const totalInCart = prev.filter(c => c.itemId === item.id).reduce((sum, c) => sum + c.quantity, 0)
 
       if (item.trackStock && totalInCart >= stock) {
@@ -802,16 +874,18 @@ export default function POSPage() {
         )
       } else {
         return [...prev, {
-          cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          cartLineId: newLineId,
           itemId: item.id,
           name: formatItemLabel(item, company.businessType),
           quantity: 1,
           unitPrice: price,
           total: price,
           taxTemplateId: item.taxTemplateId || null,
+          ...(ownBatchLine ? { batchNumber: opts.batchNumber } : {}),
         }]
       }
     })
+    if (item.trackBatches) void loadBatchOptions(item.id, newLineId, opts.batchNumber)
   }
 
   function updateQuantity(cartLineId: string, delta: number) {
@@ -1008,18 +1082,54 @@ export default function POSPage() {
     }
   }
 
+  /** Kitchen quantity of a cart line: the weight for scale-weighed lines, else the count. */
+  function kitchenQty(line: CartItem): number {
+    return line.isWeighable && line.weight ? line.weight : line.quantity
+  }
+
   async function handleSendToKitchen() {
-    if (!restaurantOrderId || cart.length === 0) return
+    if (!restaurantOrderId) return
     const orderId = restaurantOrderId
-    const unsent = cart.filter((c) => !c.restaurantOrderItemId && c.quantity > 0)
-    if (unsent.length === 0) {
+    // State is per restaurant order: a different order starts from nothing sent.
+    if (kitchenSentRef.current.orderId !== orderId) kitchenSentRef.current = { orderId, sent: {} }
+    const sentState = kitchenSentRef.current.sent
+
+    // Lines loaded from an existing order (already on the order) count as sent.
+    for (const c of cart) {
+      if (c.restaurantOrderItemId && !sentState[c.cartLineId] && c.quantity > 0) {
+        sentState[c.cartLineId] = {
+          name: c.name,
+          itemId: c.itemId,
+          quantity: roundKitchenQty(kitchenQty(c)),
+          modifiers: kitchenModifierLabels(c.modifiers),
+          notes: c.notes ?? null,
+          orderItems: [{ id: c.restaurantOrderItemId, quantity: roundKitchenQty(kitchenQty(c)) }],
+        }
+      }
+    }
+
+    const kitchenLines: KitchenCartLine[] = cart
+      .filter((c) => c.quantity > 0)
+      .map((c) => ({
+        cartLineId: c.cartLineId,
+        itemId: c.itemId,
+        name: c.name,
+        quantity: kitchenQty(c),
+        modifiers: kitchenModifierLabels(c.modifiers),
+        notes: c.notes ?? null,
+      }))
+    const plan = planKitchenSend(kitchenLines, sentState)
+    if (isEmptyKitchenPlan(plan)) {
       toast.info('Nothing new to send to the kitchen')
       return
     }
+    const byLine = new Map(cart.map((c) => [c.cartLineId, c]))
+    // Price per kitchen unit (weighed lines carry the line total in unitPrice).
+    const pricePerUnit = (c: CartItem) => (c.isWeighable && c.weight ? c.unitPrice / c.weight : c.unitPrice)
 
     // Current order: order no / table / server for the ticket, and lines that were
     // already posted (modifier picks are posted on add) so they are not duplicated.
-    type OrderLine = { id: string; itemId: string | null; modifiers?: unknown; notes?: string | null }
+    type OrderLine = { id: string; itemId: string | null; quantity?: number; modifiers?: unknown; notes?: string | null }
     let order: {
       orderNo?: string
       orderType?: string
@@ -1038,47 +1148,124 @@ export default function POSPage() {
         .map((m) => (m && typeof m === 'object' ? String((m as { id?: unknown }).id ?? '') : String(m)))
         .sort()
         .join('|')
-    const claimed = new Set(cart.map((c) => c.restaurantOrderItemId).filter(Boolean) as string[])
+    const claimed = new Set<string>([
+      ...(cart.map((c) => c.restaurantOrderItemId).filter(Boolean) as string[]),
+      ...Object.values(sentState).flatMap((e) => (e.orderItems || []).map((r) => r.id)),
+    ])
 
-    const sent: { line: CartItem; orderItemId: string }[] = []
-    let failed = 0
-    for (const line of unsent) {
-      const key = modKey(line.modifiers)
-      const match = (order?.items || []).find((oi) => !claimed.has(oi.id) && oi.itemId === line.itemId && modKey(oi.modifiers) === key)
-      if (match) {
-        claimed.add(match.id)
-        sent.push({ line, orderItemId: match.id })
-        continue
-      }
+    async function postOrderItem(c: CartItem, qty: number): Promise<KitchenOrderItemRef | null> {
+      const p = kitchenOrderItemPayload(qty, pricePerUnit(c), c.notes)
       try {
         const res = await fetch(`/api/restaurant-orders/${orderId}/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            itemId: line.itemId,
-            itemName: line.name,
-            quantity: Math.max(1, Math.round(line.quantity)),
-            unitPrice: line.unitPrice,
-            modifiers: line.modifiers && line.modifiers.length > 0 ? line.modifiers : undefined,
-            notes: line.notes || undefined,
+            itemId: c.itemId,
+            itemName: c.name,
+            quantity: p.quantity,
+            unitPrice: p.unitPrice,
+            modifiers: c.modifiers && c.modifiers.length > 0 ? c.modifiers : undefined,
+            notes: p.notes,
           }),
         })
         const data = await res.json().catch(() => ({}))
         if (res.ok && data?.item?.id) {
           claimed.add(data.item.id)
-          sent.push({ line, orderItemId: data.item.id })
-        } else failed++
+          return { id: data.item.id, quantity: roundKitchenQty(qty) }
+        }
       } catch {
-        failed++
+        /* counted as failed */
       }
+      return null
     }
 
-    if (sent.length > 0) {
-      const ids = new Map(sent.map((s) => [s.line.cartLineId, s.orderItemId]))
-      setCart((prev) => prev.map((c) => (ids.has(c.cartLineId) ? { ...c, restaurantOrderItemId: ids.get(c.cartLineId) } : c)))
+    const refs: Record<string, KitchenOrderItemRef[]> = {}
+    const okPlan: KitchenPlan = { added: [], increased: [], decreased: [] }
+    let failed = 0
+
+    // New lines: link to an order item posted at add time, else post one.
+    for (const line of plan.added) {
+      const c = byLine.get(line.cartLineId)
+      if (!c) continue
+      const key = modKey(c.modifiers)
+      const match = (order?.items || []).find((oi) => !claimed.has(oi.id) && oi.itemId === c.itemId && modKey(oi.modifiers) === key)
+      if (match) {
+        claimed.add(match.id)
+        const matchedQty = Number(match.quantity) || 1
+        const lineRefs: KitchenOrderItemRef[] = [{ id: match.id, quantity: matchedQty }]
+        const extra = roundKitchenQty(line.quantity - matchedQty)
+        if (extra > 0) {
+          const r = await postOrderItem(c, extra)
+          if (r) lineRefs.push(r)
+        }
+        refs[line.cartLineId] = lineRefs
+        okPlan.added.push(line)
+        continue
+      }
+      const r = await postOrderItem(c, line.quantity)
+      if (r) {
+        refs[line.cartLineId] = [r]
+        okPlan.added.push(line)
+      } else failed++
+    }
+
+    // Increases: the delta goes to the kitchen as its own order item ("+n").
+    for (const inc of plan.increased) {
+      const c = byLine.get(inc.line.cartLineId)
+      if (!c) continue
+      const r = await postOrderItem(c, inc.delta)
+      if (r) {
+        refs[inc.line.cartLineId] = [...(sentState[inc.line.cartLineId]?.orderItems || []), r]
+        okPlan.increased.push(inc)
+      } else failed++
+    }
+
+    // Decreases / removals: best effort on the order (DELETE while still pending, else PUT a
+    // smaller integer quantity); the VOID line is printed either way.
+    for (const dec of plan.decreased) {
+      let remaining = dec.delta
+      const lineRefs = [...(dec.entry.orderItems || [])]
+      for (let i = lineRefs.length - 1; i >= 0 && remaining > 0.0005; i--) {
+        const ref = lineRefs[i]
+        try {
+          if (ref.quantity <= remaining + 0.0005) {
+            const res = await fetch(`/api/restaurant-orders/${orderId}/items/${ref.id}`, { method: 'DELETE' })
+            if (res.ok) {
+              remaining = roundKitchenQty(remaining - ref.quantity)
+              lineRefs.splice(i, 1)
+              continue
+            }
+          } else if (Number.isInteger(ref.quantity) && Number.isInteger(remaining)) {
+            const res = await fetch(`/api/restaurant-orders/${orderId}/items/${ref.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ quantity: ref.quantity - remaining }),
+            })
+            if (res.ok) {
+              lineRefs[i] = { ...ref, quantity: ref.quantity - remaining }
+              remaining = 0
+              continue
+            }
+          }
+        } catch {
+          /* print-only */
+        }
+        break
+      }
+      refs[dec.cartLineId] = lineRefs
+      okPlan.decreased.push(dec)
+    }
+
+    kitchenSentRef.current = { orderId, sent: applyKitchenPlan(sentState, okPlan, refs) }
+    const firstRef = new Map(
+      okPlan.added.map((l) => [l.cartLineId, refs[l.cartLineId]?.[0]?.id]).filter((e): e is [string, string] => !!e[1])
+    )
+    if (firstRef.size > 0) {
+      setCart((prev) => prev.map((c) => (firstRef.has(c.cartLineId) && !c.restaurantOrderItemId ? { ...c, restaurantOrderItemId: firstRef.get(c.cartLineId) } : c)))
     }
     if (failed > 0) toast.error(`${failed} item(s) could not be sent to the kitchen`)
-    if (sent.length === 0) return
+    const ticketItems = kitchenPlanTicketItems(okPlan)
+    if (ticketItems.length === 0) return
     toast.success('Items sent to kitchen')
 
     // Kitchen ticket for this batch only. Skips silently without a kitchen printer;
@@ -1091,12 +1278,7 @@ export default function POSPage() {
       tableArea: table?.area ?? null,
       server: cashierName || order?.createdByUser?.fullName || null,
       time: new Date(),
-      items: sent.map(({ line }) => ({
-        name: line.name,
-        quantity: line.quantity,
-        modifiers: kitchenModifierLabels(line.modifiers),
-        notes: line.notes ?? null,
-      })),
+      items: ticketItems,
     })
       .then((r) => {
         if (r === 'failed') toast.warning('Sent to kitchen, but the kitchen ticket did not print')
@@ -2192,6 +2374,7 @@ export default function POSPage() {
         onRemoveFromCart={removeFromCart}
         onUpdatePrice={updatePrice}
         onSetQuantityDirectly={setQuantityDirectly}
+        onChangeBatch={changeBatch}
         onClearCart={clearCart}
         onCancelReturnMode={cancelReturnMode}
         onStartExchange={returnAgainstSale ? startExchange : undefined}

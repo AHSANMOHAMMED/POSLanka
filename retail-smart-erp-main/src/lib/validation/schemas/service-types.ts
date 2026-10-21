@@ -79,6 +79,7 @@ export const inspectionTemplatesListSchema = z.object({
   vehicleTypeId: z.string().uuid().optional(),
   inspectionType: z.enum(['check_in', 'check_out']).optional(),
   includeInactive: z.string().optional().transform(v => v === 'true'),
+  includeHidden: z.string().optional().transform(v => v === 'true'),
 })
 
 // POST /api/inspection-templates

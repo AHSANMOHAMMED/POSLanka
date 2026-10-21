@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react'
-import { View, Text, Pressable, StyleSheet, TextInput, ScrollView, Switch, ActivityIndicator, Alert } from 'react-native'
+import React, { useEffect, useRef, useState } from 'react'
+import { View, Text, Pressable, StyleSheet, TextInput, ScrollView, Switch, ActivityIndicator, Alert, BackHandler } from 'react-native'
 import { router } from 'expo-router'
 import { THEME } from '../src/lib/theme'
 import {
@@ -228,6 +228,18 @@ function PrinterEditor({ initial, isNew, onDone }: { initial: PrinterConfig; isN
   function close() {
     onDone(savedList)
   }
+
+  // Android hardware back closes the editor (back to the printer list) instead of leaving the
+  // screen. Registered after the navigator's own handler, so it runs first.
+  const closeRef = useRef(close)
+  closeRef.current = close
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeRef.current()
+      return true
+    })
+    return () => sub.remove()
+  }, [])
 
   function onRemove() {
     Alert.alert('Remove printer?', settings.name, [

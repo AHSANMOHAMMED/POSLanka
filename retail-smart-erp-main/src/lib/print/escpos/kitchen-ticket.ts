@@ -16,6 +16,12 @@ export interface KitchenTicketItem {
   /** Modifier labels (see `kitchenModifierLabels` for raw modifier objects). */
   modifiers?: string[]
   notes?: string | null
+  /**
+   * Change line for an item that was already sent: 'add' prints "+3 x Burger" (quantity
+   * increased by 3 since the last ticket), 'void' prints "VOID 1 x Burger" (quantity
+   * reduced / line removed). Omitted for a normal new line.
+   */
+  mark?: 'add' | 'void'
 }
 
 export interface KitchenTicketInput {
@@ -76,6 +82,10 @@ function qtyText(q: number): string {
   return Number.isInteger(q) ? String(q) : q.toFixed(3).replace(/0+$/, '').replace(/\.$/, '')
 }
 
+function kitchenQtyPrefix(it: KitchenTicketItem): string {
+  return it.mark === 'add' ? '+' : it.mark === 'void' ? 'VOID ' : ''
+}
+
 /** Wrap `text` to `width` with `prefix` on the first line and a hanging indent after. */
 function hanging(prefix: string, text: string, width: number): string[] {
   const indent = ' '.repeat(Math.min(prefix.length, Math.max(0, width - 4)))
@@ -117,8 +127,8 @@ export function buildKitchenTicketEscPos(input: KitchenTicketInput, opts: Kitche
   let count = 0
   input.items.forEach((it, idx) => {
     if (idx > 0) b.line()
-    count += Number.isFinite(it.quantity) ? it.quantity : 0
-    for (const l of hanging(`${qtyText(it.quantity)} x `, it.name, bigCols)) b.styledLine(l, big)
+    if (it.mark !== 'void') count += Number.isFinite(it.quantity) ? it.quantity : 0
+    for (const l of hanging(`${kitchenQtyPrefix(it)}${qtyText(it.quantity)} x `, it.name, bigCols)) b.styledLine(l, big)
     for (const m of it.modifiers || []) {
       for (const l of hanging('  + ', m, bigCols)) b.styledLine(l, { size: 2 })
     }

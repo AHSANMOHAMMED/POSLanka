@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { withAuthTenant, withAuthTenantTransaction, TenantDb } from '@/lib/db'
+import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { purchases, purchaseItems, suppliers, warehouses, users, purchaseOrders } from '@/lib/db/schema'
 import { eq, and, ilike, sql, desc, asc, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
@@ -13,31 +13,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchasesListSchema, createPurchaseSchema } from '@/lib/validation/schemas/purchases'
-
-// Generate purchase number with transaction lock to prevent race conditions
-async function generatePurchaseNo(tx: TenantDb): Promise<string> {
-  const today = new Date()
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-  const prefix = `PI-${dateStr}-`
-
-  // Find the highest number for today with FOR UPDATE lock
-  // RLS automatically filters by tenant
-  const existing = await tx
-    .select({ purchaseNo: purchases.purchaseNo })
-    .from(purchases)
-    .where(ilike(purchases.purchaseNo, `${prefix}%`))
-    .orderBy(desc(purchases.purchaseNo))
-    .limit(1)
-    .for('update')
-
-  let nextNum = 1
-  if (existing.length > 0) {
-    const lastNum = parseInt(existing[0].purchaseNo.split('-').pop() || '0', 10)
-    nextNum = lastNum + 1
-  }
-
-  return `${prefix}${nextNum.toString().padStart(3, '0')}`
-}
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all purchases for the tenant (with pagination support)
 export async function GET(request: NextRequest) {
@@ -252,7 +228,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Generate purchase number with lock
-      const purchaseNo = await generatePurchaseNo(tx)
+      const purchaseNo = await nextDocNo(tx, session.user.tenantId, 'purchase_invoice')
 
       // Create purchase invoice
       const [newPurchase] = await tx.insert(purchases).values({

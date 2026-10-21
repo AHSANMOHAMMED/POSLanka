@@ -988,6 +988,27 @@
       "when": 1771446337027,
       "tag": "0142_drop_legacy_movement_trigger",
       "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1771446337028,
+      "tag": "0143_sale_batches_purchasing",
+      "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1771446337029,
+      "tag": "0144_tenant_default_overrides",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1771446337030,
+      "tag": "0145_usage_counter_deltas",
+      "breakpoints": true
     }
   ]
 }

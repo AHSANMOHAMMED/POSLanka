@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { commissionPayoutsListSchema, createCommissionPayoutSchema } from '@/lib/validation/schemas/commissions'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all commission payouts for the tenant (with pagination and filters)
 export async function GET(request: NextRequest) {
@@ -206,15 +207,8 @@ export async function POST(request: NextRequest) {
           0
         )
 
-        // Generate payoutNo atomically inside transaction
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${commissionPayouts.payoutNo})` })
-          .from(commissionPayouts)
-          .where(sql`${commissionPayouts.payoutNo} LIKE 'PAY-%'`)
-
-        const lastNo = maxResult?.maxNo
-        const nextNumber = lastNo ? parseInt(lastNo.replace(/\D/g, '')) + 1 : 1
-        const payoutNo = `PAY-${String(nextNumber).padStart(6, '0')}`
+        // Payout number from the per-tenant sequence
+        const payoutNo = await nextDocNo(tx, session.user.tenantId, 'commission_payout')
 
         // Create payout record
         const [newPayout] = await tx.insert(commissionPayouts).values({

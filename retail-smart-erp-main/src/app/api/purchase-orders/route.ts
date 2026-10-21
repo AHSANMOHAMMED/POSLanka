@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { withAuthTenant, withAuthTenantTransaction, TenantDb } from '@/lib/db'
+import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { purchaseOrders, purchaseOrderItems, suppliers, warehouses, users } from '@/lib/db/schema'
 import { eq, and, ilike, sql, desc, asc, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
@@ -12,30 +12,7 @@ import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchaseOrdersListSchema, createPurchaseOrderSchema } from '@/lib/validation/schemas/purchases'
 import { requireTenantFeature } from '@/lib/features/check'
-
-// Generate order number with transaction lock
-async function generateOrderNo(tx: TenantDb): Promise<string> {
-  const today = new Date()
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-  const prefix = `PO-${dateStr}-`
-
-  // Find the highest number for today with FOR UPDATE lock (RLS filters by tenant)
-  const existing = await tx
-    .select({ orderNo: purchaseOrders.orderNo })
-    .from(purchaseOrders)
-    .where(ilike(purchaseOrders.orderNo, `${prefix}%`))
-    .orderBy(desc(purchaseOrders.orderNo))
-    .limit(1)
-    .for('update')
-
-  let nextNum = 1
-  if (existing.length > 0) {
-    const lastNum = parseInt(existing[0].orderNo.split('-').pop() || '0', 10)
-    nextNum = lastNum + 1
-  }
-
-  return `${prefix}${nextNum.toString().padStart(3, '0')}`
-}
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all purchase orders for the tenant (with pagination support)
 export async function GET(request: NextRequest) {
@@ -232,7 +209,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate order number with lock
-    const orderNo = await generateOrderNo(tx)
+    const orderNo = await nextDocNo(tx, session.user.tenantId, 'purchase_order')
 
     // Create purchase order
     const [newOrder] = await tx.insert(purchaseOrders).values({

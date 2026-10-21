@@ -10,6 +10,11 @@
  * New-sale pricing follows POST /api/sales: unit prices / line discounts come from the cart,
  * tax is always recomputed server-side from the tax templates. Stock leaves through the ledger.
  * Held-sale / work-order reservations are not consulted here (stock must simply be on hand).
+ * Batch-tracked new lines draw from item_batches (cashier's batch first, else FEFO) and record
+ * sale_item_batches like a normal sale (D1).
+ *
+ * GL (D1): the new sale's receivable is settled per payment method — the applied refund offset
+ * (offsetMethod) plus each collected split — so a card + cash difference posts to both accounts.
  */
 import { eq, inArray } from 'drizzle-orm'
 import { sales, saleItems, items, payments } from '@/lib/db/schema'
@@ -22,6 +27,8 @@ import { postSaleToGL } from '@/lib/accounting/auto-post'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { createReturnInTx, SaleFlowError, type CreateReturnResult, type ReturnContext, type SaleRow } from './returns'
+import { allocateSaleLineBatches, type BatchAllocation } from '@/lib/inventory/batches'
+import { getTenantSalesSettings, type RestockMode } from './return-settings'
 
 export interface ExchangeCartItem {
   itemId?: string | null
@@ -30,6 +37,10 @@ export interface ExchangeCartItem {
   unitPrice: number
   discount?: number | null
   serialNumberIds?: string[] | null
+  /** Batch picked by the cashier (D1); otherwise FEFO. */
+  batchId?: string | null
+  /** Batch number from a GS1 scan, resolved to a batch of the item. */
+  batchNumber?: string | null
 }
 
 export interface ExchangeInput {
@@ -47,12 +58,14 @@ export interface ExchangeInput {
   clientSaleId?: string | null
   reason?: string | null
   notes?: string | null
+  serialReturnStatus?: 'available' | 'defective'
+  restockMode?: RestockMode
 }
 
 export interface ExchangeResult {
   returnResult: CreateReturnResult
   sale: SaleRow
-  saleLines: Array<{ id: string; itemId: string; itemName: string; quantity: number; unitPrice: number; total: number; taxAmount: number }>
+  saleLines: Array<{ id: string; itemId: string; itemName: string; quantity: number; unitPrice: number; total: number; taxAmount: number; batches: BatchAllocation[] }>
   newTotal: number
   refundTotal: number
   /** newTotal - refundTotal: > 0 collected from the customer, < 0 paid back */
@@ -99,7 +112,10 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
     if (item.trackSerialNumbers && serialIds.length > 0 && serialIds.length !== qty) {
       throw new SaleFlowError(400, 'SERIAL_MISMATCH', `"${item.name}" requires ${qty} serial number(s), but ${serialIds.length} provided`)
     }
-    return { item, name: c.name || item.name, qty, unitPrice, discount, total: roundCurrency(unitPrice * qty - discount), serialIds }
+    return {
+      item, name: c.name || item.name, qty, unitPrice, discount, total: roundCurrency(unitPrice * qty - discount), serialIds,
+      batchId: c.batchId || null, batchNumber: c.batchNumber || null,
+    }
   })
   const taxResult = await recalculateDocumentTax(tx, tenantId,
     cart.map((c) => ({ itemId: c.item.id, lineTotal: c.total })), { type: 'sales' })
@@ -107,8 +123,12 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
   const newTax = roundCurrency(taxResult.totalTax)
   const newTotal = roundCurrency(newSubtotal + taxResult.exclusiveTax)
 
+  const settings = await getTenantSalesSettings(tx, tenantId)
+
   // ---- 1. the return, with the new sale's value applied as offset
   const returnResult = await createReturnInTx(tx, ctx, {
+    serialReturnStatus: input.serialReturnStatus || settings.returns.serialReturnStatus,
+    restockMode: input.restockMode || settings.returns.restockMode,
     originalSaleId: input.originalSaleId,
     lines: input.returnLines.map((l) => ({ originalSaleItemId: l.originalSaleItemId, quantity: l.quantity, serialNumberIds: l.serialNumberIds || undefined })),
     refundMethod,
@@ -171,6 +191,7 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
 
   const saleLines: ExchangeResult['saleLines'] = []
   const stockInputs: StockChangeInput[] = []
+  const batchLines: Array<{ lineIndex: number; saleItemId: string; c: (typeof cart)[number] }> = []
   for (let i = 0; i < cart.length; i++) {
     const c = cart[i]
     const per = taxResult.perItemTax[i]
@@ -188,7 +209,8 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
       total: String(c.total),
       serialNumberIds: c.serialIds.length ? c.serialIds : null,
     }).returning({ id: saleItems.id })
-    saleLines.push({ id: row.id, itemId: c.item.id, itemName: c.name, quantity: c.qty, unitPrice: c.unitPrice, total: c.total, taxAmount: per?.taxAmount ?? 0 })
+    saleLines.push({ id: row.id, itemId: c.item.id, itemName: c.name, quantity: c.qty, unitPrice: c.unitPrice, total: c.total, taxAmount: per?.taxAmount ?? 0, batches: [] })
+    if (c.item.trackBatches) batchLines.push({ lineIndex: saleLines.length - 1, saleItemId: row.id, c })
 
     if (c.item.trackSerialNumbers && c.serialIds.length) {
       await validateSerialAvailability(tx, c.serialIds, c.item.id, warehouseId)
@@ -209,6 +231,16 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
   }
   const stockResults = stockInputs.length ? await applyStockChanges(tx, stockInputs) : []
 
+  // ---- 3b. batches for batch-tracked new lines (after the warehouse stock rows are locked)
+  for (const b of batchLines) {
+    const r = await allocateSaleLineBatches(tx, {
+      tenantId, warehouseId, itemId: b.c.item.id, qty: b.c.qty, saleItemId: b.saleItemId,
+      preferredBatchId: b.c.batchId, preferredBatchNumber: b.c.batchNumber,
+      allowExpired: settings.batches.allowExpiredSale, itemName: b.c.name,
+    })
+    saleLines[b.lineIndex].batches = r.allocations
+  }
+
   // ---- 4. payments on the new sale: the applied refund + what was collected
   if (offset > 0) {
     await tx.insert(payments).values({
@@ -216,6 +248,9 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
       reference: `EXCHANGE ${returnResult.returnSale.invoiceNo}`, receivedBy: userId,
     })
   }
+  // what settles the new sale, per method (GL posts one debit per method)
+  const settlement: Array<{ method: string; amount: number }> = []
+  if (offset > 0) settlement.push({ method: returnResult.offsetMethod, amount: offset })
   if (collected > 0) {
     if (splits.length) {
       let left = collected
@@ -226,11 +261,13 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
         await tx.insert(payments).values({
           tenantId, saleId: sale.id, amount: String(amt), method: s.method, reference: s.reference || null, receivedBy: userId,
         })
+        settlement.push({ method: s.method, amount: amt })
       }
     } else {
       await tx.insert(payments).values({
         tenantId, saleId: sale.id, amount: String(collected), method: payMethod, receivedBy: userId,
       })
+      settlement.push({ method: payMethod, amount: collected })
     }
   }
 
@@ -248,6 +285,7 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
     creditAmount: 0,
     costOfGoodsSold: cogs,
     paymentMethod: difference > 0.005 ? collectMethod : returnResult.offsetMethod,
+    paymentSplits: settlement,
     customerId: returnResult.customerId,
     isReturn: false,
     costCenterId: sale.costCenterId,

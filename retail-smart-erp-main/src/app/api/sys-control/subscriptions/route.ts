@@ -4,6 +4,7 @@ import { subscriptions, tenantUsage } from '@/lib/db/schema'
 import { eq, desc } from 'drizzle-orm'
 import { validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
+import { foldTenantUsage } from '@/lib/db/storage-quota'
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,6 +35,7 @@ export async function GET(request: NextRequest) {
     if (includeUsage) {
       const subsWithUsage = await Promise.all(
         allSubscriptions.map(async (sub) => {
+          await foldTenantUsage(sub.tenantId)
           const usage = await db.query.tenantUsage.findFirst({
             where: eq(tenantUsage.tenantId, sub.tenantId),
           })

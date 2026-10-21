@@ -114,6 +114,8 @@ export type EntityType =
   | 'item-cost-history'
   | 'label-template'
   | 'stock-intake'
+  // User-scoped in-app alert inbox (sent via broadcastAccountChange to the tenant user id)
+  | 'inbox-notification'
   // Account-level entity types (not tenant-scoped)
   | 'account-notification'
   | 'account-wallet'

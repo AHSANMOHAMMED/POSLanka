@@ -1,12 +1,15 @@
 // Bell pill with the unread alert count; opens the alerts inbox (/alerts).
-// Self-contained: polls GET /api/notifications every minute and whenever the screen regains focus.
+// Self-contained: refreshes the unread count from GET /api/notifications when the screen gains
+// focus, when the app returns to the foreground, and whenever a push notification arrives;
+// a slow poll is only a safety net.
 import React, { useCallback, useEffect, useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { AppState, Pressable, StyleSheet, Text, View } from 'react-native'
+import * as Notifications from 'expo-notifications'
 import { router, useFocusEffect } from 'expo-router'
 import { apiGet } from '../lib/api'
 import { THEME } from '../lib/theme'
 
-const POLL_MS = 60_000
+const FALLBACK_POLL_MS = 5 * 60_000
 
 export function AlertsBell() {
   const [unread, setUnread] = useState(0)
@@ -18,8 +21,25 @@ export function AlertsBell() {
 
   useFocusEffect(useCallback(() => { void refresh() }, [refresh]))
   useEffect(() => {
-    const t = setInterval(() => { void refresh() }, POLL_MS)
-    return () => clearInterval(t)
+    // App back in the foreground → the inbox may have changed while we were away.
+    const appState = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refresh()
+    })
+    // A push arrived (foreground) → the server just wrote an inbox row for us.
+    let pushSub: { remove: () => void } | null = null
+    try {
+      pushSub = Notifications.addNotificationReceivedListener(() => { void refresh() })
+    } catch {
+      // expo-notifications unavailable (e.g. Expo Go / web) — focus + poll still work
+    }
+    const t = setInterval(() => {
+      if (AppState.currentState === 'active') void refresh()
+    }, FALLBACK_POLL_MS)
+    return () => {
+      appState.remove()
+      pushSub?.remove()
+      clearInterval(t)
+    }
   }, [refresh])
 
   return (

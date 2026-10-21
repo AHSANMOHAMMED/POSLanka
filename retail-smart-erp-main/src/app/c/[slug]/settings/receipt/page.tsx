@@ -21,6 +21,7 @@ import {
 import { buildReceiptModel, SAMPLE_RECEIPT_SALE } from '@/lib/print/receipt-model'
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
 import { invalidateTenantInfo } from '@/lib/print/receipt-loader'
+import { ReturnsSettingsCard } from '@/components/settings/ReturnsSettingsCard'
 
 interface BusinessForm {
   name: string
@@ -354,6 +355,8 @@ export default function ReceiptSettingsPage() {
               </p>
             </fieldset>
           </SectionCard>
+
+          <ReturnsSettingsCard canEdit={canEdit} />
         </div>
 
         {/* Live preview */}

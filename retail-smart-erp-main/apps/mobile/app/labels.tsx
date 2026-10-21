@@ -6,7 +6,8 @@ import { THEME } from '../src/lib/theme'
 import { BarcodeScannerModal } from '../src/components/BarcodeScannerModal'
 import { InlineNotice } from '../src/components/StateViews'
 import { getPrinterForRole, printerErrorMessage, printLabels, type PrinterConfig } from '../src/lib/printer'
-import type { LabelItemData, LabelTemplate } from '../src/lib/label'
+import { labelCurrencySymbol, type LabelItemData, type LabelTemplate } from '../src/lib/label'
+import { loadBusinessInfo } from '../src/lib/receipt'
 
 /** Shape accepted in the `items` route param (JSON array). */
 interface PreselectedItem {
@@ -25,7 +26,6 @@ interface Row {
   quantity: number
 }
 
-const CURRENCY_SYMBOL = 'Rs'
 const UUID_RE = /^[0-9a-f-]{36}$/i
 
 function toLabelItem(raw: any): LabelItemData {
@@ -78,6 +78,8 @@ export default function LabelsScreen() {
   const [printer, setPrinter] = useState<PrinterConfig | null | undefined>(undefined)
   const [codeWord, setCodeWord] = useState('')
   const [tenantName, setTenantName] = useState<string | undefined>(undefined)
+  // Tenant currency (cached business info, works offline); LKR → "Rs" like the web labels.
+  const [currencySymbol, setCurrencySymbol] = useState(() => labelCurrencySymbol(null))
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<LabelItemData[]>([])
   const [searching, setSearching] = useState(false)
@@ -101,6 +103,9 @@ export default function LabelsScreen() {
       if (res.ok && typeof res.data?.codeWord === 'string') setCodeWord(res.data.codeWord)
     })
     getUser().then((u) => setTenantName(u?.tenantName || undefined))
+    loadBusinessInfo()
+      .then((b) => setCurrencySymbol(labelCurrencySymbol(b.currency)))
+      .catch(() => undefined)
     getPrinterForRole('label')
       .then(setPrinter)
       .catch(() => setPrinter(null))
@@ -213,7 +218,7 @@ export default function LabelsScreen() {
       const res = await printLabels(
         template,
         rows.filter((r) => r.quantity > 0).map((r) => ({ item: r.item, quantity: r.quantity })),
-        { currencySymbol: CURRENCY_SYMBOL, tenantName, codeWord: codeWord || undefined },
+        { currencySymbol, tenantName, codeWord: codeWord || undefined },
         printer
       )
       Alert.alert('Labels sent', `${res.labels} label${res.labels === 1 ? '' : 's'} sent to ${res.printer.name}.${res.warnings.length ? `\n\n${res.warnings.slice(0, 5).join('\n')}` : ''}`)
@@ -305,7 +310,7 @@ export default function LabelsScreen() {
                     {it.name}
                   </Text>
                   <Text style={styles.muted} numberOfLines={1}>
-                    {[it.sku, it.barcode, `${CURRENCY_SYMBOL} ${Number(it.sellingPrice || 0).toFixed(2)}`].filter(Boolean).join(' · ')}
+                    {[it.sku, it.barcode, `${currencySymbol.trim()} ${Number(it.sellingPrice || 0).toFixed(2)}`].filter(Boolean).join(' · ')}
                   </Text>
                 </Pressable>
               ))}
@@ -327,7 +332,7 @@ export default function LabelsScreen() {
                 {r.item.name || r.item.barcode || r.item.sku}
               </Text>
               <Text style={styles.muted} numberOfLines={1}>
-                {[r.item.sku, r.item.barcode, `${CURRENCY_SYMBOL} ${Number(r.item.sellingPrice || 0).toFixed(2)}`].filter(Boolean).join(' · ')}
+                {[r.item.sku, r.item.barcode, `${currencySymbol.trim()} ${Number(r.item.sellingPrice || 0).toFixed(2)}`].filter(Boolean).join(' · ')}
               </Text>
             </View>
             <Pressable style={styles.stepBtn} onPress={() => setQty(r.key, r.quantity - 1)}>

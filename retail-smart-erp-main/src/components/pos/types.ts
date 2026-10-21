@@ -9,6 +9,8 @@ export interface Item {
   availableStock: string
   trackStock: boolean
   trackSerialNumbers?: boolean
+  /** D1: batch-tracked item (sale lines carry a batch, FEFO by default) */
+  trackBatches?: boolean
   oemPartNumber: string | null
   supplierPartNumber: string | null
   alternatePartNumbers: string[] | null
@@ -63,6 +65,21 @@ export interface CartItem {
   originalSaleItemId?: string
   /** Return mode (W8): quantity still returnable on that line */
   maxReturnQuantity?: number
+  /** D1: batch for this line (FEFO suggestion or cashier's choice); server falls back to FEFO */
+  batchId?: string
+  batchNumber?: string
+  batchExpiry?: string | null
+  /** D1 (UI only): batches the cashier can pick from */
+  batchOptions?: CartBatchOption[]
+}
+
+export interface CartBatchOption {
+  id: string
+  batchNumber: string
+  expiryDate: string | null
+  currentQuantity: number
+  /** E1: past its expiry date (offered only when the tenant allows selling expired batches) */
+  expired?: boolean
 }
 
 export interface Customer {

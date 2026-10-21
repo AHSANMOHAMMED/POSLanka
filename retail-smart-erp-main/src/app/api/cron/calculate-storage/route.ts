@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { invalidateAllStorageCache } from '@/lib/db/storage-quota'
+import { foldTenantUsage } from '@/lib/db/storage-quota'
 
 // POST /api/cron/calculate-storage
 // Recalculates storage from scratch for all tenants (corrects any drift).
@@ -26,6 +27,10 @@ export async function POST(request: NextRequest) {
         { status: 401 }
       )
     }
+
+    // Fold pending usage deltas first: the recalculation below sets storage_bytes from scratch,
+    // so deltas left unfolded would be counted twice.
+    await foldTenantUsage()
 
     // Run the storage calculation for all tenants
     const result = await db.execute(sql`SELECT * FROM update_all_tenant_storage()`)

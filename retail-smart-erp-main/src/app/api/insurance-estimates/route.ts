@@ -13,6 +13,7 @@ import { recalculateDocumentTax, type LineItemInput } from '@/lib/utils/tax-reca
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { insuranceEstimatesListSchema, createInsuranceEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all insurance estimates for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -243,17 +244,8 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Advisory lock prevents duplicate estimate numbers under concurrent load
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('insurance_estimate_' || ${session.user.tenantId}))`)
-
-        // Generate estimate number atomically inside transaction (RLS scopes)
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${insuranceEstimates.estimateNo})` })
-          .from(insuranceEstimates)
-
-      const lastEstimateNo = maxResult?.maxNo
-      const nextNumber = lastEstimateNo ? parseInt(lastEstimateNo.replace(/\D/g, '')) + 1 : 1
-      const estimateNo = `EST-${String(nextNumber).padStart(6, '0')}`
+        // Estimate number from the per-tenant sequence
+        const estimateNo = await nextDocNo(tx, session.user.tenantId, 'insurance_estimate')
 
       const [newEstimate] = await tx.insert(insuranceEstimates).values({
         tenantId: session.user.tenantId,

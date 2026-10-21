@@ -11,6 +11,7 @@ import { removeSaleLinesSchema } from '@/lib/validation/schemas/sales'
 import { createReturnInTx } from '@/lib/sales/returns'
 import { notifyReturnAlerts } from '@/lib/notifications/sales-alerts'
 import { saleFlowErrorResponse } from '@/lib/sales/route-helpers'
+import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 
 /**
  * POST /api/sales/[id]/remove-lines — "edit a completed bill / remove an item".
@@ -38,7 +39,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (acctError) return acctError
 
     return await withTenant(tenantId, async (db) => {
-      const result = await db.transaction((tx) => createReturnInTx(tx, { tenantId, userId }, {
+      const result = await db.transaction(async (tx) => createReturnInTx(tx, { tenantId, userId }, {
+        // D1: tenant return settings (serial status, stock vs quarantine)
+        ...(await getTenantSalesSettings(tx, tenantId)).returns,
         originalSaleId: p.data.id,
         lines: body.lines.map((l) => ({ originalSaleItemId: l.saleItemId, quantity: l.quantity, serialNumberIds: l.serialNumberIds })),
         refundMethod: body.refundMethod,
@@ -54,7 +57,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       })
       logAndBroadcast(tenantId, 'sale', 'updated', p.data.id, { userId })
       for (const itemId of result.affectedItemIds) logAndBroadcast(tenantId, 'item', 'updated', itemId)
-      logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.warehouseId)
+      logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.stockWarehouseId)
       notifyReturnAlerts(tenantId, {
         returnId: rtn.id, returnNo: rtn.invoiceNo, originalInvoiceNo: result.originalSale?.invoiceNo,
         manual: false, refundTotal: result.refundTotal, actorUserId: userId, actorName: session.user.name,

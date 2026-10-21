@@ -15,6 +15,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { voidSaleSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { getSaleLineBatches, restoreSaleLineBatches } from '@/lib/inventory/batches'
 
 // GET single sale
 export async function GET(
@@ -62,7 +63,11 @@ export async function GET(
         voidedAt: p.voidedAt,
       }))
 
-      return NextResponse.json({ ...sale, payments: filteredPayments })
+      // D1: batch allocations per line
+      const batchesByLine = await getSaleLineBatches(db, (sale.items || []).map((i) => i.id))
+      const itemsWithBatches = (sale.items || []).map((i) => ({ ...i, batches: batchesByLine.get(i.id) || [] }))
+
+      return NextResponse.json({ ...sale, items: itemsWithBatches, payments: filteredPayments })
     })
   } catch (error) {
     logError('api/sales/[id]', error)
@@ -191,6 +196,17 @@ export async function PUT(
               }
               await applyStockChange(tx, input)
             }
+          }
+
+          // D1: put the not-yet-returned batch quantities back into the batches they came from
+          // (sale_item_batches.returned_quantity tracks what earlier returns already restored)
+          if (sale.warehouseId && parseFloat(saleItem.quantity) > 0) {
+            await restoreSaleLineBatches(tx, {
+              tenantId: session.user.tenantId,
+              saleItemId: saleItem.id,
+              qty: parseFloat(saleItem.quantity),
+              toWarehouseId: sale.warehouseId,
+            })
           }
 
           // Restore serial numbers to 'available' status (skip serials already returned — they

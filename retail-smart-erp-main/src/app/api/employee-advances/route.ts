@@ -12,6 +12,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { employeeAdvancesListSchema, createEmployeeAdvanceSchema } from '@/lib/validation/schemas/hr'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 export async function GET(request: NextRequest) {
   try {
@@ -95,13 +96,7 @@ export async function POST(request: NextRequest) {
 
       // Wrap in transaction with advisory lock for atomic number generation
       const advance = await db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(6)`)
-
-        const [{ count }] = await tx
-          .select({ count: sql<number>`count(*)` })
-          .from(employeeAdvances)
-
-        const advanceNo = `ADV-${String(Number(count) + 1).padStart(5, '0')}`
+        const advanceNo = await nextDocNo(tx, session.user.tenantId, 'employee_advance')
 
         const [result] = await tx
           .insert(employeeAdvances)

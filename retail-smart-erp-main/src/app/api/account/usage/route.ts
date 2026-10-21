@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { tenantUsage, accountTenants, subscriptions, pricingTiers, tenants } from '@/lib/db/schema'
 import { eq, and, inArray } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { foldTenantUsage } from '@/lib/db/storage-quota'
 
 // GET /api/account/usage - Get usage summary for all user's companies
 export async function GET() {
@@ -41,6 +42,7 @@ export async function GET() {
     })
 
     // Get all usage data
+    await Promise.all(tenantIds.map((id) => foldTenantUsage(id)))
     const usageList = await db.query.tenantUsage.findMany({
       where: inArray(tenantUsage.tenantId, tenantIds),
     })

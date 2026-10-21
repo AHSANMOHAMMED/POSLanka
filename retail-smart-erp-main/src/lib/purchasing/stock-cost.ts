@@ -1,3 +1,4 @@
+import { batchErrorInfo } from '@/lib/inventory/batches'
 import { sql } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import type { DbTx } from '@/lib/inventory/db-types'
@@ -200,6 +201,11 @@ export function stockErrorResponse(err: unknown, context?: string): NextResponse
       error: context ? `${context}: insufficient stock for ${detail}` : `Insufficient stock for ${detail}`,
       code: 'INSUFFICIENT_STOCK',
     }, { status: 400 })
+  }
+  // E1: batch allocation errors (INSUFFICIENT_BATCH_STOCK / BATCH_EXPIRED / ...) are user errors
+  const batchError = batchErrorInfo(err)
+  if (batchError) {
+    return NextResponse.json({ error: context ? `${context}: ${batchError.message}` : batchError.message, code: batchError.code }, { status: 400 })
   }
   if (message === 'ITEM_NOT_FOUND' || message === 'INVALID_QUANTITY') {
     return NextResponse.json({ error: message === 'ITEM_NOT_FOUND' ? 'Item not found' : 'Invalid quantity', code: message }, { status: 400 })

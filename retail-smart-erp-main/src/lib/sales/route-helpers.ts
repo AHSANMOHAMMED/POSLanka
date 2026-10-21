@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { toApiError } from '@/lib/db/errors'
 import { SaleFlowError } from './returns'
+import { batchErrorInfo } from '@/lib/inventory/batches'
 
 /**
  * Map errors thrown by the returns / exchange library (and the stock ledger) to API responses.
@@ -16,6 +17,10 @@ export function saleFlowErrorResponse(error: unknown): NextResponse | null {
   }
   if (message.startsWith('INSUFFICIENT_STOCK:')) {
     return NextResponse.json({ error: `Insufficient stock: ${message.replace('INSUFFICIENT_STOCK:', '')}`, code: 'INSUFFICIENT_STOCK' }, { status: 400 })
+  }
+  const batchError = batchErrorInfo(error)
+  if (batchError) {
+    return NextResponse.json({ error: batchError.message, code: batchError.code }, { status: 400 })
   }
   if (message.startsWith('SERIAL_MISMATCH:')) {
     return NextResponse.json({ error: message.replace('SERIAL_MISMATCH:', ''), code: 'SERIAL_MISMATCH' }, { status: 400 })

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuthTenant, withAuthTenantTransaction, TenantDb } from '@/lib/db'
+import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { purchaseRequisitions, purchaseRequisitionItems, users } from '@/lib/db/schema'
 import { eq, and, ilike, sql, desc, asc, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
@@ -8,28 +8,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchaseRequisitionsListSchema, createPurchaseRequisitionSchema } from '@/lib/validation/schemas/purchases'
-
-async function generateRequisitionNo(tx: TenantDb): Promise<string> {
-  const today = new Date()
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-  const prefix = `PR-${dateStr}-`
-
-  const existing = await tx
-    .select({ requisitionNo: purchaseRequisitions.requisitionNo })
-    .from(purchaseRequisitions)
-    .where(ilike(purchaseRequisitions.requisitionNo, `${prefix}%`))
-    .orderBy(desc(purchaseRequisitions.requisitionNo))
-    .limit(1)
-    .for('update')
-
-  let nextNum = 1
-  if (existing.length > 0) {
-    const lastNum = parseInt(existing[0].requisitionNo.split('-').pop() || '0', 10)
-    nextNum = lastNum + 1
-  }
-
-  return `${prefix}${nextNum.toString().padStart(3, '0')}`
-}
+import { nextDocNo } from '@/lib/documents/numbering'
 
 export async function GET(request: NextRequest) {
   try {
@@ -143,7 +122,7 @@ export async function POST(request: NextRequest) {
       const quotaError = await requireQuota(session.user.tenantId, 'standard')
       if (quotaError) return { error: quotaError }
 
-      const requisitionNo = await generateRequisitionNo(tx)
+      const requisitionNo = await nextDocNo(tx, session.user.tenantId, 'purchase_requisition')
 
       let estimatedTotal = 0
       if (body.items?.length) {

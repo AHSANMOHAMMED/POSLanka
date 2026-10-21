@@ -11,6 +11,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { payrollRunsListSchema, createPayrollRunSchema } from '@/lib/validation/schemas/hr'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 export async function GET(request: NextRequest) {
   try {
@@ -85,16 +86,7 @@ export async function POST(request: NextRequest) {
     return await withTenantTransaction(session.user.tenantId, async (db) => {
       // Generate run number
       const monthStr = String(payrollMonth).padStart(2, '0')
-      const [{ count: runCount }] = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(payrollRuns)
-        .where(
-          and(
-            eq(payrollRuns.payrollYear, payrollYear),
-            eq(payrollRuns.payrollMonth, payrollMonth)
-          )
-        )
-      const runNo = `PR-${payrollYear}-${monthStr}-${String(Number(runCount) + 1).padStart(2, '0')}`
+      const runNo = await nextDocNo(db, session.user.tenantId, 'payroll_run', { period: `${payrollYear}-${monthStr}` })
 
       // Create payroll run
       const [run] = await db
@@ -161,7 +153,7 @@ export async function POST(request: NextRequest) {
           })
 
           slipCount++
-          const slipNo = `SAL-${payrollYear}-${monthStr}-${String(slipCount).padStart(3, '0')}`
+          const slipNo = await nextDocNo(db, session.user.tenantId, 'salary_slip', { period: `${payrollYear}-${monthStr}` })
           const startDate = `${payrollYear}-${monthStr}-01`
           const endDate = new Date(payrollYear, payrollMonth, 0).toISOString().split('T')[0]
 

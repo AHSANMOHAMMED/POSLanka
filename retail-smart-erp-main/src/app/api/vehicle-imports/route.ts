@@ -10,6 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { vehicleImportsListSchema, createVehicleImportSchema } from '@/lib/validation/schemas/vehicles'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all vehicle imports for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -103,15 +104,8 @@ export async function POST(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
-      // Auto-generate import number: IM-YYYYMMDD-NNN
-      const today = new Date()
-      const datePrefix = `IM-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`
-      const [existing] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(vehicleImports)
-        .where(ilike(vehicleImports.importNo, `${datePrefix}%`))
-      const seq = (existing?.count || 0) + 1
-      const importNo = `${datePrefix}-${String(seq).padStart(3, '0')}`
+      // Import number IM-YYYYMMDD-NNN from the per-tenant daily sequence
+      const importNo = await nextDocNo(db, session.user.tenantId, 'vehicle_import')
 
       const [newImport] = await db.insert(vehicleImports).values({
         tenantId: session.user.tenantId,

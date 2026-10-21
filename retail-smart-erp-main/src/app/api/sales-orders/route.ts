@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/auth/roles'
-import { withAuthTenant, withAuthTenantTransaction, TenantDb } from '@/lib/db'
+import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { salesOrders, salesOrderItems, customers, warehouses, users } from '@/lib/db/schema'
 import { eq, and, ilike, sql, desc, asc, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
@@ -10,30 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { salesOrdersListSchema, createSalesOrderSchema } from '@/lib/validation/schemas/sales'
-
-// Generate order number with transaction lock
-async function generateOrderNo(tx: TenantDb): Promise<string> {
-  const today = new Date()
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-  const prefix = `SO-${dateStr}-`
-
-  // Find the highest number for today with FOR UPDATE lock (RLS filters by tenant)
-  const existing = await tx
-    .select({ orderNo: salesOrders.orderNo })
-    .from(salesOrders)
-    .where(ilike(salesOrders.orderNo, `${prefix}%`))
-    .orderBy(desc(salesOrders.orderNo))
-    .limit(1)
-    .for('update')
-
-  let nextNum = 1
-  if (existing.length > 0) {
-    const lastNum = parseInt(existing[0].orderNo.split('-').pop() || '0', 10)
-    nextNum = lastNum + 1
-  }
-
-  return `${prefix}${nextNum.toString().padStart(3, '0')}`
-}
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all sales orders for the tenant (with pagination support)
 export async function GET(request: NextRequest) {
@@ -216,7 +193,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate order number with lock
-    const orderNo = await generateOrderNo(tx)
+    const orderNo = await nextDocNo(tx, session.user.tenantId, 'sales_order')
 
     // Create sales order
     const [newOrder] = await tx.insert(salesOrders).values({

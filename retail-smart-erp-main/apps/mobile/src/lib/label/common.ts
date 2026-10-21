@@ -290,3 +290,36 @@ export function normalizeItems(items: (LabelPrintItem | LabelItemData)[]): Label
       : { item: i as LabelItemData, quantity: 1 }
   )
 }
+
+// ---------------------------------------------------------------------------
+// Currency symbol (mirror of web getCurrencySymbol in src/lib/utils/currency.ts,
+// which the web label renderer uses via useTenantCurrency().symbol)
+// ---------------------------------------------------------------------------
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: '$',
+  LKR: 'Rs',
+  EUR: '€',
+  GBP: '£',
+  INR: '₹',
+  AUD: 'A$',
+  CAD: 'C$',
+  SGD: 'S$',
+  AED: 'د.إ',
+  MYR: 'RM',
+  PKR: '₨',
+  BDT: '৳',
+  ZAR: 'R',
+  NGN: '₦',
+  KES: 'KSh',
+}
+
+/**
+ * Currency prefix for price fields on labels, from the tenant currency code (GET /api/tenant
+ * `currency`, default LKR → "Rs"). Same table as the web; raw label printers (TSPL/ZPL/EPL)
+ * only print ASCII, so a non-ASCII symbol (€, ₹, ...) falls back to the ISO code + space.
+ */
+export function labelCurrencySymbol(currencyCode: string | null | undefined): string {
+  const code = String(currencyCode || 'LKR').trim().toUpperCase() || 'LKR'
+  const symbol = CURRENCY_SYMBOLS[code] || code
+  return /^[\x20-\x7e]+$/.test(symbol) ? symbol : `${code} `
+}

@@ -19,6 +19,8 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 import { applyStockChange, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
 import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
+import { allocateSaleLineBatches } from '@/lib/inventory/batches'
+import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 
 // POST convert work order to invoice
 export async function POST(
@@ -307,6 +309,7 @@ export async function POST(
 
         // Create sale items from parts and update stock
         // Use row-level locking to prevent race conditions in multi-user scenarios
+        let batchSettings: Awaited<ReturnType<typeof getTenantSalesSettings>>['batches'] | null = null
         for (const part of workOrder.parts) {
           const item = part.item
           if (!item) continue
@@ -338,7 +341,7 @@ export async function POST(
           }
 
           // Create sale item
-          await tx.insert(saleItems).values({
+          const [partLine] = await tx.insert(saleItems).values({
             tenantId: session.user.tenantId,
             saleId: newSale.id,
             itemId: part.itemId,
@@ -349,7 +352,7 @@ export async function POST(
             tax: '0',
             total: part.total,
             serialNumberIds: pickedSerialIds,
-          })
+          }).returning({ id: saleItems.id })
 
           // Update warehouse stock (safe now because row is locked)
           if (item.trackStock && workOrder.warehouseId) {
@@ -374,6 +377,22 @@ export async function POST(
               }
               const change = await applyStockChange(tx, input)
               stockChanges.push({ result: change, input })
+
+              // E1: batch-tracked parts draw FEFO from item_batches (stock row locked above) and
+              // record sale_item_batches for returns / voids. Missing batch quantity rejects the
+              // invoice, like missing stock does.
+              if (item.trackBatches) {
+                batchSettings ??= (await getTenantSalesSettings(tx, session.user.tenantId)).batches
+                await allocateSaleLineBatches(tx, {
+                  tenantId: session.user.tenantId,
+                  warehouseId: workOrder.warehouseId,
+                  itemId: part.itemId,
+                  qty: requiredQty,
+                  saleItemId: partLine.id,
+                  allowExpired: batchSettings.allowExpiredSale,
+                  itemName: item.name,
+                })
+              }
             }
           }
         }

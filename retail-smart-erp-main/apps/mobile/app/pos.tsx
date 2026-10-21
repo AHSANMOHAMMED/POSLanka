@@ -43,6 +43,7 @@ import { ReturnModal } from '../src/components/ReturnModal'
 import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
 import { loadBusinessInfo, type BusinessInfo } from '../src/lib/receipt'
 import { AlertsBell } from '../src/components/AlertsBell'
+import { useKitchenTickets } from '../src/lib/kitchenPrint'
 
 interface Item {
   id: string
@@ -222,6 +223,8 @@ export default function PosScreen() {
     if (cart.length > 0 && !clientSaleId) setClientSaleId(Crypto.randomUUID())
     else if (cart.length === 0 && clientSaleId) setClientSaleId(null)
   }, [cart.length, clientSaleId])
+  // Restaurants: kitchen tickets (KOT) for this cart on the kitchen-role printer.
+  const kitchen = useKitchenTickets({ enabled: user?.businessType === 'restaurant', orderKey: clientSaleId, server: user?.name })
 
   // ------------------------------------------------------------------ catalog
   useEffect(() => {
@@ -921,6 +924,7 @@ export default function PosScreen() {
           setCartDrawerVisible(false)
           setTenderVisible(true)
         }}
+        onSendToKitchen={kitchen.enabled ? () => void kitchen.send(cart, 'manual') : undefined}
         tax={cartTax.tax}
         taxLabel={taxLabel}
         taxInclusive={cartTax.hasInclusiveTax}
@@ -939,6 +943,7 @@ export default function PosScreen() {
           business={business}
           cashierName={user?.name}
           onSaleComplete={(data) => {
+            void kitchen.send(cart, 'sale')
             setTenderVisible(false)
             setCart([])
             setCustomer(null)

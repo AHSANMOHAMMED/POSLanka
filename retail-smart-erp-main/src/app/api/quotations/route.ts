@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { eq, desc, and, sql } from 'drizzle-orm'
+import { eq, desc, and } from 'drizzle-orm'
 import { withAuthTenant } from '@/lib/db/with-auth-tenant'
 import { quotations, quotationItems } from '@/lib/db/schema'
 import { requireTenantFeature } from '@/lib/features/check'
 import { z } from 'zod'
 import { validateBody } from '@/lib/validation/helpers'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 const itemSchema = z.object({
   itemId: z.string().uuid().optional().nullable(),
@@ -73,11 +74,7 @@ export async function POST(request: NextRequest) {
       return { error: details, status: 400 as const }
     }
 
-    const countResult = await db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(quotations)
-      .where(eq(quotations.tenantId, session.user.tenantId))
-    const nextNo = `QT-${String((countResult[0]?.count || 0) + 1).padStart(5, '0')}`
+    const nextNo = await nextDocNo(db, session.user.tenantId, 'quotation')
 
     const [quote] = await db
       .insert(quotations)

@@ -1,36 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuthTenantTransaction, TenantDb } from '@/lib/db'
+import { withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
 import { supplierQuotations, supplierQuotationItems, purchaseOrders, purchaseOrderItems } from '@/lib/db/schema'
-import { eq, ilike, desc } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { convertQuotationToPOSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
-
-async function generateOrderNo(tx: TenantDb): Promise<string> {
-  const today = new Date()
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-  const prefix = `PO-${dateStr}-`
-
-  const existing = await tx
-    .select({ orderNo: purchaseOrders.orderNo })
-    .from(purchaseOrders)
-    .where(ilike(purchaseOrders.orderNo, `${prefix}%`))
-    .orderBy(desc(purchaseOrders.orderNo))
-    .limit(1)
-    .for('update')
-
-  let nextNum = 1
-  if (existing.length > 0) {
-    const lastNum = parseInt(existing[0].orderNo.split('-').pop() || '0', 10)
-    nextNum = lastNum + 1
-  }
-
-  return `${prefix}${nextNum.toString().padStart(3, '0')}`
-}
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // POST - Convert awarded quotation to PO
 export async function POST(
@@ -70,7 +49,7 @@ export async function POST(
       return { error: NextResponse.json({ error: 'Quotation has no items' }, { status: 400 }) }
     }
 
-    const orderNo = await generateOrderNo(tx)
+    const orderNo = await nextDocNo(tx, session.user.tenantId, 'purchase_order')
 
     // Recalculate tax using templates for PO (dual mode)
     const lineItems = qItems.map(item => ({

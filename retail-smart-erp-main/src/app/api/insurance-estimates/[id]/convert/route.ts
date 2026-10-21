@@ -12,6 +12,7 @@ import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { convertEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // POST convert approved estimate to work order (supports partial conversion)
 export async function POST(
@@ -351,14 +352,8 @@ export async function POST(
           throw new Error('INVALID_STATUS')
         }
 
-        // Generate work order number atomically (RLS scopes to tenant)
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${workOrders.orderNo})` })
-          .from(workOrders)
-
-        const lastOrderNo = maxResult?.maxNo
-        const nextNumber = lastOrderNo ? parseInt(lastOrderNo.replace(/\D/g, '')) + 1 : 1
-        const orderNo = `WO-${String(nextNumber).padStart(6, '0')}`
+        // Work order number from the per-tenant sequence
+        const orderNo = await nextDocNo(tx, session.user.tenantId, 'work_order')
 
         // Create work order with customer complaint containing estimate info
         const customerComplaint = isDirectEstimate

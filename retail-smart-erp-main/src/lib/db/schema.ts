@@ -3000,6 +3000,10 @@ export const purchaseItems = pgTable('purchase_items', {
   taxTemplateId: uuid('tax_template_id'),
   taxBreakdown: jsonb('tax_breakdown'),
   total: decimal('total', { precision: 12, scale: 2 }).notNull(),
+  // D1 (drizzle/0143): PO line this invoice line came from, and how much it added to
+  // purchase_order_items.received_quantity (null = legacy row, unknown)
+  purchaseOrderItemId: uuid('purchase_order_item_id'),
+  poReceivedQty: decimal('po_received_qty', { precision: 12, scale: 3 }),
 })
 
 // ==================== PURCHASE ORDERS ====================
@@ -6072,6 +6076,10 @@ export interface SaleFlags {
   priceDifferences?: Array<{ itemId: string; name?: string; sold: number; catalog: number }>
   taxDifference?: { client: number; server: number; difference: number; withinTolerance: boolean }
   stockShortfall?: Array<{ itemId: string; name?: string; quantity: number; available: number }>
+  /** D1: offline sale of batch-tracked items beyond the recorded batch quantity */
+  batchShortfall?: Array<{ itemId: string; name?: string; quantity: number; allocated: number }>
+  /** E1: restaurant recipe ingredients consumed beyond the recorded batch quantity */
+  ingredientBatchShortfall?: Array<{ itemId: string; name?: string; quantity: number; allocated: number }>
   [key: string]: unknown
 }
 
@@ -6116,3 +6124,28 @@ export const alertDedupe = pgTable('alert_dedupe', {
   dedupeKey: varchar('dedupe_key', { length: 200 }).notNull(),
   lastSentAt: timestamp('last_sent_at').defaultNow().notNull(),
 }, (t) => [primaryKey({ columns: [t.tenantId, t.dedupeKey] })])
+
+// ===== D3 overrides =====
+// Per-tenant hiding of shared system defaults (tenant_id IS NULL rows). See drizzle/0144.
+export const tenantHiddenDefaults = pgTable('tenant_hidden_defaults', {
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  entity: varchar('entity', { length: 40 }).notNull().$type<'vehicle_type' | 'inspection_template'>(),
+  entityId: uuid('entity_id').notNull(),
+  hiddenAt: timestamp('hidden_at').defaultNow().notNull(),
+  hiddenBy: uuid('hidden_by').references(() => users.id, { onDelete: 'set null' }),
+}, (t) => [primaryKey({ columns: [t.tenantId, t.entity, t.entityId] })])
+
+// ===== D1 batches =====
+// Batch allocations of sale lines (drizzle/0143_sale_batches_purchasing.sql). Sale lines draw
+// from item_batches FEFO (src/lib/inventory/batches.ts); return lines record the batch the
+// returned quantity went back into. alloc_order = allocation order (returns restore LIFO).
+export const saleItemBatches = pgTable('sale_item_batches', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  saleItemId: uuid('sale_item_id').notNull().references(() => saleItems.id, { onDelete: 'cascade' }),
+  batchId: uuid('batch_id').notNull().references(() => itemBatches.id),
+  quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull(),
+  returnedQuantity: decimal('returned_quantity', { precision: 12, scale: 3 }).notNull().default('0'),
+  allocOrder: integer('alloc_order').notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})

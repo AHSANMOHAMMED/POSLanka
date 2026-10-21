@@ -27,6 +27,7 @@ import {
   type ZReportInput,
 } from './escpos'
 import { code128Svg } from './code128'
+import { businessHeaderHtml, escapeHtml, zReportHtml } from './printHtml'
 import { qrSvg } from './qr'
 import {
   encodeLabels,
@@ -523,9 +524,6 @@ export async function printBytes(bytes: Uint8Array, settingsOverride?: PrinterSe
 // ---------------------------------------------------------------------------
 // System transport (expo-print)
 // ---------------------------------------------------------------------------
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
 async function printHtml(bodyHtml: string, s: PrinterSettings): Promise<void> {
   const widthMm = s.paperWidth === 80 ? 80 : 58
@@ -579,34 +577,15 @@ export function receiptHtml(input: ReceiptInput): string {
   const payments = (input.payments || [])
     .map((p) => `<tr><td>${escapeHtml(paymentLabel(p.method))}${p.reference ? ` (${escapeHtml(p.reference)})` : ''}</td><td class="r">${money(p.amount)}</td></tr>`)
     .join('')
-  const biz = input.business
-  const bizLines = [
-    biz.legalName && biz.legalName.trim().toLowerCase() !== biz.name.trim().toLowerCase() ? biz.legalName : null,
-    biz.address,
-    biz.phone ? `Tel: ${biz.phone}` : null,
-    biz.email,
-    biz.website,
-    biz.taxId ? `VAT/TIN: ${biz.taxId}` : null,
-    biz.brn ? `BRN: ${biz.brn}` : null,
-  ]
-    .filter(Boolean)
-    .map((l) => `<div class="c">${escapeHtml(String(l))}</div>`)
-    .join('')
   const headerLines = input.headerLines?.length ? input.headerLines : input.header ? [input.header] : []
   const footerLines = input.footerLines?.length ? input.footerLines : [input.footer || 'Thank you for shopping with us!']
-  const logo =
-    input.logo?.pngBase64 && /^[A-Za-z0-9+/=]+$/.test(input.logo.pngBase64)
-      ? `<div class="c"><img src="data:image/png;base64,${input.logo.pngBase64}" style="width:${Math.min(100, Math.max(40, input.logo.widthPct || 60))}%;height:auto" alt=""></div>`
-      : ''
   const code = invoiceCodeFor(input)
   const codes = [
     code.barcode ? `<div class="c" style="margin:6px auto 0;width:85%">${code128Svg(code.value, { height: 40 })}</div>` : '',
     code.qr ? `<div class="c" style="margin-top:6px">${receiptQrSvg(code.value)}</div>` : '',
   ].join('')
   return `
-    ${logo}
-    <div class="c b big">${escapeHtml(biz.name)}</div>
-    ${bizLines}
+    ${businessHeaderHtml(input.business, input.logo)}
     ${headerLines.map((h) => `<div class="c">${escapeHtml(h).replace(/\n/g, '<br>')}</div>`).join('')}
     <hr>
     <div class="b">${input.isReturn ? 'RETURN / CREDIT NOTE' : 'SALES RECEIPT'}</div>
@@ -642,41 +621,6 @@ function receiptQrSvg(value: string): string {
   } catch {
     return `<div style="font-size:10px">${escapeHtml(value)}</div>`
   }
-}
-
-function zReportHtml(input: ZReportInput): string {
-  const tenders = input.tenders
-    .map((t) => {
-      const variance = t.variance ?? (t.actual ?? 0) - (t.expected ?? 0)
-      return `<tr><td>${escapeHtml(paymentLabel(t.method))}</td><td class="r">${money(t.expected ?? 0)}</td><td class="r">${money(t.actual ?? 0)}</td><td class="r">${variance > 0 ? '+' : ''}${money(variance)}</td></tr>`
-    })
-    .join('')
-  const tv = input.summary.totalVariance
-  return `
-    <div class="c b big">${escapeHtml(input.business.name)}</div>
-    <div class="c b">${escapeHtml(input.title || 'Z REPORT - SHIFT CLOSE')}</div>
-    <hr>
-    <table>
-      ${input.entryNumber ? `<tr><td>Closing</td><td class="r">${escapeHtml(input.entryNumber)}</td></tr>` : ''}
-      ${input.counter ? `<tr><td>Counter</td><td class="r">${escapeHtml(input.counter)}</td></tr>` : ''}
-      ${input.cashier ? `<tr><td>Cashier</td><td class="r">${escapeHtml(input.cashier)}</td></tr>` : ''}
-      ${input.openedAt ? `<tr><td>Opened</td><td class="r">${escapeHtml(formatReceiptDate(input.openedAt))}</td></tr>` : ''}
-      <tr><td>Closed</td><td class="r">${escapeHtml(formatReceiptDate(input.closedAt || new Date()))}</td></tr>
-    </table>
-    <hr>
-    <table>
-      <tr><td>Gross sales</td><td class="r">${money(input.summary.totalSales)}</td></tr>
-      <tr><td>Returns</td><td class="r">-${money(Math.abs(input.summary.totalReturns))}</td></tr>
-      <tr class="b"><td>Net sales</td><td class="r">${money(input.summary.netSales)}</td></tr>
-      <tr><td>Transactions</td><td class="r">${input.summary.totalTransactions}</td></tr>
-    </table>
-    <hr>
-    <table><tr class="b"><td>Tender</td><td class="r">Expected</td><td class="r">Counted</td><td class="r">Variance</td></tr>${tenders}</table>
-    <hr>
-    <table><tr class="b big"><td>TOTAL VARIANCE</td><td class="r">${tv > 0 ? '+' : ''}${money(tv)}</td></tr></table>
-    ${input.notes ? `<p>Notes: ${escapeHtml(input.notes)}</p>` : ''}
-    <p>Signature: ____________________</p>
-    <div class="c">Powered by POSLanka</div>`
 }
 
 // ---------------------------------------------------------------------------

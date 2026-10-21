@@ -109,6 +109,26 @@ interface SalePostingData {
   refundMethod?: string // For returns: the actual method used for refund
   costCenterId?: string | null
   taxBreakdown?: TaxBreakdownItem[]
+  /**
+   * D1: settlement per payment method (split tender, exchange offset + collected difference).
+   * When present (non-empty), the receivable is settled with one debit per method and these
+   * amounts replace `amountPaid` / `paymentMethod` for the settlement entries.
+   */
+  paymentSplits?: Array<{ method: string; amount: number }>
+}
+
+/** Debit account for money received by `method` (Modes of Payment, then defaults). */
+async function resolveReceiptAccount(tx: DbOrTx, tenantId: string, config: AccountingConfig, method: string): Promise<string> {
+  if (method === 'gift_card' && config.defaultGiftCardLiabilityAccountId) {
+    // Gift card payment: reduce the liability (someone previously bought this card)
+    return config.defaultGiftCardLiabilityAccountId
+  }
+  const modeAccount = await resolvePaymentAccountFromMode(tx, tenantId, method)
+  if (modeAccount) return modeAccount
+  if (method === 'cash') return config.defaultCashAccountId!
+  if (method === 'bank_transfer' || method === 'card') return config.defaultBankAccountId || config.defaultCashAccountId!
+  console.warn(`[GL] No Mode of Payment found for method "${method}" (tenant: ${tenantId}). Falling back to default Cash account.`)
+  return config.defaultCashAccountId!
 }
 
 /**
@@ -264,8 +284,31 @@ export async function postSaleToGL(
       })
     }
 
-    // If payment received immediately (cash/card/gift_card), settle the receivable
-    if (data.amountPaid > 0) {
+    // D1: split settlement — one debit per method, aggregated
+    const splitTotals = new Map<string, number>()
+    for (const sp of data.paymentSplits || []) {
+      const amt = roundCurrency(Number(sp.amount) || 0)
+      if (amt > 0) splitTotals.set(sp.method, roundCurrency((splitTotals.get(sp.method) || 0) + amt))
+    }
+    if (splitTotals.size > 0) {
+      for (const [method, amount] of splitTotals) {
+        entries.push({
+          accountId: await resolveReceiptAccount(tx, tenantId, config, method),
+          debit: amount,
+          costCenterId,
+          remarks: `Payment received (${method})`,
+        })
+        entries.push({
+          accountId: config.defaultReceivableAccountId,
+          credit: amount,
+          partyType: data.customerId ? 'customer' : null,
+          partyId: data.customerId || null,
+          costCenterId,
+          remarks: 'Payment against sale',
+        })
+      }
+    } else if (data.amountPaid > 0) {
+      // If payment received immediately (cash/card/gift_card), settle the receivable
       let resolvedPaymentAccountId: string
 
       if (data.paymentMethod === 'gift_card' && config.defaultGiftCardLiabilityAccountId) {

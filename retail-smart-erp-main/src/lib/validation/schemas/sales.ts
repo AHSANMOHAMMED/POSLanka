@@ -37,6 +37,8 @@ const saleCartItemSchema = cartItemSchema.extend({
   taxAmount: z.coerce.number().min(0).optional(),
   serialNumberIds: z.array(uuidSchema).optional(),
   batchId: optionalUuid,
+  /** D1: batch number (e.g. GS1 AI 10 from a scan), resolved to a batch of the item */
+  batchNumber: z.string().trim().max(100).optional(),
   notes: z.string().max(500).optional(),
   /** Returns: the original sale line being returned (W8). */
   originalSaleItemId: optionalUuid,
@@ -87,6 +89,11 @@ export const createSaleSchema = z.object({
   clientSaleId: z.string().uuid().optional(),
   /** Receipt number printed while offline ('OFF-<device>-<seq>'), unique per tenant */
   offlineRef: z.string().trim().min(1).max(40).optional(),
+  /**
+   * D2: the receipt number actually printed when `offlineRef` had to be changed after an
+   * OFFLINE_REF_CONFLICT; stored in sales.flags.offlineRefAlias so lookups by the printed number work.
+   */
+  offlineRefAlias: z.string().trim().min(1).max(40).optional(),
   /** Returns: reason code (required for returns without an original invoice) */
   returnReason: z.string().trim().max(50).optional(),
   returnNotes: z.string().max(1000).optional(),

@@ -59,6 +59,8 @@ export interface BusinessInfo {
   taxId?: string | null
   brn?: string | null
   logoUrl?: string | null
+  /** Tenant currency code (GET /api/tenant `currency`, e.g. LKR). */
+  currency?: string | null
   /** Tenant-level receipt settings (effective). */
   receiptSettings?: Partial<ReceiptSettingsLite> | null
   /** Logo raster for the configured paper width (+ PNG for HTML receipts). */
@@ -105,6 +107,7 @@ interface TenantResponse {
   taxId?: string | null
   brn?: string | null
   logoUrl?: string | null
+  currency?: string | null
   receiptSettings?: Partial<ReceiptSettingsLite> | null
 }
 
@@ -135,6 +138,7 @@ export async function loadBusinessInfo(force = false): Promise<BusinessInfo> {
       taxId: t.taxId || null,
       brn: t.brn || null,
       logoUrl: t.logoUrl || null,
+      currency: t.currency || null,
       receiptSettings: t.receiptSettings || null,
       logo: null,
       fetchedAt: Date.now(),

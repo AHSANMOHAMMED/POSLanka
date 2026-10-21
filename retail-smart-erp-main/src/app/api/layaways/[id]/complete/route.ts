@@ -18,6 +18,8 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 import { applyStockChange, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
 import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
+import { allocateSaleLineBatches } from '@/lib/inventory/batches'
+import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 
 // POST complete a layaway (convert to sale)
 export async function POST(
@@ -266,6 +268,7 @@ export async function POST(
     // Create sale items and update stock
     let totalCOGS = 0
     const stockChanges: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
+    let batchSettings: Awaited<ReturnType<typeof getTenantSalesSettings>>['batches'] | null = null
     for (let idx = 0; idx < layawayItemsData.length; idx++) {
       const item = layawayItemsData[idx]
       const quantity = parseCurrency(item.quantity)
@@ -275,7 +278,7 @@ export async function POST(
       const itemTaxRate = itemLineTotal > 0 ? roundCurrency((itemTaxAmount / itemLineTotal) * 100) : 0
 
       // Create sale item with per-item tax
-      await tx.insert(saleItems).values({
+      const [saleLine] = await tx.insert(saleItems).values({
         tenantId: session.user.tenantId,
         saleId: newSale.id,
         itemId: item.itemId,
@@ -286,12 +289,12 @@ export async function POST(
         taxAmount: itemTaxAmount.toString(),
         taxBreakdown: perItem?.taxBreakdown || null,
         total: item.total,
-      })
+      }).returning({ id: saleItems.id })
 
       // Update stock if item exists and tracks stock
       if (item.itemId) {
         const [itemRecord] = await tx
-          .select({ id: itemsTable.id, trackStock: itemsTable.trackStock, costPrice: itemsTable.costPrice })
+          .select({ id: itemsTable.id, trackStock: itemsTable.trackStock, trackBatches: itemsTable.trackBatches, costPrice: itemsTable.costPrice })
           .from(itemsTable)
           .where(eq(itemsTable.id, item.itemId))
 
@@ -319,6 +322,22 @@ export async function POST(
           }
           const change = await applyStockChange(tx, input)
           stockChanges.push({ result: change, input })
+
+          // E1: batch-tracked lines draw FEFO from item_batches (stock row locked above) and
+          // record sale_item_batches for returns / voids. Non-negative policy: missing batch
+          // quantity rejects the completion.
+          if (itemRecord.trackBatches && quantity > 0) {
+            batchSettings ??= (await getTenantSalesSettings(tx, session.user.tenantId)).batches
+            await allocateSaleLineBatches(tx, {
+              tenantId: session.user.tenantId,
+              warehouseId,
+              itemId: item.itemId,
+              qty: quantity,
+              saleItemId: saleLine.id,
+              allowExpired: batchSettings.allowExpiredSale,
+              itemName: item.itemName,
+            })
+          }
         }
       }
     }

@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateInspectionTemplateSchema } from '@/lib/validation/schemas/service-types'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { otherFieldsSet, setDefaultHidden } from '@/lib/defaults/hidden-defaults'
 
 // GET single inspection template
 export async function GET(
@@ -90,8 +91,19 @@ export async function PUT(
         return NextResponse.json({ error: 'Template not found' }, { status: 404 })
       }
 
-      // System defaults (tenantId is null) are shared by every company and read-only for tenants (RLS)
+      // System defaults (tenantId is null) are shared by every company and read-only for tenants (RLS).
+      // {isActive} alone hides / re-shows the template for THIS company only (tenant_hidden_defaults).
       if (!existingTemplate.tenantId) {
+        if (typeof body.isActive === 'boolean' && otherFieldsSet(body).length === 0) {
+          const hidden = !body.isActive
+          await setDefaultHidden(db, session!.user.tenantId, 'inspection_template', id, hidden, session!.user.id)
+          logAndBroadcast(session!.user.tenantId, 'inspection-template', 'updated', id, {
+            userId: session!.user.id,
+            entityName: existingTemplate.name,
+            description: hidden ? 'Hid system inspection template for this company' : 'Restored system inspection template for this company',
+          })
+          return NextResponse.json({ ...existingTemplate, hidden })
+        }
         return NextResponse.json({ error: 'Cannot modify system default templates' }, { status: 403 })
       }
 
@@ -125,6 +137,14 @@ export async function PUT(
     logError('api/inspection-templates/[id]', error)
     return NextResponse.json({ error: 'Failed to update inspection template' }, { status: 500 })
   }
+}
+
+// PATCH — same as PUT; on a system default only {isActive} is accepted (per-company hide/show)
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  return PUT(request, context)
 }
 
 // DELETE inspection template (only tenant's own)

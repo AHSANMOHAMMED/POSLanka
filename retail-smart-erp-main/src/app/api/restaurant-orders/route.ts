@@ -1,3 +1,4 @@
+import { nextDocNo } from '@/lib/documents/numbering'
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
@@ -167,17 +168,9 @@ export async function POST(request: NextRequest) {
 
       // Create order with atomic order number generation
       const result = await db.transaction(async (tx) => {
-        // Advisory lock to prevent duplicate order numbers under concurrency
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(4)`)
-
-        // Generate order number atomically
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${restaurantOrders.orderNo})` })
-          .from(restaurantOrders)
-
-        const lastOrderNo = maxResult?.maxNo
-        const nextNumber = lastOrderNo ? parseInt(lastOrderNo.replace(/\D/g, '')) + 1 : 1
-        const orderNo = `RO-${String(nextNumber).padStart(6, '0')}`
+        // Per-tenant order number (row-locked tenant_sequences upsert, seeded lazily from the
+        // numeric max of existing RO- numbers): unique and continuous, tenants never block each other
+        const orderNo = await nextDocNo(tx, session.user.tenantId, 'restaurant_order')
 
         // Create the restaurant order
         const orderResult = await tx.insert(restaurantOrders).values({

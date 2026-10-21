@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { paymentRequestsListSchema, createPaymentRequestSchema } from '@/lib/validation/schemas/accounting'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 export async function GET(request: NextRequest) {
   const qp = validateSearchParams(request, paymentRequestsListSchema)
@@ -60,11 +61,7 @@ export async function POST(request: NextRequest) {
     const tenantCurrency = tenant[0]?.currency || 'LKR'
 
     // Generate request number
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('payment_request_' || ${tenantId}))`)
-    const [maxResult] = await tx.select({
-      maxNum: sql<string>`COALESCE(MAX(CAST(SUBSTRING(${paymentRequests.requestNumber} FROM 5) AS integer)), 0)`,
-    }).from(paymentRequests)
-    const requestNumber = `PRQ-${String(Number(maxResult?.maxNum || 0) + 1).padStart(4, '0')}`
+    const requestNumber = await nextDocNo(tx, tenantId, 'payment_request')
 
     const [pr] = await tx.insert(paymentRequests).values({
       tenantId,

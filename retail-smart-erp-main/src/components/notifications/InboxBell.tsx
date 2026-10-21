@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { BellRing, CheckCheck, Settings2 } from 'lucide-react'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useRealtimeData } from '@/hooks/useRealtimeData'
 
 interface InboxItem {
   id: string
@@ -15,7 +16,8 @@ interface InboxItem {
   createdAt: string
 }
 
-const POLL_MS = 60_000
+/** Safety-net poll; new alerts normally arrive via the per-user `inbox-notification` WS event. */
+const FALLBACK_POLL_MS = 5 * 60_000
 
 function formatRelative(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -62,10 +64,12 @@ export function InboxBell() {
     }
   }, [])
 
+  // Initial load + refresh whenever notify() pushes an inbox event to this user.
+  useRealtimeData(load, { entityType: 'inbox-notification', pollingInterval: 0 })
+
   useEffect(() => {
-    const first = setTimeout(() => { void load() }, 0)
-    const t = setInterval(() => { void load() }, POLL_MS)
-    return () => { clearTimeout(first); clearInterval(t) }
+    const t = setInterval(() => { if (!document.hidden) void load() }, FALLBACK_POLL_MS)
+    return () => clearInterval(t)
   }, [load])
 
   useEffect(() => {

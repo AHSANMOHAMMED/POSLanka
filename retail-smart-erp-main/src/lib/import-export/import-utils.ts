@@ -38,21 +38,49 @@ export interface ValidationResult {
   columns: string[]
 }
 
-// Parse CSV string into raw rows using papaparse for robust parsing
-export function parseCsv(csvString: string): Record<string, string>[] {
-  const result = Papa.parse(csvString, {
+/**
+ * Maximum data rows processed per import file. Parsers keep at most MAX_IMPORT_ROWS + 1 rows
+ * (the extra row only signals "file is larger" so validation can warn) and stop reading there.
+ */
+export const MAX_IMPORT_ROWS = 100_000
+
+/** Rows validated between event-loop yields in validateRowsChunked. */
+export const VALIDATION_CHUNK_ROWS = 5_000
+
+/**
+ * Parse CSV text into raw rows (papaparse, row-by-row `step` mode): rows are trimmed and
+ * collected one at a time — no intermediate full-result arrays — and parsing aborts once
+ * `maxRows + 1` data rows are held, so an oversized file never materialises completely.
+ */
+export function parseCsv(csvString: string, maxRows: number = MAX_IMPORT_ROWS): Record<string, string>[] {
+  const rows: Record<string, string>[] = []
+  let first = true
+  let warnings = 0
+  let firstWarning: unknown = null
+
+  Papa.parse<Record<string, string>>(csvString, {
     header: true,
     skipEmptyLines: true,
     transformHeader: (header: string) => header.trim(),
     transform: (value: string) => value.trim(),
+    step: (result, parser) => {
+      if (result.errors.length > 0) {
+        warnings += result.errors.length
+        if (!firstWarning) firstWarning = result.errors[0]
+      }
+      const row = result.data
+      // Drop the template's instruction row (row 2) — only when every cell looks like an instruction
+      if (first) {
+        first = false
+        if (isInstructionRow(Object.values(row))) return
+      }
+      rows.push(row)
+      if (rows.length > maxRows) parser.abort()
+    },
   })
 
-  const rows = result.data as Record<string, string>[]
-  // Drop the template's instruction row (row 2) — only when every cell looks like an instruction
-  if (rows.length > 0 && isInstructionRow(Object.values(rows[0]))) rows.shift()
-
-  if (result.errors.length > 0) {
-    console.warn('CSV parsing warnings:', result.errors)
+  if (warnings > 0) {
+    console.warn(`CSV parsing warnings: ${warnings}`, firstWarning)
   }
 
   return rows
@@ -71,85 +99,107 @@ export function isInstructionRow(cells: unknown[]): boolean {
   return values.every(v => v.split(/,\s*/).every(tok => INSTRUCTION_TOKEN.test(tok.trim())))
 }
 
-// Parse XLSX buffer into raw rows using SheetJS (supports both .xls and .xlsx)
-export async function parseXlsx(buffer: ArrayBuffer): Promise<Record<string, string>[]> {
+function headerCell(val: unknown): string {
+  // Remove required marker
+  return cellToString(val).replace(/\s*\*$/, '')
+}
+
+/** Normalise a spreadsheet cell (SheetJS or ExcelJS value) to the trimmed string we import. */
+function cellToString(val: unknown): string {
+  if (val === null || val === undefined) return ''
+  if (val instanceof Date) return isNaN(val.getTime()) ? '' : val.toISOString().split('T')[0]
+  if (typeof val === 'object') {
+    const v = val as Record<string, unknown>
+    if (Array.isArray(v.richText)) return (v.richText as Array<{ text?: string }>).map(t => t.text || '').join('').trim()
+    if ('result' in v) return cellToString(v.result) // formula / shared formula
+    if ('text' in v) return cellToString(v.text) // hyperlink
+    if ('error' in v) return ''
+    return ''
+  }
+  return String(val).trim()
+}
+
+/** Shared row assembly for both XLSX readers. Returns false once the row cap is reached. */
+function makeRowCollector(maxRows: number) {
+  const rows: Record<string, string>[] = []
+  let headers: string[] | null = null
+  let dataRowNo = 0
+  const add = (cells: unknown[]): boolean => {
+    if (!headers) {
+      headers = cells.map(headerCell)
+      return true
+    }
+    dataRowNo++
+    // Skip the template instruction row (row 2) — only when it is clearly instructions
+    if (dataRowNo === 1 && isInstructionRow(cells)) return true
+    // Skip empty rows
+    if (!cells.some(v => cellToString(v) !== '')) return true
+    const record: Record<string, string> = {}
+    // Row may have fewer cells than headers (blank) or more (ignored)
+    headers.forEach((header, colIndex) => {
+      if (header) record[header] = cellToString(cells[colIndex])
+    })
+    rows.push(record)
+    return rows.length <= maxRows
+  }
+  return { rows, add }
+}
+
+/** Streaming .xlsx reader (ExcelJS WorkbookReader): first worksheet only, stops at the row cap. */
+async function parseXlsxStreaming(buffer: ArrayBuffer, maxRows: number): Promise<Record<string, string>[]> {
+  const mod = await import('exceljs')
+  const ExcelJS = (mod as unknown as { default?: typeof mod }).default ?? mod
+  const { Readable } = await import('stream')
+  const reader = new ExcelJS.stream.xlsx.WorkbookReader(Readable.from([Buffer.from(buffer)]), {
+    entries: 'emit',
+    sharedStrings: 'cache',
+    hyperlinks: 'ignore',
+    styles: 'cache', // needed to recognise date cells
+    worksheets: 'emit',
+  })
+  const collector = makeRowCollector(maxRows)
+  for await (const worksheet of reader) {
+    for await (const row of worksheet) {
+      // ExcelJS does not emit fully empty rows, so the first row seen is the header row
+      const values = Array.isArray(row.values) ? (row.values as unknown[]).slice(1) : []
+      if (!collector.add(values)) break
+    }
+    break // only the first worksheet is imported
+  }
+  return collector.rows
+}
+
+/** Legacy .xls (BIFF) — SheetJS loads the whole workbook; still capped at maxRows. */
+async function parseXlsxSheetJs(buffer: ArrayBuffer, maxRows: number): Promise<Record<string, string>[]> {
   const XLSX = await import('xlsx')
-
-  // Read workbook from buffer
-  const workbook = XLSX.read(buffer, { type: 'array' })
-
-  // We only process the first worksheet
+  const workbook = XLSX.read(buffer, { type: 'array', sheetRows: maxRows + 3 })
   const sheetName = workbook.SheetNames[0]
   if (!sheetName) return []
+  const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, blankrows: false, defval: '' }) as unknown[][]
+  const collector = makeRowCollector(maxRows)
+  for (const row of jsonData) {
+    if (!collector.add(row)) break
+  }
+  return collector.rows
+}
 
-  const worksheet = workbook.Sheets[sheetName]
-
-  // Convert to array of arrays to handle headers and skipping manually
-  const jsonData = XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    blankrows: false,
-    defval: ''
-  }) as unknown[][]
-
-  if (!jsonData || jsonData.length === 0) return []
-
-  const rows: Record<string, string>[] = []
-  let headers: string[] = []
-
-  // Process rows
-  for (let i = 0; i < jsonData.length; i++) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const row = jsonData[i] as any[]
-    const rowIndex = i + 1
-
-    // First row contains headers
-    if (rowIndex === 1) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      headers = row.map((val: any) => {
-        let strVal = String(val || '').trim()
-        // Remove required marker
-        strVal = strVal.replace(/\s*\*$/, '')
-        return strVal
-      })
-      continue
-    }
-
-    // Skip the template instruction row (row 2) — only when it is clearly instructions
-    if (rowIndex === 2 && isInstructionRow(row)) continue
-
-    // Skip empty rows
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const hasData = row.some((val: any) => val !== null && val !== undefined && String(val).trim() !== '')
-    if (!hasData) continue
-
-    // Build record from row values
-    const record: Record<string, string> = {}
-
-    // Safety check: ensure we don't access out of bounds if row has fewer cells than headers
-    // But also row might have more cells (ignore extra)
-    headers.forEach((header, colIndex) => {
-      if (header) {
-        const val = row[colIndex]
-        let strVal = ''
-        if (val instanceof Date) {
-          strVal = val.toISOString().split('T')[0]
-        } else if (val !== null && val !== undefined) {
-          strVal = String(val).trim()
-        }
-        record[header] = strVal
-      }
-    })
-
-    rows.push(record)
-
-    // Limit processing
-    if (rows.length >= 50000) {
-      console.warn('Excel file contains more than 50,000 rows. Processing limited to first 50,000 rows.')
-      break
+/**
+ * Parse a spreadsheet into raw rows (first worksheet; row 1 = headers).
+ * .xlsx (zip) is read with the ExcelJS streaming reader so 100k-row files are handled row by
+ * row; legacy .xls (or an .xlsx ExcelJS cannot read) falls back to SheetJS. Both stop once
+ * `maxRows + 1` data rows are held.
+ */
+export async function parseXlsx(buffer: ArrayBuffer, maxRows: number = MAX_IMPORT_ROWS): Promise<Record<string, string>[]> {
+  const head = new Uint8Array(buffer, 0, Math.min(2, buffer.byteLength))
+  const isZip = head[0] === 0x50 && head[1] === 0x4b // "PK"
+  if (isZip) {
+    try {
+      return await parseXlsxStreaming(buffer, maxRows)
+    } catch (err) {
+      console.warn('[import] streaming XLSX read failed, falling back to SheetJS:', err instanceof Error ? err.message : err)
     }
   }
-
-  return rows
+  return parseXlsxSheetJs(buffer, maxRows)
 }
 
 // Map column headers (label) to field keys.
@@ -271,10 +321,121 @@ function convertValue(field: EntityFieldConfig, transformedValue: string): { val
   }
 }
 
+interface RowValidationContext {
+  importFields: EntityFieldConfig[]
+  columnMapping: Record<string, string>
+  mode: ImportMode
+}
+
+function validateOneRow(rawRow: Record<string, string>, rowIndex: number, ctx: RowValidationContext): ParsedRow {
+  const { importFields, columnMapping, mode } = ctx
+  const errors: ImportError[] = []
+  const warnings: ImportWarning[] = []
+  const missingRequired: string[] = []
+  const cells: Record<string, string> = {}
+  const data: Record<string, unknown> = {}
+
+  // Map raw data using column mapping
+  for (const [header, value] of Object.entries(rawRow)) {
+    const mapped = columnMapping[header]
+    if (!mapped) continue
+    const fieldKey = isStockColumnKey(mapped) ? canonStockKey(mapped) : mapped
+    cells[fieldKey] = value === undefined || value === null ? '' : String(value)
+  }
+
+  for (const field of importFields) {
+    const strValue = (cells[field.key] ?? '').trim()
+
+    let transformedValue: string = strValue
+    if (field.transform === 'lowercase') transformedValue = strValue.toLowerCase()
+    if (field.transform === 'uppercase') transformedValue = strValue.toUpperCase()
+
+    if (strValue === CLEAR_TOKEN) {
+      if (mode === 'insert') {
+        if (field.required) missingRequired.push(field.label)
+        continue
+      }
+      if (field.required) {
+        errors.push({ row: rowIndex, column: field.label, message: `${field.label} cannot be cleared`, value: strValue })
+      } else {
+        data[field.key] = null
+      }
+      continue
+    }
+
+    if (!transformedValue) {
+      if (field.required) missingRequired.push(field.label)
+      continue
+    }
+
+    const converted = convertValue(field, transformedValue)
+    if (converted.error) {
+      errors.push({ row: rowIndex, column: field.label, message: converted.error, value: strValue })
+    } else {
+      data[field.key] = converted.value
+    }
+  }
+
+  if (mode === 'insert') {
+    for (const label of missingRequired) {
+      errors.push({ row: rowIndex, column: label, message: `${label} is required`, value: '' })
+    }
+  }
+
+  // raw is the parser's own row object (not copied — it is not mutated afterwards)
+  return { rowIndex, data, raw: rawRow, missingRequired, errors, warnings }
+}
+
+function startValidation(
+  rawRows: Record<string, string>[],
+  config: EntityConfig,
+  columnMapping: Record<string, string>,
+  mode: ImportMode,
+  businessType?: string,
+) {
+  const ctx: RowValidationContext = { importFields: getMappedImportFields(config, columnMapping, businessType), columnMapping, mode }
+  const result: ValidationResult = {
+    validRows: [],
+    invalidRows: [],
+    errors: [],
+    warnings: [],
+    totalRows: Math.min(rawRows.length, MAX_IMPORT_ROWS),
+    validCount: 0,
+    errorCount: 0,
+    columns: Object.values(columnMapping),
+  }
+  if (rawRows.length > MAX_IMPORT_ROWS) {
+    result.warnings.push({
+      row: 0,
+      column: '',
+      message: `File contains more than ${MAX_IMPORT_ROWS.toLocaleString('en-US')} rows. Only the first ${MAX_IMPORT_ROWS.toLocaleString('en-US')} will be processed.`,
+    })
+  }
+  const run = (from: number, to: number) => {
+    for (let i = from; i < to; i++) {
+      const parsed = validateOneRow(rawRows[i], i + 1, ctx) // 1-indexed for user display
+      if (parsed.errors.length > 0) {
+        result.invalidRows.push(parsed)
+        for (const e of parsed.errors) result.errors.push(e)
+      } else {
+        result.validRows.push(parsed)
+      }
+      for (const w of parsed.warnings) result.warnings.push(w)
+    }
+  }
+  const finish = () => {
+    result.validCount = result.validRows.length
+    result.errorCount = result.invalidRows.length
+    return result
+  }
+  return { run, finish, total: result.totalRows }
+}
+
 /**
  * Normalise + type-check rows (pure, no DB). Blank cells are left out of `data`
  * (blank = keep existing value on update); defaults are applied only when a row
  * is inserted. `__CLEAR__` sets a field to null in update/upsert mode.
+ * At most MAX_IMPORT_ROWS rows are processed (a warning is added for larger files).
  */
 export function validateRows(
   rawRows: Record<string, string>[],
@@ -283,100 +444,27 @@ export function validateRows(
   mode: ImportMode,
   businessType?: string
 ): ValidationResult {
-  const importFields = getMappedImportFields(config, columnMapping, businessType)
+  const v = startValidation(rawRows, config, columnMapping, mode, businessType)
+  v.run(0, v.total)
+  return v.finish()
+}
 
-  const validRows: ParsedRow[] = []
-  const invalidRows: ParsedRow[] = []
-  const allErrors: ImportError[] = []
-  const allWarnings: ImportWarning[] = []
-  const columns = Object.values(columnMapping)
-
-  const MAX_ROWS = 30000
-  const rowsToProcess = rawRows.slice(0, MAX_ROWS)
-
-  if (rawRows.length > MAX_ROWS) {
-    allWarnings.push({
-      row: 0,
-      column: '',
-      message: `File contains ${rawRows.length} rows. Only the first ${MAX_ROWS} will be processed.`,
-    })
+/**
+ * Same result as validateRows, but processed in chunks of VALIDATION_CHUNK_ROWS with an
+ * event-loop yield between chunks so a 100k-row validation does not block other requests.
+ */
+export async function validateRowsChunked(
+  rawRows: Record<string, string>[],
+  config: EntityConfig,
+  columnMapping: Record<string, string>,
+  mode: ImportMode,
+  businessType?: string,
+  chunkSize: number = VALIDATION_CHUNK_ROWS,
+): Promise<ValidationResult> {
+  const v = startValidation(rawRows, config, columnMapping, mode, businessType)
+  for (let from = 0; from < v.total; from += chunkSize) {
+    v.run(from, Math.min(v.total, from + chunkSize))
+    if (from + chunkSize < v.total) await new Promise<void>(resolve => setImmediate(resolve))
   }
-
-  for (let i = 0; i < rowsToProcess.length; i++) {
-    const rawRow = rowsToProcess[i]
-    const rowIndex = i + 1 // 1-indexed for user display
-    const errors: ImportError[] = []
-    const warnings: ImportWarning[] = []
-    const missingRequired: string[] = []
-    const cells: Record<string, string> = {}
-    const data: Record<string, unknown> = {}
-
-    // Map raw data using column mapping
-    for (const [header, value] of Object.entries(rawRow)) {
-      const mapped = columnMapping[header]
-      if (!mapped) continue
-      const fieldKey = isStockColumnKey(mapped) ? canonStockKey(mapped) : mapped
-      cells[fieldKey] = value === undefined || value === null ? '' : String(value)
-    }
-
-    for (const field of importFields) {
-      const strValue = (cells[field.key] ?? '').trim()
-
-      let transformedValue: string = strValue
-      if (field.transform === 'lowercase') transformedValue = strValue.toLowerCase()
-      if (field.transform === 'uppercase') transformedValue = strValue.toUpperCase()
-
-      if (strValue === CLEAR_TOKEN) {
-        if (mode === 'insert') {
-          if (field.required) missingRequired.push(field.label)
-          continue
-        }
-        if (field.required) {
-          errors.push({ row: rowIndex, column: field.label, message: `${field.label} cannot be cleared`, value: strValue })
-        } else {
-          data[field.key] = null
-        }
-        continue
-      }
-
-      if (!transformedValue) {
-        if (field.required) missingRequired.push(field.label)
-        continue
-      }
-
-      const converted = convertValue(field, transformedValue)
-      if (converted.error) {
-        errors.push({ row: rowIndex, column: field.label, message: converted.error, value: strValue })
-      } else {
-        data[field.key] = converted.value
-      }
-    }
-
-    if (mode === 'insert') {
-      for (const label of missingRequired) {
-        errors.push({ row: rowIndex, column: label, message: `${label} is required`, value: '' })
-      }
-    }
-
-    const parsed: ParsedRow = { rowIndex, data, raw: { ...rawRow }, missingRequired, errors, warnings }
-
-    if (errors.length > 0) {
-      invalidRows.push(parsed)
-      allErrors.push(...errors)
-    } else {
-      validRows.push(parsed)
-    }
-    allWarnings.push(...warnings)
-  }
-
-  return {
-    validRows,
-    invalidRows,
-    errors: allErrors,
-    warnings: allWarnings,
-    totalRows: rowsToProcess.length,
-    validCount: validRows.length,
-    errorCount: invalidRows.length,
-    columns,
-  }
+  return v.finish()
 }

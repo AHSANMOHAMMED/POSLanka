@@ -28,6 +28,24 @@ function getWarningLevel(dbPercent: number, filePercent: number): StorageQuota['
   return 'none'
 }
 
+/**
+ * Usage counters are written as append-only deltas by triggers (migration 0145) so sales never
+ * lock the shared tenant_usage row. Fold the pending deltas before reading tenant_usage.
+ * Pass no tenant to fold every vendor (cron). Never throws.
+ */
+export async function foldTenantUsage(tenantId?: string): Promise<number> {
+  try {
+    const res = tenantId
+      ? await db.execute(sql`SELECT fold_tenant_usage(${tenantId}::uuid) AS n`)
+      : await db.execute(sql`SELECT fold_tenant_usage() AS n`)
+    const row = (res as unknown as { rows?: Array<{ n: number }> }).rows?.[0]
+    return Number(row?.n ?? 0)
+  } catch (error) {
+    console.error('[storage] fold_tenant_usage failed', error)
+    return 0
+  }
+}
+
 export async function getStorageQuota(tenantId: string): Promise<StorageQuota> {
   // Check cache first
   const cached = quotaCache.get(tenantId)
@@ -35,7 +53,8 @@ export async function getStorageQuota(tenantId: string): Promise<StorageQuota> {
     return cached.data
   }
 
-  // Fetch usage
+  // Fetch usage (fold pending trigger deltas first; runs at most once per cache period)
+  await foldTenantUsage(tenantId)
   const usage = await db.query.tenantUsage.findFirst({
     where: eq(tenantUsage.tenantId, tenantId),
   })

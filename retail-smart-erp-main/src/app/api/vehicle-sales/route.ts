@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { vehicleSalesListSchema, createVehicleSaleSchema } from '@/lib/validation/schemas/vehicles'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all vehicle sale details for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -199,24 +200,8 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        // Advisory lock to prevent duplicate invoice numbers under concurrency
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(1)`)
-
-        // Generate invoice number
-        const [lastSale] = await tx
-          .select({ invoiceNo: sales.invoiceNo })
-          .from(sales)
-          .orderBy(desc(sales.createdAt))
-          .limit(1)
-
-        let nextInvoiceNum = 1
-        if (lastSale?.invoiceNo) {
-          const numMatch = lastSale.invoiceNo.match(/(\d+)$/)
-          if (numMatch) {
-            nextInvoiceNum = parseInt(numMatch[1]) + 1
-          }
-        }
-        const invoiceNo = `VS-${String(nextInvoiceNum).padStart(6, '0')}`
+        // Vehicle sale invoice number VS-###### from the per-tenant sequence
+        const invoiceNo = await nextDocNo(tx, session.user.tenantId, 'vehicle_sale')
 
         // Calculate total (Zod already provides numbers)
         const calculatedTotal = askingPrice - tradeInAllowance + taxAmount

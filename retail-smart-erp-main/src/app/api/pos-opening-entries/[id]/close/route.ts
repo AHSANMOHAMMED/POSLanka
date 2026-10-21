@@ -7,7 +7,7 @@ import {
   posClosingEntries,
   posClosingReconciliation,
 } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { notify } from '@/lib/notifications/notify'
 import { getAlertSettings } from '@/lib/notifications/alert-settings'
@@ -27,6 +27,7 @@ import { closePosShiftSchema } from '@/lib/validation/schemas/pos'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // POST close a shift with enhanced payment method validation and optimistic locking
 export async function POST(
@@ -269,13 +270,8 @@ export async function POST(
         return sum + (parseFloat(item.actualAmount) - parseFloat(item.expectedAmount))
       }, 0)
 
-      // Generate closing entry number
-      const today = new Date()
-      const datePrefix = `CLOSE-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`
-      const [{ count: closeCount }] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(posClosingEntries)
-      const entryNumber = `${datePrefix}-${String(closeCount + 1).padStart(3, '0')}`
+      // Closing entry number CLOSE-YYYYMMDD-### from the per-tenant daily sequence
+      const entryNumber = await nextDocNo(db, session.user.tenantId, 'pos_closing')
 
       // Create closing entry
       const [closingEntry] = await db.insert(posClosingEntries).values({

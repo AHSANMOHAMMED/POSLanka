@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { dunningsListSchema, createDunningSchema } from '@/lib/validation/schemas/accounting'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 export async function GET(request: NextRequest) {
   const qp = validateSearchParams(request, dunningsListSchema)
@@ -72,11 +73,7 @@ export async function POST(request: NextRequest) {
     const body = parsed.data
 
     // Generate dunning number
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('dunning_' || ${tenantId}))`)
-    const [maxResult] = await tx.select({
-      maxNum: sql<string>`COALESCE(MAX(CAST(SUBSTRING(${dunnings.dunningNumber} FROM 5) AS integer)), 0)`,
-    }).from(dunnings)
-    const dunningNumber = `DUN-${String(Number(maxResult?.maxNum || 0) + 1).padStart(4, '0')}`
+    const dunningNumber = await nextDocNo(tx, tenantId, 'dunning')
 
     // Get sale outstanding
     const [sale] = await tx.select().from(sales).where(eq(sales.id, body.saleId))

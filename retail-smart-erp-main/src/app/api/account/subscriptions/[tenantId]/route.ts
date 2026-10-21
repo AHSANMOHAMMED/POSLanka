@@ -8,6 +8,7 @@ import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSubscriptionSchema } from '@/lib/validation/schemas/account'
 import { z } from 'zod'
+import { foldTenantUsage } from '@/lib/db/storage-quota'
 
 // NOTE: Tier changes (upgrades/downgrades) must go through the /upgrade endpoint
 // which handles proration. This PUT endpoint only handles cancellation toggling.
@@ -66,6 +67,7 @@ export async function GET(
     })
 
     // Get storage usage
+    await foldTenantUsage(tenantId)
     const usage = await db.query.tenantUsage.findFirst({
       where: eq(tenantUsage.tenantId, tenantId),
     })

@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { createVehicleTypeSchema } from '@/lib/validation/schemas/vehicles'
+import { applyHiddenDefaults, getHiddenDefaultIds } from '@/lib/defaults/hidden-defaults'
 
 // GET all vehicle types (system defaults + tenant custom)
 export async function GET(request: NextRequest) {
@@ -22,6 +23,9 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const includeInactive = searchParams.get('includeInactive') === 'true'
+    // System defaults this company hid are left out unless ?includeHidden=true (settings UI),
+    // in which case they are returned with `hidden: true` so they can be shown again.
+    const includeHidden = searchParams.get('includeHidden') === 'true'
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (tenantDb) => {
@@ -49,7 +53,8 @@ export async function GET(request: NextRequest) {
         orderBy: (types, { asc, desc }) => [desc(types.isSystemDefault), asc(types.name)],
       })
 
-      return NextResponse.json(result)
+      const hiddenIds = await getHiddenDefaultIds(tenantDb, session.user.tenantId, 'vehicle_type')
+      return NextResponse.json(applyHiddenDefaults(result, hiddenIds, includeHidden))
     })
   } catch (error) {
     logError('api/vehicle-types', error)

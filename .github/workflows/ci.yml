@@ -128,6 +128,14 @@ jobs:
           npx tsx scripts/tests/c3-kot.ts
           npx tsx scripts/tests/c3-mobile-qr.ts
           npx tsx scripts/tests/c3-mobile-labels.ts
+      - name: Batches, quarantine, purchasing & document numbering
+        run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/d1-batches-purchasing.ts
+      - name: Kitchen tickets & mobile offline fixes
+        run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/d2-kot-mobile.ts
+      - name: Platform (hidden defaults, realtime inbox, 100k imports)
+        run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/d3-platform.ts
+      - name: Split-payment GL & batches in every sale path
+        run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/e1-final.ts
 
   build:
     name: Production build

@@ -7,7 +7,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import {
   purchases, purchaseItems, suppliers, supplierBalanceAudit, items as itemsTable, itemSerialNumbers,
 } from '@/lib/db/schema'
-import { eq, and, ilike, desc, inArray, ne } from 'drizzle-orm'
+import { eq, and, inArray, ne } from 'drizzle-orm'
 import { applyStockChanges, notifyStockDecreased, type StockChangeInput } from '@/lib/inventory/apply-stock-change'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
 import { stockErrorResponse, type StockChangeRecord } from '@/lib/purchasing/stock-cost'
@@ -22,6 +22,7 @@ import { authWithCompany } from '@/lib/auth'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createPurchaseReturnSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 export async function POST(
   request: NextRequest,
@@ -206,24 +207,8 @@ export async function POST(
       const returnTotal = taxResult.total
       const returnTaxBreakdown = taxResult.taxBreakdown
 
-      // Generate return purchase number
-      const today = new Date()
-      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-      const prefix = `PR-${dateStr}-`
-      const existing = await tx
-        .select({ purchaseNo: purchases.purchaseNo })
-        .from(purchases)
-        .where(ilike(purchases.purchaseNo, `${prefix}%`))
-        .orderBy(desc(purchases.purchaseNo))
-        .limit(1)
-        .for('update')
-
-      let nextNum = 1
-      if (existing.length > 0) {
-        const lastNum = parseInt(existing[0].purchaseNo.split('-').pop() || '0', 10)
-        nextNum = lastNum + 1
-      }
-      const returnPurchaseNo = `${prefix}${nextNum.toString().padStart(3, '0')}`
+      // Return number PR-YYYYMMDD-### from the per-tenant daily sequence
+      const returnPurchaseNo = await nextDocNo(tx, session.user.tenantId, 'purchase_return')
 
       // Validate returnReason if provided
       const validReturnReasons = ['defective', 'wrong_item', 'excess_quantity', 'damaged', 'expired', 'other']

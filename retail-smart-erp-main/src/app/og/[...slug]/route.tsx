@@ -1,7 +1,8 @@
 import { ImageResponse } from 'next/og'
 import { NextRequest } from 'next/server'
 
-export const runtime = 'edge'
+// Runs on the default Node.js runtime: next/og ImageResponse is supported there,
+// and edge runtime only triggered the "disables static generation" build warning.
 
 const pageConfig: Record<string, { title: string; subtitle: string; gradient: string }> = {
   home: {

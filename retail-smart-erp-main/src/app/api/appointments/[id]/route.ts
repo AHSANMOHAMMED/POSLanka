@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { resolveUserId } from '@/lib/auth/resolve-user'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { appointments, workOrders, workOrderServices, customers, vehicles, serviceTypes, warehouses, tenants } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -10,6 +10,7 @@ import { triggerNotification } from '@/lib/notifications/auto-trigger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateAppointmentSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // A-C6: Helper to validate date/time is not in the past
 // 8L: Uses configurable tenant timezone instead of hardcoded offset
@@ -172,15 +173,8 @@ export async function PUT(
         }, { status: 400 }) }
       }
 
-      // Generate work order number
-      const [maxResult] = await tx
-        .select({ maxNo: sql<string>`MAX(${workOrders.orderNo})` })
-        .from(workOrders)
-        .for('update')
-
-      const lastOrderNo = maxResult?.maxNo
-      const nextNumber = lastOrderNo ? parseInt(lastOrderNo.replace(/\D/g, '')) + 1 : 1
-      const orderNo = `WO-${String(nextNumber).padStart(6, '0')}`
+      // Work order number from the per-tenant sequence
+      const orderNo = await nextDocNo(tx, session.user.tenantId, 'work_order')
 
       // Get service details if applicable
       let serviceToAdd = null

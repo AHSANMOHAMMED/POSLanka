@@ -16,6 +16,8 @@ interface VehicleType {
   wheelCount: number
   isSystemDefault: boolean
   isActive: boolean
+  /** System default hidden for this company only (tenant_hidden_defaults) */
+  hidden?: boolean
   diagramViews: Array<{
     id: string
     viewName: string
@@ -53,6 +55,8 @@ export default function VehicleTypesPage() {
     try {
       const params = new URLSearchParams()
       if (showInactive) params.set('includeInactive', 'true')
+      // settings must list hidden system defaults too, so they can be shown again
+      params.set('includeHidden', 'true')
       const res = await fetch(`/api/vehicle-types?${params}`)
       if (res.ok) {
         const data = await res.json()
@@ -293,6 +297,26 @@ export default function VehicleTypesPage() {
     return view?.imageUrl || null
   }
 
+  // System defaults are shared by all companies: hiding one only affects this company.
+  async function handleToggleHidden(type: VehicleType) {
+    try {
+      const res = await fetch(`/api/vehicle-types/${type.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ isActive: !!type.hidden }),
+      })
+      if (res.ok) {
+        toast.success(type.hidden ? 'Vehicle type shown for your company' : 'Vehicle type hidden for your company')
+        fetchVehicleTypes()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        toast.error(data.error || 'Failed to update')
+      }
+    } catch {
+      toast.error('Error updating vehicle type')
+    }
+  }
+
   const systemTypes = vehicleTypes.filter(t => t.isSystemDefault)
   const customTypes = vehicleTypes.filter(t => !t.isSystemDefault)
 
@@ -366,7 +390,7 @@ export default function VehicleTypesPage() {
                   <div
                     key={type.id}
                     className={`bg-white border rounded-md p-4 flex items-center gap-4 ${
-                      !type.isActive ? 'opacity-50' : ''
+                      !type.isActive || type.hidden ? 'opacity-50' : ''
                     }`}
                   >
                     <div className="w-12 h-12 bg-gray-100 rounded flex items-center justify-center">
@@ -375,6 +399,11 @@ export default function VehicleTypesPage() {
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-medium">{type.name}</span>
+                        {type.hidden && (
+                          <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded">
+                            Hidden for my company
+                          </span>
+                        )}
                         <span className="text-xs bg-gray-100 px-2 py-0.5 rounded">
                           {bodyTypeDisplayNames[type.bodyType] || type.bodyType}
                         </span>
@@ -411,15 +440,16 @@ export default function VehicleTypesPage() {
                       </button>
                     )}
                     <button
-                      onClick={() => handleToggleActive(type)}
-                      className={`p-2 rounded ${
-                        type.isActive
-                          ? 'text-gray-500 hover:bg-gray-100'
-                          : 'text-green-600 hover:bg-green-50'
+                      onClick={() => handleToggleHidden(type)}
+                      className={`flex items-center gap-1.5 px-2 py-1.5 text-sm rounded ${
+                        type.hidden
+                          ? 'text-green-600 hover:bg-green-50'
+                          : 'text-gray-500 hover:bg-gray-100'
                       }`}
-                      title={type.isActive ? 'Deactivate' : 'Activate'}
+                      title={type.hidden ? 'Show this default for my company' : 'Hide this default for my company (other companies are not affected)'}
                     >
-                      {type.isActive ? <EyeOff size={18} /> : <Eye size={18} />}
+                      {type.hidden ? <Eye size={16} /> : <EyeOff size={16} />}
+                      {type.hidden ? 'Show' : 'Hide for my company'}
                     </button>
                   </div>
                 ))}

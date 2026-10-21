@@ -12,6 +12,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { salarySlipsListSchema, createSalarySlipSchema } from '@/lib/validation/schemas/hr'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 export async function GET(request: NextRequest) {
   try {
@@ -133,18 +134,7 @@ export async function POST(request: NextRequest) {
       const endDate = new Date(payrollYear, payrollMonth, 0).toISOString().split('T')[0]
 
       const slip = await db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(7)`)
-
-        const [{ count: slipCount }] = await tx
-          .select({ count: sql<number>`count(*)` })
-          .from(salarySlips)
-          .where(
-            and(
-              eq(salarySlips.payrollYear, payrollYear),
-              eq(salarySlips.payrollMonth, payrollMonth)
-            )
-          )
-        const slipNo = `SAL-${payrollYear}-${monthStr}-${String(Number(slipCount) + 1).padStart(3, '0')}`
+        const slipNo = await nextDocNo(tx, session.user.tenantId, 'salary_slip', { period: `${payrollYear}-${monthStr}` })
 
         const [newSlip] = await tx
           .insert(salarySlips)

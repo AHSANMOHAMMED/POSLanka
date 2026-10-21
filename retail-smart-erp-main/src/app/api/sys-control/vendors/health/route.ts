@@ -4,6 +4,7 @@ import { tenants, users, sales, tenantUsage } from '@/lib/db/schema'
 import { desc, eq, sql } from 'drizzle-orm'
 import { validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
+import { foldTenantUsage } from '@/lib/db/storage-quota'
 
 /** Platform analytics: vendor health snapshot for Super Admin */
 export async function GET() {
@@ -38,6 +39,7 @@ export async function GET() {
           columns: { createdAt: true, total: true },
         })
 
+        await foldTenantUsage(t.id)
         const usage = await db.query.tenantUsage.findFirst({
           where: eq(tenantUsage.tenantId, t.id),
           columns: { storageBytes: true, fileStorageBytes: true },

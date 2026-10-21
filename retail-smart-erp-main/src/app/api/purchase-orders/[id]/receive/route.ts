@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
 import { purchaseOrders, purchaseOrderItems, purchaseReceipts, purchaseReceiptItems } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { applyPurchaseCost, stockErrorResponse } from '@/lib/purchasing/stock-cost'
 import { logError } from '@/lib/ai/error-logger'
@@ -12,6 +12,7 @@ import { authWithCompany } from '@/lib/auth'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { receivePurchaseOrderSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // POST receive items for a purchase order (partial receiving)
 export async function POST(
@@ -125,21 +126,9 @@ export async function POST(
         updatedItems.push({ poItem, newCumulativeReceived, receivedQty: agg.qty, notes: agg.notes })
       }
 
-      // Create Purchase Receipt (GRN) record
+      // Create Purchase Receipt (GRN) record: GRN-YYYYMMDD-### from the per-tenant daily sequence
       const today = new Date()
-      const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-
-      // Generate receipt number: GRN-YYYYMMDD-###
-      const existingReceipts = await tx
-        .select({ receiptNo: purchaseReceipts.receiptNo })
-        .from(purchaseReceipts)
-        .where(and(
-          eq(purchaseReceipts.tenantId, session.user.tenantId),
-          sql`${purchaseReceipts.receiptNo} LIKE ${'GRN-' + dateStr + '-%'}`
-        ))
-
-      const nextSeq = existingReceipts.length + 1
-      const receiptNo = `GRN-${dateStr}-${String(nextSeq).padStart(3, '0')}`
+      const receiptNo = await nextDocNo(tx, session.user.tenantId, 'grn')
 
       const [receipt] = await tx.insert(purchaseReceipts).values({
         tenantId: session.user.tenantId,

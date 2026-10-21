@@ -3,12 +3,13 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { recurringJournalTemplates, journalEntries, journalEntryItems } from '@/lib/db/schema'
-import { eq, desc, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 interface TemplateItem {
   accountId: string
@@ -85,21 +86,8 @@ export async function POST(
           throw new Error('VALIDATION: Template must have at least 2 line items')
         }
 
-        // 2. Generate entry number with advisory lock (same pattern as journal entries)
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('journal_entry_' || ${tenantId}))`)
-
-        const [lastEntry] = await tx
-          .select({ entryNumber: journalEntries.entryNumber })
-          .from(journalEntries)
-          .orderBy(desc(journalEntries.createdAt))
-          .limit(1)
-
-        let nextNum = 1
-        if (lastEntry?.entryNumber) {
-          const match = lastEntry.entryNumber.match(/JE-(\d+)/)
-          if (match) nextNum = parseInt(match[1], 10) + 1
-        }
-        const entryNumber = `JE-${String(nextNum).padStart(4, '0')}`
+        // 2. Entry number from the per-tenant journal entry sequence
+        const entryNumber = await nextDocNo(tx, tenantId, 'journal_entry')
 
         // 3. Calculate totals
         let totalDebit = 0

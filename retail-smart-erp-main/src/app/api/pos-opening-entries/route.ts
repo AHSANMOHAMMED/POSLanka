@@ -7,7 +7,7 @@ import {
   posProfiles,
   posProfileUsers,
 } from '@/lib/db/schema'
-import { eq, and, desc, sql } from 'drizzle-orm'
+import { eq, and, desc } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -15,6 +15,8 @@ import { requirePermission } from '@/lib/auth/roles'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { posOpeningListSchema, createPosOpeningSchema } from '@/lib/validation/schemas/pos'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
+import { isQuarantineCode } from '@/lib/inventory/quarantine'
 
 // GET list of opening entries (shifts)
 export async function GET(request: NextRequest) {
@@ -120,6 +122,11 @@ export async function POST(request: NextRequest) {
       if (!profile.warehouseId) {
         return NextResponse.json({ error: 'POS profile has no warehouse assigned. Please configure the profile first.' }, { status: 400 })
       }
+      // D1: the quarantine location (returned goods) is never a selling location
+      const profileWarehouse = Array.isArray(profile.warehouse) ? profile.warehouse[0] : profile.warehouse
+      if (isQuarantineCode(profileWarehouse?.code)) {
+        return NextResponse.json({ error: 'The quarantine warehouse cannot be used for POS. Assign a selling warehouse to this POS profile.', code: 'QUARANTINE_WAREHOUSE' }, { status: 400 })
+      }
 
       // Check user has access to this profile
       const userAccess = await db.query.posProfileUsers.findFirst({
@@ -149,22 +156,9 @@ export async function POST(request: NextRequest) {
         }, { status: 400 })
       }
 
-      // Advisory lock for atomic entry number generation.
-      // withTenant already wraps in a transaction — no nested db.transaction()
-      // (nested transactions reset SET LOCAL RLS context on commit).
-      await db.execute(sql`SELECT pg_advisory_xact_lock(8)`)
-
-      // Generate entry number
-      const today = new Date()
-      const datePrefix = `POS-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, '0')}${String(today.getDate()).padStart(2, '0')}`
-
-      // Count today's entries using SQL date comparison (server-side)
-      const [{ count: todayCount }] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(posOpeningEntries)
-        .where(sql`${posOpeningEntries.entryNumber} LIKE ${datePrefix + '-%'}`)
-
-      const entryNumber = `${datePrefix}-${String(Number(todayCount) + 1).padStart(3, '0')}`
+      // Entry number POS-YYYYMMDD-### from the per-tenant daily sequence
+      // (withTenant already wraps in a transaction)
+      const entryNumber = await nextDocNo(db, session.user.tenantId, 'pos_opening')
 
       // Create opening entry
       const [openingEntry] = await db.insert(posOpeningEntries).values({

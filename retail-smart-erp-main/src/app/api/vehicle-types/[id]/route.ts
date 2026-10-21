@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleTypeSchema } from '@/lib/validation/schemas/vehicles'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { otherFieldsSet, setDefaultHidden } from '@/lib/defaults/hidden-defaults'
 
 // GET single vehicle type
 export async function GET(
@@ -88,8 +89,19 @@ export async function PUT(
       }
 
       // System defaults are shared by every company (tenant_id IS NULL) and are read-only
-      // for tenants (RLS) — toggling them here would change them for all companies.
+      // for tenants (RLS). {isActive} alone hides / re-shows the row for THIS company only
+      // (tenant_hidden_defaults override); anything else is refused.
       if (existingType.isSystemDefault || !existingType.tenantId) {
+        if (!existingType.tenantId && typeof body.isActive === 'boolean' && otherFieldsSet(body).length === 0) {
+          const hidden = !body.isActive
+          await setDefaultHidden(db, session!.user.tenantId, 'vehicle_type', id, hidden, session!.user.id)
+          logAndBroadcast(session!.user.tenantId, 'vehicle-type', 'updated', id, {
+            userId: session!.user.id,
+            entityName: existingType.name,
+            description: hidden ? 'Hid system vehicle type for this company' : 'Restored system vehicle type for this company',
+          })
+          return NextResponse.json({ ...existingType, hidden })
+        }
         return NextResponse.json({ error: 'Cannot modify system default vehicle types' }, { status: 403 })
       }
 
@@ -122,6 +134,14 @@ export async function PUT(
     logError('api/vehicle-types/[id]', error)
     return NextResponse.json({ error: 'Failed to update vehicle type' }, { status: 500 })
   }
+}
+
+// PATCH — same as PUT; on a system default only {isActive} is accepted (per-company hide/show)
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  return PUT(request, context)
 }
 
 // DELETE vehicle type (only tenant's own, not system defaults)

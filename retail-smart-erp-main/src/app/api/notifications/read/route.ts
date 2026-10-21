@@ -6,6 +6,7 @@ import { inAppNotifications } from '@/lib/db/schema'
 import { validateBody } from '@/lib/validation/helpers'
 import { markNotificationsReadSchema } from '@/lib/validation/schemas/notification-alerts'
 import { logError } from '@/lib/ai/error-logger'
+import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 
 // POST /api/notifications/read { ids?: uuid[], all?: true } — mark my notifications as read
 export async function POST(request: NextRequest) {
@@ -25,6 +26,8 @@ export async function POST(request: NextRequest) {
         .where(and(eq(inAppNotifications.tenantId, tenantId), eq(inAppNotifications.userId, userId), isNull(inAppNotifications.readAt)))
       return { updated: updated.length, unreadCount: unread }
     })
+    // keep this user's other open tabs/devices in sync
+    if (result.updated > 0) broadcastAccountChange(userId, 'inbox-notification', 'updated', 'read', { tenantId })
     return NextResponse.json(result)
   } catch (error) {
     logError('api/notifications/read', error)

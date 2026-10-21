@@ -9,6 +9,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { authWithCompany } from '@/lib/auth'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { stockTakesListSchema, createStockTakeSchema } from '@/lib/validation/schemas/stock'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET - List stock takes with pagination and filters
 export async function GET(request: NextRequest) {
@@ -80,22 +81,8 @@ export async function POST(request: NextRequest) {
     const permError = requirePermission(session, 'manageInventory')
     if (permError) return { error: permError }
 
-    // Advisory lock for atomic count number generation
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(9)`)
-
-    // Generate count number
-    const today = new Date()
-    const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-    const existing = await tx
-      .select({ countNo: stockTakes.countNo })
-      .from(stockTakes)
-      .where(and(
-        eq(stockTakes.tenantId, session.user.tenantId),
-        sql`${stockTakes.countNo} LIKE ${'SC-' + dateStr + '-%'}`
-      ))
-
-    const nextSeq = existing.length + 1
-    const countNo = `SC-${dateStr}-${String(nextSeq).padStart(3, '0')}`
+    // Count number SC-YYYYMMDD-### from the per-tenant daily sequence
+    const countNo = await nextDocNo(tx, session.user.tenantId, 'stock_take')
 
     // Get warehouse stock items for auto-population
     const stockConditions = [

@@ -11,13 +11,16 @@
  *      (read under RLS, so another tenant's users can never be reached);
  *   3. per recipient preferences (defaults when none): muted / not-enabled types are skipped;
  *      everybody else gets an in-app inbox row;
- *   4. push (Expo) unless the user disabled push or is inside quiet hours.
+ *   4. push (Expo) unless the user disabled push or is inside quiet hours;
+ *   5. after commit, a per-user `inbox-notification` WebSocket event is sent to each in-app
+ *      recipient so open web inboxes refresh immediately (best effort, never throws).
  */
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { withTenant } from '@/lib/db'
 import { inAppNotifications, notificationPreferences, userDevices, users } from '@/lib/db/schema'
 import { hasPermission, type Permission } from '@/lib/auth/roles'
 import { logError } from '@/lib/ai/error-logger'
+import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 import { sendPush } from './push'
 import { CRITICAL_ALERT_TYPES, DEDUPE_WINDOW_SECONDS, type AlertType } from './alert-types'
 import { getTenantTimezone, inQuietHours, toPreferences, wantsType } from './alert-settings'
@@ -105,24 +108,25 @@ export async function deliverAlert(tenantId: string, type: AlertType, payload: N
     }
 
     const data = { type, ...(payload.data || {}) }
-    if (inApp.length > 0) {
-      await tdb.insert(inAppNotifications).values(inApp.map((userId) => ({
+    const inserted = inApp.length > 0
+      ? await tdb.insert(inAppNotifications).values(inApp.map((userId) => ({
         tenantId,
         userId,
         type,
         title: payload.title.slice(0, 255),
         body: payload.body || '',
         data,
-      })))
-    }
+      }))).returning({ id: inAppNotifications.id, userId: inAppNotifications.userId })
+      : []
     const tokens = push.length > 0
       ? (await tdb.select({ token: userDevices.pushToken }).from(userDevices)
         .where(and(eq(userDevices.tenantId, tenantId), inArray(userDevices.userId, push)))).map((r) => r.token)
       : []
-    return { recipientIds, inApp, push, tokens, data }
+    return { recipientIds, inApp, push, tokens, data, inserted }
   })
 
   if ('skipped' in plan) return { ...outcome, skipped: plan.skipped }
+  emitInboxEvents(tenantId, type, plan.inserted)
   outcome.recipients = plan.recipientIds
   outcome.inApp = plan.inApp
   outcome.pushed = plan.push
@@ -131,6 +135,17 @@ export async function deliverAlert(tenantId: string, type: AlertType, payload: N
     outcome.pushSent = res.sent
   }
   return outcome
+}
+
+/** Real-time nudge to each recipient's open sessions (user-scoped channel). Never throws. */
+function emitInboxEvents(tenantId: string, type: AlertType, inserted: Array<{ id: string; userId: string }>) {
+  for (const row of inserted) {
+    try {
+      broadcastAccountChange(row.userId, 'inbox-notification', 'created', row.id, { tenantId, alertType: type })
+    } catch (error) {
+      logError('notifications/notify:broadcast', error, { type })
+    }
+  }
 }
 
 export async function notify(tenantId: string, type: AlertType, payload: NotifyPayload): Promise<void> {

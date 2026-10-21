@@ -3,13 +3,14 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { journalEntries, journalEntryItems, chartOfAccounts, costCenters } from '@/lib/db/schema'
-import { and, ilike, sql, desc, eq } from 'drizzle-orm'
+import { and, ilike, sql, eq } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { journalEntriesListSchema, createJournalEntrySchema } from '@/lib/validation/schemas/accounting'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 export async function GET(request: NextRequest) {
   try {
@@ -147,20 +148,8 @@ export async function POST(request: NextRequest) {
       }
 
       const result = await db.transaction(async (tx) => {
-        // Generate entry number
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('journal_entry_' || ${tenantId}))`)
-
-        const [lastEntry] = await tx.select({ entryNumber: journalEntries.entryNumber })
-          .from(journalEntries)
-          .orderBy(desc(journalEntries.createdAt))
-          .limit(1)
-
-        let nextNum = 1
-        if (lastEntry?.entryNumber) {
-          const match = lastEntry.entryNumber.match(/JE-(\d+)/)
-          if (match) nextNum = parseInt(match[1], 10) + 1
-        }
-        const entryNumber = `JE-${String(nextNum).padStart(4, '0')}`
+        // Entry number JE-#### from the per-tenant sequence (numeric, never re-issued)
+        const entryNumber = await nextDocNo(tx, tenantId, 'journal_entry')
 
         // Create journal entry
         const [newEntry] = await tx.insert(journalEntries).values({

@@ -500,11 +500,15 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
     b.centeredBlock(input.returnPolicy)
   }
   const code = invoiceCodeFor(input)
-  if (code.barcode) {
+  // CODE128 (set B) needs 11 modules per character + 35 for start/check/stop; at module width 2
+  // a 58mm head (384 dots) fits 14 characters. Longer values (e.g. OFF-<6-char device>-<seq>)
+  // print as QR instead so the receipt always carries a scannable code.
+  const barcodeFits = cols >= 48 || (code.value.length * 11 + 35) * 2 <= 384
+  if (code.barcode && barcodeFits) {
     b.line()
-    b.align('center').barcodeCode128(code.value, { height: 50, width: cols >= 48 ? 2 : 2 }).align('left')
+    b.align('center').barcodeCode128(code.value, { height: 50, width: 2 }).align('left')
   }
-  if (code.qr) {
+  if (code.qr || (code.barcode && !barcodeFits)) {
     b.line()
     b.align('center').qr(code.value, { size: cols >= 48 ? 6 : 4 }).align('left')
   }

@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { restaurantOrders, restaurantOrderItems, kitchenOrders, kitchenOrderItems, restaurantTables, sales, saleItems, payments, recipes, warehouseStock, warehouses } from '@/lib/db/schema'
-import { eq, and, desc } from 'drizzle-orm'
+import { restaurantOrders, restaurantOrderItems, kitchenOrders, kitchenOrderItems, restaurantTables, sales, saleItems, payments, recipes, warehouseStock, warehouses, items as itemsTable } from '@/lib/db/schema'
+import type { SaleFlags } from '@/lib/db/schema'
+import { eq, and, desc, inArray, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { triggerNotification } from '@/lib/notifications/auto-trigger'
 import { logError } from '@/lib/ai/error-logger'
@@ -16,6 +17,8 @@ import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 import { applyStockChanges, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
 import { withSavepoint, type DbTx } from '@/lib/inventory/db-types'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { allocateBatchesFEFO, allocateSaleLineBatches } from '@/lib/inventory/batches'
+import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 
 // Status workflow: open -> closed -> completed OR cancelled
 const validStatusTransitions: Record<string, string[]> = {
@@ -229,6 +232,15 @@ export async function PUT(
               // Sale invoice number from the per-tenant sequence (shared with POS sales)
               const invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
 
+              // E1: the sale's warehouse (default active warehouse, never the quarantine location)
+              // so stock-tracked lines leave stock and returns / voids put it (and its batches) back.
+              const [saleWarehouse] = await tx.select({ id: warehouses.id })
+                .from(warehouses)
+                .where(and(eq(warehouses.isActive, true), sql`upper(${warehouses.code}) <> 'QUARANTINE'`))
+                .orderBy(desc(warehouses.isDefault))
+                .limit(1)
+              const saleWarehouseId = saleWarehouse?.id || null
+
               // Create sale record with tax template data
               const saleResult = await tx.insert(sales).values({
                 tenantId: session.user.tenantId,
@@ -245,8 +257,19 @@ export async function PUT(
                 status: 'completed',
                 createdBy: userId,
                 restaurantOrderId: id,
+                warehouseId: saleWarehouseId,
               }).returning()
               const sale = (saleResult as typeof sales.$inferSelect[])[0]
+
+              const lineItemIds = [...new Set(orderItems.map(oi => oi.itemId).filter((x): x is string => !!x))]
+              const lineItemRows = lineItemIds.length > 0
+                ? await tx.select({ id: itemsTable.id, name: itemsTable.name, trackStock: itemsTable.trackStock, trackBatches: itemsTable.trackBatches })
+                    .from(itemsTable).where(inArray(itemsTable.id, lineItemIds))
+                : []
+              const lineItemById = new Map(lineItemRows.map(r => [r.id, r]))
+              const saleStockInputs: StockChangeInput[] = []
+              const saleStockQty: number[] = []
+              const saleBatchLines: Array<{ saleItemId: string; itemId: string; name: string; qty: number }> = []
 
               // Create sale items with per-item template tax
               for (let i = 0; i < orderItems.length; i++) {
@@ -256,7 +279,7 @@ export async function PUT(
                 const itemTaxAmount = perItem ? perItem.taxAmount : 0
                 const itemTaxRate = itemLineTotal > 0 ? roundCurrency((itemTaxAmount / itemLineTotal) * 100) : 0
 
-                await tx.insert(saleItems).values({
+                const [saleLine] = await tx.insert(saleItems).values({
                   tenantId: session.user.tenantId,
                   saleId: sale.id,
                   itemId: orderItem.itemId,
@@ -268,7 +291,65 @@ export async function PUT(
                   taxAmount: String(itemTaxAmount),
                   taxBreakdown: perItem?.taxBreakdown || null,
                   total: String(itemLineTotal),
+                }).returning({ id: saleItems.id })
+
+                // E1: stock-tracked lines leave stock like a POS sale. The food / drink was served:
+                // a shortfall is recorded in sale.flags, never blocks completing the order.
+                const lineItem = orderItem.itemId ? lineItemById.get(orderItem.itemId) : undefined
+                if (lineItem?.trackStock && saleWarehouseId && orderItem.quantity > 0) {
+                  saleStockInputs.push({
+                    tenantId: session.user.tenantId,
+                    warehouseId: saleWarehouseId,
+                    itemId: lineItem.id,
+                    mode: 'delta',
+                    qty: -orderItem.quantity,
+                    type: 'out',
+                    referenceType: 'sale',
+                    referenceId: sale.id,
+                    notes: `Restaurant order ${currentOrder.orderNo} (${invoiceNo})`,
+                    userId,
+                    source: 'restaurant',
+                    idempotencyKey: `sale:${sale.id}:${saleLine.id}`,
+                    allowNegative: true,
+                  })
+                  saleStockQty.push(orderItem.quantity)
+                  if (lineItem.trackBatches) {
+                    saleBatchLines.push({ saleItemId: saleLine.id, itemId: lineItem.id, name: orderItem.itemName || lineItem.name, qty: orderItem.quantity })
+                  }
+                }
+              }
+
+              if (saleStockInputs.length > 0 && saleWarehouseId) {
+                const flags: SaleFlags = {}
+                const results = await applyStockChanges(tx, saleStockInputs)
+                results.forEach((r, i) => {
+                  ingredientChanges.push({ result: r, input: saleStockInputs[i] })
+                  if (r.before < saleStockQty[i]) {
+                    (flags.stockShortfall ||= []).push({ itemId: saleStockInputs[i].itemId, name: r.itemName, quantity: saleStockQty[i], available: r.before })
+                  }
                 })
+                // Batches after the stock rows are locked: FEFO, allocate what exists
+                if (saleBatchLines.length > 0) {
+                  const settings = await getTenantSalesSettings(tx, session.user.tenantId)
+                  for (const b of saleBatchLines) {
+                    const alloc = await allocateSaleLineBatches(tx, {
+                      tenantId: session.user.tenantId,
+                      warehouseId: saleWarehouseId,
+                      itemId: b.itemId,
+                      qty: b.qty,
+                      saleItemId: b.saleItemId,
+                      allowExpired: settings.batches.allowExpiredSale,
+                      allowShortfall: true,
+                      itemName: b.name,
+                    })
+                    if (alloc.shortfall > 0) {
+                      (flags.batchShortfall ||= []).push({ itemId: b.itemId, name: b.name, quantity: b.qty, allocated: alloc.allocated })
+                    }
+                  }
+                }
+                if (flags.stockShortfall || flags.batchShortfall) {
+                  await tx.update(sales).set({ flags }).where(eq(sales.id, sale.id))
+                }
               }
 
               // Create payment record
@@ -374,11 +455,46 @@ export async function PUT(
                     allowNegative: true,
                   })
                 }
-                const results = await withSavepoint(tx as unknown as DbTx, (sp) => applyStockChanges(sp, inputs))
+                const ingredientRows = inputs.length > 0
+                  ? await tx.select({ id: itemsTable.id, name: itemsTable.name, trackBatches: itemsTable.trackBatches })
+                      .from(itemsTable).where(inArray(itemsTable.id, inputs.map(x => x.itemId)))
+                  : []
+                const batchIngredients = new Map(ingredientRows.filter(r => r.trackBatches).map(r => [r.id, r.name]))
+                const { results, shortfalls } = await withSavepoint(tx as unknown as DbTx, async (sp) => {
+                  const res = await applyStockChanges(sp, inputs)
+                  // E1: batch-tracked ingredients draw FEFO from item_batches. Consumption may
+                  // run negative, so allocate what exists and record the shortfall.
+                  const missing: Array<{ itemId: string; name?: string; quantity: number; allocated: number }> = []
+                  if (batchIngredients.size > 0) {
+                    const settings = await getTenantSalesSettings(sp, session.user.tenantId)
+                    for (const input of inputs) {
+                      const name = batchIngredients.get(input.itemId)
+                      if (name === undefined) continue
+                      const need = Math.abs(input.qty)
+                      const alloc = await allocateBatchesFEFO(sp, {
+                        tenantId: session.user.tenantId,
+                        warehouseId: input.warehouseId,
+                        itemId: input.itemId,
+                        qty: need,
+                        allowExpired: settings.batches.allowExpiredSale,
+                        allowShortfall: true,
+                        itemName: name,
+                      })
+                      if (alloc.shortfall > 0) missing.push({ itemId: input.itemId, name, quantity: need, allocated: alloc.allocated })
+                    }
+                  }
+                  return { results: res, shortfalls: missing }
+                })
                 results.forEach((r, i) => {
                   ingredientChanges.push({ result: r, input: inputs[i] })
                   logAndBroadcast(session.user.tenantId, 'item', 'updated', inputs[i].itemId, { userId })
                 })
+                // Completion always has a sale (auto-created above or the POS sale): flag it there
+                if (shortfalls.length > 0 && linkedSaleId) {
+                  await tx.update(sales)
+                    .set({ flags: sql`${sales.flags} || ${JSON.stringify({ ingredientBatchShortfall: shortfalls })}::jsonb` })
+                    .where(eq(sales.id, linkedSaleId))
+                }
               }
             } catch (stockError) {
               logError('api/restaurant-orders/[id]', stockError)

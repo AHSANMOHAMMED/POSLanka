@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuthTenantTransaction, TenantDb } from '@/lib/db'
+import { withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
 import { purchaseOrders, purchaseOrderItems, purchases, purchaseItems, suppliers } from '@/lib/db/schema'
-import { eq, and, ilike, desc, sql } from 'drizzle-orm'
-import { applyStockChanges, type StockChangeInput } from '@/lib/inventory/apply-stock-change'
-import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
+import { eq, and, sql } from 'drizzle-orm'
+import { applyStockChange, type StockChangeInput } from '@/lib/inventory/apply-stock-change'
+import { applyPurchaseCost, stockErrorResponse } from '@/lib/purchasing/stock-cost'
 import { logError } from '@/lib/ai/error-logger'
 import { roundCurrency } from '@/lib/utils/currency'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -15,30 +15,7 @@ import { postPurchaseToGL } from '@/lib/accounting/auto-post'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createPurchaseInvoiceSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
-
-// Generate purchase number with transaction lock
-async function generatePurchaseNo(tx: TenantDb): Promise<string> {
-  const today = new Date()
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-  const prefix = `PI-${dateStr}-`
-
-  // RLS filters by tenant
-  const existing = await tx
-    .select({ purchaseNo: purchases.purchaseNo })
-    .from(purchases)
-    .where(ilike(purchases.purchaseNo, `${prefix}%`))
-    .orderBy(desc(purchases.purchaseNo))
-    .limit(1)
-    .for('update')
-
-  let nextNum = 1
-  if (existing.length > 0) {
-    const lastNum = parseInt(existing[0].purchaseNo.split('-').pop() || '0', 10)
-    nextNum = lastNum + 1
-  }
-
-  return `${prefix}${nextNum.toString().padStart(3, '0')}`
-}
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // POST create invoice from purchase order
 export async function POST(
@@ -135,7 +112,7 @@ export async function POST(
       }
 
       // Generate purchase number with lock
-      const purchaseNo = await generatePurchaseNo(tx)
+      const purchaseNo = await nextDocNo(tx, session.user.tenantId, 'purchase_invoice')
 
       // Issue #37: Validate received quantities before processing
       if (receivedQuantities) {
@@ -181,6 +158,8 @@ export async function POST(
           tax: itemTax.toString(),
           total: itemTotal.toString(),
           purchaseOrderItemId: item.id,
+          // D1: what this line adds to purchase_order_items.received_quantity (reversed exactly on cancel/delete)
+          poReceivedQty: (receivedQuantities?.[item.id] !== undefined ? receivedQty : 0).toString(),
         }
       }).filter(item => parseFloat(item.quantity) > 0)
 
@@ -258,12 +237,15 @@ export async function POST(
         costCenterId: costCenterId || null,
       })
 
-      // Update stock if requested (single stock writer, signed ledger rows)
+      // Update stock if requested (single stock writer, signed ledger rows). D1: the incoming
+      // quantity also updates the weighted-average cost (applyPurchaseCost reads the total stock
+      // BEFORE this line's receipt, so cost and stock are applied line by line in item order).
       if (updateStock && order.warehouseId) {
-        const stockInputs: StockChangeInput[] = []
+        const stockInputs: Array<StockChangeInput & { unitPrice: number }> = []
         invoiceItems.forEach((item, idx) => {
           if (!item.itemId) return
           stockInputs.push({
+            unitPrice: parseFloat(item.unitPrice),
             tenantId: session.user.tenantId,
             warehouseId: order.warehouseId,
             itemId: item.itemId,
@@ -279,7 +261,21 @@ export async function POST(
             idempotencyKey: `purchase-in:${newPurchase.id}:${item.purchaseOrderItemId || idx}`,
           })
         })
-        await applyStockChanges(tx, stockInputs)
+        stockInputs.sort((a, b) => (a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0))
+        for (const { unitPrice, ...input } of stockInputs) {
+          await applyPurchaseCost(tx, {
+            tenantId: session.user.tenantId,
+            itemId: input.itemId,
+            supplierId: order.supplierId,
+            unitPrice,
+            qty: input.qty,
+            referenceId: newPurchase.id,
+            referenceNo: purchaseNo,
+            userId: session.user.id,
+            notes: `Purchase invoice ${purchaseNo} (from PO ${order.orderNo})`,
+          })
+          await applyStockChange(tx, input)
+        }
       }
 
       // Issue #38: Update received quantities cumulatively on PO items

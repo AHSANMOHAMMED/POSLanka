@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/auth/roles'
-import { withAuthTenant, withAuthTenantTransaction, TenantDb } from '@/lib/db'
+import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { layaways, layawayItems, layawayPayments, customers, users } from '@/lib/db/schema'
 import { eq, and, ilike, sql, desc, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
@@ -12,32 +12,10 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { layawaysListSchema, createLayawaySchema } from '@/lib/validation/schemas/layaways'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // Minimum deposit percentage required (10% of total)
 const MIN_DEPOSIT_PERCENTAGE = 0.10
-
-// Generate layaway number with transaction lock to prevent race conditions
-async function generateLayawayNo(tx: TenantDb): Promise<string> {
-  const prefix = 'LAY-'
-
-  // Find the highest number with FOR UPDATE lock
-  // RLS automatically filters by tenant
-  const existing = await tx
-    .select({ layawayNo: layaways.layawayNo })
-    .from(layaways)
-    .where(ilike(layaways.layawayNo, `${prefix}%`))
-    .orderBy(desc(layaways.layawayNo))
-    .limit(1)
-    .for('update')
-
-  let nextNum = 1
-  if (existing.length > 0) {
-    const lastNum = parseInt(existing[0].layawayNo.replace(/\D/g, '') || '0', 10)
-    nextNum = lastNum + 1
-  }
-
-  return `${prefix}${nextNum.toString().padStart(6, '0')}`
-}
 
 // GET all layaways for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -224,7 +202,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Generate layaway number with lock
-      const layawayNo = await generateLayawayNo(tx)
+      const layawayNo = await nextDocNo(tx, session.user.tenantId, 'layaway')
 
       // Create layaway
       const [newLayaway] = await tx.insert(layaways).values({

@@ -32,6 +32,9 @@ import type { SaleFlags } from '@/lib/db/schema'
 import type { CompanySession } from '@/lib/auth'
 import type { z } from 'zod'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { allocateSaleLineBatches, batchErrorInfo } from '@/lib/inventory/batches'
+import { isQuarantineCode } from '@/lib/inventory/quarantine'
+import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 
 // GET all sales for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -283,6 +286,8 @@ export async function POST(request: NextRequest) {
     // recorded in sales.flags; managers are notified after commit.
     const isOfflineSale = !!offlineRef
     const saleFlags: SaleFlags = isOfflineSale ? { offline: true } : {}
+    // D2: printed receipt number when the queue had to re-number the sale (lookup by alias).
+    if (isOfflineSale && parsed.data.offlineRefAlias && parsed.data.offlineRefAlias !== offlineRef) saleFlags.offlineRefAlias = parsed.data.offlineRefAlias
     let offlineNotice: { saleId: string; invoiceNo: string } | null = null
 
     // Execute with RLS tenant context
@@ -350,6 +355,10 @@ export async function POST(request: NextRequest) {
         if (!warehouse) {
           return NextResponse.json({ error: 'Selected warehouse not found or inactive' }, { status: 400 })
         }
+        // D1: the quarantine location holds returned goods; it is never a selling location
+        if (isQuarantineCode(warehouse.code)) {
+          return NextResponse.json({ error: 'The quarantine warehouse cannot be used for sales', code: 'QUARANTINE_WAREHOUSE' }, { status: 400 })
+        }
       }
 
       if (!warehouseId) {
@@ -359,12 +368,12 @@ export async function POST(request: NextRequest) {
             eq(warehouses.isActive, true)
           ),
         })
-        if (defaultWarehouse) {
+        if (defaultWarehouse && !isQuarantineCode(defaultWarehouse.code)) {
           warehouseId = defaultWarehouse.id
         } else {
-          // Fallback: get any active warehouse
+          // Fallback: get any active warehouse (never the quarantine location)
           const anyWarehouse = await db.query.warehouses.findFirst({
-            where: eq(warehouses.isActive, true),
+            where: and(eq(warehouses.isActive, true), sql`upper(${warehouses.code}) <> 'QUARANTINE'`),
           })
           if (anyWarehouse) {
             warehouseId = anyWarehouse.id
@@ -444,6 +453,8 @@ export async function POST(request: NextRequest) {
       total: number
       costPrice: number
       serialNumberIds?: string[]
+      batchId?: string | null
+      batchNumber?: string | null
     }
 
     const expandedCartItems: ExpandedCartItem[] = []
@@ -477,6 +488,8 @@ export async function POST(request: NextRequest) {
         total: itemTotal,
         costPrice: item ? roundCurrency(parseFloat(item.costPrice)) : 0,
         serialNumberIds: cartItem.serialNumberIds || undefined,
+        batchId: cartItem.batchId || null,
+        batchNumber: cartItem.batchNumber || null,
       })
 
       // W6: offline sale sold at a (cached) price that differs from today's catalog price
@@ -703,9 +716,13 @@ export async function POST(request: NextRequest) {
 
       // Create sale and items in transaction (RLS scopes)
       const result = await db.transaction(async (tx) => {
-        // Generate invoice/return number from the per-tenant sequence (row-locked
-        // upsert on tenant_sequences; no global lock, no MAX() scan). Format: INV-000123 / RTN-000004
-        const invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
+        // The real INV- number comes from the per-vendor sequence row (tenant_sequences), which stays
+        // locked until commit. To keep that window short for busy stores (many cashiers of one
+        // vendor), the sale is written with a unique temporary number and the real number is
+        // allocated just before the final GL postings, then applied to the rows that mention it.
+        // Numbering stays gap-free because allocation and use share this transaction.
+        const pendingInvoiceNo = `PND-${crypto.randomUUID()}`
+        let invoiceNo = pendingInvoiceNo
 
       // Create sale
       const saleResult = await tx.insert(sales).values({
@@ -741,7 +758,10 @@ export async function POST(request: NextRequest) {
       }).returning()
       const newSale = (saleResult as typeof sales.$inferSelect[])[0]
 
-      // Split tender (multiple payment methods) or single payment
+      // Split tender (multiple payment methods) or single payment.
+      // E1: every payment row written here is mirrored in `recordedPayments` — the GL settles the
+      // receivable with one debit per method from exactly these rows.
+      const recordedPayments: Array<{ method: string; amount: number }> = []
       const splits = Array.isArray(paymentSplits) ? paymentSplits : null
       if (splits && splits.length > 0) {
         for (const split of splits) {
@@ -754,7 +774,18 @@ export async function POST(request: NextRequest) {
               reference: split.reference || null,
               receivedBy: userId,
             })
+            recordedPayments.push({ method: split.method, amount: roundCurrency(split.amount) })
           }
+        }
+        // Customer credit applied next to the splits (the balance is deducted below)
+        if (creditUsed > 0) {
+          await tx.insert(payments).values({
+            tenantId: session.user.tenantId,
+            saleId: newSale.id,
+            amount: String(creditUsed),
+            method: 'credit',
+            receivedBy: userId,
+          })
         }
       } else {
         // Create payment record for cash/card payment.
@@ -771,6 +802,7 @@ export async function POST(request: NextRequest) {
             method: paymentMethod || 'cash',
             receivedBy: userId,
           })
+          recordedPayments.push({ method: paymentMethod || 'cash', amount: roundCurrency(cashCardRecorded) })
         }
 
         // Create payment record for credit used
@@ -785,8 +817,15 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Gift card redemption: atomically deduct from card within same transaction
-      if (paymentMethod === 'gift_card' && giftCardId && cashCardAmount > 0) {
+      // Gift card redemption: atomically deduct from card within same transaction.
+      // Split tender: only the gift-card split is drawn from the card.
+      const giftCardRedeemAmount = splits && splits.length > 0
+        ? roundCurrency(splits.filter(sp => sp.method === 'gift_card').reduce((sum, sp) => sum + sp.amount, 0))
+        : (paymentMethod === 'gift_card' ? cashCardAmount : 0)
+      if (splits && splits.length > 0 && giftCardRedeemAmount > 0 && !giftCardId) {
+        throw new Error('GIFT_CARD_NOT_FOUND')
+      }
+      if (giftCardId && giftCardRedeemAmount > 0) {
         const [currentCard] = await tx
           .select()
           .from(giftCards)
@@ -812,11 +851,11 @@ export async function POST(request: NextRequest) {
         }
 
         const cardBalance = parseCurrency(currentCard.currentBalance)
-        if (cardBalance < cashCardAmount - 0.01) {
+        if (cardBalance < giftCardRedeemAmount - 0.01) {
           throw new Error('GIFT_CARD_INSUFFICIENT_BALANCE')
         }
 
-        const newBalance = roundCurrency(Math.max(0, cardBalance - cashCardAmount))
+        const newBalance = roundCurrency(Math.max(0, cardBalance - giftCardRedeemAmount))
         const newStatus = newBalance < 0.01 ? 'used' as const : 'active' as const
 
         await tx.update(giftCards)
@@ -827,7 +866,7 @@ export async function POST(request: NextRequest) {
           tenantId: session.user.tenantId,
           giftCardId,
           type: 'redemption',
-          amount: String(cashCardAmount),
+          amount: String(giftCardRedeemAmount),
           balanceAfter: String(newBalance),
           saleId: newSale.id,
           createdBy: userId,
@@ -893,6 +932,8 @@ export async function POST(request: NextRequest) {
         // estimates) are re-checked against the locked before-value.
         const stockInputs: StockChangeInput[] = []
         const stockLineQty: number[] = []
+        // D1: batch-tracked lines draw from item_batches after the stock rows are locked
+        const batchLines: Array<{ saleItemId: string; cartItem: ExpandedCartItem }> = []
         for (const cartItem of expandedCartItems) {
           const lockedItem = tenantItems.find(i => i.id === cartItem.itemId)
 
@@ -929,6 +970,10 @@ export async function POST(request: NextRequest) {
           total: String(cartItem.total),
           serialNumberIds: cartItem.serialNumberIds?.length ? cartItem.serialNumberIds : null,
         }).returning({ id: saleItems.id })
+
+          if (lockedItem?.trackBatches && cartItem.quantity > 0) {
+            batchLines.push({ saleItemId: saleItemRow.id, cartItem })
+          }
 
           if (lockedItem?.trackStock) {
             // Serial number tracking
@@ -969,24 +1014,6 @@ export async function POST(request: NextRequest) {
           }
         }
 
-        const stockResults = stockInputs.length > 0 ? await applyStockChanges(tx, stockInputs) : []
-        const shortfalls: NonNullable<SaleFlags['stockShortfall']> = []
-        stockResults.forEach((r, i) => {
-          const reserved = reservedMap.get(stockInputs[i].itemId) || 0
-          const availableStock = Math.round((r.before - reserved) * 1000) / 1000
-          if (stockLineQty[i] > 0 && availableStock < stockLineQty[i]) {
-            if (!isOfflineSale) {
-              throw new Error(`INSUFFICIENT_STOCK:${r.itemName} (need: ${stockLineQty[i]}, have: ${availableStock})`)
-            }
-            shortfalls.push({ itemId: stockInputs[i].itemId, name: r.itemName, quantity: stockLineQty[i], available: availableStock })
-          }
-        })
-        saleStockChanges = stockResults.map((result, i) => ({ result, input: stockInputs[i] }))
-        if (shortfalls.length > 0) {
-          saleFlags.stockShortfall = shortfalls
-          await tx.update(sales).set({ flags: saleFlags }).where(eq(sales.id, newSale.id))
-          newSale.flags = saleFlags
-        }
 
         // Auto-create gift cards for gift card items sold
         const generatedGiftCards: { cardNumber: string; balance: number }[] = []
@@ -1106,6 +1133,66 @@ export async function POST(request: NextRequest) {
           }
         }
 
+        // Stock and batch locks are taken as late as possible (just before the invoice number):
+        // the warehouse_stock rows of popular items stay locked only from here to commit, so
+        // concurrent cashiers selling the same item wait for the shortest possible time.
+        const stockResults = stockInputs.length > 0 ? await applyStockChanges(tx, stockInputs) : []
+        const shortfalls: NonNullable<SaleFlags['stockShortfall']> = []
+        stockResults.forEach((r, i) => {
+          const reserved = reservedMap.get(stockInputs[i].itemId) || 0
+          const availableStock = Math.round((r.before - reserved) * 1000) / 1000
+          if (stockLineQty[i] > 0 && availableStock < stockLineQty[i]) {
+            if (!isOfflineSale) {
+              throw new Error(`INSUFFICIENT_STOCK:${r.itemName} (need: ${stockLineQty[i]}, have: ${availableStock})`)
+            }
+            shortfalls.push({ itemId: stockInputs[i].itemId, name: r.itemName, quantity: stockLineQty[i], available: availableStock })
+          }
+        })
+        saleStockChanges = stockResults.map((result, i) => ({ result, input: stockInputs[i] }))
+        if (shortfalls.length > 0) {
+          saleFlags.stockShortfall = shortfalls
+        }
+
+        // D1: batch allocation (cashier's batch / scanned batch number first, else FEFO).
+        // Online: missing batch quantity rejects the sale. Offline: allocate what exists and
+        // record the shortfall (the goods already left the shop).
+        if (batchLines.length > 0) {
+          const salesSettings = await getTenantSalesSettings(tx, session.user.tenantId)
+          const batchShortfalls: NonNullable<SaleFlags['batchShortfall']> = []
+          for (const b of batchLines) {
+            const r = await allocateSaleLineBatches(tx, {
+              tenantId: session.user.tenantId,
+              warehouseId,
+              itemId: b.cartItem.itemId,
+              qty: b.cartItem.quantity,
+              saleItemId: b.saleItemId,
+              preferredBatchId: b.cartItem.batchId,
+              preferredBatchNumber: b.cartItem.batchNumber,
+              allowExpired: salesSettings.batches.allowExpiredSale,
+              allowShortfall: isOfflineSale,
+              itemName: b.cartItem.name,
+            })
+            if (r.shortfall > 0) {
+              batchShortfalls.push({ itemId: b.cartItem.itemId, name: b.cartItem.name, quantity: b.cartItem.quantity, allocated: r.allocated })
+            }
+          }
+          if (batchShortfalls.length > 0) saleFlags.batchShortfall = batchShortfalls
+        }
+
+        if (shortfalls.length > 0 || saleFlags.batchShortfall?.length) {
+          await tx.update(sales).set({ flags: saleFlags }).where(eq(sales.id, newSale.id))
+          newSale.flags = saleFlags
+        }
+
+        // Allocate the real invoice number now (see pendingInvoiceNo above) and apply it
+        invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
+        await tx.update(sales).set({ invoiceNo }).where(eq(sales.id, newSale.id))
+        await tx.execute(sql`UPDATE customer_credit_transactions SET notes = replace(notes, ${pendingInvoiceNo}, ${invoiceNo})
+          WHERE reference_type = 'sale' AND reference_id = ${newSale.id} AND notes LIKE ${'%' + pendingInvoiceNo + '%'}`)
+        await tx.execute(sql`UPDATE loyalty_transactions SET notes = replace(notes, ${pendingInvoiceNo}, ${invoiceNo})
+          WHERE sale_id = ${newSale.id} AND notes LIKE ${'%' + pendingInvoiceNo + '%'}`)
+        newSale.invoiceNo = invoiceNo
+
         // Auto-post to General Ledger
         {
           // Separate gift card items from regular items for GL posting
@@ -1122,6 +1209,28 @@ export async function POST(request: NextRequest) {
             return sum + roundCurrency(ci.costPrice * Math.abs(ci.quantity))
           }, 0))
 
+          // E1: settlement per payment method, mirroring the payment rows of this sale. 'credit'
+          // rows are not money received: customer store credit is posted via creditAmount (Dr
+          // customer advance) and an on-account split leaves the receivable open.
+          const settlement = recordedPayments
+            .filter(p => p.method !== 'credit' && p.amount > 0)
+            .map(p => ({ ...p }))
+          // Gift card items (liability, not revenue) are paid first from the settlement, in order
+          const giftCardSettlement: Array<{ method: string; amount: number }> = []
+          {
+            let left = giftCardItemTotal
+            for (const p of settlement) {
+              if (left <= 0) break
+              const take = roundCurrency(Math.min(left, p.amount))
+              if (take <= 0) continue
+              p.amount = roundCurrency(p.amount - take)
+              left = roundCurrency(left - take)
+              giftCardSettlement.push({ method: p.method, amount: take })
+            }
+            if (left > 0) giftCardSettlement.push({ method: paymentMethod || 'cash', amount: left })
+          }
+          const regularSettlement = settlement.filter(p => p.amount > 0)
+
           // Post regular items as normal sale
           if (regularTotal > 0) {
             await postSaleToGL(tx, session.user.tenantId, {
@@ -1132,10 +1241,11 @@ export async function POST(request: NextRequest) {
               tax: finalTax,
               discount: finalDiscount,
               total: regularTotal,
-              amountPaid: roundCurrency(cashCardAmount - giftCardItemTotal),
+              amountPaid: roundCurrency(regularSettlement.reduce((sum, p) => sum + p.amount, 0)),
               creditAmount: creditUsed,
               costOfGoodsSold: totalCOGS,
               paymentMethod: paymentMethod || 'cash',
+              paymentSplits: regularSettlement,
               customerId: customerId || null,
               isReturn: false,
               costCenterId: costCenterId || null,
@@ -1143,14 +1253,14 @@ export async function POST(request: NextRequest) {
             })
           }
 
-          // Post gift card items as liability (not revenue)
-          if (giftCardItemTotal > 0) {
+          // Post gift card items as liability (not revenue), one posting per paying method
+          for (const g of giftCardSettlement) {
             await postGiftCardSaleToGL(tx, session.user.tenantId, {
               saleId: newSale.id,
               invoiceNumber: newSale.invoiceNo,
               saleDate: new Date().toISOString().split('T')[0],
-              amount: giftCardItemTotal,
-              paymentMethod: paymentMethod || 'cash',
+              amount: g.amount,
+              paymentMethod: g.method,
               customerId: customerId || null,
               costCenterId: costCenterId || null,
             })
@@ -1254,7 +1364,7 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      if (isOfflineSale && (saleFlags.priceDifferences?.length || saleFlags.taxDifference || saleFlags.stockShortfall?.length)) {
+      if (isOfflineSale && (saleFlags.priceDifferences?.length || saleFlags.taxDifference || saleFlags.stockShortfall?.length || saleFlags.batchShortfall?.length)) {
         offlineNotice = { saleId: result.id, invoiceNo: result.invoiceNo }
       }
 
@@ -1271,6 +1381,7 @@ export async function POST(request: NextRequest) {
       if ((saleFlags.priceDifferences?.length || 0) > 3) parts.push(`+${saleFlags.priceDifferences!.length - 3} more`)
       if (saleFlags.taxDifference) parts.push(`tax differs by ${saleFlags.taxDifference.difference.toFixed(2)}`)
       if (saleFlags.stockShortfall?.length) parts.push(`${saleFlags.stockShortfall.length} item(s) sold beyond recorded stock`)
+      if (saleFlags.batchShortfall?.length) parts.push(`${saleFlags.batchShortfall.length} item(s) sold beyond recorded batch quantity`)
       void notify(session.user.tenantId, 'offline_price_difference', {
         title: `Offline sale ${offlineRef} (${notice.invoiceNo}) needs review`,
         body: parts.join(' · ') || 'Offline sale differs from the current catalog',
@@ -1337,6 +1448,11 @@ export async function POST(request: NextRequest) {
 
     if (message.startsWith('SERIAL_MISMATCH:')) {
       return NextResponse.json({ error: message.replace('SERIAL_MISMATCH:', '') }, { status: 400 })
+    }
+
+    const batchError = batchErrorInfo(error)
+    if (batchError) {
+      return NextResponse.json({ error: batchError.message, code: batchError.code }, { status: 400 })
     }
 
     // Gift card errors
@@ -1411,7 +1527,9 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
         }
       }
 
-      const result = await db.transaction((tx) => createReturnInTx(tx, { tenantId, userId }, {
+      const result = await db.transaction(async (tx) => createReturnInTx(tx, { tenantId, userId }, {
+        // D1: tenant return settings (serial status, stock vs quarantine)
+        ...(await getTenantSalesSettings(tx, tenantId)).returns,
         originalSaleId: body.returnAgainst || null,
         lines: body.cartItems.map((c) => ({
           originalSaleItemId: c.originalSaleItemId || null,
@@ -1440,7 +1558,7 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
       })
       if (result.originalSale) logAndBroadcast(tenantId, 'sale', 'updated', result.originalSale.id)
       for (const itemId of result.affectedItemIds) logAndBroadcast(tenantId, 'item', 'updated', itemId)
-      logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.warehouseId)
+      logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.stockWarehouseId)
       notifyReturnAlerts(tenantId, {
         returnId: ret.id, returnNo: ret.invoiceNo, originalInvoiceNo: result.originalSale?.invoiceNo,
         manual: !result.originalSale, refundTotal: result.refundTotal, actorUserId: userId, actorName: session.user.name,

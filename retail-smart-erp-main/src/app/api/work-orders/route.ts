@@ -14,6 +14,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { workOrdersListSchema, createWorkOrderSchema } from '@/lib/validation/schemas/work-orders'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // Helper function to get available stock (current - reserved from draft work orders)
 // Requires RLS-aware db connection to be passed in
@@ -291,17 +292,8 @@ export async function POST(request: NextRequest) {
 
       // Create work order in transaction with atomic order number generation
       const result = await db.transaction(async (tx) => {
-        // Advisory lock prevents duplicate work order numbers under concurrent load
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('work_order_' || ${session.user.tenantId}))`)
-
-        // Generate work order number atomically inside transaction (RLS scopes)
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${workOrders.orderNo})` })
-          .from(workOrders)
-
-        const lastOrderNo = maxResult?.maxNo
-        const nextNumber = lastOrderNo ? parseInt(lastOrderNo.replace(/\D/g, '')) + 1 : 1
-        const orderNo = `WO-${String(nextNumber).padStart(6, '0')}`
+        // Work order number from the per-tenant sequence
+        const orderNo = await nextDocNo(tx, session.user.tenantId, 'work_order')
 
         const [newWorkOrder] = await tx.insert(workOrders).values({
           tenantId: session.user.tenantId,

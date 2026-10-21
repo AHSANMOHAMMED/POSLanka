@@ -82,7 +82,8 @@ export async function POST(request: NextRequest) {
       })
       if (result.returnResult.originalSale) logAndBroadcast(tenantId, 'sale', 'updated', result.returnResult.originalSale.id)
       for (const itemId of result.affectedItemIds) logAndBroadcast(tenantId, 'item', 'updated', itemId)
-      logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.returnResult.warehouseId)
+      logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.returnResult.stockWarehouseId)
+      if (result.returnResult.stockWarehouseId !== result.returnResult.warehouseId) logAndBroadcast(tenantId, 'warehouse-stock', 'updated', result.returnResult.warehouseId)
       notifyReturnAlerts(tenantId, {
         returnId: rtn.id, returnNo: rtn.invoiceNo, originalInvoiceNo: result.returnResult.originalSale?.invoiceNo,
         manual: !result.returnResult.originalSale, refundTotal: result.returnResult.refundTotal, actorUserId: userId, actorName: session.user.name,

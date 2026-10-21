@@ -29,6 +29,8 @@ interface CartPanelProps {
   onRemoveFromCart: (cartLineId: string) => void
   onUpdatePrice: (cartLineId: string, newPrice: number) => void
   onSetQuantityDirectly: (cartLineId: string, qty: number) => void
+  /** D1: cashier picked another batch for a batch-tracked line */
+  onChangeBatch?: (cartLineId: string, batchId: string) => void
   onClearCart: () => void
   onCancelReturnMode: () => void
   /** Return mode against an invoice: turn the selected return lines into an exchange (W8) */
@@ -85,6 +87,7 @@ export function CartPanel({
   onRemoveFromCart,
   onUpdatePrice,
   onSetQuantityDirectly,
+  onChangeBatch,
   onClearCart,
   onCancelReturnMode,
   onStartExchange,
@@ -263,6 +266,32 @@ export function CartPanel({
                       <p className="text-xs text-orange-600 mt-0.5">
                         {item.weight.toFixed(3)} kg @ {currencyCode} {item.unitPrice.toFixed(2)}/kg
                       </p>
+                    )}
+                    {item.batchNumber && (
+                      <div className="text-xs text-teal-700 dark:text-teal-400 mt-0.5 flex items-center gap-1">
+                        <span>Batch</span>
+                        {onChangeBatch && item.batchOptions && item.batchOptions.length > 1 ? (
+                          <select
+                            aria-label="Batch"
+                            className="text-xs border border-gray-300 dark:border-gray-600 rounded px-1 py-0 bg-white dark:bg-gray-800"
+                            value={item.batchId || ''}
+                            onChange={(e) => onChangeBatch(item.cartLineId, e.target.value)}
+                          >
+                            {item.batchOptions.map(b => (
+                              <option key={b.id} value={b.id}>
+                                {b.batchNumber}{b.expiryDate ? ` · exp ${b.expiryDate}` : ''} ({b.currentQuantity}){b.expired ? ' · EXPIRED' : ''}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span>
+                            {item.batchNumber}{item.batchExpiry ? ` · exp ${item.batchExpiry}` : ''}
+                            {item.batchOptions?.find(b => b.id === item.batchId)?.expired && (
+                              <span className="ml-1 font-semibold text-red-600 dark:text-red-400">EXPIRED</span>
+                            )}
+                          </span>
+                        )}
+                      </div>
                     )}
                     {item.modifiers && item.modifiers.length > 0 && (
                       <p className="text-xs text-gray-500 mt-0.5">

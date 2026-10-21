@@ -34,6 +34,8 @@ interface CartDrawerModalProps {
   onClearCart: () => void
   onHoldCart: () => void
   onProceedToTender: () => void
+  /** Restaurant businesses: print a kitchen ticket with the unsent / changed lines. */
+  onSendToKitchen?: () => void
   /** Document tax computed by the parent (tax templates). */
   tax: number
   taxLabel?: string
@@ -50,6 +52,7 @@ export function CartDrawerModal({
   onClearCart,
   onHoldCart,
   onProceedToTender,
+  onSendToKitchen,
   tax,
   taxLabel = 'Tax',
   taxInclusive = false,
@@ -171,6 +174,11 @@ export function CartDrawerModal({
                 <Pressable style={styles.secondaryBtn} onPress={onClearCart}>
                   <Text style={[styles.secondaryBtnText, { color: THEME.colors.error }]}>✕ Clear</Text>
                 </Pressable>
+                {onSendToKitchen ? (
+                  <Pressable style={styles.secondaryBtn} onPress={onSendToKitchen}>
+                    <Text style={styles.secondaryBtnText}>🍳 Kitchen</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable
                   style={styles.primaryChargeBtn}
                   onPress={() => {

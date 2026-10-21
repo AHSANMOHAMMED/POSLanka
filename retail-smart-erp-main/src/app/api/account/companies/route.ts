@@ -15,6 +15,7 @@ import { deleteTenantFiles } from '@/lib/files/storage'
 import { validateBody } from '@/lib/validation/helpers'
 import { createCompanySchema, deleteCompanySchema } from '@/lib/validation/schemas/account'
 import { RESERVED_SLUGS } from '@/lib/utils/reserved-slugs'
+import { foldTenantUsage } from '@/lib/db/storage-quota'
 
 // Admin pool for destructive operations (needs superuser for FK bypass)
 let adminPool: Pool | null = null
@@ -43,6 +44,13 @@ export async function GET() {
     if (!session?.user?.accountId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // Fold pending usage-counter deltas for this account's companies before reading tenant_usage
+    try {
+      const memberTenantIds = (await db.select({ tenantId: accountTenants.tenantId }).from(accountTenants)
+        .where(eq(accountTenants.accountId, session.user.accountId))).map((r) => r.tenantId)
+      await Promise.all(memberTenantIds.map((id) => foldTenantUsage(id)))
+    } catch { /* usage numbers may lag slightly; never block the list */ }
 
     // Get all tenant memberships for this account with usage data
     // Using a try-catch to handle potential missing tables gracefully

@@ -22,8 +22,15 @@
  * Manual returns (no invoice) need a reason, use catalogue prices and are flagged
  * `return_reason = 'no_receipt'`.
  *
- * Batches: sale lines carry no batch linkage (sales never draw down item_batches), so there is
- * nothing to restore at batch level; stock is restored at warehouse level only.
+ * Batches (D1): sale lines record the batches they drew from (sale_item_batches); a return puts
+ * the quantity back into those batches, last allocation first (restoreSaleLineBatches), and the
+ * return line records where it went.
+ *
+ * Restock mode (D1, tenants.settings.returns.restockMode): 'stock' (default) puts returned goods
+ * back into the sale's warehouse; 'quarantine' moves them into the tenant's quarantine warehouse
+ * (code QUARANTINE, ledger referenceType 'return_quarantine', batches with status 'quarantine'),
+ * leaving sellable stock unchanged. serialReturnStatus ('available' | 'defective') sets the status
+ * of serials coming back. Both default from the tenant settings when the caller does not pass them.
  */
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import {
@@ -36,6 +43,9 @@ import { allocateSerials, transferSerials } from '@/lib/inventory/serial-numbers
 import type { DbTx } from '@/lib/inventory/db-types'
 import { roundCurrency } from '@/lib/utils/currency'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
+import { restoreSaleLineBatches, getSaleLineBatches, type RestoredBatch, type SaleLineBatchInfo } from '@/lib/inventory/batches'
+import { getOrCreateQuarantineWarehouse } from '@/lib/inventory/quarantine'
+import { getTenantSalesSettings, type RestockMode } from './return-settings'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 
@@ -161,8 +171,10 @@ export interface CreateReturnInput {
    * The return still records the full value; only `refund - offset` leaves the till.
    */
   offsetAmount?: number
-  /** Status for serials coming back (default 'available'; 'defective' to quarantine). */
+  /** Status for serials coming back (default: tenant setting, else 'available'). */
   serialReturnStatus?: 'available' | 'defective'
+  /** Where returned goods go (default: tenant setting, else 'stock'). */
+  restockMode?: RestockMode
 }
 
 export interface CreatedReturnLine {
@@ -176,6 +188,8 @@ export interface CreatedReturnLine {
   tax: number
   gross: number
   serialNumberIds: string[]
+  /** Batches the returned quantity went back into (D1). */
+  batches: RestoredBatch[]
 }
 
 export interface CreateReturnResult {
@@ -197,6 +211,9 @@ export interface CreateReturnResult {
   stockChanges: Array<{ result: StockChangeResult; input: StockChangeInput }>
   affectedItemIds: string[]
   warehouseId: string
+  /** Warehouse that received the returned stock (quarantine warehouse in quarantine mode). */
+  stockWarehouseId: string
+  restockMode: RestockMode
   customerId: string | null
 }
 
@@ -439,6 +456,17 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
   const warehouseId = input.warehouseId || original?.warehouseId || null
   if (!warehouseId) throw new SaleFlowError(400, 'WAREHOUSE_REQUIRED', 'No warehouse to return stock into')
 
+  // D1: tenant return settings (callers may pass them explicitly)
+  let restockMode = input.restockMode
+  let serialStatus = input.serialReturnStatus
+  if (!restockMode || !serialStatus) {
+    const settings = await getTenantSalesSettings(tx, tenantId)
+    restockMode = restockMode || settings.returns.restockMode
+    serialStatus = serialStatus || settings.returns.serialReturnStatus
+  }
+  const quarantine = restockMode === 'quarantine'
+  const stockWarehouseId = quarantine ? await getOrCreateQuarantineWarehouse(tx, tenantId) : warehouseId
+
   // 5. return document
   const invoiceNo = await nextDocumentNumber(tx, tenantId, 'return')
   const returnReason = original ? (input.reason?.trim() || null) : 'no_receipt'
@@ -510,6 +538,7 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
       tax: roundCurrency(p.tax),
       gross: roundCurrency(p.gross),
       serialNumberIds: p.serialIds,
+      batches: [],
     })
   }
 
@@ -519,14 +548,14 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
     if (!p.itemId || !p.trackStock) return
     stockInputs.push({
       tenantId,
-      warehouseId,
+      warehouseId: stockWarehouseId,
       itemId: p.itemId,
       mode: 'delta',
       qty: p.qty,
       type: 'in',
-      referenceType: 'return',
+      referenceType: quarantine ? 'return_quarantine' : 'return',
       referenceId: returnSale.id,
-      notes: `Return ${invoiceNo}${original ? ` against ${original.invoiceNo}` : ' (no receipt)'}`,
+      notes: `Return ${invoiceNo}${original ? ` against ${original.invoiceNo}` : ' (no receipt)'}${quarantine ? ' → quarantine' : ''}`,
       userId,
       source: 'pos',
       costCenterId: input.costCenterId || original?.costCenterId || null,
@@ -535,8 +564,22 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
   })
   const stockResults = stockInputs.length ? await applyStockChanges(tx, stockInputs) : []
 
-  // 8. serials back on the shelf
-  const serialStatus = input.serialReturnStatus || 'available'
+  // 7b. batches: back into the batches the original line drew from (LIFO of allocation)
+  for (let i = 0; i < planned.length; i++) {
+    const p = planned[i]
+    if (!p.original) continue
+    const r = await restoreSaleLineBatches(tx, {
+      tenantId,
+      saleItemId: p.original.id,
+      qty: p.qty,
+      toWarehouseId: stockWarehouseId,
+      quarantine,
+      returnSaleItemId: createdLines[i].id,
+    })
+    createdLines[i].batches = r.restored
+  }
+
+  // 8. serials back on the shelf (status per tenant setting)
   for (const p of planned) {
     if (p.serialIds.length === 0) continue
     const current = await tx.select().from(itemSerialNumbers).where(inArray(itemSerialNumbers.id, p.serialIds))
@@ -549,16 +592,16 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
     await allocateSerials(tx, {
       tenantId,
       serialNumberIds: p.serialIds,
-      newStatus: serialStatus,
+      newStatus: serialStatus || 'available',
       referenceType: 'return',
       referenceId: returnSale.id,
       changedBy: userId,
       notes: `Returned on ${invoiceNo}`,
     })
-    const elsewhere = current.filter((s) => s.warehouseId !== warehouseId).map((s) => s.id)
+    const elsewhere = current.filter((s) => s.warehouseId !== stockWarehouseId).map((s) => s.id)
     if (elsewhere.length > 0) {
       await transferSerials(tx, {
-        tenantId, serialNumberIds: elsewhere, toWarehouseId: warehouseId,
+        tenantId, serialNumberIds: elsewhere, toWarehouseId: stockWarehouseId,
         referenceType: 'return', referenceId: returnSale.id, changedBy: userId,
       })
     }
@@ -664,6 +707,8 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
     stockChanges: stockResults.map((result, i) => ({ result, input: stockInputs[i] })),
     affectedItemIds: [...new Set(planned.map((p) => p.itemId).filter((x): x is string => !!x))],
     warehouseId,
+    stockWarehouseId,
+    restockMode: restockMode || 'stock',
     customerId,
   }
 }
@@ -693,6 +738,8 @@ export interface LookupLine extends SaleItemRow {
   isGiftCard: boolean
   /** Serials sold on this line that have not been returned yet. */
   remainingSerialNumberIds: string[]
+  /** Batch allocations of this line (D1). */
+  batches: SaleLineBatchInfo[]
 }
 
 export interface SaleLookupResult {
@@ -735,7 +782,11 @@ export async function lookupSaleByCode(tx: DbTx, code: string): Promise<SaleLook
     }
     if (!sale) return null
   } else {
-    const [off] = await tx.select().from(sales).where(sql`upper(${sales.offlineRef}) = ${upper}`).limit(1)
+    let [off] = await tx.select().from(sales).where(sql`upper(${sales.offlineRef}) = ${upper}`).limit(1)
+    // D2: the printed number of a sale re-numbered after an OFFLINE_REF_CONFLICT (flags.offlineRefAlias).
+    if (!off && upper.startsWith('OFF-')) {
+      ;[off] = await tx.select().from(sales).where(sql`upper(${sales.flags}->>'offlineRefAlias') = ${upper}`).limit(1)
+    }
     if (!off) return null
     matchedBy = 'offline_ref'
     if (off.isReturn && off.returnAgainst) {
@@ -777,6 +828,7 @@ export async function buildLookup(tx: DbTx, sale: SaleRow, matchedBy: LookupMatc
     for (const r of retLines) for (const sid of (r.serialNumberIds as string[] | null) || []) returnedSerials.add(sid)
   }
 
+  const batchesByLine = await getSaleLineBatches(tx, lines.map((l) => l.id))
   const outLines: LookupLine[] = lines.map((l) => {
     const qty = num(l.quantity)
     const remaining = qty > 0 ? round3(Math.max(0, qty - num(l.returnedQuantity))) : 0
@@ -787,6 +839,7 @@ export async function buildLookup(tx: DbTx, sale: SaleRow, matchedBy: LookupMatc
       refundUnitAmount: unit,
       isGiftCard: !!(l.itemId && giftIds.has(l.itemId)),
       remainingSerialNumberIds: ((l.serialNumberIds as string[] | null) || []).filter((sid) => !returnedSerials.has(sid)),
+      batches: batchesByLine.get(l.id) || [],
     }
   })
 

@@ -87,6 +87,15 @@ export const updateTenantSchema = z.object({
   taxId: z.string().trim().max(50).nullish(),
   brn: z.string().trim().max(50).nullish(),
   receiptSettings: receiptSettingsPatchSchema.optional(),
+  /** D1: returns handling (stored in tenants.settings.returns) */
+  returnSettings: z.object({
+    serialReturnStatus: z.enum(['available', 'defective']).optional(),
+    restockMode: z.enum(['stock', 'quarantine']).optional(),
+  }).optional(),
+  /** D1: batch selling (stored in tenants.settings.batches) */
+  batchSettings: z.object({
+    allowExpiredSale: z.boolean().optional(),
+  }).optional(),
 })
 
 // PUT /api/print-settings

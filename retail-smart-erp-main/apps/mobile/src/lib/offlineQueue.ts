@@ -13,6 +13,7 @@
 import * as FileSystem from 'expo-file-system'
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo'
 import { apiPost, getUser, isNetworkError } from './api'
+import { conflictOfflineRef } from './offlineRef'
 
 export interface QueuedSale {
   clientSaleId: string
@@ -315,11 +316,12 @@ export async function syncNow(): Promise<SyncResult> {
       let res = await apiPost<any>('/api/sales', entry.payload)
 
       // Another device printed the same OFF- number (device-code collision): keep the sale with a
-      // unique reference instead of losing it.
+      // unique reference instead of losing it. The number printed on the customer's receipt stays
+      // in entry.offlineRef and is sent as offlineRefAlias (sales.flags) so lookups / returns by
+      // the printed number still find the sale.
       if (!res.ok && res.status === 409 && /OFFLINE_REF_CONFLICT|already used/i.test(res.error || '') && entry.offlineRef) {
-        const newRef = `${entry.offlineRef}-${entry.clientSaleId.slice(0, 4).toUpperCase()}`.slice(0, 40)
-        entry.payload = { ...entry.payload, offlineRef: newRef }
-        entry.offlineRef = newRef
+        const newRef = conflictOfflineRef(entry.offlineRef, entry.clientSaleId)
+        entry.payload = { ...entry.payload, offlineRef: newRef, offlineRefAlias: entry.offlineRef }
         res = await apiPost<any>('/api/sales', entry.payload)
       }
 

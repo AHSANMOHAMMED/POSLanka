@@ -11,6 +11,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { dealerPaymentsListSchema, createDealerPaymentSchema } from '@/lib/validation/schemas/dealership'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all dealer payments for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -129,24 +130,9 @@ export async function POST(request: NextRequest) {
           throw new Error('DEALER_NOT_FOUND')
         }
 
-        // Auto-generate payment number: DP-YYYYMMDD-NNN
         const today = new Date()
-        const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
-        const prefix = `DP-${dateStr}-`
-
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${dealerPayments.paymentNo})` })
-          .from(dealerPayments)
-          .where(ilike(dealerPayments.paymentNo, `${prefix}%`))
-
-        let nextSeq = 1
-        if (maxResult?.maxNo) {
-          const lastSeq = parseInt(maxResult.maxNo.replace(prefix, ''))
-          if (!isNaN(lastSeq)) {
-            nextSeq = lastSeq + 1
-          }
-        }
-        const paymentNo = `${prefix}${String(nextSeq).padStart(3, '0')}`
+        // Payment number DP-YYYYMMDD-NNN from the per-tenant daily sequence
+        const paymentNo = await nextDocNo(tx, session.user.tenantId, 'dealer_payment')
 
         // Calculate balance changes
         const parsedAmount = amount

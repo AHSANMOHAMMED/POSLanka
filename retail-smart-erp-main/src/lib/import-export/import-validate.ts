@@ -9,7 +9,8 @@ import {
   type EntityConfig, type EntityFieldConfig, type ImportMode, type StockImportMode,
   isStockColumnKey, STOCK_COLUMN_PREFIX,
 } from './entity-config'
-import { validateRows, getMappedImportFields, type ParsedRow } from './import-utils'
+import { validateRowsChunked, getMappedImportFields, type ParsedRow } from './import-utils'
+import { COMPAT_KEYS, compatRawOf, parseCompatibleModels } from './compat'
 import type { ImportRowAction, ImportStockLine, NewImportRow } from './import-job-store'
 
 export interface ImportValidationOptions {
@@ -149,7 +150,7 @@ export async function validateImport(db: DbTx, params: ValidateImportParams): Pr
   const options = params.options || {}
   const stockMode: StockImportMode = options.stockMode || 'none'
   const fields = getMappedImportFields(config, columnMapping, businessType)
-  const validation = validateRows(rawRows, config, columnMapping, mode, businessType)
+  const validation = await validateRowsChunked(rawRows, config, columnMapping, mode, businessType)
   const isItems = config.name === 'items'
 
   const matchBy = resolveMatchBy(config, options.matchBy)
@@ -261,6 +262,41 @@ export async function validateImport(db: DbTx, params: ValidateImportParams): Pr
       if (!known.has(key) && !warned.has(key)) {
         warned.add(key)
         addWarning(w, field.label, `"${v}" not found in ${field.lookup!.entity} — will be auto-created`)
+      }
+    }
+  }
+
+  // ---- Part compatibility (auto-service items): makes/models the runner will auto-create ----
+  if (isItems && work.some(w => Object.keys(w.parsed.data).some(k => COMPAT_KEYS.has(k)))) {
+    // vehicle_makes / vehicle_models are shared reference tables (no tenant_id)
+    const makes = await db.select({ id: schema.vehicleMakes.id, name: schema.vehicleMakes.name }).from(schema.vehicleMakes)
+    const makeNameById = new Map(makes.map(m => [m.id, m.name.toLowerCase()]))
+    const knownMakes = new Set(makes.map(m => m.name.toLowerCase()))
+    const knownModels = new Set<string>()
+    const models = await db.select({ name: schema.vehicleModels.name, makeId: schema.vehicleModels.makeId }).from(schema.vehicleModels)
+    for (const m of models) {
+      const makeName = makeNameById.get(m.makeId)
+      if (makeName) knownModels.add(`${makeName}\u0000${m.name.toLowerCase()}`)
+    }
+    const warnedMakes = new Set<string>()
+    const warnedModels = new Set<string>()
+    for (const w of work) {
+      if (w.errors.length) continue
+      const raw = compatRawOf(w.parsed.data)
+      if (!raw) continue
+      for (const entry of parseCompatibleModels(raw)) {
+        const makeKey = entry.makeName.toLowerCase()
+        if (!knownMakes.has(makeKey) && !warnedMakes.has(makeKey)) {
+          warnedMakes.add(makeKey)
+          addWarning(w, 'Compatible Models', `Make "${entry.makeName}" not found — will be auto-created`)
+        }
+        if (entry.modelName) {
+          const modelKey = `${makeKey}\u0000${entry.modelName.toLowerCase()}`
+          if (!knownModels.has(modelKey) && !warnedModels.has(modelKey)) {
+            warnedModels.add(modelKey)
+            addWarning(w, 'Compatible Models', `Model "${entry.makeName} ${entry.modelName}" not found — will be auto-created`)
+          }
+        }
       }
     }
   }

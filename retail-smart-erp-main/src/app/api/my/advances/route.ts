@@ -9,6 +9,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { myAdvancesListSchema, createMyAdvanceSchema } from '@/lib/validation/schemas/hr'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET current user's advances
 export async function GET(request: NextRequest) {
@@ -83,12 +84,8 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'No employee profile found for your account' }, { status: 404 })
       }
 
-      // Generate advance number
-      const [{ count }] = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(employeeAdvances)
-
-      const advanceNo = `ADV-${String(Number(count) + 1).padStart(5, '0')}`
+      // Advance number from the per-tenant sequence
+      const advanceNo = await nextDocNo(db, session.user.tenantId, 'employee_advance')
       const installmentAmount = Math.round((requestedAmount / recoveryInstallments) * 100) / 100
 
       const [advance] = await db

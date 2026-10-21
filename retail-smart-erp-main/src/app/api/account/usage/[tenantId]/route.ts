@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { z } from 'zod'
+import { foldTenantUsage } from '@/lib/db/storage-quota'
 
 // GET /api/account/usage/[tenantId] - Get storage usage for a tenant
 export async function GET(
@@ -36,6 +37,7 @@ export async function GET(
     }
 
     // Get usage data
+    await foldTenantUsage(tenantId)
     const usage = await db.query.tenantUsage.findFirst({
       where: eq(tenantUsage.tenantId, tenantId),
     })

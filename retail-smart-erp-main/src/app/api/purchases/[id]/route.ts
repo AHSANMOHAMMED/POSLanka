@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { purchases, purchaseItems, purchasePayments, suppliers, warehouses, users, purchaseOrders, purchaseOrderItems, items as itemsTable, supplierBalanceAudit, itemSerialNumbers, serialNumberMovements, itemSupplierCosts, itemCostHistory } from '@/lib/db/schema'
+import { purchases, purchaseItems, purchasePayments, suppliers, warehouses, users, purchaseOrders, items as itemsTable, supplierBalanceAudit, itemSerialNumbers, serialNumberMovements, itemSupplierCosts } from '@/lib/db/schema'
 import { eq, and, sql, ne } from 'drizzle-orm'
 import { applyStockChange, notifyStockDecreased } from '@/lib/inventory/apply-stock-change'
 import {
-  applyPurchaseCost, findMovements, getTotalItemStock, reverseMovements, stockErrorResponse,
+  applyPurchaseCost, findMovements, reverseMovements, stockErrorResponse,
   type StockChangeRecord,
 } from '@/lib/purchasing/stock-cost'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -17,7 +17,7 @@ import { parseSerialNumberInput, checkDuplicateSerials, allocateSerials } from '
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
-import { recordItemChange } from '@/lib/inventory/item-audit'
+import { reversePurchaseCost, reversePurchaseOrderReceipt } from '@/lib/purchasing/purchase-reversal'
 
 // GET single purchase with items
 export async function GET(
@@ -245,95 +245,18 @@ export async function PUT(
           .filter(m => m.qtyChange !== 0)
         const addedStock = recordedMovements.some(m => m.qtyChange > 0)
 
-        // Cost reversal (purchases only): undo the weighted-average contribution of
-        // each line, using TOTAL stock across warehouses before the reversal.
+        // Cost reversal (purchases only, before the stock goes): exact restore when this
+        // purchase is the item's last cost change, else removal from the weighted average
+        // (rule documented in src/lib/purchasing/purchase-reversal.ts).
         if (addedStock && !currentPurchase.isReturn) {
-          const purchaseItemsList = (await tx
-            .select()
-            .from(purchaseItems)
-            .where(eq(purchaseItems.purchaseId, id)))
-            .filter(i => i.itemId && parseFloat(i.quantity) > 0)
-            .sort((x, y) => (x.itemId! < y.itemId! ? -1 : x.itemId! > y.itemId! ? 1 : 0))
-
-          // running total stock per item (lines of the same item reverse sequentially)
-          const runningStock = new Map<string, number>()
-          for (const item of purchaseItemsList) {
-            const itemId = item.itemId!
-            const qty = parseFloat(item.quantity)
-
-            const [currentItem] = await tx
-              .select({ costPrice: itemsTable.costPrice })
-              .from(itemsTable)
-              .where(eq(itemsTable.id, itemId))
-              .for('update')
-            if (!currentItem) continue
-
-            const stockBefore = runningStock.has(itemId)
-              ? runningStock.get(itemId)!
-              : await getTotalItemStock(tx, session.user.tenantId, itemId)
-            const stockAfter = Math.round((stockBefore - qty) * 1000) / 1000
-            runningStock.set(itemId, stockAfter)
-
-            const currentCost = parseFloat(currentItem.costPrice || '0')
-            const purchasePrice = parseFloat(item.unitPrice)
-            // With no stock left there is nothing to re-value: keep the current cost
-            // (zeroing it would corrupt later averages and COGS).
-            const reversedCost = stockAfter > 0
-              ? Math.max(0, Math.round(((currentCost * stockBefore) - (purchasePrice * qty)) / stockAfter * 100) / 100)
-              : currentCost
-
-            if (reversedCost !== currentCost) {
-              await tx.update(itemsTable)
-                .set({
-                  costPrice: reversedCost.toString(),
-                  updatedBy: session.user.id,
-                  version: sql`${itemsTable.version} + 1`,
-                  updatedAt: new Date(),
-                })
-                .where(eq(itemsTable.id, itemId))
-              await recordItemChange(tx, {
-                tenantId: session.user.tenantId,
-                itemId,
-                userId: session.user.id,
-                source: 'purchase_cancellation',
-                action: 'update',
-                before: { costPrice: currentCost },
-                after: { costPrice: reversedCost },
-                notes: `Cost reversed on cancelling ${currentPurchase.purchaseNo}`,
-              })
-            }
-
-            // Log cost reversal history
-            await tx.insert(itemCostHistory).values({
-              tenantId: session.user.tenantId,
-              itemId,
-              supplierId: currentPurchase.supplierId,
-              source: 'purchase_cancellation',
-              previousCostPrice: currentCost.toString(),
-              newCostPrice: reversedCost.toString(),
-              purchasePrice: item.unitPrice,
-              quantity: item.quantity,
-              stockBefore: stockBefore.toString(),
-              stockAfter: stockAfter.toString(),
-              referenceId: currentPurchase.id,
-              referenceNo: currentPurchase.purchaseNo,
-              notes: `Cost reversed due to cancellation of ${currentPurchase.purchaseNo}`,
-              createdBy: session.user.id,
-            })
-
-            // Update supplier cost record - decrement total purchased qty
-            if (currentPurchase.supplierId) {
-              await tx.update(itemSupplierCosts)
-                .set({
-                  totalPurchasedQty: sql`GREATEST(0, ${itemSupplierCosts.totalPurchasedQty} - ${qty})`,
-                  updatedAt: new Date(),
-                })
-                .where(and(
-                  eq(itemSupplierCosts.itemId, itemId),
-                  eq(itemSupplierCosts.supplierId, currentPurchase.supplierId)
-                ))
-            }
-          }
+          await reversePurchaseCost(tx, {
+            tenantId: session.user.tenantId,
+            purchaseId: id,
+            purchaseNo: currentPurchase.purchaseNo,
+            supplierId: currentPurchase.supplierId,
+            userId: session.user.id,
+            action: 'cancel',
+          })
         }
 
         const stockChanges: StockChangeRecord[] = await reverseMovements(tx, recordedMovements, {
@@ -373,76 +296,8 @@ export async function PUT(
           }
         }
 
-        // Revert linked PO: reverse received quantities and update status
-        let purchaseOrderId: string | null = null
-        if (currentPurchase.purchaseOrderId) {
-          purchaseOrderId = currentPurchase.purchaseOrderId
-
-          // Get invoice items to know how much to reverse
-          const invoiceItemsList = await tx
-            .select({ itemId: purchaseItems.itemId, quantity: purchaseItems.quantity })
-            .from(purchaseItems)
-            .where(eq(purchaseItems.purchaseId, id))
-
-          // Build a map of itemId → total invoice qty to reverse
-          const reverseMap = new Map<string, number>()
-          for (const ii of invoiceItemsList) {
-            if (ii.itemId) {
-              reverseMap.set(ii.itemId, (reverseMap.get(ii.itemId) || 0) + parseFloat(ii.quantity))
-            }
-          }
-
-          // Get PO items and reverse received quantities
-          const poItems = await tx
-            .select({
-              id: purchaseOrderItems.id,
-              itemId: purchaseOrderItems.itemId,
-              quantity: purchaseOrderItems.quantity,
-              receivedQuantity: purchaseOrderItems.receivedQuantity,
-            })
-            .from(purchaseOrderItems)
-            .where(eq(purchaseOrderItems.purchaseOrderId, purchaseOrderId))
-
-          let totalOrdered = 0
-          let totalReceived = 0
-
-          for (const poItem of poItems) {
-            const reverseQty = poItem.itemId ? (reverseMap.get(poItem.itemId) || 0) : 0
-            const currentReceived = parseFloat(poItem.receivedQuantity || '0')
-            const newReceived = Math.max(0, currentReceived - reverseQty)
-
-            // Update the PO item's receivedQuantity
-            if (reverseQty > 0) {
-              await tx.update(purchaseOrderItems)
-                .set({ receivedQuantity: newReceived.toString() })
-                .where(eq(purchaseOrderItems.id, poItem.id))
-
-              // Remove used qty from map so duplicate itemIds are handled one at a time
-              const remaining = reverseQty - (currentReceived - newReceived)
-              if (remaining > 0 && poItem.itemId) {
-                reverseMap.set(poItem.itemId, remaining)
-              } else if (poItem.itemId) {
-                reverseMap.delete(poItem.itemId)
-              }
-            }
-
-            totalOrdered += parseFloat(poItem.quantity)
-            totalReceived += newReceived
-          }
-
-          let revertStatus: 'confirmed' | 'partially_received' | 'fully_received'
-          if (totalReceived >= totalOrdered && totalOrdered > 0) {
-            revertStatus = 'fully_received'
-          } else if (totalReceived > 0) {
-            revertStatus = 'partially_received'
-          } else {
-            revertStatus = 'confirmed'
-          }
-
-          await tx.update(purchaseOrders)
-            .set({ status: revertStatus, updatedAt: new Date() })
-            .where(eq(purchaseOrders.id, purchaseOrderId))
-        }
+        // Revert linked PO: take back exactly what this invoice added to received quantities
+        const purchaseOrderId = await reversePurchaseOrderReceipt(tx, currentPurchase)
 
         // Reverse GL entries for this purchase (non-blocking)
         if (currentPurchase.status !== 'draft') {
@@ -957,6 +812,20 @@ export async function DELETE(
       // and reversals — are kept as the audit trail.
       const recordedMovements = (await findMovements(tx, session.user.tenantId, 'purchase', id))
         .filter(m => m.qtyChange !== 0)
+
+      // D1: undo the cost effect (before the stock goes) and the PO received quantities
+      if (!currentPurchase.isReturn && recordedMovements.some(m => m.qtyChange > 0)) {
+        await reversePurchaseCost(tx, {
+          tenantId: session.user.tenantId,
+          purchaseId: id,
+          purchaseNo: currentPurchase.purchaseNo,
+          supplierId: currentPurchase.supplierId,
+          userId: session.user.id,
+          action: 'delete',
+        })
+      }
+      const purchaseOrderId = await reversePurchaseOrderReceipt(tx, currentPurchase)
+
       const stockChanges: StockChangeRecord[] = await reverseMovements(tx, recordedMovements, {
         tenantId: session.user.tenantId,
         referenceType: 'purchase',
@@ -989,7 +858,7 @@ export async function DELETE(
       await tx.delete(purchases)
         .where(eq(purchases.id, id))
 
-      return { data: { success: true }, tenantId: session.user.tenantId, supplierId: currentPurchase.supplierId, stockChanges }
+      return { data: { success: true }, tenantId: session.user.tenantId, userId: session.user.id, supplierId: currentPurchase.supplierId, purchaseOrderId, stockChanges }
     })
   } catch (err) {
     const apiError = stockErrorResponse(err, 'Cannot delete purchase')
@@ -1005,9 +874,12 @@ export async function DELETE(
   }
   notifyStockDecreased(result.stockChanges)
 
-  logAndBroadcast(result.tenantId, 'purchase', 'deleted', id)
+  logAndBroadcast(result.tenantId, 'purchase', 'deleted', id, { userId: result.userId })
   if (result.supplierId) {
-    logAndBroadcast(result.tenantId, 'supplier', 'updated', result.supplierId)
+    logAndBroadcast(result.tenantId, 'supplier', 'updated', result.supplierId, { userId: result.userId })
+  }
+  if (result.purchaseOrderId) {
+    logAndBroadcast(result.tenantId, 'purchase-order', 'updated', result.purchaseOrderId, { userId: result.userId })
   }
   logAndBroadcast(result.tenantId, 'warehouse-stock', 'updated', 'bulk')
 

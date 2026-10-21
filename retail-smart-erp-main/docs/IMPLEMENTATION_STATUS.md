@@ -97,6 +97,19 @@ Delivered in three waves, each verified on a fresh database (migrations 0127–0
 
 Verification on the final build: 18 test suites (1,757 checks), API smoke 100/100, concurrency 105/105, browser 41/41, lint 0/0, web + mobile typecheck 0, Android bundle OK. CI runs all suites on a fresh PostgreSQL.
 
+## Round 6 — closing every open item (2026-10-21)
+- **Batches & expiry:** every sale path (POS, exchange, restaurant, sales-order, work-order, layaway) allocates earliest-expiry-first and records the batch; returns and voids restore the same batch. Expired batches blocked unless the vendor allows them.
+- **Returns:** optional quarantine location for returned goods; serial return status setting.
+- **Accounting:** split-payment sales post one debit per method; cash sales post the amount kept (not tendered); gift-card and store-credit splits fixed.
+- **Purchasing:** invoice cost updates, exact cost and PO reversal on cancel/delete; purchase invoice ↔ PO link actually stored.
+- **Document numbers:** all 28 series per vendor via `tenant_sequences`; no global locks left.
+- **Kitchen:** delta tickets (`+3`, `VOID 1`), decimal quantities, mobile kitchen tickets for restaurants.
+- **Mobile:** vendor currency on labels, branded Z-report, Android back in printer editor, offline stock reflects unsynced sales, 6-character device codes with conflict-safe lookups.
+- **Platform:** Next.js `proxy` (deprecation gone), live alert bell over WebSocket, per-vendor hiding of shared vehicle types/templates, 100,000-row imports.
+- **Scale fix (migration 0145):** usage counters no longer lock one shared row per vendor on every insert (they append deltas folded on read and every 15 minutes), the invoice number and stock rows are locked only at the end of a sale. 25 simultaneous same-item checkouts: p50 1.9 s → 1.06 s, p95 3.3 s → 1.3 s; different vendors never block each other.
+
+Final verification: fresh database 0000–0145, 22 suites / 1,947 checks, API 100/100, concurrency 105/105, browser 41/41, lint and typecheck clean, Android bundle OK, build without warnings.
+
 ## Still open
 - Not exercised on physical hardware: a real Android phone, Bluetooth/USB/network thermal printers, cash drawers, USB/Bluetooth scanners, weighing scales. These need an EAS build (`apps/mobile/README.md`) and an on-site test.
 - Push needs `npx eas init` (EAS project id) before notifications are delivered.

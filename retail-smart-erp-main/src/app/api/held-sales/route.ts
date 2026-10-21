@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { heldSalesListSchema, createHeldSaleSchema } from '@/lib/validation/schemas/held-sales'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // Default expiration time in hours
 const DEFAULT_EXPIRATION_HOURS = 24
@@ -114,17 +115,8 @@ export async function POST(request: NextRequest) {
 
       // Create held sale in transaction with atomic number generation (RLS scopes)
       const result = await db.transaction(async (tx) => {
-        // Advisory lock to prevent duplicate hold numbers under concurrency
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(5)`)
-
-        // Generate hold number atomically
-        const [maxResult] = await tx
-          .select({ maxNo: sql<string>`MAX(${heldSales.holdNumber})` })
-          .from(heldSales)
-
-        const lastHoldNo = maxResult?.maxNo
-        const nextNumber = lastHoldNo ? parseInt(lastHoldNo.replace(/\D/g, '')) + 1 : 1
-        const holdNumber = `HOLD-${String(nextNumber).padStart(4, '0')}`
+        // Hold number from the per-tenant sequence (no global lock)
+        const holdNumber = await nextDocNo(tx, session.user.tenantId, 'held_sale')
 
         const [newHeldSale] = await tx.insert(heldSales).values({
           tenantId: session.user.tenantId,

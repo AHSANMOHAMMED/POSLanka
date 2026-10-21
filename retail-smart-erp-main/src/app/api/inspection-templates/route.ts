@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { inspectionTemplatesListSchema, createInspectionTemplateSchema } from '@/lib/validation/schemas/service-types'
+import { applyHiddenDefaults, getHiddenDefaultIds } from '@/lib/defaults/hidden-defaults'
 
 // GET all inspection templates (system defaults + tenant custom)
 export async function GET(request: NextRequest) {
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
 
     const parsed = validateSearchParams(request, inspectionTemplatesListSchema)
     if (!parsed.success) return parsed.response
-    const { vehicleTypeId, inspectionType, includeInactive } = parsed.data
+    const { vehicleTypeId, inspectionType, includeInactive, includeHidden } = parsed.data
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -70,7 +71,9 @@ export async function GET(request: NextRequest) {
         orderBy: (templates, { asc, desc }) => [desc(templates.isDefault), asc(templates.name)],
       })
 
-      return NextResponse.json(result)
+      // System templates this company hid are left out unless ?includeHidden=true (flagged hidden)
+      const hiddenIds = await getHiddenDefaultIds(db, session.user.tenantId, 'inspection_template')
+      return NextResponse.json(applyHiddenDefaults(result, hiddenIds, includeHidden === true))
     })
   } catch (error) {
     logError('api/inspection-templates', error)

@@ -2,8 +2,9 @@
 // Handles GL posting, outstanding calculations, allocation, and submission
 
 import { createGLEntries, type GLEntryInput } from './gl'
-import { accountingSettings, paymentEntries, paymentLedger, paymentSchedules, sales, purchases } from '@/lib/db/schema'
+import { accountingSettings, paymentLedger, paymentSchedules, sales, purchases } from '@/lib/db/schema'
 import { eq, sql } from 'drizzle-orm'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DbOrTx = any
@@ -379,13 +380,6 @@ export function calculatePaymentSchedule(
  * Generate a unique entry number for payment entries
  */
 export async function generateEntryNumber(tx: DbOrTx, tenantId: string): Promise<string> {
-  // Use advisory lock to prevent duplicate numbers
-  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('payment_entry_' || ${tenantId}))`)
-
-  const [result] = await tx.select({
-    maxNum: sql<string>`COALESCE(MAX(CAST(SUBSTRING(${paymentEntries.entryNumber} FROM 4) AS integer)), 0)`,
-  }).from(paymentEntries)
-
-  const nextNum = Number(result?.maxNum || 0) + 1
-  return `PE-${String(nextNum).padStart(4, '0')}`
+  // Per-tenant sequence (row-locked upsert), PE-####
+  return nextDocNo(tx, tenantId, 'payment_entry')
 }

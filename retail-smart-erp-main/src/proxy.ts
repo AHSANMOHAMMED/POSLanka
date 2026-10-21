@@ -1,3 +1,7 @@
+// Next.js 16 "proxy" convention (formerly src/middleware.ts). Proxy always runs
+// on the Node.js runtime; no route segment config (e.g. `runtime`) is allowed here.
+// Behaviour is identical to the old middleware: host validation, CORS for
+// cross-subdomain RSC, sensitive-param stripping, and subdomain → /c/[slug] rewrites.
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { edgeDb } from '@/lib/edge-db'
@@ -40,7 +44,7 @@ function addSubdomainCors(response: NextResponse, origin: string): NextResponse 
   return response
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname, searchParams, hostname } = request.nextUrl
   
   // Get the actual host from headers (respecting x-forwarded-host and Host header)
@@ -91,7 +95,7 @@ export async function middleware(request: NextRequest) {
   
   // Debug logging (only when DEBUG_MIDDLEWARE env var is set)
   if (process.env.DEBUG_MIDDLEWARE) {
-    console.log(`[Middleware] ${normalizedHostname} ${pathname}`)
+    console.log(`[Proxy] ${normalizedHostname} ${pathname}`)
   }
 
   // ==================== CORS: Cross-subdomain preflight ====================

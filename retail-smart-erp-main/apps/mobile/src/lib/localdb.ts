@@ -12,6 +12,9 @@ import * as SecureStore from 'expo-secure-store'
 import * as Crypto from 'expo-crypto'
 import { apiGet, getUser, qs } from './api'
 import { analyseScan, normalizeScaleConfig, type ScaleBarcodeConfig, type ScanAnalysis } from './barcodeParse'
+import { getQueuedSales } from './offlineQueue'
+import { pendingStockFromQueue, recomputeLocalStock } from './pendingStock'
+import { formatOfflineRef } from './offlineRef'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,6 +114,10 @@ CREATE INDEX IF NOT EXISTS idx_items_code ON items(item_code);
 CREATE INDEX IF NOT EXISTS idx_items_name ON items(name_lc);
 CREATE INDEX IF NOT EXISTS idx_items_category ON items(category_id);
 CREATE TABLE IF NOT EXISTS stock (
+  item_id TEXT PRIMARY KEY NOT NULL,
+  available REAL
+);
+CREATE TABLE IF NOT EXISTS stock_server (
   item_id TEXT PRIMARY KEY NOT NULL,
   available REAL
 );
@@ -266,11 +273,15 @@ async function applyPage(db: SQLite.SQLiteDatabase, page: SyncPage, gen: number)
     const setStock = await txn.prepareAsync('INSERT INTO stock (item_id, available) VALUES (?, ?) ON CONFLICT(item_id) DO UPDATE SET available = excluded.available')
     const delItem = await txn.prepareAsync('DELETE FROM items WHERE id = ?')
     const delStock = await txn.prepareAsync('DELETE FROM stock WHERE item_id = ?')
+    // Server figure kept separately so pending offline sales can be re-applied idempotently.
+    const setServer = await txn.prepareAsync('INSERT INTO stock_server (item_id, available) VALUES (?, ?) ON CONFLICT(item_id) DO UPDATE SET available = excluded.available')
+    const delServer = await txn.prepareAsync('DELETE FROM stock_server WHERE item_id = ?')
     try {
       for (const it of page.items) {
         if (!it.isActive) {
           await delItem.executeAsync(it.id)
           await delStock.executeAsync(it.id)
+          await delServer.executeAsync(it.id)
           deleted++
           continue
         }
@@ -298,15 +309,19 @@ async function applyPage(db: SQLite.SQLiteDatabase, page: SyncPage, gen: number)
         })
         if (it.availableStock !== null && it.availableStock !== undefined) {
           await setStock.executeAsync(it.id, Number(it.availableStock))
+          await setServer.executeAsync(it.id, Number(it.availableStock))
         }
         upserted++
       }
       for (const id of page.deleted || []) {
         await delItem.executeAsync(id)
         await delStock.executeAsync(id)
+        await delServer.executeAsync(id)
         deleted++
       }
     } finally {
+      await setServer.finalizeAsync()
+      await delServer.finalizeAsync()
       await upsert.finalizeAsync()
       await setStock.finalizeAsync()
       await delItem.finalizeAsync()
@@ -382,9 +397,11 @@ async function runSync(tenantSlug: string, warehouseId: string, forceFull: boole
       const swept = await db.runAsync('DELETE FROM items WHERE sync_gen <> ?', gen)
       deleted += swept.changes
       await db.runAsync('DELETE FROM stock WHERE item_id NOT IN (SELECT id FROM items)')
+      await db.runAsync('DELETE FROM stock_server WHERE item_id NOT IN (SELECT id FROM items)')
       await setMeta(db, 'fullInProgress', null)
       await setMeta(db, 'lastFullSyncAt', new Date().toISOString())
     }
+    await reapplyPendingStock(db, tenantSlug, warehouseId)
     const now = new Date().toISOString()
     await setMeta(db, 'lastSyncAt', now)
     await setMeta(db, 'tenantSlug', tenantSlug)
@@ -557,6 +574,41 @@ export async function findByCode(code: string, scaleConfig?: Partial<ScaleBarcod
   return null
 }
 
+/**
+ * After a sync the stock rows hold server figures, which do not include sales still waiting in the
+ * offline queue. Re-apply them: local = server − pending, recomputed from `stock_server` (never
+ * from the current local value), so running it after every sync never double-subtracts. Items
+ * that were pending at the previous run are recomputed too, so an uploaded sale is not left
+ * subtracted when the server figure for that item did not change.
+ */
+async function reapplyPendingStock(db: SQLite.SQLiteDatabase, tenantSlug: string, warehouseId: string): Promise<void> {
+  try {
+    const pending = pendingStockFromQueue(await getQueuedSales(), { tenantSlug, warehouseId })
+    let previous: string[] = []
+    try {
+      const raw = await getMeta(db, 'pendingStockItems')
+      previous = raw ? (JSON.parse(raw) as string[]) : []
+    } catch {
+      previous = []
+    }
+    const ids = Array.from(new Set([...pending.keys(), ...previous]))
+    const server = new Map<string, number>()
+    for (const id of ids) {
+      const row = await db.getFirstAsync<{ available: number | null }>('SELECT available FROM stock_server WHERE item_id = ?', id)
+      if (row && row.available !== null && row.available !== undefined) server.set(id, Number(row.available))
+    }
+    const rows = recomputeLocalStock(server, pending, previous)
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      for (const r of rows) {
+        await txn.runAsync('INSERT INTO stock (item_id, available) VALUES (?, ?) ON CONFLICT(item_id) DO UPDATE SET available = excluded.available', r.itemId, r.available)
+      }
+    })
+    await setMeta(db, 'pendingStockItems', pending.size ? JSON.stringify([...pending.keys()]) : null)
+  } catch {
+    // best effort: the next sync tries again
+  }
+}
+
 /** Reflect a sale made on this device in the local stock (until the next sync brings server truth). */
 export async function adjustLocalStock(lines: Array<{ itemId: string; quantity: number }>): Promise<void> {
   const db = await activeDb()
@@ -649,13 +701,16 @@ export async function refreshBundle(): Promise<{ bundle: OfflineBundle | null; o
 // ---------------------------------------------------------------------------
 const DEVICE_CODE_KEY = 'poslanka.deviceCode'
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+const DEVICE_CODE_LENGTH = 6
 let deviceCodeCache: string | null = null
 
 export async function getDeviceCode(): Promise<string> {
   if (deviceCodeCache) return deviceCodeCache
   let code = await SecureStore.getItemAsync(DEVICE_CODE_KEY)
-  if (!code || !/^[A-Z0-9]{4}$/.test(code)) {
-    const bytes = Crypto.getRandomBytes(4)
+  // Devices that already printed OFF-<4 chars>- receipts keep their code; new devices get 6
+  // random characters (32^6 ≈ 1e9 codes), so two devices of one tenant practically never share one.
+  if (!code || !/^[A-Z0-9]{4}([A-Z0-9]{2})?$/.test(code)) {
+    const bytes = Crypto.getRandomBytes(DEVICE_CODE_LENGTH)
     code = Array.from(bytes).map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('')
     await SecureStore.setItemAsync(DEVICE_CODE_KEY, code)
   }
@@ -663,7 +718,7 @@ export async function getDeviceCode(): Promise<string> {
   return code
 }
 
-/** Next offline receipt number for this device and tenant, e.g. OFF-K7QD-00042. */
+/** Next offline receipt number for this device and tenant, e.g. OFF-K7QD2X-00042. */
 export async function nextOfflineRef(tenantSlug?: string): Promise<string> {
   const slug = tenantSlug || (await getUser())?.tenantSlug || 'default'
   const [code, db] = await Promise.all([getDeviceCode(), getDeviceDb()])
@@ -673,7 +728,7 @@ export async function nextOfflineRef(tenantSlug?: string): Promise<string> {
     seq = (row?.seq ?? 0) + 1
     await txn.runAsync('INSERT INTO offline_seq (scope, seq) VALUES (?, ?) ON CONFLICT(scope) DO UPDATE SET seq = excluded.seq', slug, seq)
   })
-  return `OFF-${code}-${String(seq).padStart(5, '0')}`
+  return formatOfflineRef(code, seq)
 }
 
 /** "12 min ago" style age for banners. */

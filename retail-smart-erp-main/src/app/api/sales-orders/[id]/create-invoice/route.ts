@@ -15,6 +15,8 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 import { applyStockChange, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
 import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
+import { allocateSaleLineBatches } from '@/lib/inventory/batches'
+import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 
 // POST create sales invoice from sales order
 export async function POST(
@@ -199,16 +201,23 @@ export async function POST(
       taxRate: item.taxRate,
       total: item.total,
     }))
-    await tx.insert(saleItems).values(saleItemsData)
+    // One insert per line so each sale line id is known (batch allocations reference it)
+    const insertedLines: Array<{ id: string }> = []
+    for (const line of saleItemsData) {
+      const [row] = await tx.insert(saleItems).values(line).returning({ id: saleItems.id })
+      insertedLines.push(row)
+    }
+    let batchSettings: Awaited<ReturnType<typeof getTenantSalesSettings>>['batches'] | null = null
 
     // Deduct stock and update reserved stock
     const stockChanges: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
-    for (const item of invoiceItems) {
+    for (let lineIdx = 0; lineIdx < invoiceItems.length; lineIdx++) {
+      const item = invoiceItems[lineIdx]
       if (!item.itemId) continue
 
       // Check if item tracks stock
       const [itemRecord] = await tx
-        .select({ trackStock: itemsTable.trackStock })
+        .select({ trackStock: itemsTable.trackStock, trackBatches: itemsTable.trackBatches })
         .from(itemsTable)
         .where(eq(itemsTable.id, item.itemId))
 
@@ -243,6 +252,22 @@ export async function POST(
           updatedAt: new Date(),
         })
         .where(eq(warehouseStock.id, change.warehouseStockId))
+
+      // E1: batch-tracked lines draw FEFO from item_batches (after the stock row is locked) and
+      // record sale_item_batches so returns / voids restore the same batches. Non-negative policy:
+      // missing batch quantity rejects the invoice (INSUFFICIENT_BATCH_STOCK).
+      if (itemRecord.trackBatches) {
+        batchSettings ??= (await getTenantSalesSettings(tx, session.user.tenantId)).batches
+        await allocateSaleLineBatches(tx, {
+          tenantId: session.user.tenantId,
+          warehouseId: order.warehouseId,
+          itemId: item.itemId,
+          qty,
+          saleItemId: insertedLines[lineIdx].id,
+          allowExpired: batchSettings.allowExpiredSale,
+          itemName: item.itemName,
+        })
+      }
     }
 
     // Update fulfilled quantities cumulatively on SO items

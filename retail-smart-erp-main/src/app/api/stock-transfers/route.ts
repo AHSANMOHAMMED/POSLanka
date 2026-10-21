@@ -11,6 +11,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { stockTransfersListSchema, createStockTransferSchema } from '@/lib/validation/schemas/stock'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { nextDocNo } from '@/lib/documents/numbering'
 
 // GET all stock transfers (with pagination)
 export async function GET(request: NextRequest) {
@@ -165,24 +166,8 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Generate transfer number with advisory lock to prevent duplicates
-      await db.execute(sql`SELECT pg_advisory_xact_lock(3)`)
-      const year = new Date().getFullYear()
-      const [lastTransfer] = await db
-        .select({ transferNo: stockTransfers.transferNo })
-        .from(stockTransfers)
-        .where(ilike(stockTransfers.transferNo, `ST${year}%`))
-        .orderBy(desc(stockTransfers.transferNo))
-        .limit(1)
-
-      let nextNum = 1
-      if (lastTransfer?.transferNo) {
-        const match = lastTransfer.transferNo.match(/ST\d{4}(\d+)/)
-        if (match) {
-          nextNum = parseInt(match[1], 10) + 1
-        }
-      }
-      const transferNo = `ST${year}${String(nextNum).padStart(5, '0')}`
+      // Per-tenant yearly sequence (ST<year><5 digits>), no global lock
+      const transferNo = await nextDocNo(db, session.user.tenantId, 'stock_transfer')
 
       // Create the transfer
       const [newTransfer] = await db.insert(stockTransfers).values({
