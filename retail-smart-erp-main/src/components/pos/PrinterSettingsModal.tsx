@@ -384,6 +384,32 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
                         </FormSelect>
                       </FormField>
                     </div>
+                    <div>
+                      <span className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5 block">Common Label Sizes (Zebra & Barcode Printers):</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {[
+                          { label: '50 × 30 mm', w: 50, h: 30, g: 2 },
+                          { label: '50 × 25 mm (2"×1")', w: 50, h: 25, g: 2 },
+                          { label: '40 × 30 mm', w: 40, h: 30, g: 2 },
+                          { label: '58 × 40 mm (Scale)', w: 58, h: 40, g: 2 },
+                          { label: '100 × 50 mm (4"×2")', w: 100, h: 50, g: 3 },
+                          { label: '100 × 150 mm (4"×6")', w: 100, h: 150, g: 3 },
+                        ].map((sz) => (
+                          <button
+                            key={sz.label}
+                            type="button"
+                            onClick={() => updateLabel({ widthMm: sz.w, heightMm: sz.h, gapMm: sz.g })}
+                            className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                              selected.label.widthMm === sz.w && selected.label.heightMm === sz.h
+                                ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
+                                : 'bg-gray-50 hover:bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:border-gray-700'
+                            }`}
+                          >
+                            {sz.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="grid grid-cols-3 gap-3">
                       <FormField label="Label width (mm)">
                         <FormInput type="number" min={10} max={220} value={selected.label.widthMm} onChange={(e) => updateLabel({ widthMm: Number(e.target.value) })} inputSize="sm" />

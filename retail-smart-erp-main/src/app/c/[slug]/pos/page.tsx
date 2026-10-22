@@ -1971,7 +1971,7 @@ export default function POSPage() {
     return false
   }
 
-  // ─── Keyboard shortcuts ────────────────────────────────────────
+  // ─── Keyboard shortcuts & Barcode Wedge Scanner ──────────────
   useEffect(() => {
     const isTyping = (el: Element | null) =>
       !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
@@ -1979,8 +1979,42 @@ export default function POSPage() {
       || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || showFloatModal || showPriceCheckModal
       || showQuickAddModal || !!variantPickerParentItem || !!supervisorRequest || clearCartConfirm
 
+    let barcodeBuffer = ''
+    let lastKeyTime = 0
+
     function onKey(e: KeyboardEvent) {
       if (terminalLocked) return
+
+      const now = Date.now()
+      const timeDiff = now - lastKeyTime
+      lastKeyTime = now
+
+      const target = e.target as HTMLElement | null
+      const isSearchInput = target?.id === POS_SEARCH_INPUT_ID
+      const isOtherInput = isTyping(target) && !isSearchInput
+
+      // Barcode Wedge Scanner: when Enter is pressed anywhere on page outside modals/inputs
+      if (e.key === 'Enter' && !modalOpen && !isOtherInput) {
+        const codeToScan = barcodeBuffer.trim() || (isSearchInput ? search.trim() : '')
+        if (codeToScan.length >= 3) {
+          e.preventDefault()
+          barcodeBuffer = ''
+          handleScanSubmit(codeToScan)
+          return
+        }
+        barcodeBuffer = ''
+      }
+
+      // If user/scanner enters printable characters outside input elements, redirect to search buffer & focus search
+      if (!modalOpen && !isTyping(target) && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (timeDiff > 100) {
+          barcodeBuffer = e.key
+        } else {
+          barcodeBuffer += e.key
+        }
+        focusSearch()
+      }
+
       switch (e.key) {
         case 'F1':
           e.preventDefault(); focusSearch(); break

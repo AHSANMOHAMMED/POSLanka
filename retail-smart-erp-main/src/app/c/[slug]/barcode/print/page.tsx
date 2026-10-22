@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Printer, Minus, Plus, X, Search, Tag } from 'lucide-react'
+import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
 import { LabelPreview } from '@/components/labels/LabelPreview'
 import { printLabels, printLabelsRaw, isRawLabelPrinter } from '@/lib/labels/label-print'
@@ -25,6 +25,8 @@ export default function BarcodePrintPage() {
   const [items, setItems] = useState<ItemWithQty[]>([])
   const [searchValue, setSearchValue] = useState('')
   const [codeWord, setCodeWord] = useState<string>('')
+  const [previewIndex, setPreviewIndex] = useState(0)
+  const [showFullPreview, setShowFullPreview] = useState(false)
   const [config, setConfig] = useState<PrintLabelConfig>({
     labelsPerRow: 3,
     gapMm: 3,
@@ -376,27 +378,142 @@ export default function BarcodePrintPage() {
           </div>
 
           {/* Preview */}
-          <div className="bg-white rounded-lg border p-4">
-            <h3 className="text-sm font-medium text-gray-700 mb-3">Preview</h3>
-            {selectedTemplate && items.length > 0 ? (
-              <LabelPreview
-                template={selectedTemplate}
-                item={items[0]?.item}
-                currencySymbol={currencySymbol}
-                tenantName={company?.tenantName}
-                codeWord={codeWord}
-                maxWidth={350}
-              />
+          <div className="bg-white rounded-lg border p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                <Eye size={15} className="text-blue-600" />
+                Label Preview
+              </h3>
+              {selectedTemplate && (
+                <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                  {parseFloat(String(selectedTemplate.widthMm))} × {parseFloat(String(selectedTemplate.heightMm))} mm
+                </span>
+              )}
+            </div>
+
+            {selectedTemplate ? (
+              <div className="space-y-3">
+                {items.length > 1 && (
+                  <div className="flex items-center justify-between bg-slate-50 border rounded px-2.5 py-1.5 text-xs text-slate-700">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewIndex((prev) => Math.max(0, prev - 1))}
+                      disabled={previewIndex <= 0}
+                      className="p-1 hover:bg-slate-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span className="font-medium truncate max-w-[200px]">
+                      {previewIndex + 1}/{items.length}: {items[previewIndex]?.item.name}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewIndex((prev) => Math.min(items.length - 1, prev + 1))}
+                      disabled={previewIndex >= items.length - 1}
+                      className="p-1 hover:bg-slate-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                )}
+
+                <div className="p-4 bg-slate-100/70 dark:bg-slate-800/50 rounded-lg flex flex-col items-center justify-center border border-dashed border-gray-200 dark:border-gray-700 min-h-[160px]">
+                  <LabelPreview
+                    template={selectedTemplate}
+                    item={items[previewIndex]?.item || null}
+                    currencySymbol={currencySymbol}
+                    tenantName={company?.tenantName}
+                    codeWord={codeWord}
+                    maxWidth={320}
+                  />
+                  {items.length === 0 && (
+                    <p className="text-[11px] text-gray-400 mt-2 italic">Sample preview • Add items on left to preview actual products</p>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-gray-500 pt-1">
+                  <span>Target: <strong className="text-gray-700">{chosenPrinter ? chosenPrinter.name : 'Browser print'}</strong></span>
+                  <button
+                    type="button"
+                    onClick={() => setShowFullPreview(true)}
+                    className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                  >
+                    <Eye size={12} />
+                    Enlarge preview
+                  </button>
+                </div>
+              </div>
             ) : (
               <div className="text-center py-8 text-gray-400 text-sm">
-                {!selectedTemplate
-                  ? 'Select a template to see preview'
-                  : 'Add items to see preview'}
+                Select a template above to see preview
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* Full Preview Modal */}
+      {showFullPreview && selectedTemplate && (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div>
+                <h3 className="font-semibold text-gray-900 dark:text-white">Label Preview (100% scale)</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {selectedTemplate.name} ({parseFloat(String(selectedTemplate.widthMm))} × {parseFloat(String(selectedTemplate.heightMm))} mm)
+                </p>
+              </div>
+              <button
+                onClick={() => setShowFullPreview(false)}
+                className="p-1 text-gray-400 hover:text-gray-600 rounded-lg"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-6 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center overflow-auto max-h-[60vh]">
+              <div className="shadow-md bg-white p-2 rounded">
+                <LabelPreview
+                  template={selectedTemplate}
+                  item={items[previewIndex]?.item || null}
+                  currencySymbol={currencySymbol}
+                  tenantName={company?.tenantName}
+                  codeWord={codeWord}
+                  maxWidth={450}
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <span className="text-xs text-gray-500">
+                {items[previewIndex] ? items[previewIndex].item.name : 'Sample product preview'}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowFullPreview(false)}
+                  className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded border"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFullPreview(false)
+                    handlePrint()
+                  }}
+                  disabled={items.length === 0 || printing}
+                  className="px-3 py-1.5 text-xs text-white bg-green-600 hover:bg-green-700 rounded font-medium flex items-center gap-1 disabled:opacity-50"
+                >
+                  <Printer size={13} />
+                  Print Now
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} />
     </div>
   )

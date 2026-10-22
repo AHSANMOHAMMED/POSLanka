@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant } from '@/lib/db'
-import { labelTemplates } from '@/lib/db/schema'
+import { labelTemplates, tenants } from '@/lib/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { labelTemplatesListSchema, createLabelTemplateSchema } from '@/lib/validation/schemas/label-templates'
+import { getPresetsForBusinessType } from '@/lib/labels/presets'
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,12 +16,40 @@ export async function GET(request: NextRequest) {
     if (!parsed.success) return parsed.response
 
     const result = await withAuthTenant(async (session, db) => {
-      return db.select().from(labelTemplates)
+      let list = await db.select().from(labelTemplates)
         .where(and(
           eq(labelTemplates.tenantId, session.user.tenantId),
           eq(labelTemplates.isActive, true)
         ))
         .orderBy(desc(labelTemplates.createdAt))
+
+      if (list.length === 0) {
+        // Auto-seed default label presets (Zebra 50x30, 40x25, scale labels, hang tags, etc.)
+        const tenant = await db.query.tenants.findFirst({
+          where: eq(tenants.id, session.user.tenantId),
+          columns: { businessType: true },
+        })
+        const presets = getPresetsForBusinessType(tenant?.businessType || 'retail')
+        const toInsert = presets.map((p, idx) => ({
+          tenantId: session.user.tenantId,
+          name: p.name,
+          description: p.description,
+          widthMm: String(p.widthMm),
+          heightMm: String(p.heightMm),
+          labelShape: p.labelShape,
+          cornerRadius: p.cornerRadius ?? null,
+          elements: p.elements,
+          isDefault: idx === 0,
+          isActive: true,
+          createdBy: session.user.id,
+        }))
+
+        if (toInsert.length > 0) {
+          list = await db.insert(labelTemplates).values(toInsert).returning()
+        }
+      }
+
+      return list
     })
 
     if (result === null) {
