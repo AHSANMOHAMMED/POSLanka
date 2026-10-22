@@ -55,5 +55,21 @@ export async function GET(
     }
   }
 
+  // 3. Fallback for images: return a 1x1 transparent PNG so Next.js Image component doesn't error
+  const ext = path.extname(filePath).toLowerCase()
+  if (['.png', '.jpg', '.jpeg', '.webp', '.svg', '.gif'].includes(ext)) {
+    const TRANSPARENT_PNG = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      'base64'
+    )
+    return new NextResponse(TRANSPARENT_PNG, {
+      status: 200,
+      headers: {
+        'Content-Type': 'image/png',
+        'Cache-Control': 'no-cache',
+      },
+    })
+  }
+
   return NextResponse.json({ error: 'File not found' }, { status: 404 })
 }
