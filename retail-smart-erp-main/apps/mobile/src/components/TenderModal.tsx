@@ -26,6 +26,7 @@ import type { ReceiptInput } from '../lib/escpos'
 import type { CartLine } from './CartDrawerModal'
 import type { Customer } from './CustomerPickerModal'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from './SupervisorPinModal'
+import { useHeaderPad } from '../lib/safeArea'
 
 export interface SaleResultData {
   invoiceNo: string
@@ -101,6 +102,7 @@ export function TenderModal({
   couponCodes,
   onPriceChanged,
 }: TenderModalProps) {
+  const headerPad = useHeaderPad()
   // Σ of rounded line totals — what POST /api/sales checks the subtotal against.
   const subtotal = useMemo(() => cartSubtotal(cart), [cart])
   // tax is charged on what the customer pays: lines net of their share of the cart promotions
@@ -415,7 +417,7 @@ export function TenderModal({
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, headerPad]}>
           <Pressable style={styles.backBtn} onPress={onClose} disabled={busy}>
             <Text style={styles.backBtnText}>←</Text>
           </Pressable>

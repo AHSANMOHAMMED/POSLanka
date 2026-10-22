@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { purchaseRequisitions, purchaseRequisitionItems, suppliers, warehouses } from '@/lib/db/schema'
 import { eq, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -18,6 +18,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'buying')
+    if (moduleError) return { moduleError }
     const data = await db.select({
       id: purchaseRequisitionItems.id,
       itemId: purchaseRequisitionItems.itemId,
@@ -41,6 +44,7 @@ export async function GET(
   })
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if ('moduleError' in result) return result.moduleError
   return NextResponse.json(result)
 }
 

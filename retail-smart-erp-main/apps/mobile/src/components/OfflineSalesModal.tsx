@@ -14,6 +14,7 @@ import {
   type QueueState,
   type SyncedSale,
 } from '../lib/offlineQueue'
+import { useHeaderPad } from '../lib/safeArea'
 
 interface Props {
   visible: boolean
@@ -33,6 +34,7 @@ function label(s: QueuedSale): string {
 }
 
 export function OfflineSalesModal({ visible, onClose, canDiscard }: Props) {
+  const headerPad = useHeaderPad()
   const [queued, setQueued] = useState<QueuedSale[]>([])
   const [synced, setSynced] = useState<SyncedSale[]>([])
   const [state, setState] = useState<QueueState | null>(null)
@@ -87,7 +89,7 @@ export function OfflineSalesModal({ visible, onClose, canDiscard }: Props) {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, headerPad]}>
           <Pressable onPress={onClose} style={styles.backBtn}>
             <Text style={styles.backText}>←</Text>
           </Pressable>

@@ -6,6 +6,7 @@ import { sql, and, gte, eq } from 'drizzle-orm'
 import crypto from 'crypto'
 import { validateBody } from '@/lib/validation/helpers'
 import { clientErrorsSchema } from '@/lib/validation/schemas/public'
+import { consumeRateLimit, clientIp } from '@/lib/auth/rate-limit'
 
 interface ClientError {
   message: string
@@ -15,30 +16,8 @@ interface ClientError {
   timestamp: number
 }
 
-// Rate limit: max 50 errors per tenant per hour
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
-let lastCleanup = Date.now()
-
-function checkRateLimit(key: string): boolean {
-  const now = Date.now()
-
-  // Periodically clean expired entries (every 10 min)
-  if (now - lastCleanup > 600_000) {
-    lastCleanup = now
-    for (const [k, v] of rateLimitMap) {
-      if (now > v.resetAt) rateLimitMap.delete(k)
-    }
-  }
-
-  const entry = rateLimitMap.get(key)
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(key, { count: 1, resetAt: now + 3600_000 })
-    return true
-  }
-  if (entry.count >= 50) return false
-  entry.count++
-  return true
-}
+// Rate limit: max 50 reports per tenant (or IP) per hour (database-backed, shared by all instances)
+const CLIENT_ERRORS_RATE_LIMIT = { maxAttempts: 50, windowMs: 60 * 60 * 1000, category: 'client_errors' }
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,8 +26,8 @@ export async function POST(request: NextRequest) {
     const userId = session?.user?.id || null
 
     // Rate limit by tenant or IP
-    const rateLimitKey = tenantId || request.headers.get('x-forwarded-for') || 'unknown'
-    if (!checkRateLimit(rateLimitKey)) {
+    const rateLimitKey = tenantId ? `tenant:${tenantId}` : `ip:${clientIp(request)}`
+    if ((await consumeRateLimit(rateLimitKey, CLIENT_ERRORS_RATE_LIMIT)).limited) {
       return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 })
     }
 

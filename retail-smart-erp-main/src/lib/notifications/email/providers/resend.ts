@@ -1,4 +1,5 @@
 import type { ResendConfig, SendEmailResult } from '../../types'
+import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 
 /**
  * Resend Email Provider
@@ -29,7 +30,7 @@ export async function sendWithResend(
   }
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -78,7 +79,7 @@ export async function testResendConnection(config: ResendConfig): Promise<{
   const url = 'https://api.resend.com/domains'
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,

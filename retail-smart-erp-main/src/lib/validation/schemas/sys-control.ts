@@ -30,7 +30,7 @@ export const sysCreateCouponSchema = z.object({
 // PUT /api/sys-control/coupons/[id]
 export const sysUpdateCouponSchema = z.object({
   code: z.string().trim().min(1).max(50).optional(),
-  description: z.string().max(500).optional(),
+  description: z.string().max(500).nullable().optional(),
   discountType: z.enum(['percentage', 'fixed_amount']).optional(),
   discountValue: z.coerce.number().positive('Discount value must be greater than 0').optional(),
   applicableTiers: z.array(z.string()).optional(),
@@ -91,10 +91,11 @@ export const sysUpdatePricingTierSchema = z.object({
   priceMonthly: z.coerce.number().min(0).optional(),
   priceYearly: z.coerce.number().min(0).optional(),
   currency: z.string().min(2).max(10).optional(),
-  maxUsers: z.coerce.number().int().min(1).optional(),
-  maxSalesMonthly: z.coerce.number().int().min(1).optional(),
-  maxDatabaseBytes: z.coerce.number().int().min(0).optional(),
-  maxFileStorageBytes: z.coerce.number().int().min(0).optional(),
+  // null = unlimited
+  maxUsers: z.number().int().min(1).nullable().optional(),
+  maxSalesMonthly: z.number().int().min(1).nullable().optional(),
+  maxDatabaseBytes: z.number().int().min(0).nullable().optional(),
+  maxFileStorageBytes: z.number().int().min(0).nullable().optional(),
   features: z.record(z.string(), z.unknown()).optional(),
   sortOrder: z.coerce.number().int().min(0).optional(),
   isActive: z.boolean().optional(),
@@ -109,10 +110,14 @@ export const sysUpdateSubscriptionSchema = z.object({
   setEndDate: z.string().optional(),
   reason: z.string().max(1000).optional(),
   status: z.enum(['trial', 'active', 'past_due', 'cancelled', 'locked']).optional(),
-  overrideDatabaseBytes: z.coerce.number().int().min(0).optional(),
-  overrideFileStorageBytes: z.coerce.number().int().min(0).optional(),
+  // null clears the override (back to the plan's limit)
+  overrideDatabaseBytes: z.number().int().min(0).nullable().optional(),
+  overrideFileStorageBytes: z.number().int().min(0).nullable().optional(),
   lock: z.boolean().optional(),
   unlock: z.boolean().optional(),
+  // Free access granted with an unlock (months from today). Omitted / 0 = no extension: the
+  // subscription resumes on its own dates (active, trial or past due).
+  unlockGrantMonths: z.coerce.number().int().min(0).max(12).optional(),
   lockReason: z.string().max(500).optional(),
 })
 

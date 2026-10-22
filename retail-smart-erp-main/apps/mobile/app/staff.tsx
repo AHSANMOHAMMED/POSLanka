@@ -15,16 +15,20 @@ import {
   Platform,
 } from 'react-native'
 import { router } from 'expo-router'
-import { api, apiGet, apiPost, asList, getUser, type AuthUser } from '../src/lib/api'
-import { hasPermission, roleLabel, canModifyUser, assignableRoles } from '../src/lib/roles'
+import { api, apiGet, apiPost, asList, getUser, formatBusinessId, type AuthUser } from '../src/lib/api'
+import { hasPermission, roleLabel, canModifyUser, assignableRoles, displayRole } from '../src/lib/roles'
 import { THEME } from '../src/lib/theme'
 import { LoadingView, EmptyView, ErrorView, InlineNotice } from '../src/components/StateViews'
+import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
+import { goBack } from '../src/lib/nav'
 
 interface StaffRow {
   id: string
   email: string
   fullName: string
   role: string
+  customRoleId?: string | null
+  customRoleName?: string | null
   isActive: boolean
   updatedAt?: string
   lastLoginAt?: string | null
@@ -46,6 +50,19 @@ interface Counter {
 
 type ResetKind = 'pin' | 'password'
 
+interface CustomRole {
+  id: string
+  name: string
+  baseRole: string
+  isActive: boolean
+}
+
+/** Role choice in the forms: a built-in role, optionally refined by a custom role. */
+interface RoleChoice {
+  role: string
+  customRoleId: string
+}
+
 const PASSWORD_RULE = 'Min 8 characters with upper-case, lower-case and a number'
 
 function passwordProblem(pw: string): string | null {
@@ -60,12 +77,18 @@ const emptyForm = {
   fullName: '',
   email: '',
   role: 'cashier',
+  customRoleId: '',
   password: '',
   confirm: '',
   pin: '',
 }
 
 export default function StaffScreen() {
+  const headerPad = useHeaderPad()
+  const bottomPad = useBottomPad()
+  const [customRoles, setCustomRoles] = useState<CustomRole[]>([])
+  const [roleTarget, setRoleTarget] = useState<StaffRow | null>(null)
+  const [roleChoice, setRoleChoice] = useState<RoleChoice>({ role: 'cashier', customRoleId: '' })
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
   const [staff, setStaff] = useState<StaffRow[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
@@ -108,11 +131,13 @@ export default function StaffScreen() {
       if (!silent) setLoading(true)
       setError(null)
       setNotice(null)
-      const [usersRes, whRes, ppRes] = await Promise.all([
+      const [usersRes, whRes, ppRes, crRes] = await Promise.all([
         apiGet<StaffRow[]>('/api/users?includeWarehouses=true'),
         apiGet<any>('/api/warehouses?all=true&activeOnly=true'),
         apiGet<any>('/api/pos-profiles?all=true'),
+        apiGet<any>('/api/custom-roles'),
       ])
+      if (crRes.ok) setCustomRoles(asList<CustomRole>(crRes.data, 'customRoles', 'roles').filter((r) => r.isActive !== false))
       if (!usersRes.ok) {
         setError(usersRes.error)
       } else {
@@ -130,6 +155,55 @@ export default function StaffScreen() {
   useEffect(() => {
     load()
   }, [load])
+
+  // Custom roles the actor may hand out: their base role must itself be assignable.
+  const assignableCustomRoles = useMemo(() => customRoles.filter((r) => roles.includes(r.baseRole)), [customRoles, roles])
+
+  function renderRolePicker(value: RoleChoice, onChange: (v: RoleChoice) => void) {
+    return (
+      <>
+        <View style={styles.chipWrap}>
+          {roles.map((r) => {
+            const on = value.role === r && !value.customRoleId
+            return (
+              <TouchableOpacity key={r} onPress={() => onChange({ role: r, customRoleId: '' })} style={[styles.chip, on && styles.chipOn]}>
+                <Text style={[styles.chipText, on && styles.chipTextOn]}>{roleLabel(r)}</Text>
+              </TouchableOpacity>
+            )
+          })}
+        </View>
+        {assignableCustomRoles.length > 0 ? (
+          <>
+            <Text style={styles.hint}>Custom roles (set up by the owner on the web: Settings → Role Permissions)</Text>
+            <View style={styles.chipWrap}>
+              {assignableCustomRoles.map((cr) => {
+                const on = value.customRoleId === cr.id
+                return (
+                  <TouchableOpacity key={cr.id} onPress={() => onChange({ role: cr.baseRole, customRoleId: cr.id })} style={[styles.chip, on && styles.chipOn]}>
+                    <Text style={[styles.chipText, on && styles.chipTextOn]}>
+                      ★ {cr.name} · {roleLabel(cr.baseRole)}
+                    </Text>
+                  </TouchableOpacity>
+                )
+              })}
+            </View>
+          </>
+        ) : null}
+      </>
+    )
+  }
+
+  function openRoleChange(target: StaffRow) {
+    setRoleTarget(target)
+    setRoleChoice({ role: target.role, customRoleId: target.customRoleId || '' })
+  }
+
+  async function submitRoleChange() {
+    if (!roleTarget) return
+    const target = roleTarget
+    const ok = await updateUser(target, { role: roleChoice.role, customRoleId: roleChoice.customRoleId || null })
+    if (ok) setRoleTarget(null)
+  }
 
   const visible = useMemo(() => (showInactive ? staff : staff.filter((s) => s.isActive)), [staff, showInactive])
 
@@ -176,6 +250,7 @@ export default function StaffScreen() {
       email: form.email.trim(),
       fullName: form.fullName.trim(),
       role: form.role,
+      ...(form.customRoleId ? { customRoleId: form.customRoleId } : {}),
       password: form.password,
       pin: form.pin || undefined,
       warehouseIds: formBranches,
@@ -246,15 +321,15 @@ export default function StaffScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => (router.canGoBack() ? router.back() : router.replace('/pos'))} style={styles.backButton}>
+      <View style={[styles.header, headerPad]}>
+        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.storeName} numberOfLines={1}>
             {user?.tenantName || 'POSLanka'}
           </Text>
-          <Text style={styles.branchSub}>Staff accounts</Text>
+          <Text style={styles.branchSub} numberOfLines={1}>Staff accounts</Text>
         </View>
         {canManage ? (
           <TouchableOpacity onPress={openCreate} style={styles.addBtn}>
@@ -268,7 +343,7 @@ export default function StaffScreen() {
       {user === undefined ? (
         <LoadingView />
       ) : !canManage ? (
-        <EmptyView icon="🔒" title="Not available for your role" subtitle={`${roleLabel(user?.role)} accounts cannot manage staff.`} />
+        <EmptyView icon="🔒" title="Not available for your role" subtitle={`${displayRole(user)} accounts cannot manage staff.`} />
       ) : loading ? (
         <LoadingView text="Loading staff…" />
       ) : error ? (
@@ -276,7 +351,7 @@ export default function StaffScreen() {
       ) : (
         <ScrollView
           style={styles.content}
-          contentContainerStyle={styles.contentInner}
+          contentContainerStyle={[styles.contentInner, { paddingBottom: 24 + bottomPad }]}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -287,6 +362,13 @@ export default function StaffScreen() {
             />
           }
         >
+          {user?.businessId ? (
+            <View style={styles.bizBanner}>
+              <Text style={styles.bizBannerText}>
+                Staff sign in with Business ID <Text style={styles.bizBannerId}>{formatBusinessId(user.businessId)}</Text>
+              </Text>
+            </View>
+          ) : null}
           {notice ? <InlineNotice text={notice} tone="warn" /> : null}
           <View style={styles.filterRow}>
             <Text style={styles.countText}>
@@ -307,15 +389,15 @@ export default function StaffScreen() {
               return (
                 <View key={s.id} style={[styles.card, !s.isActive && styles.cardInactive]}>
                   <View style={styles.cardTop}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.name}>
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <Text style={styles.name} numberOfLines={2}>
                         {s.fullName}
                         {isSelf ? <Text style={styles.muted}> (you)</Text> : null}
                       </Text>
-                      <Text style={styles.muted}>{s.email}</Text>
+                      <Text style={styles.muted} numberOfLines={1}>{s.email}</Text>
                     </View>
                     <View style={styles.rolePill}>
-                      <Text style={styles.rolePillText}>{roleLabel(s.role)}</Text>
+                      <Text style={styles.rolePillText} numberOfLines={1}>{s.customRoleName ? `★ ${s.customRoleName}` : roleLabel(s.role)}</Text>
                     </View>
                   </View>
                   <View style={styles.tagRow}>
@@ -351,6 +433,11 @@ export default function StaffScreen() {
                         <ActivityIndicator color={THEME.colors.primary} />
                       ) : (
                         <>
+                          {s.role !== 'owner' ? (
+                            <Pressable style={styles.actionBtn} onPress={() => openRoleChange(s)}>
+                              <Text style={styles.actionText}>Change role</Text>
+                            </Pressable>
+                          ) : null}
                           <Pressable style={styles.actionBtn} onPress={() => openReset(s, 'pin')}>
                             <Text style={styles.actionText}>Reset PIN</Text>
                           </Pressable>
@@ -383,7 +470,7 @@ export default function StaffScreen() {
                 <Text style={styles.close}>✕</Text>
               </TouchableOpacity>
             </View>
-            <ScrollView contentContainerStyle={{ paddingBottom: 24 }} keyboardShouldPersistTaps="handled">
+            <ScrollView contentContainerStyle={{ paddingBottom: 24 + bottomPad }} keyboardShouldPersistTaps="handled">
               <Text style={styles.label}>Full name *</Text>
               <TextInput style={styles.input} value={form.fullName} onChangeText={(v) => setForm({ ...form, fullName: v })} placeholder="e.g. Nimal Perera" />
               <Text style={styles.label}>Email (sign-in) *</Text>
@@ -396,13 +483,7 @@ export default function StaffScreen() {
                 placeholder="cashier@shop.lk"
               />
               <Text style={styles.label}>Role *</Text>
-              <View style={styles.chipWrap}>
-                {roles.map((r) => (
-                  <TouchableOpacity key={r} onPress={() => setForm({ ...form, role: r })} style={[styles.chip, form.role === r && styles.chipOn]}>
-                    <Text style={[styles.chipText, form.role === r && styles.chipTextOn]}>{roleLabel(r)}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              {renderRolePicker({ role: form.role, customRoleId: form.customRoleId }, (v) => setForm({ ...form, role: v.role, customRoleId: v.customRoleId }))}
               <Text style={styles.label}>Password *</Text>
               <TextInput style={styles.input} value={form.password} onChangeText={(v) => setForm({ ...form, password: v })} secureTextEntry autoCapitalize="none" />
               <Text style={styles.label}>Confirm password *</Text>
@@ -463,6 +544,27 @@ export default function StaffScreen() {
         </KeyboardAvoidingView>
       </Modal>
 
+      {/* Change role (built-in or custom). The server re-checks rank + permissions held. */}
+      <Modal visible={!!roleTarget} animationType="fade" transparent onRequestClose={() => setRoleTarget(null)}>
+        <View style={styles.modalBackdropCenter}>
+          <View style={styles.dialog}>
+            <Text style={styles.sheetTitle} numberOfLines={2}>Role — {roleTarget?.fullName}</Text>
+            <ScrollView style={{ maxHeight: 360 }}>
+              {renderRolePicker(roleChoice, setRoleChoice)}
+            </ScrollView>
+            <Text style={styles.hint}>Their open sessions pick up the new role on the next request.</Text>
+            <View style={styles.dialogActions}>
+              <TouchableOpacity style={styles.secondaryBtn} onPress={() => setRoleTarget(null)}>
+                <Text style={styles.secondaryBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.primaryBtn, { flex: 1, marginTop: 0 }]} onPress={submitRoleChange} disabled={!!busyId}>
+                {busyId ? <ActivityIndicator color="#FFF" /> : <Text style={styles.primaryBtnText}>Save role</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Reset PIN / password */}
       <Modal visible={!!resetTarget} animationType="fade" transparent onRequestClose={() => setResetTarget(null)}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalBackdropCenter}>
@@ -505,6 +607,15 @@ export default function StaffScreen() {
 }
 
 const styles = StyleSheet.create({
+  bizBanner: {
+    backgroundColor: THEME.colors.primaryLight,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: 10,
+  },
+  bizBannerText: { fontSize: 12, color: THEME.colors.primary },
+  bizBannerId: { fontFamily: 'monospace', fontWeight: '800', fontSize: 13 },
   safe: { flex: 1, backgroundColor: THEME.colors.background },
   header: {
     flexDirection: 'row',
@@ -532,7 +643,7 @@ const styles = StyleSheet.create({
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   name: { fontSize: 15, fontWeight: '800', color: THEME.colors.text },
   muted: { fontSize: 12, color: THEME.colors.textMuted, fontWeight: '400' },
-  rolePill: { backgroundColor: THEME.colors.surfaceContainer, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4 },
+  rolePill: { backgroundColor: THEME.colors.surfaceContainer, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4, maxWidth: '45%' },
   rolePillText: { fontSize: 11, fontWeight: '700', color: THEME.colors.text },
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 10 },
   tag: { backgroundColor: THEME.colors.surfaceContainerLow, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
@@ -548,7 +659,7 @@ const styles = StyleSheet.create({
   chipTextOn: { color: THEME.colors.primary },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modalBackdropCenter: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
-  sheet: { backgroundColor: THEME.colors.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '92%' },
+  sheet: { backgroundColor: THEME.colors.card, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '92%', width: '100%', maxWidth: 720, alignSelf: 'center' },
   sheetHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   sheetTitle: { fontSize: 16, fontWeight: '800', color: THEME.colors.text },
   close: { fontSize: 18, color: THEME.colors.textMuted, padding: 4 },
@@ -568,6 +679,6 @@ const styles = StyleSheet.create({
   primaryBtnText: { color: '#FFF', fontWeight: '800', fontSize: 14 },
   secondaryBtn: { borderWidth: 1, borderColor: THEME.colors.border, borderRadius: 10, paddingVertical: 13, paddingHorizontal: 18, alignItems: 'center' },
   secondaryBtnText: { color: THEME.colors.text, fontWeight: '700', fontSize: 14 },
-  dialog: { backgroundColor: THEME.colors.card, borderRadius: 14, padding: 18 },
+  dialog: { backgroundColor: THEME.colors.card, borderRadius: 14, padding: 18, width: '100%', maxWidth: 520, alignSelf: 'center' },
   dialogActions: { flexDirection: 'row', gap: 10, marginTop: 18 },
 })

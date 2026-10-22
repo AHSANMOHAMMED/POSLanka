@@ -2,49 +2,11 @@ import { NextResponse } from 'next/server'
 import { headers } from 'next/headers'
 import { validateBody } from '@/lib/validation/helpers'
 import { contactFormSchema } from '@/lib/validation/schemas/public'
+import { consumeRateLimit } from '@/lib/auth/rate-limit'
+import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 
-// --- In-memory rate limiting ---
-// Maps IP address to an array of submission timestamps (in ms)
-const rateLimitMap = new Map<string, number[]>()
-const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000 // 1 hour
-const RATE_LIMIT_MAX = 3 // max submissions per window
-
-// Periodically clean up expired entries every 10 minutes
-const CLEANUP_INTERVAL_MS = 10 * 60 * 1000
-let lastCleanup = Date.now()
-
-function cleanupExpiredEntries() {
-  const now = Date.now()
-  if (now - lastCleanup < CLEANUP_INTERVAL_MS) return
-  lastCleanup = now
-
-  for (const [ip, timestamps] of rateLimitMap.entries()) {
-    const valid = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS)
-    if (valid.length === 0) {
-      rateLimitMap.delete(ip)
-    } else {
-      rateLimitMap.set(ip, valid)
-    }
-  }
-}
-
-function isRateLimited(ip: string): boolean {
-  cleanupExpiredEntries()
-
-  const now = Date.now()
-  const timestamps = rateLimitMap.get(ip) || []
-  // Keep only timestamps within the window
-  const valid = timestamps.filter((t) => now - t < RATE_LIMIT_WINDOW_MS)
-
-  if (valid.length >= RATE_LIMIT_MAX) {
-    rateLimitMap.set(ip, valid)
-    return true
-  }
-
-  valid.push(now)
-  rateLimitMap.set(ip, valid)
-  return false
-}
+// Rate limiting: 3 submissions per hour per IP (database-backed, shared by all instances)
+const CONTACT_RATE_LIMIT = { maxAttempts: 3, windowMs: 60 * 60 * 1000, category: 'contact_form' }
 
 // --- HTML escaping ---
 function escapeHtml(str: string): string {
@@ -63,7 +25,7 @@ export async function POST(request: Request) {
     const forwarded = headersList.get('x-forwarded-for')
     const ip = forwarded ? forwarded.split(',')[0].trim() : 'unknown'
 
-    if (isRateLimited(ip)) {
+    if ((await consumeRateLimit(ip, CONTACT_RATE_LIMIT)).limited) {
       return NextResponse.json(
         { error: 'Too many submissions. Please try again later.' },
         { status: 429 }
@@ -85,7 +47,7 @@ export async function POST(request: Request) {
     const resendKey = process.env.RESEND_API_KEY
     if (resendKey) {
       const emailFrom = process.env.SYSTEM_EMAIL_FROM || 'noreply@retailsmarterp.com'
-      await fetch('https://api.resend.com/emails', {
+      await fetchWithTimeout('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${resendKey}`,

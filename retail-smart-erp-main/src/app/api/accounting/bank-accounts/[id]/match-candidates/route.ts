@@ -7,6 +7,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateParams, validateSearchParams } from '@/lib/validation/helpers'
 import { matchCandidatesQuerySchema } from '@/lib/validation/schemas/accounting'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { requireModule } from '@/lib/auth/roles'
 
 export async function GET(
   request: NextRequest,
@@ -17,6 +18,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'accounting')
+    if (moduleError) return moduleError
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response

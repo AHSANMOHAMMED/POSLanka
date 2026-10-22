@@ -15,11 +15,10 @@ import {
   businessTypeEnum,
   planEnum,
 } from '@/lib/db/schema'
-import { desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm'
-import { validateAdminSession, adminAudit } from '@/lib/admin'
+import { asc, eq, sql } from 'drizzle-orm'
+import { adminAuthError, validateAdminSession, adminAudit } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateSearchParams } from '@/lib/validation'
-import { escapeLikePattern } from '@/lib/utils/sql'
 import { createMinimalDefaults } from '@/lib/setup/create-seed-data'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import {
@@ -28,98 +27,49 @@ import {
   type FeatureFlagsMap,
 } from '@/lib/features/flags'
 import { setTenantFeatureFlags } from '@/lib/features/check'
+import { seedCountryTaxTemplates } from '@/lib/setup/seed-tax-templates'
+import { getNextPeriodDates } from '@/lib/billing/proration'
+import { tierNameToPlan } from '@/lib/billing/activate-company'
+import { NEVER_EXPIRES, isFreeTier, planExpiryFor } from '@/lib/billing/subscription-state'
+import { vendorFilterSchema, queryVendors } from '@/lib/admin/vendor-query'
+import { SLUG_RE, checkSlugAvailability } from '@/lib/admin/vendor-slug'
 
-const listSchema = z.object({
-  q: z.string().trim().max(100).optional(),
+const listSchema = vendorFilterSchema.extend({
   page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(200).default(50),
+  pageSize: z.coerce.number().int().min(1).max(200).default(25),
 })
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('read')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const parsed = validateSearchParams(request, listSchema)
     if (!parsed.success) return parsed.response
-    const { q, page, pageSize } = parsed.data
+    const { page, pageSize, ...filters } = parsed.data
 
-    let whereClause: SQL | undefined
-    if (q) {
-      const pattern = `%${escapeLikePattern(q)}%`
-      whereClause = or(
-        ilike(tenants.name, pattern),
-        ilike(tenants.slug, pattern),
-        ilike(tenants.email, pattern)
-      )
-    }
-
-    const [[countRow], pageTenants] = await Promise.all([
-      db.select({ total: sql<number>`count(*)::int` }).from(tenants).where(whereClause),
-      db.query.tenants.findMany({
-        where: whereClause,
-        orderBy: [desc(tenants.createdAt)],
-        limit: pageSize,
-        offset: (page - 1) * pageSize,
-        columns: {
-          id: true,
-          name: true,
-          slug: true,
-          email: true,
-          phone: true,
-          businessType: true,
-          country: true,
-          currency: true,
-          status: true,
-          plan: true,
-          settings: true,
-          createdAt: true,
-          setupCompletedAt: true,
-        },
-      }),
+    const [{ rows, total }, statusCounts, tiers] = await Promise.all([
+      queryVendors(filters, pageSize, (page - 1) * pageSize),
+      db.select({ status: tenants.status, count: sql<number>`count(*)::int` }).from(tenants).groupBy(tenants.status),
+      db.select({ id: pricingTiers.id, name: pricingTiers.name, displayName: pricingTiers.displayName, isActive: pricingTiers.isActive })
+        .from(pricingTiers)
+        .orderBy(asc(pricingTiers.sortOrder), asc(pricingTiers.priceMonthly)),
     ])
 
-    const tenantIds = pageTenants.map((t) => t.id)
-
-    const [userCounts, subs] = tenantIds.length
-      ? await Promise.all([
-          db
-            .select({ tenantId: users.tenantId, count: sql<number>`count(*)::int` })
-            .from(users)
-            .where(inArray(users.tenantId, tenantIds))
-            .groupBy(users.tenantId),
-          db
-            .select({
-              tenantId: subscriptions.tenantId,
-              status: subscriptions.status,
-              currentPeriodEnd: subscriptions.currentPeriodEnd,
-            })
-            .from(subscriptions)
-            .where(inArray(subscriptions.tenantId, tenantIds)),
-        ])
-      : [[], []]
-
-    const userCountMap = new Map(userCounts.map((r) => [r.tenantId, r.count]))
-    const subMap = new Map(subs.map((s) => [s.tenantId, s]))
-
-    const vendors = pageTenants.map((t) => {
-      const settings = (t.settings || {}) as { featureFlags?: Partial<FeatureFlagsMap> }
-      const sub = subMap.get(t.id)
-      return {
-        ...t,
-        featureFlags: normalizeFeatureFlags(settings.featureFlags),
-        userCount: userCountMap.get(t.id) ?? 0,
-        subscriptionStatus: sub?.status ?? null,
-        subscriptionPeriodEnd: sub?.currentPeriodEnd ?? null,
-      }
-    })
+    const vendors = rows.map((r) => ({
+      ...r,
+      // Older clients (mobile admin) read these names
+      subscriptionPeriodEnd: r.currentPeriodEnd,
+    }))
 
     return NextResponse.json({
       vendors,
+      pagination: { page, pageSize, total },
+      statusCounts: Object.fromEntries(statusCounts.map((c) => [c.status, c.count])),
+      tiers,
       defaults: DEFAULT_VENDOR_FEATURE_FLAGS,
-      pagination: { page, pageSize, total: countRow?.total ?? 0 },
     })
   } catch (error) {
     logError('api/sys-control/vendors', error)
@@ -135,9 +85,9 @@ const bulkFlagsSchema = z.object({
 
 export async function PATCH(request: NextRequest) {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('vendors.manage')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const parsed = await validateBody(request, bulkFlagsSchema)
@@ -167,81 +117,88 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
+const optText = (max: number) =>
+  z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().max(max).optional())
+
 const createVendorSchema = z
   .object({
     name: z.string().trim().min(2).max(255),
-    slug: z.string().regex(/^[a-z0-9-]{3,50}$/, 'Slug must be 3-50 chars: a-z, 0-9, hyphen'),
+    legalName: optText(255),
+    slug: z.string().trim().toLowerCase().regex(SLUG_RE, 'Use 3–50 characters: lowercase letters, numbers and single hyphens'),
     email: z.string().trim().email().max(255),
-    phone: z.string().trim().max(50).optional(),
-    address: z.string().trim().max(1000).optional(),
+    phone: optText(50),
+    address: optText(1000),
     businessType: z.enum(businessTypeEnum.enumValues).default('retail'),
-    plan: z.enum(planEnum.enumValues).default('trial'),
+    /** Pricing tier to start on (pricing_tiers.id). Falls back to `plan` (legacy) or the free tier. */
+    tierId: z.string().uuid().optional(),
+    billingCycle: z.enum(['monthly', 'yearly']).default('monthly'),
+    /** Legacy: plan enum name; prefer tierId. */
+    plan: z.enum(planEnum.enumValues).optional(),
     country: z.string().trim().length(2).toUpperCase().default('LK'),
     currency: z.string().trim().length(3).toUpperCase().default('LKR'),
-    tin: z.string().trim().max(50).optional(),
-    brn: z.string().trim().max(50).optional(),
-    vatRegistered: z.boolean().optional(),
+    taxId: optText(50),
+    /** Legacy alias of taxId */
+    tin: optText(50),
+    brn: optText(50),
+    vatRegistered: z.boolean().default(false),
     featureFlags: z.record(z.string(), z.boolean()).optional(),
-    limits: z
-      .object({
-        countersQuota: z.coerce.number().int().min(1).max(500).optional(),
-        storageGb: z.coerce.number().int().min(1).max(10000).optional(),
-      })
-      .optional(),
-    location: z
-      .object({
-        province: z.string().trim().max(100).optional(),
-        city: z.string().trim().max(100).optional(),
-      })
-      .optional(),
     ownerName: z.string().trim().min(2).max(255),
-    ownerEmail: z.string().trim().email().max(255).optional(),
-    ownerPassword: z.string().min(8).max(128).optional(),
+    ownerEmail: z.preprocess((v) => (v === '' ? undefined : v), z.string().trim().email().max(255).optional()),
+    ownerPassword: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).max(128).optional()),
     sendInvite: z.boolean().optional(),
   })
   .refine((d) => !!d.ownerPassword || d.sendInvite === true, {
-    message: 'Provide ownerPassword (min 8 characters) or set sendInvite to true',
+    message: 'Set an owner password (at least 8 characters) or choose to email an invitation',
     path: ['ownerPassword'],
+  })
+  .refine((d) => !d.vatRegistered || !!(d.taxId || d.tin), {
+    message: 'A VAT-registered business needs its TIN / VAT number',
+    path: ['taxId'],
   })
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('vendors.manage')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const parsed = await validateBody(request, createVendorSchema)
     if (!parsed.success) return parsed.response
     const {
-      name, slug, email, phone, address, businessType, plan, country, currency,
-      tin, brn, vatRegistered, featureFlags, limits, location,
-      ownerName, ownerEmail, ownerPassword, sendInvite,
+      name, legalName, slug, email, phone, address, businessType, tierId, billingCycle, plan, country, currency,
+      brn, vatRegistered, featureFlags, ownerName, ownerEmail, ownerPassword, sendInvite,
     } = parsed.data
+    const taxId = parsed.data.taxId || parsed.data.tin || null
 
     const ownerLoginEmail = (ownerEmail || email).toLowerCase()
 
-    // Pre-check slug (the transaction re-checks to avoid races)
-    const existing = await db.query.tenants.findFirst({
-      where: eq(tenants.slug, slug),
-      columns: { id: true },
-    })
-    if (existing) {
-      return NextResponse.json({ error: `Slug "${slug}" is already taken.` }, { status: 409 })
+    // Same checks as self-registration (reserved words, taken, held by a pending sign-up);
+    // the transaction re-checks the tenants table to avoid races.
+    const slugCheck = await checkSlugAvailability(slug)
+    if (!slugCheck.available) {
+      return NextResponse.json({ error: slugCheck.reason, field: 'slug' }, { status: 409 })
     }
+
+    // Pricing tier: explicit id, else legacy plan name, else the free tier
+    const allTiers = await db.query.pricingTiers.findMany({
+      columns: { id: true, name: true, displayName: true, priceMonthly: true, priceYearly: true, isActive: true },
+    })
+    const freeTier = allTiers.find((t) => t.name === 'trial') || allTiers.find((t) => t.isActive && isFreeTier(t))
+    const tier = tierId
+      ? allTiers.find((t) => t.id === tierId)
+      : (plan && allTiers.find((t) => t.name === plan)) || freeTier
+    if (!tier) {
+      return NextResponse.json({ error: tierId ? 'Selected plan was not found' : 'No free plan is configured' }, { status: 400 })
+    }
+    if (tierId && !tier.isActive) {
+      return NextResponse.json({ error: 'Selected plan is no longer offered' }, { status: 400 })
+    }
+    const free = isFreeTier(tier)
 
     const mergedFlags = featureFlags
       ? normalizeFeatureFlags(featureFlags as Partial<FeatureFlagsMap>)
       : DEFAULT_VENDOR_FEATURE_FLAGS
-
-    const newSettings = {
-      tin: tin || null,
-      brn: brn || null,
-      vatRegistered: vatRegistered ?? null,
-      featureFlags: mergedFlags,
-      limits: limits || {},
-      location: location || {},
-    }
 
     // Password: provided, or random (invite flow — owner sets their own on accept)
     const effectivePassword = ownerPassword || randomBytes(24).toString('base64url')
@@ -285,30 +242,28 @@ export async function POST(request: NextRequest) {
         ownerAccount = created
       }
 
-      // Pricing tier matching the chosen plan (tier names mirror the plan enum)
-      const tier = await tx.query.pricingTiers.findFirst({
-        where: eq(pricingTiers.name, plan),
-        columns: { id: true, priceMonthly: true, priceYearly: true },
-      }) || await tx.query.pricingTiers.findFirst({
-        where: eq(pricingTiers.name, 'trial'),
-        columns: { id: true, priceMonthly: true, priceYearly: true },
-      })
-      if (!tier) throw new Error('NO_PRICING_TIER')
+      // Free plan never expires (same as self-registration); a paid plan starts a
+      // complimentary first period the super admin can extend.
+      const { periodEnd } = getNextPeriodDates(now, billingCycle)
 
       const [tenant] = await tx
         .insert(tenants)
         .values({
           name,
+          legalName: legalName || null,
           slug,
           email,
           phone: phone || null,
           address: address || null,
+          taxId,
+          brn: brn || null,
           businessType,
-          plan,
+          plan: tierNameToPlan(tier.name),
+          planExpiresAt: free ? null : planExpiryFor({ status: 'active', trialEndsAt: null, currentPeriodEnd: periodEnd }),
           country,
           currency,
           status: 'active',
-          settings: newSettings,
+          settings: { vatRegistered, featureFlags: mergedFlags },
           primaryOwnerId: ownerAccount.id,
         })
         .returning()
@@ -316,19 +271,15 @@ export async function POST(request: NextRequest) {
       // RLS context for tenant-scoped tables (users, warehouses, pos profiles, ...)
       await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenant.id}, true)`)
 
-      // Subscription: free plan never expires (same as self-registration);
-      // a paid plan starts a one-month period the super admin can extend.
-      const periodEnd = new Date(now)
-      periodEnd.setMonth(periodEnd.getMonth() + 1)
       await tx.insert(subscriptions).values({
         tenantId: tenant.id,
         billingAccountId: ownerAccount.id,
         tierId: tier.id,
-        status: plan === 'trial' ? 'trial' : 'active',
+        status: free ? 'trial' : 'active',
         trialEndsAt: null,
         currentPeriodStart: now,
-        currentPeriodEnd: plan === 'trial' ? new Date('2099-12-31') : periodEnd,
-        billingCycle: 'monthly',
+        currentPeriodEnd: free ? NEVER_EXPIRES : periodEnd,
+        billingCycle,
         subscribedPriceMonthly: tier.priceMonthly,
         subscribedPriceYearly: tier.priceYearly,
         priceLockedAt: now,
@@ -362,6 +313,14 @@ export async function POST(request: NextRequest) {
       // with the owner assigned via pos_profile_users. Also marks setup complete.
       const defaults = await createMinimalDefaults(tx, tenant.id, businessType, currency, owner.id)
 
+      // VAT-registered → the country's standard VAT template becomes the default sales tax.
+      // Not registered → no default tax (prices are charged without VAT).
+      let defaultTaxTemplateId: string | null = null
+      if (vatRegistered) {
+        const seeded = await seedCountryTaxTemplates(tx, tenant.id, country, { setDefault: true })
+        defaultTaxTemplateId = seeded.defaultTemplateId
+      }
+
       let inviteToken: string | null = null
       if (sendInvite) {
         inviteToken = randomBytes(32).toString('hex')
@@ -376,12 +335,14 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      return { tenant, owner, defaults, inviteToken }
+      return { tenant, owner, defaults, inviteToken, defaultTaxTemplateId }
     })
 
     const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin
-    const loginUrl = `${baseUrl}/c/${result.tenant.slug}/login`
+    const loginUrl = `${baseUrl}/login`
+    const companyLoginUrl = `${baseUrl}/c/${result.tenant.slug}/login`
 
+    let inviteEmailFailed = false
     if (result.inviteToken) {
       try {
         await sendStaffInviteEmail({
@@ -392,6 +353,7 @@ export async function POST(request: NextRequest) {
           inviteUrl: `${baseUrl}/invite/${result.inviteToken}`,
         })
       } catch (emailError) {
+        inviteEmailFailed = true
         logError('api/sys-control/vendors POST invite-email', emailError)
       }
     }
@@ -399,8 +361,12 @@ export async function POST(request: NextRequest) {
     await adminAudit.create(session.superAdminId, 'tenant', result.tenant.id, {
       name: result.tenant.name,
       slug: result.tenant.slug,
+      businessId: result.tenant.businessId,
       businessType,
-      plan,
+      tierId: tier.id,
+      tier: tier.name,
+      billingCycle,
+      vatRegistered,
       ownerUserId: result.owner.id,
       ownerEmail: result.owner.email,
       warehouseId: result.defaults.warehouseId,
@@ -411,13 +377,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       vendor: result.tenant,
+      businessId: result.tenant.businessId,
       owner: { id: result.owner.id, email: result.owner.email },
-      loginUrl,
-      inviteSent: !!result.inviteToken,
+      plan: { id: tier.id, name: tier.displayName },
+      loginUrl: companyLoginUrl,
+      signInUrl: loginUrl,
+      inviteSent: !!result.inviteToken && !inviteEmailFailed,
+      inviteEmailFailed,
+      vatDefaultTemplateId: result.defaultTaxTemplateId,
     })
   } catch (error) {
     if (error instanceof Error && error.message === 'SLUG_TAKEN') {
-      return NextResponse.json({ error: 'Slug is already taken.' }, { status: 409 })
+      return NextResponse.json({ error: 'That web address is already taken.' }, { status: 409 })
     }
     logError('api/sys-control/vendors POST', error)
     return NextResponse.json({ error: 'Failed to create vendor' }, { status: 500 })

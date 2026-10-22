@@ -39,26 +39,40 @@ services:
       deploy_on_push:
         enabled: true
     http_port: 3000
-    # ONE instance: realtime (WebSocket) broadcasts are in-process. Scale UP (bigger size), not OUT.
+    # Horizontal scaling is supported: realtime broadcasts fan out between instances via Postgres
+    # LISTEN/NOTIFY, rate limits / caches / audit state are shared through the database, uploads
+    # go to Spaces. Connection budget: instance_count × (DATABASE_POOL_MAX + 2 LISTEN) + ~5 must
+    # stay below the DB cluster's limit (1 GB ≈ 22 → 1 × 15; 2 GB ≈ 47 → 2 × 15 or 3 × 10;
+    # 4 GB ≈ 97 → up to 4 × 15). Lower DATABASE_POOL_MAX when adding instances.
     instance_count: 1
     instance_size_slug: apps-s-2vcpu-4gb
+    # Readiness: routes traffic only when the DB answers and the instance is not draining.
     health_check:
-      http_path: /api/health
+      http_path: /api/health/ready
       initial_delay_seconds: 40
       period_seconds: 15
       timeout_seconds: 5
       failure_threshold: 4
+    # Liveness: restart only when the process itself is stuck (never on a DB outage).
+    liveness_health_check:
+      http_path: /api/health/live
+      initial_delay_seconds: 60
+      period_seconds: 30
+      timeout_seconds: 5
+      failure_threshold: 5
     envs:
       - { key: NODE_ENV, value: production, scope: RUN_TIME }
       - { key: SKIP_MIGRATIONS, value: "true", scope: RUN_TIME }
       - { key: DATABASE_URL, value: "${poslanka-db.DATABASE_URL}", scope: RUN_TIME, type: SECRET }
       - { key: DATABASE_CA_CERT, value: "${poslanka-db.CA_CERT}", scope: RUN_TIME, type: SECRET }
       - { key: DATABASE_APP_ROLE, value: app_user, scope: RUN_TIME }
-      - { key: DATABASE_POOL_MAX, value: "15", scope: RUN_TIME }
+      - { key: DATABASE_POOL_MAX, value: "15", scope: RUN_TIME }   # per instance; see connection budget above
       - { key: NEXTAUTH_URL, value: "https://app.poslanka.lk", scope: RUN_TIME }
       - { key: NEXTAUTH_URL_INTERNAL, value: "http://127.0.0.1:3000", scope: RUN_TIME }
       - { key: NEXTAUTH_SECRET, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
       - { key: CRON_SECRET, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+      - { key: METRICS_TOKEN, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }   # GET /api/metrics (Bearer)
+      - { key: LOG_FORMAT, value: json, scope: RUN_TIME }
       - { key: EINVOICE_TRANSMITTER, value: disabled, scope: RUN_TIME }   # einvoice-sync cron: queue only until IRD RAMIS
       - { key: ALLOWED_HOSTS, value: "poslanka.lk,app.poslanka.lk,www.poslanka.lk", scope: RUN_TIME }
       - { key: STORAGE_ENDPOINT, value: "https://sgp1.digitaloceanspaces.com", scope: RUN_TIME }

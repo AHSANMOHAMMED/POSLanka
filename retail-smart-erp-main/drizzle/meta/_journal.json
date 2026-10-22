@@ -1100,6 +1100,41 @@
       "when": 1771446406033,
       "tag": "0161_pricing_catalog",
       "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "7",
+      "when": 1771446407033,
+      "tag": "0162_tenant_business_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 166,
+      "version": "7",
+      "when": 1771446411033,
+      "tag": "0166_platform_admin_console",
+      "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "7",
+      "when": 1771446412033,
+      "tag": "0167_nfr_payment_activation",
+      "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "7",
+      "when": 1771446413033,
+      "tag": "0168_nfr_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 169,
+      "version": "7",
+      "when": 1771446414033,
+      "tag": "0169_admin_roles_coupons_refunds_push",
+      "breakpoints": true
     }
   ]
 }

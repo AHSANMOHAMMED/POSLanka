@@ -60,4 +60,6 @@ export const payhereCheckoutSchema = z.object({
   newTierId: z.string().uuid().optional(),
   walletCreditApplied: z.coerce.number().min(0).optional(),
   amount: z.coerce.number().positive().optional(),
+  /** Promo code: validated and applied server-side to the computed price */
+  couponCode: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().max(50).optional()),
 })

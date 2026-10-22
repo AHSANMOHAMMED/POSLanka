@@ -366,12 +366,22 @@ async function main() {
     const secret = generateTotpSecret()
     await admin.query(`INSERT INTO super_admins (id, email, password_hash, full_name, totp_enabled, totp_secret) VALUES ($1, $2, 'x', 'SA', true, $3)`,
       [id, `sa-${id.slice(0, 6)}@example.test`, secret])
-    const good = authenticator.generate(secret)
-    const wrong = good === '000000' ? '111111' : '000000'
-    for (let i = 0; i < 5; i++) await checkAdminTotp(id, wrong)
-    check('after 5 wrong codes even the correct code is refused', (await checkAdminTotp(id, good)) === 'invalid')
-    await admin.query(`DELETE FROM rate_limit_attempts WHERE key=$1`, [`sa-totp:${id}`])
-    check('correct code accepted when not locked', (await checkAdminTotp(id, good)) === 'ok')
+    try {
+      const good = authenticator.generate(secret)
+      const wrong = good === '000000' ? '111111' : '000000'
+      for (let i = 0; i < 5; i++) await checkAdminTotp(id, wrong)
+      check('after 5 wrong codes even the correct code is refused', (await checkAdminTotp(id, good)) === 'invalid')
+      await admin.query(`DELETE FROM rate_limit_attempts WHERE key=$1`, [`sa-totp:${id}`])
+      check('correct code accepted when not locked', (await checkAdminTotp(id, good)) === 'ok')
+    } finally {
+      // Leave no platform admin behind (also sweeps leftovers of earlier runs: same fixture shape)
+      await admin.query(`DELETE FROM rate_limit_attempts WHERE key LIKE 'sa-totp:%' AND key = ANY(
+        SELECT 'sa-totp:' || id FROM super_admins WHERE email LIKE 'sa-%@example.test' AND full_name = 'SA')`).catch(() => undefined)
+      await admin.query(`DELETE FROM admin_sessions WHERE super_admin_id IN (
+        SELECT id FROM super_admins WHERE email LIKE 'sa-%@example.test' AND full_name = 'SA')`).catch(() => undefined)
+      await admin.query(`DELETE FROM super_admins WHERE email LIKE 'sa-%@example.test' AND full_name = 'SA'`)
+        .catch((e) => console.warn('cleanup super admin:', e.message))
+    }
   })
 
   await admin.end()

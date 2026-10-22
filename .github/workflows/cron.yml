@@ -13,6 +13,7 @@ on:
     - cron: '17 */6 * * *'   # every 6 h: enforce-subscriptions
     - cron: '0 21 * * *'     # daily 02:30 LKT: auto-reorder
     - cron: '30 21 * * *'    # daily 03:00 LKT: storage, held sales, exchange rates, subscription reminders
+    - cron: '45 20 * * *'    # daily 02:15 LKT: retention (delete old logs, src/lib/maintenance/retention.ts)
   workflow_dispatch:
     inputs:
       job:
@@ -30,6 +31,7 @@ on:
           - refresh-exchange-rates
           - einvoice-sync
           - auto-reorder
+          - retention
           - all
 
 concurrency:
@@ -63,9 +65,10 @@ jobs:
             '0 21 * * *')   JOBS="auto-reorder" ;;
             '17 */6 * * *') JOBS="enforce-subscriptions" ;;
             '30 21 * * *')  JOBS="calculate-storage cleanup-held-sales refresh-exchange-rates subscription-reminders" ;;
+            '45 20 * * *')  JOBS="retention" ;;
             *)
               if [ "$INPUT_JOB" = "all" ]; then
-                JOBS="stock-alerts import-maintenance enforce-subscriptions subscription-reminders calculate-storage cleanup-held-sales refresh-exchange-rates einvoice-sync auto-reorder"
+                JOBS="stock-alerts import-maintenance enforce-subscriptions subscription-reminders calculate-storage cleanup-held-sales refresh-exchange-rates einvoice-sync auto-reorder retention"
               else
                 JOBS="$INPUT_JOB"
               fi

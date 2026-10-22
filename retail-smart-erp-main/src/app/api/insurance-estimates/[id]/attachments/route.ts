@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { insuranceEstimates, files } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { validateFile, storeFile, computeFileHash, deleteStoredFile } from '@/lib/files'
+import { validateFile, validateFileContent, storeFile, computeFileHash, deleteStoredFile } from '@/lib/files'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota, invalidateStorageCache } from '@/lib/db/storage-quota'
 import { validateParams } from '@/lib/validation/helpers'
@@ -23,6 +23,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'auto-service')
+    if (moduleError) return moduleError
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
@@ -120,6 +123,8 @@ export async function POST(
 
       const bytes = await file.arrayBuffer()
       const buffer = Buffer.from(bytes)
+      const content = validateFileContent(buffer, file.name)
+      if (!content.valid) return NextResponse.json({ error: content.error }, { status: 400 })
       const contentHash = computeFileHash(buffer)
 
       // Check for duplicate in same estimate

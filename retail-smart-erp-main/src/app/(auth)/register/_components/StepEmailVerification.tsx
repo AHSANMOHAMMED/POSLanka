@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Mail, Loader2, ArrowLeft } from 'lucide-react'
 import { OTPInput } from './OTPInput'
+import { Alert, Button } from '@/components/admin/kit'
 
 interface StepEmailVerificationProps {
   email: string
@@ -100,78 +101,45 @@ export function StepEmailVerification({ email, onVerified, onBack }: StepEmailVe
 
   return (
     <div>
-      <div className="text-center mb-6">
-        <div className="w-14 h-14 rounded-full bg-gradient-to-br from-emerald-500/20 to-violet-500/20 flex items-center justify-center mx-auto mb-4">
-          <Mail size={28} className="text-emerald-400" />
-        </div>
-        <h2 className="text-2xl font-extrabold text-white">Verify Your Email</h2>
-        <p className="text-zinc-500 mt-1">
-          We sent a 5-digit code to
+      <div className="mb-6 text-center">
+        <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-adm-primary-soft text-adm-primary-soft-fg">
+          <Mail size={24} aria-hidden />
+        </span>
+        <h1 className="text-[22px] font-semibold tracking-[-0.01em] text-adm-fg">Check your email</h1>
+        <p className="mt-1.5 text-[14px] text-adm-muted">
+          Enter the 5-digit code we sent to <span className="font-medium text-adm-fg break-all">{email}</span>
         </p>
-        <p className="text-emerald-400 font-semibold">{email}</p>
-        {sent && (
-          <div className="mt-3 px-4 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-md">
-            <p className="text-amber-300 text-xs leading-relaxed">
-              Can&apos;t find it? Check your <span className="font-semibold">Spam</span> or <span className="font-semibold">Junk</span> folder — sometimes our emails are too cool for the inbox.
-            </p>
-          </div>
+      </div>
+
+      {sent && (
+        <Alert tone="info" className="mb-4">Can’t find it? Look in your Spam or Junk folder.</Alert>
+      )}
+      {error && <Alert tone="danger" className="mb-4">{error}</Alert>}
+
+      <div className="mb-5">
+        <OTPInput value={otp} onChange={setOtp} disabled={verifying} />
+      </div>
+
+      <div className="mb-6 min-h-[22px] text-center text-[13.5px] text-adm-muted" aria-live="polite">
+        {verifying ? (
+          <span className="inline-flex items-center gap-2 text-adm-primary"><Loader2 size={16} className="animate-spin" aria-hidden /> Verifying…</span>
+        ) : !sent && sending ? (
+          <span className="inline-flex items-center gap-2"><Loader2 size={16} className="animate-spin" aria-hidden /> Sending code…</span>
+        ) : (
+          <>
+            Didn’t get a code?{' '}
+            {cooldown > 0 ? (
+              <span className="adm-num">Resend in {cooldown}s</span>
+            ) : (
+              <button type="button" onClick={sendOtp} disabled={sending} className="adm-focus font-medium text-adm-primary hover:underline disabled:opacity-50">
+                {sending ? 'Sending…' : 'Resend code'}
+              </button>
+            )}
+          </>
         )}
       </div>
 
-      {error && (
-        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
-          <p className="text-red-400 text-sm text-center">{error}</p>
-        </div>
-      )}
-
-      <div className="mb-6">
-        <OTPInput
-          value={otp}
-          onChange={setOtp}
-          disabled={verifying}
-        />
-      </div>
-
-      {verifying && (
-        <div className="flex items-center justify-center gap-2 text-emerald-400 mb-4">
-          <Loader2 size={18} className="animate-spin" />
-          <span className="text-sm font-medium">Verifying...</span>
-        </div>
-      )}
-
-      <div className="text-center mb-6">
-        <p className="text-sm text-zinc-500">
-          Didn&apos;t receive the code?{' '}
-          {cooldown > 0 ? (
-            <span className="text-zinc-500">
-              Resend in {cooldown}s
-            </span>
-          ) : (
-            <button
-              onClick={sendOtp}
-              disabled={sending}
-              className="text-emerald-400 hover:underline font-semibold disabled:opacity-50"
-            >
-              {sending ? 'Sending...' : 'Resend Code'}
-            </button>
-          )}
-        </p>
-      </div>
-
-      {!sent && sending && (
-        <div className="flex items-center justify-center gap-2 text-zinc-500 mb-4">
-          <Loader2 size={18} className="animate-spin" />
-          <span className="text-sm">Sending code...</span>
-        </div>
-      )}
-
-      <button
-        onClick={onBack}
-        className="w-full py-3 px-4 border border-white/10 text-zinc-300 rounded-md hover:bg-white/5 transition-colors flex items-center justify-center gap-2"
-      >
-        <ArrowLeft size={18} />
-        Back
-      </button>
+      <Button size="lg" fullWidth icon={ArrowLeft} onClick={onBack}>Back</Button>
     </div>
   )
 }

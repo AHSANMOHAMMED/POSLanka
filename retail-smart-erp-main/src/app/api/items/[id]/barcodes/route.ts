@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { items } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -17,6 +17,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   try {
     const session = await authWithCompany()
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, ['stock', 'selling'])
+    if (moduleError) return moduleError
     const p = validateParams(await params, idParamSchema)
     if (!p.success) return p.response
     const tenantId = session.user.tenantId

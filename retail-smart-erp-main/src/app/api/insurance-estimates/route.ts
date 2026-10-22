@@ -4,7 +4,7 @@ import { withTenant } from '@/lib/db'
 import { insuranceEstimates, insuranceEstimateItems, customers, vehicles, insuranceCompanies, insuranceAssessors } from '@/lib/db/schema'
 import { eq, desc, sql, and, or, ilike } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -22,6 +22,9 @@ export async function GET(request: NextRequest) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'auto-service')
+    if (moduleError) return moduleError
 
     const parsed = validateSearchParams(request, insuranceEstimatesListSchema)
     if (!parsed.success) return parsed.response

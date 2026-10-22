@@ -6,6 +6,7 @@ import { accounts, subscriptions, payhereTransactions, pricingTiers, pendingComp
 import { and, eq } from 'drizzle-orm'
 import { quotePlanChange } from '@/lib/billing/plan-change'
 import { getSubscriptionPrice } from '@/lib/billing/pricing'
+import { quoteCoupon } from '@/lib/billing/coupons'
 import { generateOrderId, generateCheckoutParams, isPayhereConfigured } from '@/lib/payhere'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
@@ -38,6 +39,7 @@ export async function POST(request: NextRequest) {
       tierId,
       billingCycle: requestedCycle,
       newTierId,             // For upgrades: the tier to apply after payment
+      couponCode,            // Promo code: validated and priced here
       // `walletCreditApplied` and `amount` from the client are ignored — both are computed below
     } = parsed.data
 
@@ -59,6 +61,18 @@ export async function POST(request: NextRequest) {
     let price: number
     let walletCredit = 0
     let upgradeTierId: string | null = null
+    // Promo code: applied to the amount due before any wallet part
+    let coupon: { id: string; code: string; listAmount: number; discount: number } | null = null
+    const applyCoupon = async (amount: number, tierForCoupon: string | null): Promise<NextResponse | number> => {
+      if (!couponCode) return amount
+      const q = await quoteCoupon({ code: couponCode, accountId: accountId!, tierId: tierForCoupon, billingCycle, amount })
+      if (!q.ok) return NextResponse.json({ error: q.error, code: 'COUPON_INVALID' }, { status: 400 })
+      if (q.finalAmount <= 0) {
+        return NextResponse.json({ error: 'This promo code covers the whole amount, so no card payment is needed. Contact support to apply it.', code: 'COUPON_COVERS_ALL' }, { status: 400 })
+      }
+      coupon = { id: q.coupon.id, code: q.code, listAmount: q.listAmount, discount: q.discount }
+      return q.finalAmount
+    }
 
     if (pendingCompanyId && subscriptionId) {
       return NextResponse.json({ error: 'Provide either subscriptionId or pendingCompanyId' }, { status: 400 })
@@ -80,6 +94,9 @@ export async function POST(request: NextRequest) {
       tier = await db.query.pricingTiers.findFirst({ where: eq(pricingTiers.id, pending.tierId) })
       if (!tier) return NextResponse.json({ error: 'Pricing tier not found' }, { status: 404 })
       price = billingCycle === 'yearly' ? Number(tier.priceYearly) : Number(tier.priceMonthly)
+      const discounted = await applyCoupon(price, tier.id)
+      if (discounted instanceof NextResponse) return discounted
+      price = discounted
     } else if (subscriptionId) {
       // For existing subscriptions, verify ownership and use the locked-in (grandfathered) price
       const sub = await db.query.subscriptions.findFirst({
@@ -102,20 +119,25 @@ export async function POST(request: NextRequest) {
         if (quote.amountDue <= 0) {
           return NextResponse.json({ error: 'No payment is needed for this plan change' }, { status: 400 })
         }
+        const due = await applyCoupon(quote.amountDue, newTier.id)
+        if (due instanceof NextResponse) return due
         if (!quote.noProration) {
           const walletBalance = Math.max(0, Number(account.walletBalance || 0))
-          walletCredit = Math.min(walletBalance, quote.amountDue)
-          if (walletCredit >= quote.amountDue) {
+          walletCredit = Math.min(walletBalance, due)
+          if (walletCredit >= due) {
             return NextResponse.json({ error: 'Your wallet covers this change; no card payment is needed' }, { status: 400 })
           }
         }
-        price = Math.round((quote.amountDue - walletCredit) * 100) / 100
+        price = Math.round((due - walletCredit) * 100) / 100
         tier = newTier
         upgradeTierId = newTier.id
       } else {
         // Renewal of the CURRENT plan at the subscriber's locked-in price
         tier = sub.tier
         price = getSubscriptionPrice(sub, sub.tier, billingCycle)
+        const discounted = await applyCoupon(price, sub.tier.id)
+        if (discounted instanceof NextResponse) return discounted
+        price = discounted
       }
     } else {
       return NextResponse.json({ error: 'subscriptionId or pendingCompanyId is required' }, { status: 400 })
@@ -126,6 +148,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Cannot checkout for free tier' }, { status: 400 })
     }
 
+    const couponApplied = coupon as { id: string; code: string; listAmount: number; discount: number } | null
     const periodMonths = billingCycle === 'yearly' ? 12 : 1
     const orderId = generateOrderId()
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
@@ -134,6 +157,7 @@ export async function POST(request: NextRequest) {
     const description = isUpgrade
       ? `Plan upgrade to ${tier.displayName} - ${billingCycle === 'yearly' ? 'Annual' : 'Monthly'} (prorated)`
       : `${tier.displayName} Plan - ${billingCycle === 'yearly' ? 'Annual' : 'Monthly'}`
+    const itemDescription = couponApplied ? `${description} (promo ${couponApplied.code})` : description
 
     // Create pending transaction record
     await db.insert(payhereTransactions).values({
@@ -150,6 +174,13 @@ export async function POST(request: NextRequest) {
       newTierId: upgradeTierId,
       // Deducted from the wallet by the notify webhook only when the payment succeeds
       walletCreditApplied: walletCredit.toFixed(2),
+      // Promo code: the use is counted by the notify webhook only when the payment succeeds
+      ...(couponApplied ? {
+        couponId: couponApplied.id,
+        couponCode: couponApplied.code,
+        listAmount: couponApplied.listAmount.toFixed(2),
+        discountAmount: couponApplied.discount.toFixed(2),
+      } : {}),
     })
 
     // Generate checkout form params
@@ -157,7 +188,7 @@ export async function POST(request: NextRequest) {
       orderId,
       amount: price,
       currency: 'LKR',
-      itemDescription: description,
+      itemDescription: itemDescription,
       customerName: account.fullName,
       customerEmail: account.email,
       customerPhone: account.phone || '',
@@ -170,6 +201,8 @@ export async function POST(request: NextRequest) {
       orderId,
       params,
       checkoutUrl: params.checkout_url,
+      amount: price,
+      ...(couponApplied ? { coupon: { code: couponApplied.code, listAmount: couponApplied.listAmount, discount: couponApplied.discount } } : {}),
     })
   } catch (error) {
     logError('api/payhere/checkout', error)

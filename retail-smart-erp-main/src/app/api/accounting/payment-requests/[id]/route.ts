@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant } from '@/lib/db'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { paymentRequests } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -13,6 +13,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
   const result = await withAuthTenant(async (session, db) => {
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'accounting')
+    if (moduleError) return moduleError
     const [pr] = await db.select().from(paymentRequests).where(eq(paymentRequests.id, id))
     if (!pr) return NextResponse.json({ error: 'Payment request not found' }, { status: 404 })
     return NextResponse.json(pr)

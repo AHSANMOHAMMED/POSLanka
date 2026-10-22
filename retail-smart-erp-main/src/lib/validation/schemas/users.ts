@@ -14,6 +14,8 @@ export const updateUserSchema = z.object({
   password: passwordSchema.optional(),
   /** 4-6 digit POS PIN; empty string clears it */
   pin: z.union([z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 digits'), z.literal('')]).optional(),
+  /** Custom role to assign (its base role becomes `role`); null removes the custom role */
+  customRoleId: z.string().uuid().nullable().optional(),
 }).merge(optimisticLockSchema)
 
 // POST /api/users (invite or add user)
@@ -22,6 +24,7 @@ export const createInviteSchema = z.object({
   email: emailSchema,
   role: userRoleSchema,
   fullName: z.string().trim().max(255).optional(),
+  customRoleId: z.string().uuid().nullable().optional(),
   warehouseIds: z.array(z.string().uuid()).optional(),
   posProfileIds: z.array(z.string().uuid()).optional(),
 })
@@ -32,6 +35,8 @@ export const createStaffSchema = z.object({
   email: emailSchema,
   fullName: z.string().trim().min(1, 'Full name is required').max(255),
   role: userRoleSchema,
+  /** Optional custom role; its base role overrides `role` */
+  customRoleId: z.string().uuid().nullable().optional(),
   password: passwordSchema,
   /** Optional 4-6 digit POS PIN; empty string = none */
   pin: z.union([z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 digits'), z.literal('')]).optional(),

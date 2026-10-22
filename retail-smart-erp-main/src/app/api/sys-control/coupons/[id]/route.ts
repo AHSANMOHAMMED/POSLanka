@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { couponCodes } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
-import { adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
+import { adminAuthError, adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { sysUpdateCouponSchema } from '@/lib/validation/schemas/sys-control'
@@ -17,9 +17,9 @@ export async function PUT(
     const rateLimited = await withRateLimit('/api/sys-control/coupons', STRICT_LIMIT)
     if (rateLimited) return rateLimited
 
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('billing')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const paramsParsed = validateParams(await params, idParamSchema)
@@ -91,9 +91,9 @@ export async function DELETE(
     const rateLimited = await withRateLimit('/api/sys-control/coupons', STRICT_LIMIT)
     if (rateLimited) return rateLimited
 
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('billing')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const paramsParsed = validateParams(await params, idParamSchema)
@@ -108,6 +108,15 @@ export async function DELETE(
       return NextResponse.json({ error: 'Coupon not found' }, { status: 404 })
     }
 
+    // A code that has been redeemed is kept (deactivated) so its history stays explainable.
+    if (existing.usedCount > 0) {
+      await db.update(couponCodes)
+        .set({ isActive: false, updatedAt: new Date() })
+        .where(eq(couponCodes.id, id))
+      await adminAudit.update(session.superAdminId, 'coupon', id, { code: existing.code, deactivated: true, usedCount: existing.usedCount })
+      return NextResponse.json({ success: true, deactivated: true })
+    }
+
     await db.delete(couponCodes)
       .where(eq(couponCodes.id, id))
 
@@ -115,7 +124,7 @@ export async function DELETE(
       code: existing.code,
     })
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json({ success: true, deactivated: false })
   } catch (error) {
     logError('api/sys-control/coupons/[id]', error)
     return NextResponse.json({ error: 'Failed to delete coupon' }, { status: 500 })

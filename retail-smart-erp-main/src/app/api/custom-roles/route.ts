@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { customRoles, rolePermissionOverrides } from '@/lib/db/schema'
-import { eq, isNotNull } from 'drizzle-orm'
-import { requirePermission, ROLE_PERMISSIONS, OWNER_ONLY_PERMISSIONS, type Permission } from '@/lib/auth/roles'
+import { customRoles, rolePermissionOverrides, users } from '@/lib/db/schema'
+import { eq, isNotNull, sql } from 'drizzle-orm'
+import { requirePermission, resolveRoleDefinition } from '@/lib/auth/roles'
+import { checkRoleRank, sanitizeRequestedPermissions, requestedPermissions, escalatedPermissions, escalationResponse } from '@/lib/auth/role-guard'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -20,7 +21,14 @@ export async function GET() {
     }
 
     return await withTenant(session.user.tenantId, async (db) => {
-      const roles = await db.select().from(customRoles)
+      const [roles, counts] = await Promise.all([
+        db.select().from(customRoles),
+        db.select({ customRoleId: users.customRoleId, n: sql<number>`count(*)::int` })
+          .from(users)
+          .where(isNotNull(users.customRoleId))
+          .groupBy(users.customRoleId),
+      ])
+      const userCount = new Map(counts.map((c) => [c.customRoleId, c.n]))
 
       // Fetch permissions for each custom role
       const allOverrides = await db.select().from(rolePermissionOverrides).where(
@@ -39,6 +47,9 @@ export async function GET() {
         roles.map(r => ({
           ...r,
           permissions: permsByRole[r.id] || {},
+          // What the role actually resolves to (explicit → base-role override → default)
+          effectivePermissions: resolveRoleDefinition(r.baseRole, permsByRole[r.id] || {}, session.user.tenantId),
+          userCount: userCount.get(r.id) || 0,
         }))
       )
     })
@@ -56,7 +67,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const permError = requirePermission(session, 'manageTenant')
+    const permError = requirePermission(session, 'manageRoles')
     if (permError) return permError
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
@@ -66,10 +77,17 @@ export async function POST(request: Request) {
     if (!parsed.success) return parsed.response
     const { name, baseRole, description, color, permissions } = parsed.data
 
-    // Cannot base on owner
+    // Cannot base on owner, an unknown role, or (non-owners) a role at/above your own rank
     if (baseRole === 'owner') {
       return NextResponse.json({ error: 'Cannot create custom roles based on owner' }, { status: 400 })
     }
+    const rankError = checkRoleRank(session, baseRole)
+    if (rankError) return rankError
+
+    // Nobody can create a role carrying permissions they do not hold themselves
+    const missing = escalatedPermissions(session, resolveRoleDefinition(baseRole, requestedPermissions(permissions || {}), session.user.tenantId), null)
+    if (missing.length > 0) return escalationResponse(missing)
+    const explicit = sanitizeRequestedPermissions(session, permissions || {})
 
     // Generate slug from name
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 50)
@@ -97,34 +115,16 @@ export async function POST(request: Request) {
         createdBy: session.user.id,
       }).returning()
 
-      // Insert permission overrides if provided
-      if (permissions && Object.keys(permissions).length > 0) {
-        const allPermissions = Object.keys(ROLE_PERMISSIONS) as Permission[]
-        const toInsert: Array<{
-          tenantId: string
-          customRoleId: string
-          permissionKey: string
-          isGranted: boolean
-          updatedBy: string
-        }> = []
-
-        for (const [permKey, granted] of Object.entries(permissions)) {
-          if (!allPermissions.includes(permKey as Permission)) continue
-          // Block owner-only permissions
-          if (granted && OWNER_ONLY_PERMISSIONS.includes(permKey as Permission)) continue
-
-          toInsert.push({
-            tenantId: session.user.tenantId,
-            customRoleId: role.id,
-            permissionKey: permKey,
-            isGranted: granted,
-            updatedBy: session.user.id,
-          })
-        }
-
-        if (toInsert.length > 0) {
-          await db.insert(rolePermissionOverrides).values(toInsert)
-        }
+      // Insert the role's explicit permissions
+      const toInsert = Object.entries(explicit).map(([permKey, granted]) => ({
+        tenantId: session.user.tenantId,
+        customRoleId: role.id,
+        permissionKey: permKey,
+        isGranted: granted,
+        updatedBy: session.user.id,
+      }))
+      if (toInsert.length > 0) {
+        await db.insert(rolePermissionOverrides).values(toInsert)
       }
 
       return { role }

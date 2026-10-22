@@ -1,10 +1,30 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Loader2, Plus, Edit2, Save, X, Database, HardDrive, Users } from 'lucide-react'
-import { formatCurrencyWithSymbol } from '@/lib/utils/currency'
+import { useCallback, useEffect, useState } from 'react'
+import { Layers, Pencil, Plus, RefreshCw, Ticket, Trash2 } from 'lucide-react'
+import {
+  AdminCard,
+  AdminModal,
+  AdminPage,
+  AdminTable,
+  Alert,
+  Badge,
+  Button,
+  Checkbox,
+  ConfirmDialog,
+  EmptyState,
+  Field,
+  Input,
+  Select,
+  Textarea,
+  fmtLKR,
+  fmtNumber,
+  type AdminColumn,
+} from '@/components/admin/kit'
+import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import { adminFetch, fmtBytes, fmtDate } from '@/components/admin/console-helpers'
 
-interface PricingTier {
+interface Tier {
   id: string
   name: string
   displayName: string
@@ -15,530 +35,527 @@ interface PricingTier {
   maxSalesMonthly: number | null
   maxDatabaseBytes: number | null
   maxFileStorageBytes: number | null
-  features: Record<string, unknown>
+  features: Record<string, unknown> | null
   isActive: boolean
   sortOrder: number
-  subscriberCount?: number
+  subscriberCount: number
 }
 
-
-function formatBytes(bytes: number): string {
-  if (!bytes || bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+interface Coupon {
+  id: string
+  code: string
+  description: string | null
+  discountType: 'percentage' | 'fixed_amount'
+  discountValue: string
+  applicableTiers: string[] | null
+  maxUses: number | null
+  usedCount: number
+  maxUsesPerAccount: number
+  validFrom: string | null
+  validUntil: string | null
+  isActive: boolean
 }
 
-function bytesToGB(bytes: number): string {
-  if (!bytes) return ''
-  return (bytes / (1024 * 1024 * 1024)).toFixed(2).replace(/\.?0+$/, '')
-}
-
-function gbToBytes(gb: string): number | null {
-  if (!gb) return null
-  return Math.round(parseFloat(gb) * 1024 * 1024 * 1024)
-}
+const GB = 1024 ** 3
+const toGb = (b: number | null) => (b == null ? '' : String(+(b / GB).toFixed(2)))
+const fromGb = (v: string) => (v.trim() === '' ? null : Math.round(Number(v) * GB))
+const intOrNull = (v: string) => (v.trim() === '' ? null : Math.round(Number(v)))
 
 export default function PricingPage() {
-  const [tiers, setTiers] = useState<PricingTier[]>([])
+  const canBill = useAdminCan('billing')
+  const [tiers, setTiers] = useState<Tier[] | null>(null)
+  const [coupons, setCoupons] = useState<Coupon[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editData, setEditData] = useState<Record<string, unknown>>({})
-  const [showForm, setShowForm] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const [flash, setFlash] = useState<{ tone: 'success' | 'warning'; text: string } | null>(null)
+  const [editingTier, setEditingTier] = useState<Tier | 'new' | null>(null)
+  const [retiring, setRetiring] = useState<Tier | null>(null)
+  const [editingCoupon, setEditingCoupon] = useState<Coupon | 'new' | null>(null)
+  const [deletingCoupon, setDeletingCoupon] = useState<Coupon | null>(null)
+  const [busy, setBusy] = useState(false)
 
-  const [formData, setFormData] = useState({
-    name: '',
-    displayName: '',
-    priceMonthly: '',
-    priceYearly: '',
-    maxDatabaseGB: '',
-    maxFileStorageGB: '',
-    sortOrder: 0,
-  })
-
-  const fetchTiers = useCallback(async () => {
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
-      const res = await fetch('/api/sys-control/pricing-tiers')
-      if (res.ok) {
-        const data = await res.json()
-        setTiers(data)
-      }
-    } catch (error) {
-      console.error('Failed to fetch pricing tiers:', error)
+      const [t, c] = await Promise.all([
+        adminFetch<Tier[]>('/api/sys-control/pricing-tiers'),
+        adminFetch<Coupon[]>('/api/sys-control/coupons'),
+      ])
+      setTiers(t)
+      setCoupons(c)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load plans')
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => {
-    fetchTiers()
-  }, [fetchTiers])
+  useEffect(() => { load() }, [load])
 
-  const handleCreate = async () => {
-    if (!formData.name || !formData.displayName) {
-      alert('Name and display name are required')
-      return
-    }
-
-    setSaving(true)
+  async function setTierActive(tier: Tier, isActive: boolean) {
+    setBusy(true)
     try {
-      const res = await fetch('/api/sys-control/pricing-tiers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...formData,
-          priceMonthly: formData.priceMonthly ? parseFloat(formData.priceMonthly) : null,
-          priceYearly: formData.priceYearly ? parseFloat(formData.priceYearly) : (formData.priceMonthly ? parseFloat(formData.priceMonthly) * 10 : null),
-          currency: 'LKR',
-          maxUsers: null,
-          maxSalesMonthly: null,
-          maxDatabaseBytes: gbToBytes(formData.maxDatabaseGB),
-          maxFileStorageBytes: gbToBytes(formData.maxFileStorageGB),
-        }),
-      })
-
-      if (res.ok) {
-        setShowForm(false)
-        setFormData({
-          name: '',
-          displayName: '',
-          priceMonthly: '',
-          priceYearly: '',
-          maxDatabaseGB: '',
-          maxFileStorageGB: '',
-          sortOrder: 0,
-        })
-        fetchTiers()
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to create tier')
-      }
-    } catch (error) {
-      console.error('Failed to create tier:', error)
-      alert('Failed to create tier')
+      if (isActive) await adminFetch(`/api/sys-control/pricing-tiers/${tier.id}`, { method: 'PUT', json: { isActive: true } })
+      else await adminFetch(`/api/sys-control/pricing-tiers/${tier.id}`, { method: 'DELETE' })
+      setFlash({ tone: 'success', text: isActive ? `${tier.displayName} is offered again.` : `${tier.displayName} is retired. Existing subscribers keep it.` })
+      setRetiring(null)
+      load()
+    } catch (e) {
+      setFlash({ tone: 'warning', text: e instanceof Error ? e.message : 'Update failed' })
     } finally {
-      setSaving(false)
+      setBusy(false)
     }
   }
 
-  const startEditing = (tier: PricingTier) => {
-    setEditingId(tier.id)
-    setEditData({
-      displayName: tier.displayName,
-      priceMonthly: tier.priceMonthly || '',
-      priceYearly: tier.priceYearly || '',
-      maxDatabaseGB: tier.maxDatabaseBytes ? bytesToGB(tier.maxDatabaseBytes) : '',
-      maxFileStorageGB: tier.maxFileStorageBytes ? bytesToGB(tier.maxFileStorageBytes) : '',
-      sortOrder: tier.sortOrder,
-      isActive: tier.isActive,
-    })
-  }
-
-  const cancelEditing = () => {
-    setEditingId(null)
-    setEditData({})
-  }
-
-  const handleUpdate = async (id: string) => {
-    setSaving(true)
+  async function deleteCoupon(c: Coupon) {
+    setBusy(true)
     try {
-      const res = await fetch(`/api/sys-control/pricing-tiers/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          displayName: editData.displayName,
-          priceMonthly: editData.priceMonthly ? parseFloat(String(editData.priceMonthly)) : null,
-          priceYearly: editData.priceYearly ? parseFloat(String(editData.priceYearly)) : null,
-          currency: 'LKR',
-          maxDatabaseBytes: editData.maxDatabaseGB ? gbToBytes(String(editData.maxDatabaseGB)) : null,
-          maxFileStorageBytes: editData.maxFileStorageGB ? gbToBytes(String(editData.maxFileStorageGB)) : null,
-          sortOrder: editData.sortOrder,
-          isActive: editData.isActive,
-        }),
-      })
-
-      if (res.ok) {
-        setEditingId(null)
-        setEditData({})
-        fetchTiers()
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to update tier')
-      }
-    } catch (error) {
-      console.error('Failed to update tier:', error)
-      alert('Failed to update tier')
+      const res = await adminFetch<{ deactivated: boolean }>(`/api/sys-control/coupons/${c.id}`, { method: 'DELETE' })
+      setFlash({ tone: 'success', text: res.deactivated ? `${c.code} has been used, so it was deactivated instead of deleted.` : `${c.code} deleted.` })
+      setDeletingCoupon(null)
+      load()
+    } catch (e) {
+      setFlash({ tone: 'warning', text: e instanceof Error ? e.message : 'Delete failed' })
     } finally {
-      setSaving(false)
+      setBusy(false)
     }
   }
 
-  const handleToggleActive = async (tier: PricingTier) => {
-    setSaving(true)
+  const tierColumns: AdminColumn<Tier>[] = [
+    {
+      key: 'plan',
+      header: 'Plan',
+      primary: true,
+      cell: (t) => (
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium text-adm-fg">{t.displayName}</span>
+            {!t.isActive && <Badge>Retired</Badge>}
+          </div>
+          <p className="text-[12.5px] text-adm-subtle">{t.name}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'price',
+      header: 'Price',
+      cell: (t) => Number(t.priceMonthly ?? 0) === 0 && Number(t.priceYearly ?? 0) === 0 ? (
+        <span className="text-adm-fg">Free</span>
+      ) : (
+        <div className="adm-num">
+          <p className="text-adm-fg">{fmtLKR(Number(t.priceMonthly))} <span className="text-[12px] text-adm-subtle">/ month</span></p>
+          <p className="text-[12.5px] text-adm-subtle">{fmtLKR(Number(t.priceYearly))} / year</p>
+        </div>
+      ),
+    },
+    { key: 'users', header: 'Users', hideBelow: 'md', cell: (t) => (t.maxUsers ? fmtNumber(t.maxUsers) : 'Unlimited') },
+    {
+      key: 'storage',
+      header: 'Storage',
+      hideBelow: 'lg',
+      cell: (t) => (
+        <span className="text-adm-muted">
+          {t.maxDatabaseBytes ? fmtBytes(t.maxDatabaseBytes) : 'No limit'} data · {t.maxFileStorageBytes ? fmtBytes(t.maxFileStorageBytes) : 'no limit'} files
+        </span>
+      ),
+    },
+    { key: 'subs', header: 'Subscribers', align: 'right', cell: (t) => <span className="adm-num">{fmtNumber(t.subscriberCount)}</span> },
+    ...(!canBill ? [] : [{
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right' as const,
+      mobileLabel: 'Actions',
+      cell: (t: Tier) => (
+        <div className="flex justify-end gap-1">
+          <Button size="sm" variant="ghost" icon={Pencil} onClick={() => setEditingTier(t)}>Edit</Button>
+          {t.isActive ? (
+            <Button size="sm" variant="ghost" onClick={() => setRetiring(t)} disabled={t.name === 'trial'}>Retire</Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => setTierActive(t, true)} disabled={busy}>Restore</Button>
+          )}
+        </div>
+      ),
+    }]),
+  ]
+
+  const couponColumns: AdminColumn<Coupon>[] = [
+    {
+      key: 'code',
+      header: 'Code',
+      primary: true,
+      cell: (c) => (
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="adm-num font-semibold text-adm-fg">{c.code}</span>
+            <Badge tone={c.isActive ? 'success' : 'neutral'}>{c.isActive ? 'Active' : 'Inactive'}</Badge>
+          </div>
+          {c.description && <p className="truncate text-[12.5px] text-adm-subtle">{c.description}</p>}
+        </div>
+      ),
+    },
+    { key: 'discount', header: 'Discount', cell: (c) => (c.discountType === 'percentage' ? `${Number(c.discountValue)}%` : fmtLKR(Number(c.discountValue))) },
+    { key: 'valid', header: 'Valid', hideBelow: 'md', cell: (c) => <span className="text-adm-muted">{c.validFrom || c.validUntil ? `${c.validFrom ? fmtDate(c.validFrom) : 'Now'} – ${c.validUntil ? fmtDate(c.validUntil) : 'no end'}` : 'Always'}</span> },
+    { key: 'uses', header: 'Used', align: 'right', cell: (c) => <span className="adm-num">{c.usedCount}{c.maxUses ? ` / ${c.maxUses}` : ''}</span> },
+    ...(!canBill ? [] : [{
+      key: 'actions',
+      header: <span className="sr-only">Actions</span>,
+      align: 'right' as const,
+      mobileLabel: 'Actions',
+      cell: (c: Coupon) => (
+        <div className="flex justify-end gap-1">
+          <Button size="sm" variant="ghost" icon={Pencil} onClick={() => setEditingCoupon(c)}>Edit</Button>
+          <Button size="icon-sm" variant="ghost" onClick={() => setDeletingCoupon(c)} aria-label={`Delete ${c.code}`}><Trash2 size={14} aria-hidden /></Button>
+        </div>
+      ),
+    }]),
+  ]
+
+  return (
+    <AdminPage
+      title="Plans & pricing"
+      description="The plans vendors can subscribe to, their prices and limits, and promotional codes."
+      actions={
+        <>
+          <Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading && !!tiers}>Refresh</Button>
+          {canBill && <Button variant="primary" icon={Plus} onClick={() => setEditingTier('new')}>New plan</Button>}
+        </>
+      }
+    >
+      {flash && <Alert tone={flash.tone} action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash.text}</Alert>}
+      {error && <Alert tone="danger" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Alert>}
+
+      <AdminCard
+        title="Plans"
+        description="Price changes apply to new sign-ups and plan changes. Current subscribers keep the price they signed up at; their billing period is not changed."
+        icon={<Layers size={17} />}
+        flush
+      >
+        <AdminTable
+          columns={tierColumns}
+          rows={tiers ?? []}
+          rowKey={(t) => t.id}
+          loading={loading}
+          minWidth={760}
+          rowClassName={(t) => (t.isActive ? undefined : 'opacity-70')}
+          empty={<EmptyState icon={Layers} title="No plans yet" action={canBill ? <Button size="sm" variant="primary" icon={Plus} onClick={() => setEditingTier('new')}>New plan</Button> : undefined} />}
+        />
+      </AdminCard>
+
+      <AdminCard
+        title="Promo codes"
+        description="Discount codes vendors enter when they pay for a plan (card, wallet or bank transfer). A use is counted when the payment succeeds or the slip is approved."
+        icon={<Ticket size={17} />}
+        actions={canBill ? <Button size="sm" icon={Plus} onClick={() => setEditingCoupon('new')}>New code</Button> : undefined}
+        flush
+      >
+        <AdminTable
+          columns={couponColumns}
+          rows={coupons ?? []}
+          rowKey={(c) => c.id}
+          loading={loading}
+          minWidth={620}
+          empty={<EmptyState icon={Ticket} title="No promo codes" compact />}
+        />
+      </AdminCard>
+
+      {editingTier && (
+        <TierDialog
+          tier={editingTier === 'new' ? null : editingTier}
+          onClose={() => setEditingTier(null)}
+          onSaved={(text) => { setEditingTier(null); setFlash({ tone: 'success', text }); load() }}
+        />
+      )}
+      {editingCoupon && tiers && (
+        <CouponDialog
+          coupon={editingCoupon === 'new' ? null : editingCoupon}
+          tiers={tiers}
+          onClose={() => setEditingCoupon(null)}
+          onSaved={(text) => { setEditingCoupon(null); setFlash({ tone: 'success', text }); load() }}
+        />
+      )}
+      <ConfirmDialog
+        open={!!retiring}
+        onCancel={() => setRetiring(null)}
+        onConfirm={() => retiring && setTierActive(retiring, false)}
+        loading={busy}
+        title={`Retire ${retiring?.displayName ?? ''}?`}
+        description="It is no longer offered to new sign-ups or plan changes. The vendors on it keep it until they change plan."
+        confirmLabel="Retire plan"
+        confirmVariant="danger"
+      >
+        {retiring && retiring.subscriberCount > 0 && (
+          <p className="text-[13.5px] text-adm-muted">{fmtNumber(retiring.subscriberCount)} vendor{retiring.subscriberCount === 1 ? ' is' : 's are'} on this plan.</p>
+        )}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={!!deletingCoupon}
+        onCancel={() => setDeletingCoupon(null)}
+        onConfirm={() => deletingCoupon && deleteCoupon(deletingCoupon)}
+        loading={busy}
+        title={`Delete ${deletingCoupon?.code ?? ''}?`}
+        description={deletingCoupon && deletingCoupon.usedCount > 0 ? 'This code has been used, so it will be deactivated and kept for the record.' : 'The code is removed permanently.'}
+        confirmLabel={deletingCoupon && deletingCoupon.usedCount > 0 ? 'Deactivate' : 'Delete'}
+        confirmVariant="danger"
+      />
+    </AdminPage>
+  )
+}
+
+/* ------------------------------------------------------------------ tier dialog */
+
+function TierDialog({ tier, onClose, onSaved }: { tier: Tier | null; onClose: () => void; onSaved: (text: string) => void }) {
+  const f = (tier?.features ?? {}) as Record<string, unknown>
+  const [name, setName] = useState(tier?.name ?? '')
+  const [displayName, setDisplayName] = useState(tier?.displayName ?? '')
+  const [priceMonthly, setPriceMonthly] = useState(tier?.priceMonthly != null ? String(Number(tier.priceMonthly)) : '')
+  const [priceYearly, setPriceYearly] = useState(tier?.priceYearly != null ? String(Number(tier.priceYearly)) : '')
+  const [maxUsers, setMaxUsers] = useState(tier?.maxUsers != null ? String(tier.maxUsers) : '')
+  const [maxSales, setMaxSales] = useState(tier?.maxSalesMonthly != null ? String(tier.maxSalesMonthly) : '')
+  const [dbGb, setDbGb] = useState(toGb(tier?.maxDatabaseBytes ?? null))
+  const [fileGb, setFileGb] = useState(toGb(tier?.maxFileStorageBytes ?? null))
+  const [sortOrder, setSortOrder] = useState(String(tier?.sortOrder ?? 0))
+  const [locations, setLocations] = useState(typeof f.locations === 'number' && f.locations > 0 ? String(f.locations) : '')
+  const [supportType, setSupportType] = useState(typeof f.supportType === 'string' ? f.supportType : 'email')
+  const [advancedReports, setAdvancedReports] = useState(!!f.advancedReports)
+  const [customReports, setCustomReports] = useState(!!f.customReports)
+  const [apiAccess, setApiAccess] = useState(!!f.apiAccess)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const num = (v: string) => v.trim() === '' || (Number.isFinite(Number(v)) && Number(v) >= 0)
+  const valid =
+    displayName.trim().length > 0 &&
+    (tier || /^[a-z0-9_-]{2,50}$/.test(name)) &&
+    [priceMonthly, priceYearly, maxUsers, maxSales, dbGb, fileGb, sortOrder, locations].every(num) &&
+    priceMonthly.trim() !== ''
+  const priceChanged = tier && (Number(priceMonthly) !== Number(tier.priceMonthly) || Number(priceYearly || 0) !== Number(tier.priceYearly || 0))
+
+  async function save() {
+    setBusy(true)
+    setError(null)
+    const features = {
+      ...f,
+      locations: locations.trim() === '' ? -1 : Number(locations),
+      supportType,
+      advancedReports,
+      customReports,
+      apiAccess,
+    }
+    const body: Record<string, unknown> = {
+      displayName: displayName.trim(),
+      priceMonthly: Number(priceMonthly),
+      priceYearly: priceYearly.trim() === '' ? undefined : Number(priceYearly),
+      maxUsers: intOrNull(maxUsers),
+      maxSalesMonthly: intOrNull(maxSales),
+      maxDatabaseBytes: fromGb(dbGb),
+      maxFileStorageBytes: fromGb(fileGb),
+      sortOrder: Number(sortOrder || 0),
+      features,
+    }
     try {
-      const res = await fetch(`/api/sys-control/pricing-tiers/${tier.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isActive: !tier.isActive }),
-      })
-
-      if (res.ok) {
-        fetchTiers()
+      if (tier) {
+        const res = await adminFetch<{ grandfatheredCount: number }>(`/api/sys-control/pricing-tiers/${tier.id}`, { method: 'PUT', json: body })
+        onSaved(
+          res.grandfatheredCount > 0
+            ? `${displayName} saved. ${res.grandfatheredCount} current subscriber${res.grandfatheredCount === 1 ? ' keeps' : 's keep'} the previous price.`
+            : `${displayName} saved.`
+        )
       } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to update tier')
+        // Create rejects nulls: leave unlimited limits out
+        for (const k of ['maxUsers', 'maxSalesMonthly', 'maxDatabaseBytes', 'maxFileStorageBytes']) if (body[k] === null) delete body[k]
+        await adminFetch('/api/sys-control/pricing-tiers', { method: 'POST', json: { ...body, name } })
+        onSaved(`${displayName} created.`)
       }
-    } catch (error) {
-      console.error('Failed to update tier:', error)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the plan')
     } finally {
-      setSaving(false)
+      setBusy(false)
     }
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-      </div>
-    )
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
-            Pricing Tiers
-          </h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">Manage subscription plans and storage limits (all prices in LKR)</p>
+    <AdminModal
+      open
+      onClose={onClose}
+      size="lg"
+      title={tier ? `Edit ${tier.displayName}` : 'New plan'}
+      description="Leave a limit empty for unlimited."
+      footer={
+        <>
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={save} loading={busy} disabled={!valid}>{tier ? 'Save plan' : 'Create plan'}</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {error && <Alert tone="danger">{error}</Alert>}
+        {priceChanged && tier!.subscriberCount > 0 && (
+          <Alert tone="info">The {fmtNumber(tier!.subscriberCount)} current subscriber{tier!.subscriberCount === 1 ? '' : 's'} keep their existing price. The new price applies to new sign-ups and plan changes.</Alert>
+        )}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Display name" htmlFor="t-display" required>
+            <Input id="t-display" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Professional" />
+          </Field>
+          <Field label="Internal name" htmlFor="t-name" required={!tier} hint={tier ? 'Cannot be changed.' : 'Lowercase, e.g. professional.'}>
+            <Input id="t-name" value={name} onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))} disabled={!!tier} />
+          </Field>
+          <Field label="Monthly price (LKR)" htmlFor="t-pm" required>
+            <Input id="t-pm" type="number" min={0} step="1" value={priceMonthly} onChange={(e) => setPriceMonthly(e.target.value)} />
+          </Field>
+          <Field label="Yearly price (LKR)" htmlFor="t-py" hint={!tier ? 'Empty = 10 × monthly.' : undefined}>
+            <Input id="t-py" type="number" min={0} step="1" value={priceYearly} onChange={(e) => setPriceYearly(e.target.value)} />
+          </Field>
+          <Field label="Max active users" htmlFor="t-users" hint="Enforced when staff are added.">
+            <Input id="t-users" type="number" min={1} value={maxUsers} onChange={(e) => setMaxUsers(e.target.value)} placeholder="Unlimited" />
+          </Field>
+          <Field label="Sales per month" htmlFor="t-sales" hint="Shown on plan pages and usage; not enforced at the till.">
+            <Input id="t-sales" type="number" min={1} value={maxSales} onChange={(e) => setMaxSales(e.target.value)} placeholder="Unlimited" />
+          </Field>
+          <Field label="Database storage (GB)" htmlFor="t-db">
+            <Input id="t-db" type="number" min={0} step="0.1" value={dbGb} onChange={(e) => setDbGb(e.target.value)} placeholder="Unlimited" />
+          </Field>
+          <Field label="File storage (GB)" htmlFor="t-files">
+            <Input id="t-files" type="number" min={0} step="0.1" value={fileGb} onChange={(e) => setFileGb(e.target.value)} placeholder="Unlimited" />
+          </Field>
+          <Field label="Display order" htmlFor="t-sort">
+            <Input id="t-sort" type="number" min={0} value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} />
+          </Field>
         </div>
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Add Tier
-        </button>
+        <fieldset className="space-y-3 rounded-lg border border-adm-border p-4">
+          <legend className="px-1 text-[13px] font-medium text-adm-fg">Shown on the plans page</legend>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Locations" htmlFor="t-loc">
+              <Input id="t-loc" type="number" min={1} value={locations} onChange={(e) => setLocations(e.target.value)} placeholder="Unlimited" />
+            </Field>
+            <Field label="Support" htmlFor="t-support">
+              <Select id="t-support" value={supportType} onChange={(e) => setSupportType(e.target.value)}>
+                <option value="email">Email</option>
+                <option value="email_chat">Email + chat</option>
+                <option value="phone_chat">Phone + chat</option>
+                <option value="dedicated_manager">Dedicated manager</option>
+              </Select>
+            </Field>
+          </div>
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            <Checkbox label="Advanced reports" checked={advancedReports} onChange={(e) => setAdvancedReports(e.target.checked)} />
+            <Checkbox label="Custom reports" checked={customReports} onChange={(e) => setCustomReports(e.target.checked)} />
+            <Checkbox label="API access" checked={apiAccess} onChange={(e) => setApiAccess(e.target.checked)} />
+          </div>
+        </fieldset>
       </div>
+    </AdminModal>
+  )
+}
 
-      {/* Create Form */}
-      {showForm && (
-        <div className="bg-white dark:bg-gray-800 rounded-md shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-          <h3 className="font-semibold text-gray-900 dark:text-white mb-4">Create New Pricing Tier</h3>
-          <div className="grid gap-4 md:grid-cols-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Internal Name *
-              </label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value.toLowerCase().replace(/\s/g, '_') })}
-                placeholder="e.g., starter"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-              />
+/* ------------------------------------------------------------------ coupon dialog */
+
+function CouponDialog({ coupon, tiers, onClose, onSaved }: { coupon: Coupon | null; tiers: Tier[]; onClose: () => void; onSaved: (text: string) => void }) {
+  const [code, setCode] = useState(coupon?.code ?? '')
+  const [description, setDescription] = useState(coupon?.description ?? '')
+  const [discountType, setDiscountType] = useState<Coupon['discountType']>(coupon?.discountType ?? 'percentage')
+  const [discountValue, setDiscountValue] = useState(coupon ? String(Number(coupon.discountValue)) : '')
+  const [maxUses, setMaxUses] = useState(coupon?.maxUses != null ? String(coupon.maxUses) : '')
+  const [perAccount, setPerAccount] = useState(String(coupon?.maxUsesPerAccount ?? 1))
+  const [validFrom, setValidFrom] = useState(coupon?.validFrom ? coupon.validFrom.slice(0, 10) : '')
+  const [validUntil, setValidUntil] = useState(coupon?.validUntil ? coupon.validUntil.slice(0, 10) : '')
+  const [tierIds, setTierIds] = useState<string[]>(coupon?.applicableTiers ?? [])
+  const [isActive, setIsActive] = useState(coupon?.isActive ?? true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const value = Number(discountValue)
+  const valid =
+    /^[A-Za-z0-9_-]{3,50}$/.test(code.trim()) &&
+    Number.isFinite(value) && value > 0 && (discountType !== 'percentage' || value <= 100) &&
+    (maxUses.trim() === '' || Number(maxUses) >= 1) && Number(perAccount) >= 1 &&
+    (!validFrom || !validUntil || validFrom <= validUntil)
+
+  async function save() {
+    setBusy(true)
+    setError(null)
+    const body = {
+      code: code.trim().toUpperCase(),
+      description: description.trim() || (coupon ? null : undefined),
+      discountType,
+      discountValue: value,
+      applicableTiers: tierIds,
+      maxUses: maxUses.trim() === '' ? undefined : Number(maxUses),
+      maxUsesPerAccount: Number(perAccount),
+      validFrom: validFrom ? new Date(`${validFrom}T00:00:00`).toISOString() : '',
+      validUntil: validUntil ? new Date(`${validUntil}T23:59:59`).toISOString() : '',
+      isActive,
+    }
+    try {
+      if (coupon) await adminFetch(`/api/sys-control/coupons/${coupon.id}`, { method: 'PUT', json: body })
+      else await adminFetch('/api/sys-control/coupons', { method: 'POST', json: body })
+      onSaved(`${body.code} ${coupon ? 'saved' : 'created'}.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save the code')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AdminModal
+      open
+      onClose={onClose}
+      size="lg"
+      title={coupon ? `Edit ${coupon.code}` : 'New promo code'}
+      footer={
+        <>
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={save} loading={busy} disabled={!valid}>{coupon ? 'Save code' : 'Create code'}</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {error && <Alert tone="danger">{error}</Alert>}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="Code" htmlFor="c-code" required hint="Letters, numbers, - and _.">
+            <Input id="c-code" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} placeholder="AVURUDU25" />
+          </Field>
+          <Field label="Discount" htmlFor="c-value" required>
+            <div className="flex gap-2">
+              <Select aria-label="Discount type" className="w-36 shrink-0" value={discountType} onChange={(e) => setDiscountType(e.target.value as Coupon['discountType'])}>
+                <option value="percentage">Percent</option>
+                <option value="fixed_amount">LKR off</option>
+              </Select>
+              <Input id="c-value" type="number" min={0} step="1" value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Display Name *
-              </label>
-              <input
-                type="text"
-                value={formData.displayName}
-                onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-                placeholder="e.g., Starter Plan"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Sort Order
-              </label>
-              <input
-                type="number"
-                value={formData.sortOrder}
-                onChange={(e) => setFormData({ ...formData, sortOrder: parseInt(e.target.value) || 0 })}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            <div />
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Monthly Price (LKR)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={formData.priceMonthly}
-                onChange={(e) => setFormData({ ...formData, priceMonthly: e.target.value })}
-                placeholder="Leave blank for custom"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Yearly Price (LKR)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={formData.priceYearly}
-                onChange={(e) => setFormData({ ...formData, priceYearly: e.target.value })}
-                placeholder="Auto or blank for custom"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                DB Storage (GB)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                value={formData.maxDatabaseGB}
-                onChange={(e) => setFormData({ ...formData, maxDatabaseGB: e.target.value })}
-                placeholder="e.g., 3"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                File Storage (GB)
-              </label>
-              <input
-                type="number"
-                step="0.1"
-                value={formData.maxFileStorageGB}
-                onChange={(e) => setFormData({ ...formData, maxFileStorageGB: e.target.value })}
-                placeholder="e.g., 2"
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-              />
-            </div>
-          </div>
-          <div className="flex gap-3 mt-4">
-            <button
-              onClick={handleCreate}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800 disabled:opacity-50"
-            >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              Create Tier
-            </button>
-            <button
-              onClick={() => setShowForm(false)}
-              className="px-4 py-2 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
-            >
-              Cancel
-            </button>
-          </div>
+          </Field>
+          <Field label="Valid from" htmlFor="c-from">
+            <Input id="c-from" type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
+          </Field>
+          <Field label="Valid until" htmlFor="c-until">
+            <Input id="c-until" type="date" value={validUntil} onChange={(e) => setValidUntil(e.target.value)} />
+          </Field>
+          <Field label="Total uses" htmlFor="c-max" hint="Empty = unlimited.">
+            <Input id="c-max" type="number" min={1} value={maxUses} onChange={(e) => setMaxUses(e.target.value)} placeholder="Unlimited" />
+          </Field>
+          <Field label="Uses per account" htmlFor="c-per">
+            <Input id="c-per" type="number" min={1} value={perAccount} onChange={(e) => setPerAccount(e.target.value)} />
+          </Field>
+          <Field label="Description" htmlFor="c-desc" className="sm:col-span-2">
+            <Textarea id="c-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
+          </Field>
         </div>
-      )}
-
-      {/* Tiers Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-md shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-        <table className="w-full">
-          <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
-            <tr>
-              <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                Plan
-              </th>
-              <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                Monthly (LKR)
-              </th>
-              <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                Yearly (LKR)
-              </th>
-              <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                DB Storage
-              </th>
-              <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                File Storage
-              </th>
-              <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                Subscribers
-              </th>
-              <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                Status
-              </th>
-              <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-            {tiers.map((tier) => (
-              <tr key={tier.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700 ${!tier.isActive ? 'opacity-50' : ''}`}>
-                {editingId === tier.id ? (
-                  // Edit Mode
-                  <>
-                    <td className="px-6 py-4">
-                      <input
-                        type="text"
-                        value={String(editData.displayName || '')}
-                        onChange={(e) => setEditData({ ...editData, displayName: e.target.value })}
-                        className="w-full px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white"
-                      />
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{tier.name}</p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={String(editData.priceMonthly || '')}
-                        onChange={(e) => setEditData({ ...editData, priceMonthly: e.target.value })}
-                        className="w-28 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white"
-                      />
-                    </td>
-                    <td className="px-6 py-4">
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={String(editData.priceYearly || '')}
-                        onChange={(e) => setEditData({ ...editData, priceYearly: e.target.value })}
-                        className="w-28 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white"
-                      />
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={String(editData.maxDatabaseGB || '')}
-                          onChange={(e) => setEditData({ ...editData, maxDatabaseGB: e.target.value })}
-                          placeholder="GB"
-                          className="w-20 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white"
-                        />
-                        <span className="text-xs text-gray-500 dark:text-gray-400">GB</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="number"
-                          step="0.1"
-                          value={String(editData.maxFileStorageGB || '')}
-                          onChange={(e) => setEditData({ ...editData, maxFileStorageGB: e.target.value })}
-                          placeholder="GB"
-                          className="w-20 px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white"
-                        />
-                        <span className="text-xs text-gray-500 dark:text-gray-400">GB</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1.5">
-                        <Users className="w-4 h-4 text-gray-400" />
-                        <span className="text-gray-900 dark:text-white font-medium">{tier.subscriberCount ?? 0}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <select
-                        value={editData.isActive ? 'active' : 'inactive'}
-                        onChange={(e) => setEditData({ ...editData, isActive: e.target.value === 'active' })}
-                        className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white"
-                      >
-                        <option value="active">Active</option>
-                        <option value="inactive">Inactive</option>
-                      </select>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleUpdate(tier.id)}
-                          disabled={saving}
-                          className="p-1.5 text-green-600 hover:bg-green-50 rounded"
-                        >
-                          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                        </button>
-                        <button
-                          onClick={cancelEditing}
-                          className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </>
-                ) : (
-                  // View Mode
-                  <>
-                    <td className="px-6 py-4">
-                      <div>
-                        <p className="font-medium text-gray-900 dark:text-white">{tier.displayName}</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">{tier.name}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-gray-900 dark:text-white font-medium">
-                        {tier.priceMonthly != null ? formatCurrencyWithSymbol(Number(tier.priceMonthly), tier.currency) : <span className="text-amber-600 italic">Custom</span>}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-gray-900 dark:text-white font-medium">
-                        {tier.priceYearly != null ? formatCurrencyWithSymbol(Number(tier.priceYearly), tier.currency) : <span className="text-amber-600 italic">Custom</span>}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1.5">
-                        <Database className="w-4 h-4 text-purple-500" />
-                        <span className="text-gray-900 dark:text-white font-medium">
-                          {tier.maxDatabaseBytes ? formatBytes(tier.maxDatabaseBytes) : 'Unlimited'}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1.5">
-                        <HardDrive className="w-4 h-4 text-green-500" />
-                        <span className="text-gray-900 dark:text-white font-medium">
-                          {tier.maxFileStorageBytes ? formatBytes(tier.maxFileStorageBytes) : 'Unlimited'}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-1.5">
-                        <Users className="w-4 h-4 text-gray-400" />
-                        <span className="text-gray-900 dark:text-white font-medium">{tier.subscriberCount ?? 0}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className={`px-2.5 py-1 text-xs font-medium rounded-full ${
-                        tier.isActive
-                          ? 'bg-green-100 text-green-700'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
-                      }`}>
-                        {tier.isActive ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => startEditing(tier)}
-                          className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-                          title="Edit"
-                        >
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleToggleActive(tier)}
-                          disabled={saving}
-                          className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                            tier.isActive
-                              ? 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200'
-                              : 'bg-green-100 text-green-700 hover:bg-green-200'
-                          }`}
-                        >
-                          {tier.isActive ? 'Deactivate' : 'Activate'}
-                        </button>
-                      </div>
-                    </td>
-                  </>
-                )}
-              </tr>
+        <fieldset className="space-y-2">
+          <legend className="text-[13px] font-medium text-adm-fg">Plans (none ticked = all plans)</legend>
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            {tiers.filter((t) => t.isActive).map((t) => (
+              <Checkbox
+                key={t.id}
+                label={t.displayName}
+                checked={tierIds.includes(t.id)}
+                onChange={(e) => setTierIds((ids) => (e.target.checked ? [...ids, t.id] : ids.filter((x) => x !== t.id)))}
+              />
             ))}
-          </tbody>
-        </table>
+          </div>
+        </fieldset>
+        <Checkbox label="Active" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
       </div>
-    </div>
+    </AdminModal>
   )
 }

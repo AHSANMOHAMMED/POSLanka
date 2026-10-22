@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { salesOrders, salesOrderItems, warehouses, users, items as itemsTable, warehouseStock, sales } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -31,6 +31,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'selling')
+    if (moduleError) return { error: moduleError }
     // Get sales order with joins (RLS filters by tenant)
     const [order] = await db
       .select({

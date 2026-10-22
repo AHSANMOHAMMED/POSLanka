@@ -34,6 +34,7 @@ import {
   type IntakeStoreState,
   type LocalIntakeBatch,
 } from '../src/lib/intakeStore'
+import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
 
 interface Warehouse { id: string; name: string }
 
@@ -253,6 +254,7 @@ function ServerBatchCard({ s, onPress }: { s: ServerBatchSummary; onPress: () =>
 // ============================================================================
 
 function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: LocalIntakeBatch; online: boolean; onBack: () => void }) {
+  const bottomPad = useBottomPad()
   const canPost = hasPermission(user, 'postStockIntake')
   const [detail, setDetail] = useState<ServerDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
@@ -509,7 +511,7 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
       />
 
       {batch.serverId && editable && (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(28, bottomPad + 12) }]}>
           {serverStatus === 'draft' && (
             <Pressable style={[styles.secondaryBtn, { flex: 1 }]} disabled={!!busy || lines.length === 0} onPress={submit}>
               {busy === 'submit' ? <ActivityIndicator color={THEME.colors.primary} /> : <Text style={styles.secondaryBtnText}>Submit</Text>}
@@ -528,14 +530,14 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
         </View>
       )}
       {batch.serverId && !editable && labelItems.length > 0 && (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(28, bottomPad + 12) }]}>
           <Pressable style={[styles.primaryBtn, { flex: 1 }]} onPress={openLabels}>
             <Text style={styles.primaryBtnText}>🏷️ Print labels ({labelItems.length} item{labelItems.length === 1 ? '' : 's'})</Text>
           </Pressable>
         </View>
       )}
       {!batch.serverId && batch.lines.length === 0 && (
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(28, bottomPad + 12) }]}>
           <Pressable style={[styles.secondaryBtn, { flex: 1 }]} onPress={async () => { await forgetLocalBatch(batch.clientBatchId); onBack() }}>
             <Text style={styles.secondaryBtnText}>Discard batch</Text>
           </Pressable>
@@ -570,8 +572,9 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
 }
 
 function Header({ title, subtitle, onBack }: { title: string; subtitle?: string; onBack: () => void }) {
+  const headerPad = useHeaderPad()
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, headerPad]}>
       <Pressable onPress={onBack} style={styles.backBtn}><Text style={styles.backText}>‹</Text></Pressable>
       <View style={{ flex: 1 }}>
         <Text style={styles.headerTitle}>{title}</Text>

@@ -1,897 +1,842 @@
 'use client'
 
-import { useState, useEffect, use, useCallback } from 'react'
-import Link from 'next/link'
+import { useCallback, useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
 import {
+  Archive,
+  CalendarPlus,
+  CreditCard,
+  ExternalLink,
+  KeyRound,
+  Layers,
+  Mail,
+  PauseCircle,
+  PlayCircle,
+  RefreshCw,
   Store,
-  Building2,
-  ShieldCheck,
-  Lock,
-  Loader2,
-  CheckCircle2,
-  Zap,
-  Globe,
-  Cpu,
-  ArrowLeft,
-  TrendingUp,
   Users,
-  AlertOctagon,
-  Receipt,
 } from 'lucide-react'
 import {
-  FEATURE_FLAGS,
-  FEATURE_FLAG_LABELS,
-  type FeatureFlag,
-  type FeatureFlagsMap,
-} from '@/lib/features/flags'
+  AdminCard,
+  AdminModal,
+  AdminPage,
+  AdminTable,
+  Alert,
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  Input,
+  KeyValueList,
+  SegmentedControl,
+  Select,
+  Skeleton,
+  StatCard,
+  StatGrid,
+  Switch,
+  Textarea,
+  businessTypeLabel,
+  fmtDateTime,
+  fmtLKR,
+  fmtNumber,
+  statusTone,
+  timeAgo,
+  type AdminColumn,
+} from '@/components/admin/kit'
+import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import {
+  CopyButton,
+  LOCK_REASON_LABEL,
+  SUBSCRIPTION_STATUS_LABEL,
+  UsageBar,
+  VENDOR_STATUS_LABEL,
+  adminFetch,
+  daysUntil,
+  fmtBytes,
+  fmtDate,
+  labelFor,
+} from '@/components/admin/console-helpers'
+import { formatBusinessId } from '@/lib/tenant/business-id-format'
 
-interface VendorBranch {
+/* ------------------------------------------------------------------ types */
+
+interface Tier {
   id: string
   name: string
-  code?: string | null
-  address?: string | null
-  isDefault?: boolean
-  isActive?: boolean
+  displayName: string
+  priceMonthly: string | null
+  priceYearly: string | null
+  maxUsers: number | null
+  isActive: boolean
 }
 
-interface VendorCounter {
-  id: string
-  name: string
-  code?: string | null
-  status?: string
-  warehouseId?: string | null
+interface Detail {
+  vendor: {
+    id: string
+    name: string
+    legalName: string | null
+    slug: string
+    businessId: string
+    email: string
+    phone: string | null
+    address: string | null
+    taxId: string | null
+    brn: string | null
+    vatRegistered: boolean
+    businessType: string
+    country: string
+    currency: string
+    status: string
+    lockedAt: string | null
+    lockedReason: string | null
+    deletionScheduledAt: string | null
+    planExpiresAt: string | null
+    einvoiceEnabled: boolean
+    aiEnabled: boolean
+    createdAt: string
+    setupCompletedAt: string | null
+    featureFlags: Record<string, boolean>
+    branches: Array<{ id: string; name: string; code: string | null; isActive: boolean; isDefault: boolean }>
+    counters: Array<{ id: string; name: string; code: string | null; status: string; isDefault: boolean }>
+  }
+  owner: { id: string; fullName: string; email: string; lastLoginAt: string | null; inviteAccepted: boolean } | null
+  subscription: {
+    id: string
+    status: string
+    billingCycle: string | null
+    currentPeriodStart: string | null
+    currentPeriodEnd: string | null
+    trialEndsAt: string | null
+    subscribedPriceMonthly: string | null
+    subscribedPriceYearly: string | null
+    lastPaymentAt: string | null
+    neverExpires: boolean
+    tier: (Tier & { maxSalesMonthly: number | null }) | null
+  } | null
+  usage: {
+    activeUsers: number
+    totalUsers: number
+    itemsCount: number
+    customersCount: number
+    salesCount: number
+    salesThisMonth: number
+    storageBytes: number
+    fileStorageBytes: number
+    warehouses: number
+    posProfiles: number
+  }
+  limits: { maxUsers: number | null; maxSalesMonthly: number | null; maxDatabaseBytes: number | null; maxFileStorageBytes: number | null }
+  staff: Array<{ id: string; fullName: string; email: string; role: string; isActive: boolean; lastLoginAt: string | null; lastActiveAt: string | null }>
+  payments: Array<{ id: string; kind: 'bank_transfer' | 'payhere'; amount: string; currency: string; status: string; reference: string | null; periodMonths: number; createdAt: string; paidAt: string | null }>
+  activity: Array<{ id: string; action: string; resource: string; details: Record<string, unknown> | null; createdAt: string; adminName: string | null }>
+  tiers: Tier[]
+  featureFlagLabels: Record<string, string>
 }
 
-interface VendorSubscription {
-  status: string
-  currentPeriodStart?: string | null
-  currentPeriodEnd?: string | null
-  trialEndsAt?: string | null
-  billingCycle?: string | null
-  lastPaymentAt?: string | null
-  subscribedPriceMonthly?: string | null
-  subscribedPriceYearly?: string | null
-  tier?: { id: string; name: string; priceMonthly?: string | null; priceYearly?: string | null } | null
+interface Totals { netSales: number; receipts: number; avgBasket: number }
+interface Analytics { totals: { today: Totals; '7d': Totals; '30d': Totals } }
+
+type Tab = 'overview' | 'staff' | 'billing' | 'features' | 'activity'
+type Dialog = null | 'suspend' | 'reactivate' | 'extend' | 'plan' | 'password' | 'welcome' | 'archive' | 'impersonate'
+
+const ROLE_LABEL: Record<string, string> = {
+  owner: 'Owner', manager: 'Manager', cashier: 'Cashier', technician: 'Technician', chef: 'Chef', waiter: 'Waiter',
+  system_manager: 'System manager', accounts_manager: 'Accounts manager', sales_manager: 'Sales manager',
+  purchase_manager: 'Purchase manager', hr_manager: 'HR manager', stock_manager: 'Stock manager',
+  pos_user: 'POS user', report_user: 'Report user', dealer_sales: 'Dealer sales',
 }
 
-interface VendorData {
-  id: string
-  name: string
-  slug: string
-  email: string
-  phone?: string | null
-  address?: string | null
-  businessType: string
-  status: string
-  plan?: string | null
-  currency: string
-  country?: string
-  createdAt?: string
-  setupCompletedAt?: string | null
-  userCount?: number
-  branches?: VendorBranch[]
-  counters?: VendorCounter[]
-  featureFlags?: FeatureFlagsMap
-  settings?: Record<string, unknown> | null
-  subscription?: VendorSubscription | null
+const OP_LABEL: Record<string, string> = {
+  suspend: 'Suspended the vendor',
+  reactivate: 'Reactivated the vendor',
+  extend: 'Extended the subscription',
+  extend_trial: 'Extended the trial',
+  change_plan: 'Changed the plan',
+  reset_password: 'Reset the owner password',
+  resend_welcome: 'Emailed the owner',
+  archive: 'Archived the vendor',
 }
 
-interface RangeTotals {
-  netSales: number
-  grossSales: number
-  returns: number
-  receipts: number
-  avgBasket: number
+function activityText(a: Detail['activity'][number]): string {
+  const d = (a.details || {}) as Record<string, unknown>
+  const op = typeof d.op === 'string' ? d.op : null
+  if (op && OP_LABEL[op]) {
+    if (op === 'reset_password') return `${OP_LABEL[op]} (${d.mode === 'temporary' ? 'temporary password' : 'emailed link'})`
+    if (op === 'extend' || op === 'extend_trial') return `${OP_LABEL[op]} by ${d.days} days`
+    if (op === 'change_plan') return `${OP_LABEL[op]} to ${(d.after as { tier?: string } | undefined)?.tier ?? 'another plan'}`
+    return OP_LABEL[op]
+  }
+  if (a.resource === 'impersonate') return 'Opened the vendor app as its owner'
+  if (a.resource === 'tenant' && a.action === 'create') return 'Created the vendor'
+  if (a.resource === 'tenant_feature_flags') return 'Changed feature switches'
+  if (a.resource === 'payment') return a.action === 'approve' ? 'Approved a bank transfer' : 'Rejected a bank transfer'
+  if (a.resource === 'subscription') return a.action === 'extend' ? 'Changed the subscription period' : 'Updated the subscription'
+  return `${a.action} ${a.resource.replace(/_/g, ' ')}`
 }
 
-interface VendorAnalytics {
-  totals: { today: RangeTotals; '7d': RangeTotals; '30d': RangeTotals }
-  byBranch: Array<{ warehouseId: string | null; name: string; netSales: number; receipts: number }>
-  byCounter: Array<{ posProfileId: string | null; name: string; netSales: number; receipts: number }>
-  byCashier: Array<{ userId: string | null; name: string; netSales: number; receipts: number; variance: number }>
-  openShifts: Array<{ id: string; entryNumber: string; cashierName: string; counterName: string; warehouseName: string; openingTime: string }>
-}
+/* ------------------------------------------------------------------ page */
 
-interface AuditLogRow {
-  id: string
-  action: string
-  resource: string
-  resourceId: string | null
-  details: Record<string, unknown> | null
-  ipAddress: string | null
-  createdAt: string
-  account?: { email: string; fullName: string } | null
-}
-
-interface Vendor360Props {
-  params: Promise<{ id: string }>
-}
-
-type TabId = 'sales' | 'branches' | 'flags' | 'billing' | 'audit'
-
-function fmtMoney(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-}
-
-function fmtDate(iso?: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-LK', { year: 'numeric', month: 'short', day: '2-digit' })
-}
-
-function fmtDateTime(iso?: string | null): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('en-LK', { hour12: false })
-}
-
-export default function Vendor360DossierPage({ params }: Vendor360Props) {
-  const resolvedParams = use(params)
-  const vendorId = resolvedParams.id
-
+export default function VendorDetailPage() {
+  const { id } = useParams<{ id: string }>()
+  const [data, setData] = useState<Detail | null>(null)
+  const [analytics, setAnalytics] = useState<Analytics | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [vendorData, setVendorData] = useState<VendorData | null>(null)
-  const [analytics, setAnalytics] = useState<VendorAnalytics | null>(null)
-  const [analyticsLoading, setAnalyticsLoading] = useState(false)
-  const [auditLogs, setAuditLogs] = useState<AuditLogRow[] | null>(null)
-  const [activeTab, setActiveTab] = useState<TabId>('sales')
-  const [flags, setFlags] = useState<FeatureFlagsMap>({} as FeatureFlagsMap)
-  const [savingFlags, setSavingFlags] = useState(false)
-  const [message, setMessage] = useState<string | null>(null)
-  const [status, setStatus] = useState('active')
-  const [statusBusy, setStatusBusy] = useState(false)
+  const [tab, setTab] = useState<Tab>('overview')
+  const [dialog, setDialog] = useState<Dialog>(null)
+  const [flash, setFlash] = useState<{ tone: 'success' | 'warning' | 'danger'; text: string } | null>(null)
+  const canManage = useAdminCan('vendors.manage')
+  const canBill = useAdminCan('billing')
+  const canImpersonate = useAdminCan('vendors.impersonate')
 
-  const loadVendor = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true)
-    setLoadError(null)
+    setError(null)
     try {
-      const res = await fetch(`/api/sys-control/vendors/${vendorId}`, { cache: 'no-store' })
-      if (res.status === 401) {
-        window.location.href = '/sys-control/login'
-        return
-      }
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        setLoadError(data.error || 'Failed to load vendor')
-        return
-      }
-      setVendorData(data.vendor)
-      setFlags(data.vendor.featureFlags || {})
-      setStatus(data.vendor.status || 'active')
-    } catch {
-      setLoadError('Network error while loading vendor')
+      const [d, a] = await Promise.allSettled([
+        adminFetch<Detail>(`/api/sys-control/vendors/${id}`),
+        adminFetch<Analytics>(`/api/sys-control/analytics/vendors/${id}`),
+      ])
+      if (d.status === 'fulfilled') setData(d.value)
+      else setError(d.reason instanceof Error ? d.reason.message : 'Could not load the vendor')
+      setAnalytics(a.status === 'fulfilled' ? a.value : null)
     } finally {
       setLoading(false)
     }
-  }, [vendorId])
+  }, [id])
 
-  const loadAnalytics = useCallback(async () => {
-    setAnalyticsLoading(true)
-    try {
-      const res = await fetch(`/api/sys-control/analytics/vendors/${vendorId}`, { cache: 'no-store' })
-      if (res.ok) {
-        setAnalytics(await res.json())
-      }
-    } catch {
-      // keep previous analytics
-    } finally {
-      setAnalyticsLoading(false)
-    }
-  }, [vendorId])
+  useEffect(() => { load() }, [load])
 
-  const loadAudit = useCallback(async () => {
-    try {
-      const res = await fetch('/api/sys-control/audit-logs?days=90&limit=500', { cache: 'no-store' })
-      if (res.ok) {
-        const rows: AuditLogRow[] = await res.json()
-        setAuditLogs(
-          (Array.isArray(rows) ? rows : []).filter(
-            (r) =>
-              r.resourceId === vendorId ||
-              (r.details && (r.details as { tenantIds?: string[] }).tenantIds?.includes(vendorId))
-          )
-        )
-      } else {
-        setAuditLogs([])
-      }
-    } catch {
-      setAuditLogs([])
-    }
-  }, [vendorId])
+  const done = useCallback((text: string, tone: 'success' | 'warning' = 'success') => {
+    setDialog(null)
+    setFlash({ tone, text })
+    load()
+  }, [load])
 
-  useEffect(() => {
-    loadVendor()
-    loadAnalytics()
-  }, [loadVendor, loadAnalytics])
-
-  useEffect(() => {
-    if (activeTab === 'audit' && auditLogs === null) loadAudit()
-  }, [activeTab, auditLogs, loadAudit])
-
-  const handleToggleFlag = (flag: FeatureFlag) => {
-    setFlags((prev) => ({ ...prev, [flag]: !prev[flag] }))
-  }
-
-  const saveFlags = async () => {
-    setSavingFlags(true)
-    setMessage(null)
-    try {
-      const res = await fetch(`/api/sys-control/vendors/${vendorId}/features`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ featureFlags: flags }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setFlags(data.featureFlags || flags)
-        setMessage('Feature flags updated.')
-        setAuditLogs(null)
-      } else {
-        const data = await res.json().catch(() => ({}))
-        setMessage(data.error || 'Failed to persist feature flag update.')
-      }
-    } catch {
-      setMessage('Network error while saving flags.')
-    } finally {
-      setSavingFlags(false)
-    }
-  }
-
-  const handleImpersonate = async () => {
-    setMessage(null)
-    try {
-      const res = await fetch(`/api/sys-control/vendors/${vendorId}/impersonate`, { method: 'POST' })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok && data.redirectUrl) {
-        window.location.href = data.redirectUrl
-      } else {
-        setMessage(data.error || 'Impersonation failed.')
-      }
-    } catch {
-      setMessage('Network error while starting impersonation.')
-    }
-  }
-
-  const handleToggleStatus = async () => {
-    const nextStatus = status === 'active' ? 'locked' : 'active'
-    setStatusBusy(true)
-    setMessage(null)
-    try {
-      const res = await fetch(`/api/sys-control/vendors/${vendorId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: nextStatus }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (res.ok) {
-        setStatus(data.vendor?.status || nextStatus)
-        setMessage(`Tenant status updated to: ${nextStatus.toUpperCase()}`)
-        setAuditLogs(null)
-      } else {
-        setMessage(data.error || 'Failed to update tenant status.')
-      }
-    } catch {
-      setMessage('Network error while updating status.')
-    } finally {
-      setStatusBusy(false)
-    }
-  }
-
-  if (loading) {
+  if (error && !data) {
     return (
-      <div className="py-24 text-center text-[#bcc9c6] space-y-3">
-        <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#6bd8cb]" />
-        <div className="font-mono text-xs">Loading Vendor 360° Dossier...</div>
-      </div>
+      <AdminPage title="Vendor" breadcrumbs={[{ label: 'Vendors', href: '/sys-control/vendors' }, { label: 'Vendor' }]}>
+        <Alert tone="danger" title="Could not load the vendor" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Alert>
+      </AdminPage>
     )
   }
 
-  if (loadError || !vendorData) {
+  if (!data) {
     return (
-      <div className="py-24 text-center space-y-4">
-        <AlertOctagon className="w-10 h-10 mx-auto text-[#ff5451]" />
-        <div className="text-sm text-[#ffdad6]">{loadError || 'Vendor not found'}</div>
-        <div className="flex items-center justify-center gap-3">
-          <button
-            type="button"
-            onClick={loadVendor}
-            className="px-4 py-2 rounded-lg bg-[#222a3d] text-white text-xs font-semibold"
-          >
-            Retry
-          </button>
-          <Link href="/sys-control/vendors" className="px-4 py-2 rounded-lg bg-[#6bd8cb] text-[#003732] text-xs font-bold">
-            Back to Vendors
-          </Link>
-        </div>
-      </div>
+      <AdminPage title={<Skeleton className="h-7 w-56" />} breadcrumbs={[{ label: 'Vendors', href: '/sys-control/vendors' }, { label: '…' }]}>
+        <StatGrid>{Array.from({ length: 4 }).map((_, i) => <StatCard key={i} label="" value="" loading />)}</StatGrid>
+        <Skeleton className="h-64 w-full" />
+      </AdminPage>
     )
   }
 
-  const settings = (vendorData.settings || {}) as Record<string, unknown>
-  const tin = (settings.tin as string) || null
-  const brn = (settings.brn as string) || null
-  const sub = vendorData.subscription
-  const currency = vendorData.currency || 'LKR'
-  const t30 = analytics?.totals['30d']
-  const tToday = analytics?.totals.today
-  const t7 = analytics?.totals['7d']
-
-  const monthlyFee = sub?.subscribedPriceMonthly ?? sub?.tier?.priceMonthly ?? null
-  const daysRemaining = sub?.currentPeriodEnd
-    ? Math.max(0, Math.ceil((Date.parse(sub.currentPeriodEnd) - Date.now()) / 86400000))
-    : null
+  const { vendor: v, subscription: sub, usage, limits, owner } = data
+  const bid = formatBusinessId(v.businessId)
+  const isActive = v.status === 'active'
+  const trialEnds = sub?.status === 'trial' && sub.trialEndsAt ? sub.trialEndsAt : null
+  const periodLabel = sub
+    ? sub.neverExpires
+      ? 'Does not expire'
+      : trialEnds
+        ? `Trial ends ${fmtDate(trialEnds)}`
+        : `${(daysUntil(sub.currentPeriodEnd) ?? 0) < 0 ? 'Ended' : 'Renews'} ${fmtDate(sub.currentPeriodEnd)}`
+    : 'No subscription'
 
   return (
-    <div className="space-y-6 pb-16">
-      {/* Breadcrumb strip */}
-      <div className="flex flex-wrap items-center justify-between gap-3 py-1 font-mono text-xs">
-        <div className="flex items-center gap-2 text-[#879391]">
-          <Link href="/sys-control/vendors" className="hover:text-[#6bd8cb] flex items-center gap-1 transition-colors">
-            <ArrowLeft className="w-3.5 h-3.5" />
-            <span>Vendors Directory</span>
-          </Link>
-          <span>/</span>
-          <span className="capitalize">{vendorData.businessType.replace('_', ' ')}</span>
-          <span>/</span>
-          <span className="text-[#6bd8cb] font-semibold">{vendorData.slug}</span>
-        </div>
-
-        <div className="flex items-center gap-4 text-[#bcc9c6]">
-          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#131b2e] border border-[#2d3449]">
-            <span className="text-[#879391] text-[10px] uppercase">CREATED:</span>
-            <span className="text-[#4fdbc8] font-bold">{fmtDate(vendorData.createdAt)}</span>
-          </div>
-          <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-[#131b2e] border border-[#2d3449]">
-            <span className="text-[#879391] text-[10px] uppercase">SETUP:</span>
-            <span className={`font-bold ${vendorData.setupCompletedAt ? 'text-[#4fdbc8]' : 'text-[#ffb4ab]'}`}>
-              {vendorData.setupCompletedAt ? 'COMPLETE' : 'PENDING'}
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Header */}
-      <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-6 shadow-xl relative overflow-hidden">
-        <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-6 relative z-10">
-          <div className="flex items-start gap-5 min-w-0">
-            <div className="relative shrink-0">
-              <div className="w-16 h-16 rounded-xl bg-[#060e20] border border-[#2d3449] flex items-center justify-center text-[#6bd8cb] font-bold text-2xl shadow-inner">
-                <Store className="w-8 h-8 text-[#6bd8cb]" />
-              </div>
-              <span className="absolute -bottom-1 -right-1 px-1.5 py-0.5 bg-[#29a195] text-[#00302b] font-mono text-[9px] font-bold rounded shadow uppercase">
-                {vendorData.plan || 'trial'}
-              </span>
-            </div>
-
-            <div className="space-y-1.5 min-w-0">
-              <div className="flex items-center gap-3 flex-wrap">
-                <h1 className="text-2xl font-bold text-white tracking-tight truncate">{vendorData.name}</h1>
-                <span className="px-2 py-0.5 rounded bg-[#29a195]/20 text-[#6bd8cb] font-mono text-xs font-semibold">
-                  Slug: {vendorData.slug}
-                </span>
-                <span className="px-2 py-0.5 rounded bg-[#060e20] border border-[#2d3449] text-[#bcc9c6] font-mono text-[11px]">
-                  ID: {vendorId.slice(0, 8)}
-                </span>
-                <div
-                  className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-bold ${
-                    status === 'active'
-                      ? 'bg-[#4fdbc8]/15 text-[#4fdbc8] border border-[#4fdbc8]/30'
-                      : 'bg-[#ff5451]/20 text-[#ffb4ab] border border-[#ff5451]/40'
-                  }`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full ${status === 'active' ? 'bg-[#4fdbc8] animate-pulse' : 'bg-[#ff5451]'}`}></span>
-                  <span className="uppercase">{status}</span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 text-xs font-mono text-[#bcc9c6] flex-wrap">
-                <Link href={`/c/${vendorData.slug}/login`} className="flex items-center gap-1 text-[#6bd8cb] hover:underline">
-                  <Globe className="w-3.5 h-3.5" />
-                  <span>/c/{vendorData.slug}</span>
-                </Link>
-                <span className="text-[#3d4947]">•</span>
-                <span className="text-white capitalize">{vendorData.businessType.replace('_', ' ')}</span>
-                <span className="text-[#3d4947]">•</span>
-                <span>{vendorData.email}</span>
-                {vendorData.phone && (
-                  <>
-                    <span className="text-[#3d4947]">•</span>
-                    <span>{vendorData.phone}</span>
-                  </>
-                )}
-              </div>
-
-              <div className="flex items-center gap-3 pt-1 flex-wrap text-xs font-mono">
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#060e20] border border-[#2d3449] text-white">
-                  <span className="text-[#879391] uppercase text-[10px]">TIN:</span>
-                  <span className="text-[#6bd8cb] font-bold">{tin || 'Not set'}</span>
-                  {tin && <ShieldCheck className="w-3.5 h-3.5 text-[#4fdbc8]" />}
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#060e20] border border-[#2d3449] text-white">
-                  <span className="text-[#879391] uppercase text-[10px]">BRN:</span>
-                  <span className="text-[#4fdbc8] font-bold">{brn || 'Not set'}</span>
-                </div>
-                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#060e20] border border-[#2d3449] text-white">
-                  <span className="text-[#879391] uppercase text-[10px]">Currency:</span>
-                  <span className="text-[#bcc9c6]">{currency}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-start xl:items-end gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleImpersonate}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#ff5451] hover:bg-[#ff897d] text-[#690005] font-bold text-xs uppercase tracking-wider shadow-lg transition-transform active:scale-95"
-            >
-              <Zap className="w-4 h-4" />
-              <span>Impersonate Vendor</span>
-            </button>
-            <div className="font-mono text-[10px] text-[#ffb4ab] bg-[#93000a]/20 px-2.5 py-0.5 rounded border border-[#ff5451]/30">
-              All actions recorded in admin_audit_logs
-            </div>
-
-            <div className="flex items-center gap-2 pt-2">
-              <button
-                type="button"
-                disabled={statusBusy}
-                onClick={handleToggleStatus}
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-semibold transition-colors disabled:opacity-50 ${
-                  status === 'active'
-                    ? 'bg-[#171f33] border-[#ff5451]/50 text-[#ffdad7] hover:bg-[#93000a]/30'
-                    : 'bg-[#29a195] border-[#6bd8cb] text-[#003732] hover:bg-[#89f5e7]'
-                }`}
-              >
-                {statusBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
-                <span>{status === 'active' ? 'Lock / Freeze Tenant' : 'Unlock Tenant'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {message && (
-        <div className="p-3 bg-[#222a3d] border border-[#3d4947] rounded-lg text-xs text-[#dae2fd] flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4 text-[#4fdbc8]" />
-          <span>{message}</span>
-        </div>
+    <AdminPage
+      title={v.name}
+      titleAside={
+        <>
+          <Badge tone={statusTone(v.status)} dot>{labelFor(VENDOR_STATUS_LABEL, v.status)}</Badge>
+          {sub?.tier && <Badge tone="primary">{sub.tier.displayName}</Badge>}
+        </>
+      }
+      description={
+        <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="inline-flex items-center gap-0.5">
+            <span className="adm-num font-medium text-adm-fg">{bid}</span>
+            <CopyButton text={bid} label="Copy Business ID" />
+          </span>
+          <span aria-hidden>·</span>
+          <span>{v.slug}</span>
+          <span aria-hidden>·</span>
+          <span>{businessTypeLabel(v.businessType)}</span>
+        </span>
+      }
+      breadcrumbs={[{ label: 'Vendors', href: '/sys-control/vendors' }, { label: v.name }]}
+      actions={
+        <>
+          <Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading}>Refresh</Button>
+          {canImpersonate && <Button icon={ExternalLink} onClick={() => setDialog('impersonate')} disabled={!isActive || !owner}>Open as owner</Button>}
+        </>
+      }
+    >
+      {flash && (
+        <Alert tone={flash.tone} action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash.text}</Alert>
+      )}
+      {!isActive && (
+        <Alert tone={v.status === 'locked' ? 'danger' : 'warning'} title={`${labelFor(VENDOR_STATUS_LABEL, v.status)}${v.lockedReason ? ` — ${labelFor(LOCK_REASON_LABEL, v.lockedReason)}` : ''}`}>
+          Staff cannot sign in{v.lockedAt ? ` since ${fmtDateTime(v.lockedAt)}` : ''}.
+          {v.deletionScheduledAt && ` The billing job will permanently delete this vendor’s data on ${fmtDate(v.deletionScheduledAt)} unless the subscription is renewed or extended.`}
+        </Alert>
       )}
 
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm">
-          <div className="flex items-center justify-between text-xs text-[#879391] font-mono uppercase font-semibold mb-1">
-            <span>Net Sales 30D</span>
-            <TrendingUp className="w-4 h-4 text-[#6bd8cb]" />
-          </div>
-          <div className="text-xl font-bold text-white font-mono">
-            {analyticsLoading && !analytics ? '…' : `${currency} ${fmtMoney(t30?.netSales ?? 0)}`}
-          </div>
-          <div className="mt-2 flex items-center justify-between font-mono text-[11px] bg-[#060e20] p-1.5 rounded">
-            <span className="text-[#bcc9c6]">Daily Avg: {fmtMoney((t30?.netSales ?? 0) / 30)}</span>
-            <span className="text-[#4fdbc8] font-bold">{t30?.receipts ?? 0} receipts</span>
-          </div>
-        </div>
+      <StatGrid>
+        <StatCard label="Net sales today" icon={CreditCard} loading={loading && !analytics} value={analytics ? fmtLKR(analytics.totals.today.netSales) : '—'} hint={analytics ? `${fmtNumber(analytics.totals.today.receipts)} receipts` : 'Sales data unavailable'} />
+        <StatCard label="Net sales, 30 days" icon={CreditCard} tone="success" loading={loading && !analytics} value={analytics ? fmtLKR(analytics.totals['30d'].netSales) : '—'} hint={analytics ? `${fmtNumber(analytics.totals['30d'].receipts)} receipts · avg ${fmtLKR(analytics.totals['30d'].avgBasket)}` : undefined} />
+        <StatCard label="Active users" icon={Users} tone="info" value={`${usage.activeUsers}${limits.maxUsers ? ` / ${limits.maxUsers}` : ''}`} hint={`${usage.totalUsers} accounts in total`} />
+        <StatCard label="Plan" icon={Layers} tone="warning" value={sub?.tier?.displayName ?? 'None'} hint={periodLabel} />
+      </StatGrid>
 
-        <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm">
-          <div className="flex items-center justify-between text-xs text-[#879391] font-mono uppercase font-semibold mb-1">
-            <span>Outlets &amp; Tills</span>
-            <Building2 className="w-4 h-4 text-[#4fdbc8]" />
-          </div>
-          <div className="text-xl font-bold text-white font-mono">
-            {vendorData.branches?.length ?? 0} Branches • {vendorData.counters?.length ?? 0} Tills
-          </div>
-          <div className="mt-2 flex items-center justify-between font-mono text-[11px] bg-[#060e20] p-1.5 rounded">
-            <span className="text-[#4fdbc8]">{analytics?.openShifts.length ?? 0} shifts open</span>
-            <span className="text-[#bcc9c6]">{vendorData.userCount ?? 0} users</span>
-          </div>
-        </div>
+      <SegmentedControl
+        ariaLabel="Section"
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: 'overview', label: 'Overview' },
+          { value: 'staff', label: `Staff ${data.staff.length}` },
+          { value: 'billing', label: 'Billing' },
+          { value: 'features', label: 'Features' },
+          { value: 'activity', label: 'Activity' },
+        ]}
+      />
 
-        <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm">
-          <div className="flex items-center justify-between text-xs text-[#879391] font-mono uppercase font-semibold mb-1">
-            <span>Today</span>
-            <Receipt className="w-4 h-4 text-[#6bd8cb]" />
-          </div>
-          <div className="text-xl font-bold text-white font-mono">
-            {currency} {fmtMoney(tToday?.netSales ?? 0)}
-          </div>
-          <div className="mt-2 flex items-center justify-between font-mono text-[11px] bg-[#060e20] p-1.5 rounded">
-            <span className="text-[#bcc9c6]">{tToday?.receipts ?? 0} receipts</span>
-            <span className="text-[#6bd8cb] font-bold">avg {fmtMoney(tToday?.avgBasket ?? 0)}</span>
-          </div>
-        </div>
+      {tab === 'overview' && (
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+          <div className="space-y-5 xl:col-span-2">
+            <AdminCard title="Business profile">
+              <div className="grid grid-cols-1 gap-x-8 lg:grid-cols-2">
+                <KeyValueList
+                  items={[
+                    { label: 'Business ID', value: <span className="adm-num">{bid}</span> },
+                    { label: 'Legal name', value: v.legalName || '—' },
+                    { label: 'Business type', value: businessTypeLabel(v.businessType) },
+                    { label: 'Email', value: v.email },
+                    { label: 'Phone', value: v.phone || '—' },
+                    { label: 'Address', value: v.address || '—' },
+                  ]}
+                />
+                <KeyValueList
+                  items={[
+                    { label: 'BRN', value: v.brn || '—' },
+                    { label: 'TIN / VAT no.', value: v.taxId || '—' },
+                    { label: 'VAT', value: v.vatRegistered ? 'Registered' : 'Not registered' },
+                    { label: 'E-invoicing (RAMIS)', value: v.einvoiceEnabled ? 'On' : 'Off' },
+                    { label: 'Created', value: fmtDate(v.createdAt) },
+                    { label: 'Web address', value: `/c/${v.slug}` },
+                  ]}
+                />
+              </div>
+            </AdminCard>
 
-        <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm">
-          <div className="flex items-center justify-between text-xs text-[#879391] font-mono uppercase font-semibold mb-1">
-            <span>Subscription</span>
-            <ShieldCheck className="w-4 h-4 text-[#4fdbc8]" />
-          </div>
-          <div className="text-xl font-bold text-[#4fdbc8] font-mono uppercase">{sub?.status || 'NONE'}</div>
-          <div className="mt-2 flex items-center justify-between font-mono text-[11px] bg-[#060e20] p-1.5 rounded">
-            <span className="text-[#4fdbc8]">{sub?.tier?.name || vendorData.plan || 'trial'}</span>
-            <span className="text-[#bcc9c6]">Ends {fmtDate(sub?.currentPeriodEnd || sub?.trialEndsAt)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-[#2d3449] pb-1 font-mono text-xs overflow-x-auto">
-        {(
-          [
-            { id: 'sales', label: 'Sales Analytics' },
-            { id: 'branches', label: 'Terminals & Branches' },
-            { id: 'flags', label: 'Feature Flags Matrix' },
-            { id: 'billing', label: 'Billing & Commercials' },
-            { id: 'audit', label: 'Audit Trail & Access' },
-          ] as Array<{ id: TabId; label: string }>
-        ).map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 rounded-t-lg font-semibold transition-all whitespace-nowrap ${
-              activeTab === tab.id
-                ? 'bg-[#131b2e] border-t border-x border-[#2d3449] text-[#6bd8cb]'
-                : 'text-[#879391] hover:text-white'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* TAB: Sales Analytics */}
-      {activeTab === 'sales' && (
-        <div className="space-y-4">
-          {analyticsLoading && !analytics ? (
-            <div className="py-12 text-center text-[#bcc9c6] font-mono text-xs flex items-center justify-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-[#6bd8cb]" />
-              Loading sales analytics...
-            </div>
-          ) : !analytics ? (
-            <div className="py-12 text-center text-[#ffb4ab] font-mono text-xs">
-              Sales analytics unavailable.{' '}
-              <button type="button" onClick={loadAnalytics} className="underline">
-                Retry
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
-                {(
-                  [
-                    { key: 'today', label: 'Today', t: tToday },
-                    { key: '7d', label: 'Last 7 Days', t: t7 },
-                    { key: '30d', label: 'Last 30 Days', t: t30 },
-                  ] as Array<{ key: string; label: string; t?: RangeTotals }>
-                ).map(({ key, label, t }) => (
-                  <div key={key} className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl space-y-2">
-                    <div className="text-[#879391] uppercase text-[10px]">{label}</div>
-                    <div className="text-xl font-bold text-white">
-                      {currency} {fmtMoney(t?.netSales ?? 0)}
-                    </div>
-                    <div className="grid grid-cols-2 gap-1 text-[11px] text-[#bcc9c6]">
-                      <span>Gross: {fmtMoney(t?.grossSales ?? 0)}</span>
-                      <span className="text-right">Returns: {fmtMoney(t?.returns ?? 0)}</span>
-                      <span>Receipts: {t?.receipts ?? 0}</span>
-                      <span className="text-right text-[#4fdbc8]">Avg: {fmtMoney(t?.avgBasket ?? 0)}</span>
-                    </div>
+            <AdminCard title="Usage and limits" description="Limits come from the plan (or a storage override set on the subscription).">
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                <div>
+                  <p className="mb-1.5 text-[13px] text-adm-muted">Active users</p>
+                  <UsageBar used={usage.activeUsers} limit={limits.maxUsers} />
+                </div>
+                <div>
+                  <p className="mb-1.5 text-[13px] text-adm-muted">Sales this month</p>
+                  <UsageBar used={usage.salesThisMonth} limit={limits.maxSalesMonthly} />
+                </div>
+                <div>
+                  <p className="mb-1.5 text-[13px] text-adm-muted">Database storage</p>
+                  <UsageBar used={usage.storageBytes} limit={limits.maxDatabaseBytes} format={fmtBytes} />
+                </div>
+                <div>
+                  <p className="mb-1.5 text-[13px] text-adm-muted">File storage</p>
+                  <UsageBar used={usage.fileStorageBytes} limit={limits.maxFileStorageBytes} format={fmtBytes} />
+                </div>
+              </div>
+              <dl className="mt-5 grid grid-cols-2 gap-3 border-t border-adm-border pt-4 text-[13px] sm:grid-cols-4">
+                {[
+                  ['Items', usage.itemsCount],
+                  ['Customers', usage.customersCount],
+                  ['Sales (all time)', usage.salesCount],
+                  ['Locations / counters', `${usage.warehouses} / ${usage.posProfiles}`],
+                ].map(([label, value]) => (
+                  <div key={String(label)}>
+                    <dt className="text-adm-subtle">{label}</dt>
+                    <dd className="adm-num text-[15px] font-semibold text-adm-fg">{typeof value === 'number' ? fmtNumber(value) : value}</dd>
                   </div>
                 ))}
+              </dl>
+            </AdminCard>
+
+            <AdminCard title="Locations and counters" flush>
+              {v.branches.length + v.counters.length === 0 ? (
+                <EmptyState icon={Store} title="No locations yet" compact />
+              ) : (
+                <ul className="divide-y divide-[var(--adm-border)] text-[13.5px]">
+                  {v.branches.map((b) => (
+                    <li key={b.id} className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-5">
+                      <span className="min-w-0 truncate text-adm-fg">{b.name}{b.code ? <span className="text-adm-subtle"> · {b.code}</span> : null}</span>
+                      <span className="flex shrink-0 gap-1.5">{b.isDefault && <Badge tone="info">Default</Badge>}<Badge>Location</Badge></span>
+                    </li>
+                  ))}
+                  {v.counters.map((c) => (
+                    <li key={c.id} className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-5">
+                      <span className="min-w-0 truncate text-adm-fg">{c.name}{c.code ? <span className="text-adm-subtle"> · {c.code}</span> : null}</span>
+                      <span className="flex shrink-0 gap-1.5"><Badge tone={statusTone(c.status)}>{c.status}</Badge><Badge>POS counter</Badge></span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </AdminCard>
+          </div>
+
+          <div className="space-y-5">
+            <AdminCard title="Owner">
+              {owner ? (
+                <KeyValueList
+                  items={[
+                    { label: 'Name', value: owner.fullName },
+                    { label: 'Email', value: <span className="break-all">{owner.email}</span> },
+                    { label: 'Last sign-in', value: owner.lastLoginAt ? timeAgo(owner.lastLoginAt) : 'Never' },
+                    { label: 'Invitation', value: owner.inviteAccepted ? 'Accepted' : <Badge tone="warning">Not accepted yet</Badge> },
+                  ]}
+                />
+              ) : (
+                <Alert tone="warning">This vendor has no active owner user.</Alert>
+              )}
+            </AdminCard>
+
+            <AdminCard title="Subscription">
+              {sub ? (
+                <KeyValueList
+                  items={[
+                    { label: 'Plan', value: sub.tier?.displayName ?? '—' },
+                    { label: 'Status', value: <Badge tone={statusTone(sub.status)}>{labelFor(SUBSCRIPTION_STATUS_LABEL, sub.status)}</Badge> },
+                    { label: 'Billing', value: sub.neverExpires ? 'Free' : `${sub.billingCycle === 'yearly' ? 'Yearly' : 'Monthly'} · ${fmtLKR(Number(sub.billingCycle === 'yearly' ? sub.subscribedPriceYearly ?? sub.tier?.priceYearly : sub.subscribedPriceMonthly ?? sub.tier?.priceMonthly))}` },
+                    { label: trialEnds ? 'Trial ends' : 'Period ends', value: sub.neverExpires ? 'Does not expire' : fmtDate(trialEnds ?? sub.currentPeriodEnd) },
+                    { label: 'Last payment', value: sub.lastPaymentAt ? fmtDate(sub.lastPaymentAt) : '—' },
+                  ]}
+                />
+              ) : (
+                <Alert tone="warning">No subscription record.</Alert>
+              )}
+            </AdminCard>
+
+            {(canManage || canBill) && (
+            <AdminCard title="Manage vendor" description="Every action asks for confirmation and is recorded in the audit log.">
+              <div className="grid grid-cols-1 gap-2">
+                {!canManage ? null : isActive ? (
+                  <Button icon={PauseCircle} variant="danger-soft" onClick={() => setDialog('suspend')} className="justify-start">Suspend sign-in</Button>
+                ) : (
+                  <Button icon={PlayCircle} variant="primary" onClick={() => setDialog('reactivate')} className="justify-start">Reactivate</Button>
+                )}
+                {canBill && (
+                  <>
+                    <Button icon={CalendarPlus} onClick={() => setDialog('extend')} disabled={!sub || sub.neverExpires || v.status === 'suspended' || v.status === 'cancelled'} className="justify-start">
+                      {trialEnds ? 'Extend trial' : 'Extend subscription'}
+                    </Button>
+                    <Button icon={Layers} onClick={() => setDialog('plan')} disabled={!sub} className="justify-start">Change plan</Button>
+                  </>
+                )}
+                {canManage && (
+                  <>
+                    <Button icon={KeyRound} onClick={() => setDialog('password')} disabled={!owner} className="justify-start">Reset owner password</Button>
+                    <Button icon={Mail} onClick={() => setDialog('welcome')} disabled={!owner} className="justify-start">
+                      {owner && !owner.inviteAccepted ? 'Resend invitation' : 'Email sign-in details'}
+                    </Button>
+                  </>
+                )}
+                {canManage && v.status !== 'cancelled' && (
+                  <Button icon={Archive} variant="ghost" onClick={() => setDialog('archive')} className="justify-start text-adm-danger">Archive vendor</Button>
+                )}
               </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                {/* By Branch */}
-                <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-4 shadow-sm">
-                  <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-[#6bd8cb]" />
-                    By Branch (30D)
-                  </h4>
-                  <div className="space-y-2 font-mono text-xs">
-                    {analytics.byBranch.length === 0 && <div className="text-[#879391]">No sales</div>}
-                    {analytics.byBranch.map((b, i) => (
-                      <div key={b.warehouseId ?? i} className="flex items-center justify-between p-2 bg-[#060e20] rounded-lg border border-[#2d3449]/50">
-                        <div className="min-w-0">
-                          <div className="text-white truncate">{b.name}</div>
-                          <div className="text-[10px] text-[#879391]">{b.receipts} receipts</div>
-                        </div>
-                        <div className="text-[#6bd8cb] font-bold shrink-0">{fmtMoney(b.netSales)}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* By Counter */}
-                <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-4 shadow-sm">
-                  <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-[#4fdbc8]" />
-                    By Counter (30D)
-                  </h4>
-                  <div className="space-y-2 font-mono text-xs">
-                    {analytics.byCounter.length === 0 && <div className="text-[#879391]">No sales</div>}
-                    {analytics.byCounter.map((c, i) => (
-                      <div key={c.posProfileId ?? i} className="flex items-center justify-between p-2 bg-[#060e20] rounded-lg border border-[#2d3449]/50">
-                        <div className="min-w-0">
-                          <div className="text-white truncate">{c.name}</div>
-                          <div className="text-[10px] text-[#879391]">{c.receipts} receipts</div>
-                        </div>
-                        <div className="text-[#6bd8cb] font-bold shrink-0">{fmtMoney(c.netSales)}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* By Cashier */}
-                <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-4 shadow-sm">
-                  <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
-                    <Users className="w-4 h-4 text-[#6bd8cb]" />
-                    By Cashier (30D)
-                  </h4>
-                  <div className="space-y-2 font-mono text-xs">
-                    {analytics.byCashier.length === 0 && <div className="text-[#879391]">No sales</div>}
-                    {analytics.byCashier.map((c, i) => (
-                      <div key={c.userId ?? i} className="flex items-center justify-between p-2 bg-[#060e20] rounded-lg border border-[#2d3449]/50">
-                        <div className="min-w-0">
-                          <div className="text-white truncate">{c.name}</div>
-                          <div className="text-[10px] text-[#879391]">
-                            {c.receipts} receipts • variance{' '}
-                            <span className={c.variance < 0 ? 'text-[#ffb4ab]' : c.variance > 0 ? 'text-[#4fdbc8]' : ''}>
-                              {c.variance >= 0 ? '+' : ''}
-                              {c.variance.toFixed(2)}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="text-[#6bd8cb] font-bold shrink-0">{fmtMoney(c.netSales)}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Open shifts */}
-              <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl overflow-hidden p-4 shadow-sm">
-                <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-[#4fdbc8]" />
-                  Open Shifts ({analytics.openShifts.length})
-                </h4>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left font-mono text-xs">
-                    <thead className="bg-[#060e20] text-[#879391] uppercase text-[10px] border-b border-[#2d3449]">
-                      <tr>
-                        <th className="px-3 py-2">Entry</th>
-                        <th className="px-3 py-2">Cashier</th>
-                        <th className="px-3 py-2">Counter</th>
-                        <th className="px-3 py-2">Branch</th>
-                        <th className="px-3 py-2 text-right">Opened</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#2d3449]/40">
-                      {analytics.openShifts.length === 0 && (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-[#879391]">No open shifts</td>
-                        </tr>
-                      )}
-                      {analytics.openShifts.map((s) => (
-                        <tr key={s.id} className="hover:bg-[#171f33]">
-                          <td className="px-3 py-2 text-[#4fdbc8] font-bold">{s.entryNumber}</td>
-                          <td className="px-3 py-2 text-white">{s.cashierName}</td>
-                          <td className="px-3 py-2 text-[#bcc9c6]">{s.counterName}</td>
-                          <td className="px-3 py-2 text-[#bcc9c6]">{s.warehouseName}</td>
-                          <td className="px-3 py-2 text-right text-[#879391]">{fmtDateTime(s.openingTime)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* TAB: Terminals & Branches */}
-      {activeTab === 'branches' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {(vendorData.branches || []).length === 0 && (
-              <div className="md:col-span-3 text-xs text-[#879391] font-mono">No branches configured.</div>
+            </AdminCard>
             )}
-            {(vendorData.branches || []).map((b, idx) => (
-              <div key={b.id} className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="font-bold text-sm text-white">{b.name}</div>
-                  <span className={`w-2 h-2 rounded-full ${b.isActive === false ? 'bg-[#ff5451]' : 'bg-[#4fdbc8]'}`}></span>
-                </div>
-                <div className="text-xs text-[#bcc9c6]">{b.address || 'No address on file'}</div>
-                <div className="pt-2 border-t border-[#2d3449]/40 flex justify-between font-mono text-[11px] text-[#879391]">
-                  <span>Code: {b.code || '—'}{b.isDefault ? ' • Default' : ''}</span>
-                  <span className="text-[#6bd8cb]">Branch #{idx + 1}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl overflow-hidden p-4 shadow-sm">
-            <h4 className="font-bold text-sm text-white mb-3 flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-[#4fdbc8]" />
-              POS Counters / Profiles
-            </h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left font-mono text-xs">
-                <thead className="bg-[#060e20] text-[#879391] uppercase text-[10px] border-b border-[#2d3449]">
-                  <tr>
-                    <th className="px-3 py-2">Code</th>
-                    <th className="px-3 py-2">Counter Name</th>
-                    <th className="px-3 py-2">Branch</th>
-                    <th className="px-3 py-2 text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#2d3449]/40">
-                  {(vendorData.counters || []).length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="px-3 py-6 text-center text-[#879391]">No POS profiles configured.</td>
-                    </tr>
-                  )}
-                  {(vendorData.counters || []).map((c, idx) => {
-                    const branch = (vendorData.branches || []).find((b) => b.id === c.warehouseId)
-                    const active = (c.status || 'active') === 'active'
-                    return (
-                      <tr key={c.id} className="hover:bg-[#171f33]">
-                        <td className="px-3 py-2 text-[#4fdbc8] font-bold">{c.code || `POS-${String(idx + 1).padStart(2, '0')}`}</td>
-                        <td className="px-3 py-2 text-white">{c.name}</td>
-                        <td className="px-3 py-2 text-[#bcc9c6]">{branch?.name || '—'}</td>
-                        <td className="px-3 py-2 text-right">
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                              active ? 'bg-[#4fdbc8]/15 text-[#4fdbc8]' : 'bg-[#ff5451]/20 text-[#ffb4ab]'
-                            }`}
-                          >
-                            {c.status || 'active'}
-                          </span>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
           </div>
         </div>
       )}
 
-      {/* TAB: Feature Flags */}
-      {activeTab === 'flags' && (
-        <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-[#2d3449]/50">
-            <div>
-              <h3 className="font-bold text-base text-white">Granular Feature Flags &amp; Modules</h3>
-              <p className="text-xs text-[#bcc9c6]">Configure feature capabilities for {vendorData.name}</p>
-            </div>
-            <button
-              type="button"
-              disabled={savingFlags}
-              onClick={saveFlags}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#6bd8cb] text-[#003732] hover:bg-[#89f5e7] text-xs font-bold transition-all disabled:opacity-50"
-            >
-              {savingFlags ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              <span>Save Tenant Flags</span>
-            </button>
-          </div>
+      {tab === 'staff' && <StaffTab staff={data.staff} />}
+      {tab === 'billing' && <BillingTab data={data} />}
+      {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} labels={data.featureFlagLabels} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
+      {tab === 'activity' && <ActivityTab activity={data.activity} />}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {FEATURE_FLAGS.map((flag) => {
-              const enabled = !!flags[flag]
-              return (
-                <div
-                  key={flag}
-                  onClick={() => handleToggleFlag(flag)}
-                  className={`p-3 rounded-lg border cursor-pointer flex items-center justify-between transition-all ${
-                    enabled ? 'bg-[#29a195]/20 border-[#6bd8cb]' : 'bg-[#060e20] border-[#2d3449] opacity-75'
-                  }`}
-                >
-                  <div>
-                    <div className="text-xs font-semibold text-white">{FEATURE_FLAG_LABELS[flag]}</div>
-                    <div className="font-mono text-[10px] text-[#879391]">{flag}</div>
-                  </div>
-                  <div className={`w-9 h-5 rounded-full p-0.5 flex transition-colors ${enabled ? 'bg-[#6bd8cb] justify-end' : 'bg-[#222a3d] justify-start'}`}>
-                    <div className={`w-4 h-4 rounded-full ${enabled ? 'bg-[#003732]' : 'bg-[#879391]'}`}></div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+      <ActionDialogs key={dialog ?? 'none'} dialog={dialog} data={data} onClose={() => setDialog(null)} onDone={done} />
+    </AdminPage>
+  )
+}
+
+/* ------------------------------------------------------------------ tabs */
+
+function StaffTab({ staff }: { staff: Detail['staff'] }) {
+  const columns: AdminColumn<Detail['staff'][number]>[] = [
+    {
+      key: 'name',
+      header: 'Name',
+      primary: true,
+      cell: (u) => (
+        <div className="min-w-0">
+          <p className="font-medium text-adm-fg">{u.fullName}</p>
+          <p className="truncate text-[12.5px] text-adm-subtle">{u.email}</p>
         </div>
-      )}
+      ),
+    },
+    { key: 'role', header: 'Role', cell: (u) => <Badge tone={u.role === 'owner' ? 'primary' : 'neutral'}>{ROLE_LABEL[u.role] ?? u.role}</Badge> },
+    { key: 'status', header: 'Status', cell: (u) => <Badge tone={u.isActive ? 'success' : 'neutral'} dot>{u.isActive ? 'Active' : 'Deactivated'}</Badge> },
+    { key: 'login', header: 'Last sign-in', hideBelow: 'md', cell: (u) => <span className="text-adm-muted">{u.lastLoginAt ? timeAgo(u.lastLoginAt) : 'Never'}</span> },
+  ]
+  return (
+    <AdminCard title="Staff" description="Users of this business and their roles. Staff are managed by the vendor in their own settings." flush>
+      <AdminTable columns={columns} rows={staff} rowKey={(u) => u.id} minWidth={560} empty={<EmptyState icon={Users} title="No staff" compact />} />
+    </AdminCard>
+  )
+}
 
-      {/* TAB: Billing */}
-      {activeTab === 'billing' && (
-        <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-[#2d3449]/50">
-            <h3 className="font-bold text-base text-white">Commercial Tier &amp; Billing Records</h3>
-            <span className="font-mono text-xs text-[#4fdbc8] font-bold uppercase">
-              PLAN: {vendorData.plan || 'trial'}
-              {sub?.tier?.name ? ` (${sub.tier.name})` : ''}
-            </span>
-          </div>
-
-          {!sub ? (
-            <div className="text-xs text-[#879391] font-mono">
-              No subscription record for this tenant.{' '}
-              <Link href="/sys-control/subscriptions" className="text-[#6bd8cb] underline">
-                Manage subscriptions
-              </Link>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
-              <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
-                <div className="text-[#879391] uppercase text-[10px]">
-                  {sub.billingCycle === 'yearly' ? 'Yearly Fee' : 'Monthly Fee'}
-                </div>
-                <div className="text-xl font-bold text-white">
-                  {monthlyFee !== null && monthlyFee !== undefined
-                    ? `LKR ${fmtMoney(parseFloat(String(sub.billingCycle === 'yearly' ? sub.subscribedPriceYearly ?? sub.tier?.priceYearly ?? monthlyFee : monthlyFee)))}`
-                    : '—'}
-                </div>
-                <div className="text-[#4fdbc8]">Cycle: {sub.billingCycle || 'monthly'}</div>
-              </div>
-
-              <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
-                <div className="text-[#879391] uppercase text-[10px]">Current Period End</div>
-                <div className="text-xl font-bold text-white">{fmtDate(sub.currentPeriodEnd || sub.trialEndsAt)}</div>
-                <div className="text-[#bcc9c6]">
-                  {daysRemaining !== null ? `${daysRemaining} days remaining in cycle` : 'No period set'}
-                </div>
-              </div>
-
-              <div className="bg-[#060e20] p-4 rounded-xl border border-[#2d3449] space-y-2">
-                <div className="text-[#879391] uppercase text-[10px]">Subscription Status</div>
-                <div className={`text-xl font-bold uppercase ${sub.status === 'active' ? 'text-[#4fdbc8]' : 'text-[#ffb4ab]'}`}>
-                  {sub.status}
-                </div>
-                <div className="text-[#879391]">Last payment: {fmtDate(sub.lastPaymentAt)}</div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB: Audit */}
-      {activeTab === 'audit' && (
-        <div className="bg-[#131b2e] border border-[#2d3449] rounded-xl p-6 shadow-sm space-y-3 font-mono text-xs">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-base text-white">Privileged Admin Audit History (90 days)</h3>
-            <Link href="/sys-control/audit-logs" className="text-[#6bd8cb] hover:underline text-xs">
-              Full audit log →
-            </Link>
-          </div>
-          {auditLogs === null ? (
-            <div className="py-8 text-center text-[#bcc9c6] flex items-center justify-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin text-[#6bd8cb]" />
-              Loading audit history...
-            </div>
-          ) : auditLogs.length === 0 ? (
-            <div className="py-8 text-center text-[#879391]">No admin actions recorded for this tenant.</div>
-          ) : (
-            <div className="space-y-2">
-              {auditLogs.map((log) => (
-                <div key={log.id} className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-white font-semibold uppercase truncate">
-                      {log.action}_{log.resource}
-                    </div>
-                    <div className="text-[10px] text-[#879391] truncate">
-                      Actor: {log.account?.email || 'system'} • IP: {log.ipAddress || '—'}
-                    </div>
-                  </div>
-                  <div className="text-[#bcc9c6] text-[11px] shrink-0">{fmtDateTime(log.createdAt)}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+function BillingTab({ data }: { data: Detail }) {
+  const columns: AdminColumn<Detail['payments'][number]>[] = [
+    { key: 'date', header: 'Date', primary: true, cell: (p) => fmtDate(p.createdAt) },
+    { key: 'method', header: 'Method', cell: (p) => (p.kind === 'payhere' ? 'Card (PayHere)' : 'Bank transfer') },
+    { key: 'ref', header: 'Reference', hideBelow: 'md', cell: (p) => <span className="adm-num text-adm-muted">{p.reference || '—'}</span> },
+    { key: 'period', header: 'Covers', hideBelow: 'lg', cell: (p) => `${p.periodMonths} month${p.periodMonths === 1 ? '' : 's'}` },
+    { key: 'amount', header: 'Amount', align: 'right', cell: (p) => <span className="adm-num">{fmtLKR(Number(p.amount), 2)}</span> },
+    { key: 'status', header: 'Status', cell: (p) => <Badge tone={statusTone(p.status)}>{p.status.replace(/_/g, ' ')}</Badge> },
+  ]
+  const sub = data.subscription
+  return (
+    <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
+      <AdminCard title="Subscription" className="xl:col-span-1">
+        {sub ? (
+          <KeyValueList
+            items={[
+              { label: 'Plan', value: sub.tier?.displayName ?? '—' },
+              { label: 'Status', value: <Badge tone={statusTone(sub.status)}>{labelFor(SUBSCRIPTION_STATUS_LABEL, sub.status)}</Badge> },
+              { label: 'Cycle', value: sub.neverExpires ? 'Free' : sub.billingCycle === 'yearly' ? 'Yearly' : 'Monthly' },
+              { label: 'Locked-in price', value: sub.neverExpires ? '—' : `${fmtLKR(Number(sub.subscribedPriceMonthly ?? 0))} / month` },
+              { label: 'Current plan price', value: sub.tier ? `${fmtLKR(Number(sub.tier.priceMonthly ?? 0))} / month` : '—' },
+              { label: 'Period', value: sub.neverExpires ? 'Does not expire' : `${fmtDate(sub.currentPeriodStart)} – ${fmtDate(sub.currentPeriodEnd)}` },
+              { label: 'Trial ends', value: sub.trialEndsAt ? fmtDate(sub.trialEndsAt) : '—' },
+              { label: 'Sign-in cut-off', value: data.vendor.planExpiresAt ? fmtDate(data.vendor.planExpiresAt) : 'None' },
+            ]}
+          />
+        ) : (
+          <Alert tone="warning">No subscription record.</Alert>
+        )}
+      </AdminCard>
+      <AdminCard title="Payments" description="Bank transfers and card payments for this subscription (latest 25 of each)." className="xl:col-span-2" flush>
+        <AdminTable columns={columns} rows={data.payments} rowKey={(p) => `${p.kind}-${p.id}`} minWidth={620} empty={<EmptyState icon={CreditCard} title="No payments yet" compact />} />
+      </AdminCard>
     </div>
   )
+}
+
+function FeaturesTab({ vendorId, flags, labels, onSaved }: { vendorId: string; flags: Record<string, boolean>; labels: Record<string, string>; onSaved: (text: string) => void }) {
+  const [draft, setDraft] = useState(flags)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const dirty = Object.keys(labels).some((k) => !!draft[k] !== !!flags[k])
+  const canEdit = useAdminCan('vendors.manage')
+
+  async function save() {
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await adminFetch<{ featureFlags: Record<string, boolean> }>(`/api/sys-control/vendors/${vendorId}/features`, { method: 'PUT', json: { featureFlags: draft } })
+      setDraft(res.featureFlags)
+      onSaved('Feature switches saved. The vendor sees the change on their next page load.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <AdminCard
+      title="Feature switches"
+      description="Turning a module off hides it from this vendor’s menus. Existing data is kept."
+      footer={
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {error && <span className="mr-auto text-[13px] text-adm-danger">{error}</span>}
+          {!canEdit && <span className="mr-auto text-[13px] text-adm-subtle">Only owners can change feature switches.</span>}
+          <Button variant="ghost" onClick={() => setDraft(flags)} disabled={!dirty || saving}>Undo changes</Button>
+          <Button variant="primary" onClick={save} loading={saving} disabled={!dirty || !canEdit}>Save</Button>
+        </div>
+      }
+    >
+      <div className="grid grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-2">
+        {Object.entries(labels).map(([key, label]) => (
+          <Switch key={key} label={label} checked={!!draft[key]} disabled={!canEdit} onChange={(c) => setDraft((d) => ({ ...d, [key]: c }))} />
+        ))}
+      </div>
+    </AdminCard>
+  )
+}
+
+function ActivityTab({ activity }: { activity: Detail['activity'] }) {
+  return (
+    <AdminCard title="Admin activity" description="Platform-admin actions on this vendor and its subscription (latest 40)." flush>
+      {activity.length === 0 ? (
+        <EmptyState title="No admin actions recorded" compact />
+      ) : (
+        <ul className="divide-y divide-[var(--adm-border)]">
+          {activity.map((a) => {
+            const reason = (a.details as { reason?: string } | null)?.reason
+            return (
+              <li key={a.id} className="flex flex-col gap-0.5 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4 sm:px-5">
+                <div className="min-w-0">
+                  <p className="text-[13.5px] text-adm-fg">{activityText(a)}</p>
+                  {reason && <p className="text-[12.5px] text-adm-muted">“{reason}”</p>}
+                </div>
+                <p className="shrink-0 text-[12.5px] text-adm-subtle">{a.adminName ?? 'Admin'} · {fmtDateTime(a.createdAt)}</p>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </AdminCard>
+  )
+}
+
+/* ------------------------------------------------------------------ action dialogs */
+
+function ActionDialogs({ dialog, data, onClose, onDone }: { dialog: Dialog; data: Detail; onClose: () => void; onDone: (text: string, tone?: 'success' | 'warning') => void }) {
+  const v = data.vendor
+  const sub = data.subscription
+  // State starts fresh for every dialog: the parent remounts this component per dialog (key)
+  const [reason, setReason] = useState('')
+  const [days, setDays] = useState('14')
+  const [tierId, setTierId] = useState(sub?.tier?.id ?? '')
+  const [cycle, setCycle] = useState<'monthly' | 'yearly'>((sub?.billingCycle as 'monthly' | 'yearly') || 'monthly')
+  const [confirm, setConfirm] = useState('')
+  const [pwMode, setPwMode] = useState<'email' | 'temporary'>('email')
+  const [tempPassword, setTempPassword] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function run(body: Record<string, unknown>, onOk?: (res: Record<string, unknown>) => boolean | void) {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await adminFetch<Record<string, unknown>>(`/api/sys-control/vendors/${v.id}/actions`, { method: 'POST', json: body })
+      if (onOk?.(res) === true) return
+      const warning = typeof res.warning === 'string' ? res.warning : null
+      onDone([res.message, warning].filter(Boolean).join(' '), warning ? 'warning' : 'success')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The action failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function impersonate() {
+    setBusy(true)
+    setError(null)
+    // Open the tab inside the click so pop-up blockers allow it, then point it at the sign-in link
+    const tab = window.open('about:blank', '_blank')
+    try {
+      const res = await adminFetch<{ redirectUrl: string }>(`/api/sys-control/vendors/${v.id}/impersonate`, { method: 'POST', json: { reason: reason.trim() || undefined } })
+      if (tab) {
+        tab.opener = null
+        tab.location.href = res.redirectUrl
+      } else {
+        window.location.href = res.redirectUrl
+      }
+      onClose()
+    } catch (e) {
+      tab?.close()
+      setError(e instanceof Error ? e.message : 'Could not open the vendor app')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const reasonOk = reason.trim().length >= 3
+  const reasonField = (label = 'Reason', hint = 'Recorded in the audit log.') => (
+    <Field label={label} htmlFor="act-reason" required hint={hint}>
+      <Textarea id="act-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+    </Field>
+  )
+  const footer = (label: string, onClick: () => void, variant: 'primary' | 'danger' = 'primary', disabled = false) => (
+    <>
+      <Button onClick={onClose} disabled={busy}>Cancel</Button>
+      <Button variant={variant} onClick={onClick} loading={busy} disabled={disabled}>{label}</Button>
+    </>
+  )
+  const err = error && <Alert tone="danger" className="mb-3">{error}</Alert>
+  const trial = sub?.status === 'trial' && !!sub.trialEndsAt
+  const daysN = Number(days)
+  const daysOk = Number.isInteger(daysN) && daysN >= 1 && daysN <= 366
+  const targetTier = data.tiers.find((t) => t.id === tierId)
+  const targetFree = targetTier ? Number(targetTier.priceMonthly ?? 0) === 0 && Number(targetTier.priceYearly ?? 0) === 0 : false
+
+  switch (dialog) {
+    case 'suspend':
+      return (
+        <AdminModal open onClose={onClose} title={`Suspend ${v.name}?`} description="Staff are signed out and cannot sign in on the web or the app. No data is changed." footer={footer('Suspend', () => run({ action: 'suspend', reason }), 'danger', !reasonOk)}>
+          {err}
+          {reasonField()}
+        </AdminModal>
+      )
+    case 'reactivate':
+      return (
+        <AdminModal open onClose={onClose} title={`Reactivate ${v.name}?`} description="Staff can sign in again straight away." footer={footer('Reactivate', () => run({ action: 'reactivate', reason: reason.trim() || undefined }))}>
+          {err}
+          {sub && !sub.neverExpires && (daysUntil(sub.trialEndsAt ?? sub.currentPeriodEnd) ?? 0) < 0 && (
+            <Alert tone="warning" className="mb-3">The subscription period has ended. Extend it after reactivating, or the billing job will lock the vendor again.</Alert>
+          )}
+          <Field label="Note" htmlFor="act-reason" hint="Optional; recorded in the audit log.">
+            <Textarea id="act-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </Field>
+        </AdminModal>
+      )
+    case 'extend':
+      return (
+        <AdminModal
+          open
+          onClose={onClose}
+          title={trial ? 'Extend trial' : 'Extend subscription'}
+          description={trial ? `Trial currently ends ${fmtDate(sub?.trialEndsAt)}.` : `Current period ends ${fmtDate(sub?.currentPeriodEnd)}. Added days are free of charge.`}
+          footer={footer('Extend', () => run({ action: trial ? 'extend_trial' : 'extend', days: daysN, reason }), 'primary', !reasonOk || !daysOk)}
+        >
+          {err}
+          <div className="space-y-4">
+            <Field label="Days to add" htmlFor="act-days" required hint="Counted from the current end date, or from today if it has passed.">
+              <Input id="act-days" type="number" inputMode="numeric" min={1} max={366} value={days} onChange={(e) => setDays(e.target.value)} />
+            </Field>
+            {reasonField()}
+          </div>
+        </AdminModal>
+      )
+    case 'plan':
+      return (
+        <AdminModal
+          open
+          onClose={onClose}
+          title="Change plan"
+          description="Moves the vendor to another plan without charging them. The new plan’s current price applies from the next renewal."
+          footer={footer('Change plan', () => run({ action: 'change_plan', tierId, billingCycle: targetFree ? undefined : cycle, reason }), 'primary', !reasonOk || !tierId)}
+        >
+          {err}
+          <div className="space-y-4">
+            <Field label="Plan" htmlFor="act-tier" required>
+              <Select id="act-tier" value={tierId} onChange={(e) => setTierId(e.target.value)}>
+                {data.tiers.filter((t) => t.isActive || t.id === sub?.tier?.id).map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.displayName} — {Number(t.priceMonthly ?? 0) === 0 ? 'Free' : `${fmtLKR(Number(t.priceMonthly))}/month`}{t.maxUsers ? ` · ${t.maxUsers} users` : ''}{t.id === sub?.tier?.id ? ' (current)' : ''}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {!targetFree && (
+              <Field label="Billing cycle">
+                <SegmentedControl ariaLabel="Billing cycle" value={cycle} onChange={setCycle} options={[{ value: 'monthly', label: 'Monthly' }, { value: 'yearly', label: 'Yearly' }]} size="sm" />
+              </Field>
+            )}
+            <p className="text-[13px] text-adm-muted">
+              {targetFree
+                ? 'The free plan does not expire.'
+                : sub?.status === 'trial' || sub?.neverExpires
+                  ? `A complimentary first ${cycle === 'yearly' ? 'year' : 'month'} starts today.`
+                  : 'The current paid period is kept as it is.'}
+            </p>
+            {reasonField()}
+          </div>
+        </AdminModal>
+      )
+    case 'password':
+      return (
+        <AdminModal
+          open
+          onClose={onClose}
+          title="Reset owner password"
+          description={data.owner ? `${data.owner.fullName} · ${data.owner.email}` : undefined}
+          footer={
+            tempPassword ? (
+              <Button variant="primary" onClick={() => onDone('Temporary password set. The owner’s other sessions were signed out.')}>Done</Button>
+            ) : (
+              footer(pwMode === 'email' ? 'Send reset link' : 'Set temporary password', () =>
+                run({ action: 'reset_password', mode: pwMode }, (res) => {
+                  if (typeof res.temporaryPassword === 'string') {
+                    setTempPassword(res.temporaryPassword)
+                    return true
+                  }
+                }))
+            )
+          }
+        >
+          {err}
+          {tempPassword ? (
+            <div className="space-y-3">
+              <Alert tone="warning" title="Shown only once">Give this password to the owner securely and ask them to change it after signing in.</Alert>
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-adm-border bg-adm-surface-2 px-4 py-3">
+                <span className="adm-num select-all break-all text-[18px] font-semibold tracking-[0.04em] text-adm-fg">{tempPassword}</span>
+                <CopyButton text={tempPassword} label="Copy password" />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <SegmentedControl
+                ariaLabel="Reset method"
+                value={pwMode}
+                onChange={setPwMode}
+                options={[{ value: 'email', label: 'Email a reset link' }, { value: 'temporary', label: 'Set a temporary password' }]}
+              />
+              <p className="text-[13px] text-adm-muted">
+                {pwMode === 'email'
+                  ? 'The owner receives a one-time link that expires in 1 hour. The current password keeps working until they use it.'
+                  : 'The current password stops working immediately and the owner is signed out everywhere. You will see the new password once.'}
+              </p>
+            </div>
+          )}
+        </AdminModal>
+      )
+    case 'welcome':
+      return (
+        <AdminModal
+          open
+          onClose={onClose}
+          title={data.owner && !data.owner.inviteAccepted ? 'Resend invitation' : 'Email sign-in details'}
+          description={data.owner?.email}
+          footer={footer('Send email', () => run({ action: 'resend_welcome' }))}
+        >
+          {err}
+          <p className="text-[13.5px] text-adm-muted">
+            {data.owner && !data.owner.inviteAccepted
+              ? 'A new 7-day invitation link replaces the previous one.'
+              : `The owner receives the sign-in page address, the Business ID ${formatBusinessId(v.businessId)} and their email. No password is sent.`}
+          </p>
+        </AdminModal>
+      )
+    case 'archive':
+      return (
+        <AdminModal
+          open
+          onClose={onClose}
+          title={`Archive ${v.name}?`}
+          description="Sign-in is blocked and the vendor is hidden from active lists. Sales, invoices and billing records are kept and nothing is deleted. You can reactivate it later."
+          footer={footer('Archive', () => run({ action: 'archive', reason, confirm }), 'danger', !reasonOk || !confirm.trim())}
+        >
+          {err}
+          <div className="space-y-4">
+            {reasonField()}
+            <Field label={`Type the Business ID ${formatBusinessId(v.businessId)} to confirm`} htmlFor="act-confirm" required>
+              <Input id="act-confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" />
+            </Field>
+          </div>
+        </AdminModal>
+      )
+    case 'impersonate':
+      return (
+        <AdminModal
+          open
+          onClose={onClose}
+          title="Open as owner"
+          description={`Opens ${v.name} in a new tab signed in as ${data.owner?.fullName ?? 'the owner'}. The link is valid for 2 minutes.`}
+          footer={footer('Open vendor app', impersonate)}
+        >
+          {err}
+          <Alert tone="info" className="mb-3">Everything you do there is done as the owner. This sign-in is recorded in the audit log.</Alert>
+          <Field label="Reason" htmlFor="act-reason" hint="Optional, e.g. a support ticket number.">
+            <Input id="act-reason" value={reason} onChange={(e) => setReason(e.target.value)} />
+          </Field>
+        </AdminModal>
+      )
+    default:
+      return null
+  }
 }

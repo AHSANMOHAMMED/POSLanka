@@ -55,12 +55,22 @@ export async function GET(
     let totalDbBytes = 0
 
     await withTenant(tenantId, async (tdb) => {
+      // Table names are interpolated into SQL: only plain identifiers from TABLE_MODULES that
+      // exist in this database. (A failing COUNT would also abort the surrounding transaction
+      // and silently zero every later table.)
+      const existing = await tdb.execute(sql`
+        SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'`)
+      const knownTables = new Set((existing.rows as Array<{ table_name: string }>).map((r) => r.table_name))
+      const SAFE_IDENT = /^[a-z_][a-z0-9_]{0,62}$/
+
       for (const [moduleKey, mod] of Object.entries(TABLE_MODULES)) {
         const tableCounts: TableBreakdown[] = []
         let moduleTotalBytes = 0
         let moduleTotalRows = 0
 
         for (const [tableName, tableInfo] of Object.entries(mod.tables)) {
+          if (!SAFE_IDENT.test(tableName) || !knownTables.has(tableName)) continue
           try {
             const result = await tdb.execute(
               sql.raw(`SELECT COUNT(*)::int AS cnt FROM "${tableName}"`)

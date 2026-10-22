@@ -3,14 +3,13 @@ import { db } from '@/lib/db'
 import { staffInvites, tenants, accounts } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { consumeRateLimit, clientIp } from '@/lib/auth/rate-limit'
 
-// Rate limiting map: IP/token -> { count, firstRequest }
-const rateLimitMap = new Map<string, { count: number; firstRequest: number }>()
-const RATE_LIMIT_WINDOW = 60 * 1000 // 1 minute
-const RATE_LIMIT_MAX = 10 // Max 10 requests per minute
+// Rate limiting per client IP (database-backed, shared by all instances): 10 lookups per minute.
+// Keyed by IP rather than token prefix — every guessed token has a different prefix, so a
+// token-keyed limit never slowed enumeration down.
+const INVITE_LOOKUP_RATE_LIMIT = { maxAttempts: 10, windowMs: 60 * 1000, category: 'invite_lookup' }
 const MIN_RESPONSE_TIME = 100 // Minimum response time in ms to prevent timing attacks
-let inviteLastCleanup = Date.now()
-const CLEANUP_INTERVAL = 5 * 60 * 1000 // 5 minutes
 
 // GET /api/invites/[token] - Get invite details (public)
 export async function GET(
@@ -22,34 +21,13 @@ export async function GET(
   try {
     const { token } = await params
 
-    // Periodically clean expired entries to prevent memory leaks
-    const now = Date.now()
-    if (now - inviteLastCleanup > CLEANUP_INTERVAL) {
-      inviteLastCleanup = now
-      for (const [key, entry] of rateLimitMap) {
-        if (now - entry.firstRequest > RATE_LIMIT_WINDOW) rateLimitMap.delete(key)
+    // Rate limiting by client IP to prevent token enumeration
+    if ((await consumeRateLimit(clientIp(request), INVITE_LOOKUP_RATE_LIMIT)).limited) {
+      const elapsed = Date.now() - startTime
+      if (elapsed < MIN_RESPONSE_TIME) {
+        await new Promise(resolve => setTimeout(resolve, MIN_RESPONSE_TIME - elapsed))
       }
-    }
-
-    // Rate limiting by token to prevent enumeration
-    const rateLimitKey = `token:${token.substring(0, 8)}` // Only use first 8 chars to group similar attempts
-    const rateLimit = rateLimitMap.get(rateLimitKey)
-
-    if (rateLimit) {
-      if (now - rateLimit.firstRequest < RATE_LIMIT_WINDOW) {
-        if (rateLimit.count >= RATE_LIMIT_MAX) {
-          const elapsed = Date.now() - startTime
-          if (elapsed < MIN_RESPONSE_TIME) {
-            await new Promise(resolve => setTimeout(resolve, MIN_RESPONSE_TIME - elapsed))
-          }
-          return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 })
-        }
-        rateLimit.count++
-      } else {
-        rateLimitMap.set(rateLimitKey, { count: 1, firstRequest: now })
-      }
-    } else {
-      rateLimitMap.set(rateLimitKey, { count: 1, firstRequest: now })
+      return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 })
     }
 
     // Find invite

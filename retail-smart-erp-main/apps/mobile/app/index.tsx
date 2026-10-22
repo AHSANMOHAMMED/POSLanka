@@ -1,13 +1,14 @@
 import { Redirect } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { ActivityIndicator, View } from 'react-native'
-import { getToken, loadSavedSettings } from '../src/lib/api'
+import { getToken, getUser, loadSavedSettings, refreshPermissions } from '../src/lib/api'
+import { hasPermission } from '../src/lib/roles'
 import { getAdminToken } from '../src/lib/adminApi'
 import { registerPushToken } from '../src/lib/notifications'
 import { fetchCurrentShift } from '../src/lib/shift'
 
 export default function Index() {
-  const [target, setTarget] = useState<'/login' | '/pos' | '/shifts' | '/admin/pulse' | null>(null)
+  const [target, setTarget] = useState<'/login' | '/pos' | '/shifts' | '/home' | '/admin/pulse' | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -22,6 +23,17 @@ export default function Index() {
       }
       // Re-register the push token on every cold start (tokens rotate); ignores 404 / Expo Go.
       registerPushToken().catch(() => undefined)
+      // Pick up role / permission changes the owner made since the last launch. Bounded so a
+      // slow network never blocks start-up (the stored permissions are used meanwhile).
+      const user = await Promise.race([
+        refreshPermissions().catch(() => null),
+        new Promise<null>((r) => setTimeout(() => r(null), 4000)),
+      ]) || (await getUser())
+      if (cancelled) return
+      if (!hasPermission(user, 'createSales')) {
+        setTarget('/home')
+        return
+      }
       const res = await fetchCurrentShift()
       if (cancelled) return
       if (res.status === 401) {

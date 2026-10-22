@@ -5,15 +5,20 @@ import {
   subscriptions,
   pendingCompanies,
   tenants,
+  accounts,
+  creditTransactions,
 } from '@/lib/db/schema'
-import { and, eq } from 'drizzle-orm'
-import { adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
+import { and, eq, sql } from 'drizzle-orm'
+import { adminAuthError, adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { sysUpdatePaymentSchema } from '@/lib/validation/schemas/sys-control'
 import { activateCompanyFromPending, notifyPendingCompanyRejected, ActivationError } from '@/lib/billing/activate-company'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { renewalStartDate } from '@/lib/billing/proration'
+import { syncTenantPlanExpiry } from '@/lib/billing/subscription-state'
+import { recordCouponRedemption } from '@/lib/billing/coupons'
 
 export async function PUT(
   request: NextRequest,
@@ -24,9 +29,9 @@ export async function PUT(
     const rateLimited = await withRateLimit('/api/sys-control/payments', STRICT_LIMIT)
     if (rateLimited) return rateLimited
 
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('billing')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const paramsParsed = validateParams(await params, idParamSchema)
@@ -96,32 +101,32 @@ export async function PUT(
 
         if (subscription) {
           const now = new Date()
-          const currentEnd = subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : now
-          const newEnd = new Date(Math.max(currentEnd.getTime(), now.getTime()))
+          // Lapsed or trial → the paid months start now; otherwise they extend the current period.
+          const newEnd = new Date(renewalStartDate(now, subscription))
           newEnd.setMonth(newEnd.getMonth() + payment.periodMonths)
+          const lapsed = subscription.status === 'trial' || !subscription.currentPeriodEnd || subscription.currentPeriodEnd.getTime() <= now.getTime()
 
-          await db.update(subscriptions)
-            .set({
-              status: 'active',
-              currentPeriodStart: subscription.currentPeriodStart || now,
-              currentPeriodEnd: newEnd,
-              lastPaymentAt: now,
-              updatedAt: new Date(),
-            })
-            .where(eq(subscriptions.id, payment.subscriptionId))
-
-          // Unlock tenant if locked
-          if (subscription.tenantId) {
-            await db.update(tenants)
+          await db.transaction(async (tx) => {
+            await tx.update(subscriptions)
               .set({
                 status: 'active',
-                lockedAt: null,
-                lockedReason: null,
-                deletionScheduledAt: null,
+                currentPeriodStart: lapsed ? now : (subscription.currentPeriodStart || now),
+                currentPeriodEnd: newEnd,
+                trialEndsAt: null,
+                lastPaymentAt: now,
                 updatedAt: now,
               })
-              .where(eq(tenants.id, subscription.tenantId))
-          }
+              .where(eq(subscriptions.id, subscription.id))
+
+            // Lift a billing lock only — a vendor suspended or archived by an admin stays that way.
+            await tx.update(tenants)
+              .set({ status: 'active', lockedAt: null, lockedReason: null, deletionScheduledAt: null, updatedAt: now })
+              .where(and(eq(tenants.id, subscription.tenantId), eq(tenants.status, 'locked')))
+            await syncTenantPlanExpiry(subscription.tenantId, tx)
+          }).catch(async (err) => {
+            await releaseClaim() // nothing was applied — leave the slip pending so it can be retried
+            throw err
+          })
 
           // Broadcast subscription renewal
           if (payment.accountId) {
@@ -129,18 +134,57 @@ export async function PUT(
           }
         }
       }
-      // Case 3: Wallet deposit is handled by another flow (credit transaction)
+      // Case 3: Wallet top-up — credit the account wallet (exactly once: the deposit is claimed above)
+      else if (payment.isWalletDeposit) {
+        const amount = Number(payment.amount)
+        await db.transaction(async (tx) => {
+          const [acc] = await tx.update(accounts)
+            .set({ walletBalance: sql`${accounts.walletBalance} + ${amount.toFixed(2)}::numeric`, updatedAt: new Date() })
+            .where(eq(accounts.id, payment.accountId))
+            .returning({ walletBalance: accounts.walletBalance })
+          if (!acc) throw new Error('Billing account not found')
+          await tx.insert(creditTransactions).values({
+            accountId: payment.accountId,
+            type: 'credit',
+            amount: amount.toFixed(2),
+            currency: payment.currency,
+            description: `Bank transfer top-up${payment.bankReference ? ` (${payment.bankReference})` : ''}`,
+            balanceAfter: Number(acc.walletBalance).toFixed(2),
+            paymentDepositId: payment.id,
+          })
+        }).catch(async (err) => {
+          await releaseClaim()
+          throw err
+        })
+        broadcastAccountChange(payment.accountId, 'account-wallet', 'updated', payment.accountId)
+      }
     }
 
-    // Now mark payment as approved/rejected (after activation succeeded)
-    await db.update(paymentDeposits)
-      .set({
-        status,
-        reviewNotes: reviewNotes ? `[Admin Review] ${reviewNotes}` : '[Admin Review]',
-        reviewedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(paymentDeposits.id, id))
+    // Now mark payment as approved/rejected (after activation succeeded). A promo code on an
+    // approved slip is counted in the same transaction (unique per slip: never twice).
+    await db.transaction(async (tx) => {
+      await tx.update(paymentDeposits)
+        .set({
+          status,
+          reviewNotes: reviewNotes ? `[Admin Review] ${reviewNotes}` : '[Admin Review]',
+          reviewedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(paymentDeposits.id, id))
+      if (status === 'approved' && payment.couponCode && !payment.isWalletDeposit) {
+        await recordCouponRedemption(tx, {
+          couponId: payment.couponId,
+          couponCode: payment.couponCode,
+          accountId: payment.accountId,
+          source: 'bank_deposit',
+          paymentDepositId: payment.id,
+          subscriptionId: payment.subscriptionId,
+          listAmount: payment.listAmount ?? Number(payment.amount) + Number(payment.discountAmount || 0),
+          discountAmount: payment.discountAmount || 0,
+          paidAmount: payment.amount,
+        })
+      }
+    })
 
     // Handle rejection for pending company
     if (status === 'rejected' && payment.pendingCompanyId) {
@@ -170,6 +214,7 @@ export async function PUT(
     const auditAction = status === 'approved' ? adminAudit.approve : adminAudit.reject
     await auditAction(session.superAdminId, 'payment', id, {
       amount: payment.amount,
+      ...(payment.couponCode ? { couponCode: payment.couponCode, discountAmount: payment.discountAmount } : {}),
       reviewNotes,
       subscriptionId: payment.subscriptionId,
       pendingCompanyId: payment.pendingCompanyId,

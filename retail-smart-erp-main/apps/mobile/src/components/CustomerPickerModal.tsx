@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Modal, View, Text, StyleSheet, Pressable, TextInput, FlatList, ActivityIndicator, Alert } from 'react-native'
-import { apiGet, apiPost, asList, qs } from '../lib/api'
+import { apiGet, apiPost, asList, qs, getUser } from '../lib/api'
+import { hasPermission } from '../lib/roles'
+import { useHeaderPad } from '../lib/safeArea'
 import { THEME, formatLKR } from '../lib/theme'
 import { EmptyView, ErrorView } from './StateViews'
 
@@ -37,6 +39,12 @@ export function CustomerPickerModal({ visible, onClose, onSelect }: Props) {
   const [newPhone, setNewPhone] = useState('')
   const [creating, setCreating] = useState(false)
   const [seq, setSeq] = useState(0)
+  const headerPad = useHeaderPad()
+  // Creating customers needs manageCustomers on the server (cashiers can only pick existing ones).
+  const [canCreate, setCanCreate] = useState(false)
+  useEffect(() => {
+    if (visible) getUser().then((u) => setCanCreate(hasPermission(u, 'manageCustomers')))
+  }, [visible])
 
   useEffect(() => {
     if (!visible) return
@@ -84,14 +92,18 @@ export function CustomerPickerModal({ visible, onClose, onSelect }: Props) {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, headerPad]}>
           <Pressable style={styles.backBtn} onPress={onClose}>
             <Text style={styles.backBtnText}>←</Text>
           </Pressable>
           <Text style={styles.title}>Select Customer</Text>
-          <Pressable style={styles.addBtn} onPress={() => setShowCreate((v) => !v)}>
-            <Text style={styles.addBtnText}>{showCreate ? 'Cancel' : '+ New'}</Text>
-          </Pressable>
+          {canCreate ? (
+            <Pressable style={styles.addBtn} onPress={() => setShowCreate((v) => !v)}>
+              <Text style={styles.addBtnText}>{showCreate ? 'Cancel' : '+ New'}</Text>
+            </Pressable>
+          ) : (
+            <View style={{ width: 40 }} />
+          )}
         </View>
 
         {showCreate ? (

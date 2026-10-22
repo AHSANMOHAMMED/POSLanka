@@ -4,11 +4,9 @@ import { InstallPromptPopup } from '@/components/ui/install-prompt-popup'
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
     <SessionProvider basePath="/api/account-auth" refetchInterval={840}>
-      <main className="auth-root">
-        <div className="fixed inset-0 -z-50 bg-[#09090b]" aria-hidden="true" />
-        {children}
-        <InstallPromptPopup />
-      </main>
+      {/* Pages render their own <AuthShell> (src/components/admin/kit), which follows the light/dark theme */}
+      {children}
+      <InstallPromptPopup />
     </SessionProvider>
   )
 }

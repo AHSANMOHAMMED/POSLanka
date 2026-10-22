@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import ExcelJS from 'exceljs'
+import { requireModule } from '@/lib/auth/roles'
 
 export async function GET() {
   try {
@@ -8,6 +9,9 @@ export async function GET() {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'accounting')
+    if (moduleError) return moduleError
 
     const workbook = new ExcelJS.Workbook()
     const sheet = workbook.addWorksheet('Bank Statement')

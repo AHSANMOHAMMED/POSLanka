@@ -11,15 +11,17 @@ Two supported layouts, both using **Managed PostgreSQL** and **Spaces**:
 
 Region: **blr1 (Bangalore)** is closest to Sri Lanka; sgp1 also works. Keep the app, DB and Spaces in the same region where possible.
 
-> Run **one** app instance. Realtime (WebSocket) broadcasts are in-process, so scale *up*
-> (bigger instance), not *out*. Two instances would each miss the other's live updates.
+> **Scaling out is supported.** Realtime broadcasts reach every instance through Postgres
+> LISTEN/NOTIFY, rate limits and caches are shared through the database, uploads go to Spaces.
+> Size the pool so `instances × (DATABASE_POOL_MAX + 2) + ~5` stays below the cluster's
+> connection limit (see PRODUCTION_DEPLOYMENT.md §7).
 
 ## 1. Create the shared resources
 
 1. **Managed PostgreSQL 16**, Basic 1 GB/1 vCPU or larger, region blr1. Under *Trusted sources*, add the app or Droplet.
    - The default user `doadmin` is enough. It is **not** a superuser and has no BYPASSRLS. Migrations 0073, 0147, 0148 and 0149 make the schema work under exactly that: they create `app_user`, grant it to the login role, and add the platform-access policies.
-   - Connect directly on port 25060, or through a connection pool in **Session** mode only. *Transaction* pool mode breaks `SET LOCAL ROLE` and the tenant context.
-   - Keep `DATABASE_POOL_MAX` × instances below the cluster's connection limit (1 GB plan ≈ 22 usable connections, so 15 is fine).
+   - Connect directly on port 25060, or through a connection pool in **Session** mode only. *Transaction* pool mode breaks `SET LOCAL ROLE`, the tenant context and `LISTEN`.
+   - Keep `instances × (DATABASE_POOL_MAX + 2)` plus ~5 for the migrate job and admin below the cluster's connection limit. 1 GB plan ≈ 22 usable: 1 instance × 15. 2 GB ≈ 47: 2 × 15 or 3 × 10. 4 GB ≈ 97: up to 4 × 15.
 2. **Spaces bucket**, for example `poslanka-uploads` in sgp1, with the CDN enabled. Create an access key under *Spaces Object Storage → Access Keys*.
    - Set `STORAGE_PUBLIC_ACL=public-read`, so logos and item images are readable through the CDN. Keys under `private/` stay private.
    - Set `STORAGE_REGION=us-east-1`. That is what Spaces expects for request signing.
@@ -79,15 +81,19 @@ docker compose up -d app caddy
 ```bash
 # create the super admin once (inside the running container / App console)
 SUPER_ADMIN_EMAIL=... SUPER_ADMIN_PASSWORD=... npx tsx scripts/create-super-admin.ts
-curl https://app.poslanka.lk/api/health      # expect "tenantIsolation":"app_role"
+curl https://app.poslanka.lk/api/health      # expect "tenantIsolation":"app_role", "storage":"s3"
+curl https://app.poslanka.lk/api/health/ready
 ```
 
 - **Cron:** set the GitHub secrets `CRON_SECRET` and `APP_URL` so `.github/workflows/cron.yml` drives `/api/cron/*`. This includes `einvoice-sync` every 10 min and `auto-reorder` daily at 02:30 Asia/Colombo (both `POST`, `Authorization: Bearer $CRON_SECRET`; see PRODUCTION_DEPLOYMENT.md → Scheduled Jobs). `EINVOICE_TRANSMITTER` defaults to `disabled` (queue only).
 - **Backups:**
   - Managed PostgreSQL keeps daily backups with 7-day point-in-time recovery.
+  - App Platform cannot schedule `deploy/backup/pg-backup.sh`. For copies outside the provider run it daily from a small Droplet (system cron) or a scheduled CI job, to a bucket you control — see `deploy/backup/README.md`.
   - Enable versioning or lifecycle rules on the Spaces bucket.
+- **Retention:** `/api/cron/retention` (daily, in `cron.yml`) deletes old activity / error / notification logs in batches; policy in PRODUCTION_DEPLOYMENT.md → Data retention.
 - **Monitoring:**
-  - DO's uptime check on `/api/health`.
+  - App Platform: readiness `health_check` on `/api/health/ready`, `liveness_health_check` on `/api/health/live` (both in `.do/app.yaml`). DO's uptime check on `/api/health`.
+  - Set `METRICS_TOKEN` and scrape `GET /api/metrics` (Bearer) per instance, or just watch the JSON logs (`slow query`, `slow request`, `request failed` lines carry the `requestId`).
   - Alert policies for CPU and memory on the app or Droplet, and for connections and disk on the DB.
 
 ## Environment reference (DigitalOcean-specific)
@@ -97,7 +103,9 @@ curl https://app.poslanka.lk/api/health      # expect "tenantIsolation":"app_rol
 | `DATABASE_URL` | cluster connection string (`?sslmode=require`); App Platform: `${poslanka-db.DATABASE_URL}` |
 | `DATABASE_CA_CERT` | the cluster CA (PEM, `\n` allowed). Enables full certificate verification. App Platform: `${poslanka-db.CA_CERT}` |
 | `DATABASE_SSL` | optional override: `verify` / `no-verify` / `disable`. Without a CA, `ondigitalocean.com` hosts use encrypted SSL without verification. |
-| `DATABASE_POOL_MAX` | connections per instance (default 15) |
+| `DATABASE_POOL_MAX` | pooled connections per instance (default 15; each instance also holds 2 LISTEN connections) |
+| `METRICS_TOKEN` | enables `GET /api/metrics` (Bearer); unset = 404 |
+| `DB_STATEMENT_TIMEOUT_MS` / `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | per-connection limits (defaults 30000 / 60000, `0` = off) |
 | `DATABASE_APP_ROLE` | `app_user` (created by the migrations) |
 | `STORAGE_*` | Spaces endpoint, region `us-east-1`, bucket, CDN URL, `public-read` ACL and access keys |
 

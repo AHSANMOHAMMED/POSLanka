@@ -5,7 +5,7 @@ import { accounts } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import crypto from 'crypto'
 import { logError } from '@/lib/ai/error-logger'
-import { uploadToR2, deleteFromR2, keyFromUrl } from '@/lib/files'
+import { uploadToR2, deleteFromR2, keyFromUrl, validateFileContent } from '@/lib/files'
 
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp']
 const MAX_SIZE = 2 * 1024 * 1024 // 2MB
@@ -35,6 +35,11 @@ export async function POST(request: NextRequest) {
     const accountId = session.user.accountId
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
+    const typeExt = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg'
+    const content = validateFileContent(buffer, `avatar.${typeExt}`)
+    if (!content.valid) {
+      return NextResponse.json({ error: 'Invalid image file' }, { status: 400 })
+    }
     const hash = crypto.createHash('sha256').update(buffer).digest('hex').slice(0, 12)
     const ext = file.name.split('.').pop() || 'png'
 

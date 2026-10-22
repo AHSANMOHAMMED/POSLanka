@@ -111,6 +111,8 @@ export const createPaymentDepositSchema = z.object({
   notes: z.string().max(1000).optional(),
   periodMonths: z.coerce.number().int().min(0).default(1),
   isWalletDeposit: z.boolean().default(false),
+  /** Promo code for a subscription / new-company slip (counted when the slip is approved) */
+  couponCode: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().max(50).optional()),
 })
 
 // ==================== Invites ====================
@@ -145,6 +147,16 @@ export const upgradeSubscriptionSchema = z.object({
   newTierId: uuidSchema,
   billingCycle: z.enum(['monthly', 'yearly']).default('monthly'),
   action: z.enum(['preview', 'execute']).default('preview'),
+  /** Promo code applied to the amount due (preview shows the discount) */
+  couponCode: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().max(50).optional()),
+})
+
+// POST /api/account/coupons/quote — price a promo code for a bank-transfer slip
+export const couponQuoteSchema = z.object({
+  code: z.string().trim().min(1, 'Enter a promo code').max(50),
+  subscriptionId: optionalUuid,
+  pendingCompanyId: optionalUuid,
+  periodMonths: z.coerce.number().int().min(1).max(36).default(1),
 })
 
 // ==================== Account Messages (conversation replies) ====================

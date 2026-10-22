@@ -1,501 +1,496 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
-import { Pagination } from '@/components/ui/pagination'
-import { toast } from '@/components/ui/toast'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
+import { AlertTriangle, Bug, CheckCircle2, Layers, MessageSquareWarning, RefreshCw, X } from 'lucide-react'
 import {
-  AlertCircle,
-  AlertTriangle,
-  Info,
-  CheckCircle,
-  Clock,
-  ChevronDown,
-  ChevronUp,
-  Filter,
-  Monitor,
-  User,
-  Globe,
-  Bug,
-  Hash,
-  MessageSquare,
-  ExternalLink,
-  Sparkles,
-  Building2,
-} from 'lucide-react'
+  AdminCard,
+  AdminPage,
+  AdminTable,
+  AdminToolbar,
+  Alert,
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  Input,
+  KeyValueList,
+  SearchInput,
+  SegmentedControl,
+  Select,
+  Skeleton,
+  StatCard,
+  StatGrid,
+  Textarea,
+  fmtDateTime,
+  fmtNumber,
+  timeAgo,
+  type AdminColumn,
+  type Tone,
+} from '@/components/admin/kit'
+import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import { AdminDrawer, CodeBlock, Pager, adminFetch } from '@/components/admin/console-helpers'
+import { formatBusinessId } from '@/lib/tenant/business-id-format'
 
-interface ErrorLog {
+type Status = 'open' | 'investigating' | 'resolved' | 'wont_fix'
+
+interface EntryRow {
   id: string
   tenantId: string | null
   tenantName: string | null
-  tenantSlug: string | null
-  level: 'error' | 'warning' | 'info'
+  tenantBusinessId: string | null
+  level: string
   source: string
   message: string
-  stack: string | null
-  context: Record<string, unknown> | null
-  aiAnalysis: string | null
-  aiSuggestion: string | null
   groupHash: string | null
-  resolvedAt: string | null
-  createdAt: string
   errorSource: string | null
-  resolutionStatus: string | null
-  resolutionNotes: string | null
+  resolutionStatus: Status
   occurrenceCount: number | null
+  createdAt: string
   lastOccurredAt: string | null
-  reportedUrl: string | null
-  userDescription: string | null
-  reportedByUserId: string | null
   reportedByName: string | null
 }
 
-interface Stats {
-  total24h: number
-  unresolvedCount: number
-  userReportsCount: number
-  systemCount: number
-  systemNullTenantCount?: number
+interface GroupRow {
+  groupKey: string
+  groupHash: string | null
+  entries: number
+  occurrences: number
+  openEntries: number
+  vendors: number
+  firstSeen: string
+  lastSeen: string
+  latestId: string
+  message: string
+  source: string
+  level: string
 }
 
-const levelConfig = {
-  error: { icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-50 dark:bg-red-900/20', label: 'Error' },
-  warning: { icon: AlertTriangle, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20', label: 'Warning' },
-  info: { icon: Info, color: 'text-blue-500', bg: 'bg-blue-50 dark:bg-blue-900/20', label: 'Info' },
+interface Stats { last24h: number; unresolved: number; userReports: number; occurrences24h: number }
+
+interface Detail {
+  id: string
+  level: string
+  source: string
+  message: string
+  stack: string | null
+  context: unknown
+  browserInfo: unknown
+  userAgent: string | null
+  aiAnalysis: string | null
+  aiSuggestion: string | null
+  groupHash: string | null
+  groupEntries: number
+  errorSource: string
+  resolutionStatus: Status
+  resolutionNotes: string | null
+  resolvedAt: string | null
+  occurrenceCount: number
+  createdAt: string
+  lastOccurredAt: string | null
+  reportedUrl: string | null
+  userDescription: string | null
+  tenantId: string | null
+  tenantName: string | null
+  tenantBusinessId: string | null
+  reportedByName: string | null
+  reportedByEmail: string | null
 }
 
-const sourceConfig: Record<string, { icon: typeof Monitor; color: string; bg: string; label: string }> = {
-  system: { icon: Monitor, color: 'text-red-600 dark:text-red-400', bg: 'bg-red-100 dark:bg-red-900/30', label: 'System' },
-  user_report: { icon: Bug, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-100 dark:bg-blue-900/30', label: 'User Report' },
-  frontend: { icon: Globe, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-100 dark:bg-orange-900/30', label: 'Frontend' },
-}
+const PAGE_SIZE = 25
 
-const resolutionOptions = [
-  { value: 'open', label: 'Open', color: 'text-red-600 bg-red-50 dark:bg-red-900/20' },
-  { value: 'investigating', label: 'Investigating', color: 'text-amber-600 bg-amber-50 dark:bg-amber-900/20' },
-  { value: 'resolved', label: 'Resolved', color: 'text-green-600 bg-green-50 dark:bg-green-900/20' },
-  { value: 'wont_fix', label: "Won't Fix", color: 'text-gray-600 bg-gray-50 dark:bg-gray-900/20' },
-]
+const STATUS_LABEL: Record<Status, string> = { open: 'Open', investigating: 'Investigating', resolved: 'Resolved', wont_fix: 'Ignored' }
+const STATUS_TONE: Record<Status, Tone> = { open: 'danger', investigating: 'warning', resolved: 'success', wont_fix: 'neutral' }
+const LEVEL_TONE: Record<string, Tone> = { error: 'danger', warning: 'warning', info: 'info' }
+const SOURCE_LABEL: Record<string, string> = { system: 'Server', user_report: 'User report', frontend: 'Browser' }
 
-export default function SysControlErrorLogsPage() {
-  const [logs, setLogs] = useState<ErrorLog[]>([])
-  const [pagination, setPagination] = useState({ page: 1, pageSize: 50, total: 0, totalPages: 0 })
+const lastSeen = (r: { lastOccurredAt: string | null; createdAt: string }) => r.lastOccurredAt ?? r.createdAt
+
+export default function ErrorLogsPage() {
+  const canTriage = useAdminCan('error_logs')
+  const [view, setView] = useState<'list' | 'groups'>('list')
+  const [status, setStatus] = useState<'unresolved' | 'closed' | 'all'>('unresolved')
+  const [level, setLevel] = useState('')
+  const [source, setSource] = useState('')
+  const [vendor, setVendor] = useState('')
+  const [days, setDays] = useState('')
+  const [q, setQ] = useState('')
+  const [debounced, setDebounced] = useState({ q: '', vendor: '' })
+  const [groupHash, setGroupHash] = useState<{ hash: string; label: string } | null>(null)
+  const [page, setPage] = useState(1)
+
+  const [entries, setEntries] = useState<EntryRow[] | null>(null)
+  const [groups, setGroups] = useState<GroupRow[] | null>(null)
+  const [total, setTotal] = useState(0)
+  const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [levelFilter, setLevelFilter] = useState('')
-  const [sourceFilter, setSourceFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('')
-  const [tenantFilter, setTenantFilter] = useState('')
-  const [stats, setStats] = useState<Stats | null>(null)
-  const [editingNotes, setEditingNotes] = useState<string | null>(null)
-  const [notesText, setNotesText] = useState('')
+  const [flash, setFlash] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null)
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [groupBusy, setGroupBusy] = useState(false)
 
-  const fetchLogs = useCallback(async () => {
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebounced({ q: q.trim(), vendor: vendor.trim() }), 350)
+    return () => window.clearTimeout(t)
+  }, [q, vendor])
+  useEffect(() => { setPage(1) }, [view, status, level, source, days, debounced, groupHash])
+
+  const params = useMemo(() => {
+    const p = new URLSearchParams({ view: groupHash ? 'list' : view, page: String(page), pageSize: String(PAGE_SIZE), includeStats: '1' })
+    if (status !== 'all') p.set('status', status)
+    if (level) p.set('level', level)
+    if (source) p.set('source', source)
+    if (days) p.set('days', days)
+    if (debounced.q) p.set('q', debounced.q)
+    if (debounced.vendor) p.set('vendor', debounced.vendor)
+    if (groupHash) p.set('groupHash', groupHash.hash)
+    return p.toString()
+  }, [view, status, level, source, days, debounced, groupHash, page])
+
+  const load = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const params = new URLSearchParams()
-    params.set('page', String(pagination.page))
-    params.set('pageSize', String(pagination.pageSize))
-    params.set('includeStats', 'true')
-    if (levelFilter) params.set('level', levelFilter)
-    if (sourceFilter) params.set('source', sourceFilter)
-    if (statusFilter) params.set('resolutionStatus', statusFilter)
-    if (tenantFilter) params.set('tenantId', tenantFilter)
     try {
-      const res = await fetch(`/api/sys-control/error-logs?${params}`)
-      if (!res.ok) throw new Error('Failed to fetch')
-      const data = await res.json()
-      setLogs(data.data || [])
-      setPagination(data.pagination || pagination)
-      if (data.stats) setStats(data.stats)
+      const res = await adminFetch<{ data?: EntryRow[]; groups?: GroupRow[]; pagination: { total: number }; stats?: Stats }>(`/api/sys-control/error-logs?${params}`)
+      setEntries(res.data ?? null)
+      setGroups(res.groups ?? null)
+      setTotal(res.pagination.total)
+      if (res.stats) setStats(res.stats)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load error logs')
+      setError(e instanceof Error ? e.message : 'Could not load the error log')
     } finally {
       setLoading(false)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pagination.page, pagination.pageSize, levelFilter, sourceFilter, statusFilter, tenantFilter])
+  }, [params])
 
-  useEffect(() => {
-    fetchLogs()
-  }, [fetchLogs])
+  useEffect(() => { load() }, [load])
 
-  const handleStatusChange = useCallback(async (id: string, newStatus: string) => {
+  async function updateGroup(next: Status) {
+    if (!groupHash) return
+    setGroupBusy(true)
     try {
-      const res = await fetch('/api/sys-control/error-logs', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, resolutionStatus: newStatus }),
-      })
-      if (res.ok) {
-        toast.success(`Status changed to ${newStatus}`)
-        fetchLogs()
-      } else {
-        const d = await res.json()
-        toast.error(d.error || 'Failed to update status')
-      }
-    } catch {
-      toast.error('Failed to update status')
+      const res = await adminFetch<{ updated: number }>('/api/sys-control/error-logs', { method: 'PUT', json: { groupHash: groupHash.hash, resolutionStatus: next } })
+      setFlash({ tone: 'success', text: `${res.updated} entr${res.updated === 1 ? 'y' : 'ies'} marked ${STATUS_LABEL[next].toLowerCase()}.` })
+      load()
+    } catch (e) {
+      setFlash({ tone: 'danger', text: e instanceof Error ? e.message : 'Update failed' })
+    } finally {
+      setGroupBusy(false)
     }
-  }, [fetchLogs])
-
-  const handleSaveNotes = useCallback(async (id: string) => {
-    try {
-      const res = await fetch('/api/sys-control/error-logs', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, resolutionNotes: notesText }),
-      })
-      if (res.ok) {
-        toast.success('Notes saved')
-        setEditingNotes(null)
-        fetchLogs()
-      } else {
-        const d = await res.json()
-        toast.error(d.error || 'Failed to save notes')
-      }
-    } catch {
-      toast.error('Failed to save notes')
-    }
-  }, [notesText, fetchLogs])
-
-  function formatRelative(dateStr: string): string {
-    const d = new Date(dateStr)
-    const now = new Date()
-    const diff = now.getTime() - d.getTime()
-    const mins = Math.floor(diff / 60000)
-    if (mins < 1) return 'Just now'
-    if (mins < 60) return `${mins}m ago`
-    const hours = Math.floor(mins / 60)
-    if (hours < 24) return `${hours}h ago`
-    const days = Math.floor(hours / 24)
-    return `${days}d ago`
   }
 
-  function formatDate(dateStr: string): string {
-    return new Date(dateStr).toLocaleString()
-  }
+  const filtersActive = !!(level || source || days || debounced.q || debounced.vendor || status !== 'unresolved')
+  const clear = () => { setLevel(''); setSource(''); setDays(''); setQ(''); setVendor(''); setStatus('unresolved') }
+  const showingGroups = view === 'groups' && !groupHash
+
+  const entryColumns: AdminColumn<EntryRow>[] = [
+    {
+      key: 'message',
+      header: 'Error',
+      primary: true,
+      cell: (r) => (
+        <div className="min-w-0 max-w-[560px]">
+          <p className="line-clamp-2 break-words font-medium text-adm-fg">{r.message}</p>
+          <p className="truncate font-mono text-[12px] text-adm-subtle">{r.source}</p>
+        </div>
+      ),
+    },
+    { key: 'level', header: 'Severity', cell: (r) => <Badge tone={LEVEL_TONE[r.level] ?? 'neutral'}>{r.level}</Badge> },
+    { key: 'status', header: 'Status', cell: (r) => <Badge tone={STATUS_TONE[r.resolutionStatus]} dot>{STATUS_LABEL[r.resolutionStatus]}</Badge> },
+    {
+      key: 'vendor',
+      header: 'Vendor',
+      hideBelow: 'lg',
+      cell: (r) => r.tenantName ? (
+        <div className="min-w-0">
+          <p className="truncate text-adm-fg">{r.tenantName}</p>
+          {r.tenantBusinessId && <p className="adm-num text-[12px] text-adm-subtle">{formatBusinessId(r.tenantBusinessId)}</p>}
+        </div>
+      ) : <span className="text-adm-subtle">Platform</span>,
+    },
+    { key: 'kind', header: 'Origin', hideBelow: 'xl', cell: (r) => <span className="text-adm-muted">{SOURCE_LABEL[r.errorSource ?? 'system'] ?? r.errorSource}</span> },
+    { key: 'count', header: 'Times', align: 'right', hideBelow: 'md', cell: (r) => <span className="adm-num">{fmtNumber(r.occurrenceCount ?? 1)}</span> },
+    { key: 'seen', header: 'Last seen', cell: (r) => <span className="whitespace-nowrap text-adm-muted" title={fmtDateTime(lastSeen(r))}>{timeAgo(lastSeen(r))}</span> },
+  ]
+
+  const groupColumns: AdminColumn<GroupRow>[] = [
+    {
+      key: 'message',
+      header: 'Error group',
+      primary: true,
+      cell: (g) => (
+        <div className="min-w-0 max-w-[560px]">
+          <p className="line-clamp-2 break-words font-medium text-adm-fg">{g.message}</p>
+          <p className="truncate font-mono text-[12px] text-adm-subtle">{g.source}</p>
+        </div>
+      ),
+    },
+    { key: 'level', header: 'Severity', cell: (g) => <Badge tone={LEVEL_TONE[g.level] ?? 'neutral'}>{g.level}</Badge> },
+    {
+      key: 'open',
+      header: 'Open',
+      align: 'right',
+      cell: (g) => <span className={g.openEntries > 0 ? 'adm-num font-medium text-adm-danger' : 'adm-num text-adm-subtle'}>{g.openEntries} / {g.entries}</span>,
+    },
+    { key: 'occ', header: 'Times', align: 'right', hideBelow: 'md', cell: (g) => <span className="adm-num">{fmtNumber(g.occurrences)}</span> },
+    { key: 'vendors', header: 'Vendors', align: 'right', hideBelow: 'lg', cell: (g) => <span className="adm-num">{g.vendors}</span> },
+    { key: 'first', header: 'First seen', hideBelow: 'xl', cell: (g) => <span className="text-adm-muted">{timeAgo(g.firstSeen)}</span> },
+    { key: 'seen', header: 'Last seen', cell: (g) => <span className="whitespace-nowrap text-adm-muted">{timeAgo(g.lastSeen)}</span> },
+  ]
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <AlertCircle size={22} className="text-red-500" />
-        <h1 className="text-xl font-semibold text-gray-900 dark:text-white">Error Logs (All Tenants & System)</h1>
-      </div>
+    <AdminPage
+      title="Error log"
+      description="Server, browser and user-reported errors from every vendor. Repeats of the same error within a day are counted on one entry."
+      actions={<Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading && (entries !== null || groups !== null)}>Refresh</Button>}
+    >
+      <StatGrid>
+        <StatCard label="Seen in the last 24 hours" value={stats ? fmtNumber(stats.last24h) : '—'} hint={stats ? `${fmtNumber(stats.occurrences24h)} occurrences` : undefined} icon={Bug} tone="danger" loading={!stats} />
+        <StatCard label="Unresolved" value={stats ? fmtNumber(stats.unresolved) : '—'} hint="Open or investigating" icon={AlertTriangle} tone="warning" loading={!stats} />
+        <StatCard label="Open user reports" value={stats ? fmtNumber(stats.userReports) : '—'} hint="Sent from the vendor app" icon={MessageSquareWarning} tone="info" loading={!stats} />
+        <StatCard label="Showing" value={fmtNumber(total)} hint={showingGroups ? 'groups match the filters' : 'entries match the filters'} icon={Layers} tone="primary" loading={loading && entries === null && groups === null} />
+      </StatGrid>
 
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-3">
-            <p className="text-xs text-gray-500 dark:text-gray-400">Errors (24h)</p>
-            <p className="text-2xl font-bold text-gray-900 dark:text-white">{stats.total24h}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-3">
-            <p className="text-xs text-gray-500 dark:text-gray-400">Unresolved</p>
-            <p className="text-2xl font-bold text-red-600">{stats.unresolvedCount}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-3">
-            <p className="text-xs text-gray-500 dark:text-gray-400">User Reports (open)</p>
-            <p className="text-2xl font-bold text-blue-600">{stats.userReportsCount}</p>
-          </div>
-          <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-3">
-            <p className="text-xs text-gray-500 dark:text-gray-400">System errors</p>
-            <p className="text-2xl font-bold text-orange-600">{stats.systemCount}</p>
-          </div>
-        </div>
-      )}
+      {flash && <Alert tone={flash.tone} action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash.text}</Alert>}
 
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-1.5">
-          <Filter size={14} className="text-gray-400" />
-          <span className="text-sm text-gray-500 dark:text-gray-400">Level:</span>
-          <select
-            value={levelFilter}
-            onChange={(e) => {
-              setLevelFilter(e.target.value)
-              setPagination((p) => ({ ...p, page: 1 }))
-              setExpandedId(null)
-            }}
-            className="text-sm border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-          >
-            <option value="">All</option>
-            <option value="error">Errors</option>
-            <option value="warning">Warnings</option>
-            <option value="info">Info</option>
-          </select>
+      <AdminCard flush>
+        <div className="space-y-3 border-b border-adm-border p-4 sm:p-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedControl ariaLabel="View" size="sm" value={view} onChange={(v) => { setView(v); setGroupHash(null) }} options={[{ value: 'list', label: 'Entries' }, { value: 'groups', label: 'Grouped' }]} />
+            <SegmentedControl ariaLabel="Status" size="sm" value={status} onChange={setStatus} options={[{ value: 'unresolved', label: 'Unresolved' }, { value: 'closed', label: 'Resolved / ignored' }, { value: 'all', label: 'All' }]} />
+          </div>
+          <AdminToolbar>
+            <SearchInput size="sm" wrapperClassName="w-full sm:w-72" placeholder="Message, route or page" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search errors" />
+            <Input size="sm" wrapperClassName="w-full sm:w-52" placeholder="Vendor PL-123456 or “system”" value={vendor} onChange={(e) => setVendor(e.target.value)} aria-label="Vendor" />
+            <Select size="sm" className="w-full min-[480px]:w-auto" value={level} onChange={(e) => setLevel(e.target.value)} aria-label="Severity">
+              <option value="">All severities</option>
+              <option value="error">Error</option>
+              <option value="warning">Warning</option>
+              <option value="info">Info</option>
+            </Select>
+            <Select size="sm" className="w-full min-[480px]:w-auto" value={source} onChange={(e) => setSource(e.target.value)} aria-label="Origin">
+              <option value="">All origins</option>
+              <option value="system">Server</option>
+              <option value="frontend">Browser</option>
+              <option value="user_report">User reports</option>
+            </Select>
+            <Select size="sm" className="w-full min-[480px]:w-auto" value={days} onChange={(e) => setDays(e.target.value)} aria-label="Period">
+              <option value="">Any time</option>
+              <option value="1">Last 24 hours</option>
+              <option value="7">Last 7 days</option>
+              <option value="30">Last 30 days</option>
+            </Select>
+            {filtersActive && <Button size="sm" variant="ghost" onClick={clear}>Reset</Button>}
+          </AdminToolbar>
+          {groupHash && (
+            <div className="flex flex-col gap-2 rounded-lg border border-adm-border bg-adm-surface-2 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-w-0 text-[13px] text-adm-muted">
+                Entries in group <span className="font-medium text-adm-fg">“{groupHash.label.slice(0, 90)}{groupHash.label.length > 90 ? '…' : ''}”</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {canTriage && (
+                  <>
+                    <Button size="sm" variant="primary" loading={groupBusy} onClick={() => updateGroup('resolved')}>Resolve all</Button>
+                    <Button size="sm" disabled={groupBusy} onClick={() => updateGroup('wont_fix')}>Ignore all</Button>
+                    <Button size="sm" disabled={groupBusy} onClick={() => updateGroup('open')}>Reopen all</Button>
+                  </>
+                )}
+                <Button size="sm" variant="ghost" icon={X} onClick={() => setGroupHash(null)}>Back to groups</Button>
+              </div>
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Source:</span>
-          <select
-            value={sourceFilter}
-            onChange={(e) => {
-              setSourceFilter(e.target.value)
-              setPagination((p) => ({ ...p, page: 1 }))
-              setExpandedId(null)
-            }}
-            className="text-sm border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-          >
-            <option value="">All</option>
-            <option value="system">System</option>
-            <option value="user_report">User Report</option>
-            <option value="frontend">Frontend</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Status:</span>
-          <select
-            value={statusFilter}
-            onChange={(e) => {
-              setStatusFilter(e.target.value)
-              setPagination((p) => ({ ...p, page: 1 }))
-              setExpandedId(null)
-            }}
-            className="text-sm border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-          >
-            <option value="">All</option>
-            <option value="open">Open</option>
-            <option value="investigating">Investigating</option>
-            <option value="resolved">Resolved</option>
-            <option value="wont_fix">Won&apos;t Fix</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Tenant:</span>
-          <select
-            value={tenantFilter}
-            onChange={(e) => {
-              setTenantFilter(e.target.value)
-              setPagination((p) => ({ ...p, page: 1 }))
-              setExpandedId(null)
-            }}
-            className="text-sm border border-gray-300 dark:border-gray-600 rounded-md px-2 py-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-          >
-            <option value="">All</option>
-            <option value="system">System (no tenant)</option>
-          </select>
-        </div>
-      </div>
 
-      <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
         {error ? (
-          <div className="p-8 text-center">
-            <AlertCircle size={40} className="mx-auto text-red-400 mb-2" />
-            <p className="text-gray-500 dark:text-gray-400">{error}</p>
+          <div className="p-4 sm:p-5">
+            <Alert tone="danger" title="Could not load the error log" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Alert>
           </div>
-        ) : loading ? (
-          <div className="p-8 text-center text-gray-400">Loading error logs...</div>
-        ) : logs.length === 0 ? (
-          <div className="p-8 text-center">
-            <CheckCircle size={40} className="mx-auto text-green-400 mb-2" />
-            <p className="text-gray-500 dark:text-gray-400">No errors found</p>
-          </div>
+        ) : showingGroups ? (
+          <AdminTable
+            columns={groupColumns}
+            rows={groups ?? []}
+            rowKey={(g) => g.groupKey}
+            onRowClick={(g) => (g.groupHash ? setGroupHash({ hash: g.groupHash, label: g.message }) : setOpenId(g.latestId))}
+            loading={loading}
+            minWidth={760}
+            empty={<EmptyState icon={CheckCircle2} title={filtersActive ? 'No groups match these filters' : 'No unresolved errors'} action={filtersActive ? <Button size="sm" onClick={clear}>Reset filters</Button> : undefined} />}
+          />
         ) : (
-          <div className="divide-y divide-gray-100 dark:divide-gray-700">
-            {logs.map((log) => {
-              const config = levelConfig[log.level]
-              const LevelIcon = config.icon
-              const isExpanded = expandedId === log.id
-              const src = sourceConfig[log.errorSource || 'system'] || sourceConfig.system
-              const SrcIcon = src.icon
-              const status = log.resolutionStatus || 'open'
-              const count = log.occurrenceCount || 1
-              const tenantLabel = log.tenantId
-                ? (log.tenantName || log.tenantSlug || log.tenantId)
-                : 'System'
-
-              return (
-                <div key={log.id} className={status === 'resolved' || status === 'wont_fix' ? 'opacity-60' : ''}>
-                  <button
-                    type="button"
-                    onClick={() => setExpandedId(isExpanded ? null : log.id)}
-                    className="w-full flex items-start gap-3 p-4 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
-                  >
-                    <LevelIcon size={18} className={`mt-0.5 flex-shrink-0 ${config.color}`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                          {log.message.slice(0, 120)}{log.message.length > 120 ? '...' : ''}
-                        </span>
-                        <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded ${src.bg} ${src.color}`}>
-                          <SrcIcon size={10} />
-                          {src.label}
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300" title="Tenant">
-                          <Building2 size={10} />
-                          {tenantLabel}
-                        </span>
-                        {count > 1 && (
-                          <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                            <Hash size={9} />
-                            x{count}
-                          </span>
-                        )}
-                        {status !== 'open' && (
-                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${resolutionOptions.find((o) => o.value === status)?.color || ''}`}>
-                            {resolutionOptions.find((o) => o.value === status)?.label || status}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3 mt-1 text-xs text-gray-500 dark:text-gray-400">
-                        <span className="font-mono">{log.source}</span>
-                        <span className="flex items-center gap-1">
-                          <Clock size={11} />
-                          {formatRelative(log.createdAt)}
-                        </span>
-                        {log.reportedByName && (
-                          <span className="flex items-center gap-1">
-                            <User size={11} />
-                            {log.reportedByName}
-                          </span>
-                        )}
-                        {log.aiAnalysis && (
-                          <span className="flex items-center gap-1 text-purple-500">
-                            <Sparkles size={11} />
-                            AI analyzed
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {isExpanded ? <ChevronUp size={16} className="text-gray-400 flex-shrink-0 mt-1" /> : <ChevronDown size={16} className="text-gray-400 flex-shrink-0 mt-1" />}
-                  </button>
-
-                  {isExpanded && (
-                    <div className="px-4 pb-4 space-y-3 border-t border-gray-100 dark:border-gray-700 pt-3 ml-8">
-                      {log.userDescription && (
-                        <div className="bg-blue-50 dark:bg-blue-900/20 rounded p-3 border border-blue-200 dark:border-blue-800">
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <MessageSquare size={14} className="text-blue-500" />
-                            <h4 className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase">User Description</h4>
-                            {log.reportedByName && <span className="text-xs text-blue-500 ml-2">by {log.reportedByName}</span>}
-                          </div>
-                          <p className="text-sm text-blue-900 dark:text-blue-200 whitespace-pre-wrap">{log.userDescription}</p>
-                        </div>
-                      )}
-                      {log.reportedUrl && (
-                        <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-                          <ExternalLink size={12} />
-                          <span>Page: {log.reportedUrl}</span>
-                        </div>
-                      )}
-                      <div>
-                        <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1">Error Message</h4>
-                        <p className="text-sm text-gray-700 dark:text-gray-300 font-mono bg-gray-50 dark:bg-gray-900 rounded p-2 break-all">{log.message}</p>
-                      </div>
-                      {log.context && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1">Context</h4>
-                          <pre className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto">
-                            {JSON.stringify(log.context, null, 2)}
-                          </pre>
-                        </div>
-                      )}
-                      {log.stack && (
-                        <div>
-                          <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1">Stack Trace</h4>
-                          <pre className="text-xs text-gray-600 dark:text-gray-400 font-mono bg-gray-50 dark:bg-gray-900 rounded p-2 overflow-x-auto max-h-48 overflow-y-auto">
-                            {log.stack}
-                          </pre>
-                        </div>
-                      )}
-                      {log.aiAnalysis && (
-                        <div className="bg-purple-50 dark:bg-purple-900/20 rounded p-3 border border-purple-200 dark:border-purple-800">
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <Sparkles size={14} className="text-purple-500" />
-                            <h4 className="text-xs font-semibold text-purple-700 dark:text-purple-300 uppercase">AI Analysis</h4>
-                          </div>
-                          <p className="text-sm text-purple-900 dark:text-purple-200">{log.aiAnalysis}</p>
-                          {log.aiSuggestion && (
-                            <div className="mt-2 pt-2 border-t border-purple-200 dark:border-purple-700">
-                              <h5 className="text-xs font-semibold text-purple-600 dark:text-purple-400 mb-1">Suggested Fix</h5>
-                              <p className="text-sm text-purple-800 dark:text-purple-300">{log.aiSuggestion}</p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <div className="bg-gray-50 dark:bg-gray-900 rounded p-3 space-y-2">
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Status:</span>
-                          <div className="flex gap-1">
-                            {resolutionOptions.map((opt) => (
-                              <button
-                                key={opt.value}
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleStatusChange(log.id, opt.value)
-                                }}
-                                className={`px-2 py-0.5 text-xs rounded font-medium transition-colors ${
-                                  status === opt.value ? opt.color + ' ring-1 ring-current' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800'
-                                }`}
-                              >
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Notes:</span>
-                            {editingNotes !== log.id && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setEditingNotes(log.id)
-                                  setNotesText(log.resolutionNotes || '')
-                                }}
-                                className="text-xs text-blue-500 hover:text-blue-700"
-                              >
-                                {log.resolutionNotes ? 'Edit' : 'Add notes'}
-                              </button>
-                            )}
-                          </div>
-                          {editingNotes === log.id ? (
-                            <div className="mt-1 space-y-1" onClick={(e) => e.stopPropagation()}>
-                              <textarea
-                                value={notesText}
-                                onChange={(e) => setNotesText(e.target.value)}
-                                className="w-full px-2 py-1 text-sm border rounded bg-white dark:bg-gray-800 dark:border-gray-600"
-                                rows={2}
-                                placeholder="Add resolution notes..."
-                              />
-                              <div className="flex gap-1">
-                                <button type="button" onClick={() => handleSaveNotes(log.id)} className="px-2 py-0.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
-                                  Save
-                                </button>
-                                <button type="button" onClick={() => setEditingNotes(null)} className="px-2 py-0.5 text-xs border rounded hover:bg-gray-100 dark:hover:bg-gray-700">
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          ) : log.resolutionNotes ? (
-                            <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">{log.resolutionNotes}</p>
-                          ) : (
-                            <p className="text-xs text-gray-400 mt-1 italic">No notes</p>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-gray-400">
-                        <span>Created: {formatDate(log.createdAt)}</span>
-                        {log.lastOccurredAt && count > 1 && <span>Last seen: {formatDate(log.lastOccurredAt)}</span>}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+          <AdminTable
+            columns={entryColumns}
+            rows={entries ?? []}
+            rowKey={(r) => r.id}
+            onRowClick={(r) => setOpenId(r.id)}
+            loading={loading}
+            minWidth={820}
+            empty={<EmptyState icon={CheckCircle2} title={filtersActive || groupHash ? 'No entries match these filters' : 'No unresolved errors'} description={!filtersActive && !groupHash ? 'New errors appear here as they happen.' : undefined} action={filtersActive ? <Button size="sm" onClick={clear}>Reset filters</Button> : undefined} />}
+          />
+        )}
+        {total > 0 && (
+          <div className="border-t border-adm-border px-4 py-3 sm:px-5">
+            <Pager page={page} pageSize={PAGE_SIZE} total={total} onPage={setPage} />
           </div>
         )}
+      </AdminCard>
 
-        <Pagination
-          page={pagination.page}
-          pageSize={pagination.pageSize}
-          total={pagination.total}
-          totalPages={pagination.totalPages}
-          onPageChange={(page) => setPagination((p) => ({ ...p, page }))}
-          onPageSizeChange={(pageSize) => setPagination((p) => ({ ...p, pageSize, page: 1 }))}
-          className="border-t px-4"
-        />
-      </div>
-    </div>
+      <ErrorDetailDrawer
+        id={openId}
+        onClose={() => setOpenId(null)}
+        onChanged={(msg) => { setFlash({ tone: 'success', text: msg }); load() }}
+        onShowGroup={(hash, label) => { setOpenId(null); setView('list'); setGroupHash({ hash, label }) }}
+      />
+    </AdminPage>
+  )
+}
+
+function ErrorDetailDrawer({
+  id,
+  onClose,
+  onChanged,
+  onShowGroup,
+}: {
+  id: string | null
+  onClose: () => void
+  onChanged: (msg: string) => void
+  onShowGroup: (hash: string, label: string) => void
+}) {
+  const canTriage = useAdminCan('error_logs')
+  const [detail, setDetail] = useState<Detail | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notes, setNotes] = useState('')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!id) return
+    setDetail(null)
+    setError(null)
+    setActionError(null)
+    adminFetch<Detail>(`/api/sys-control/error-logs/${id}`)
+      .then((d) => { setDetail(d); setNotes(d.resolutionNotes ?? '') })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load this entry'))
+  }, [id])
+
+  async function update(body: { resolutionStatus?: Status; resolutionNotes?: string }, key: string, msg: string) {
+    if (!detail) return
+    setBusy(key)
+    setActionError(null)
+    try {
+      await adminFetch('/api/sys-control/error-logs', { method: 'PUT', json: { id: detail.id, ...body } })
+      setDetail({ ...detail, ...(body.resolutionStatus ? { resolutionStatus: body.resolutionStatus } : {}), ...(body.resolutionNotes !== undefined ? { resolutionNotes: body.resolutionNotes } : {}) })
+      onChanged(msg)
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Update failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const closed = detail && (detail.resolutionStatus === 'resolved' || detail.resolutionStatus === 'wont_fix')
+  const notesChanged = detail && notes !== (detail.resolutionNotes ?? '')
+
+  return (
+    <AdminDrawer
+      open={!!id}
+      onClose={onClose}
+      title="Error details"
+      description={detail ? `${detail.source} · ${fmtDateTime(detail.lastOccurredAt ?? detail.createdAt)}` : undefined}
+      footer={detail && canTriage ? (
+        closed ? (
+          <Button variant="primary" loading={busy === 'open'} onClick={() => update({ resolutionStatus: 'open' }, 'open', 'Entry reopened.')}>Reopen</Button>
+        ) : (
+          <>
+            {detail.resolutionStatus !== 'investigating' && (
+              <Button loading={busy === 'investigating'} disabled={!!busy} onClick={() => update({ resolutionStatus: 'investigating' }, 'investigating', 'Marked as investigating.')}>Investigating</Button>
+            )}
+            <Button loading={busy === 'wont_fix'} disabled={!!busy} onClick={() => update({ resolutionStatus: 'wont_fix', ...(notesChanged ? { resolutionNotes: notes } : {}) }, 'wont_fix', 'Entry ignored.')}>Ignore</Button>
+            <Button variant="primary" loading={busy === 'resolved'} disabled={!!busy} onClick={() => update({ resolutionStatus: 'resolved', ...(notesChanged ? { resolutionNotes: notes } : {}) }, 'resolved', 'Entry resolved.')}>Resolve</Button>
+          </>
+        )
+      ) : undefined}
+    >
+      {error ? (
+        <Alert tone="danger">{error}</Alert>
+      ) : !detail ? (
+        <div className="space-y-3">
+          <Skeleton className="h-6 w-2/3" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {actionError && <Alert tone="danger">{actionError}</Alert>}
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-1.5">
+              <Badge tone={LEVEL_TONE[detail.level] ?? 'neutral'}>{detail.level}</Badge>
+              <Badge tone={STATUS_TONE[detail.resolutionStatus]} dot>{STATUS_LABEL[detail.resolutionStatus]}</Badge>
+              <Badge>{SOURCE_LABEL[detail.errorSource] ?? detail.errorSource}</Badge>
+            </div>
+            <p className="break-words text-[14px] font-medium text-adm-fg">{detail.message}</p>
+          </div>
+
+          <KeyValueList
+            items={[
+              { label: 'Route / component', value: <span className="break-all font-mono text-[12.5px]">{detail.source}</span> },
+              {
+                label: 'Vendor',
+                value: detail.tenantId ? (
+                  <Link href={`/sys-control/vendors/${detail.tenantId}`} className="text-adm-primary hover:underline">
+                    {detail.tenantName ?? 'Vendor'}{detail.tenantBusinessId ? ` · ${formatBusinessId(detail.tenantBusinessId)}` : ''}
+                  </Link>
+                ) : 'Platform',
+              },
+              { label: 'Times seen', value: fmtNumber(detail.occurrenceCount) },
+              { label: 'First seen', value: fmtDateTime(detail.createdAt) },
+              ...(detail.lastOccurredAt ? [{ label: 'Last seen', value: fmtDateTime(detail.lastOccurredAt) }] : []),
+              ...(detail.reportedByName ? [{ label: 'Reported by', value: `${detail.reportedByName}${detail.reportedByEmail ? ` · ${detail.reportedByEmail}` : ''}` }] : []),
+              ...(detail.reportedUrl ? [{ label: 'Page', value: <span className="break-all">{detail.reportedUrl}</span> }] : []),
+              ...(detail.resolvedAt ? [{ label: 'Closed', value: fmtDateTime(detail.resolvedAt) }] : []),
+            ]}
+          />
+
+          {detail.groupHash && detail.groupEntries > 1 && (
+            <Button size="sm" variant="secondary" icon={Layers} onClick={() => onShowGroup(detail.groupHash!, detail.message)}>
+              Show all {detail.groupEntries} entries in this group
+            </Button>
+          )}
+
+          {detail.userDescription && (
+            <section className="space-y-1.5">
+              <h3 className="text-[13px] font-semibold text-adm-fg">What the user said</h3>
+              <p className="whitespace-pre-wrap break-words text-[13.5px] text-adm-muted">{detail.userDescription}</p>
+            </section>
+          )}
+
+          <section className="space-y-1.5">
+            <h3 className="text-[13px] font-semibold text-adm-fg">Stack trace</h3>
+            {detail.stack ? <CodeBlock>{detail.stack}</CodeBlock> : <p className="text-[13px] text-adm-subtle">No stack trace was recorded.</p>}
+            <p className="text-[12px] text-adm-subtle">Passwords, tokens, connection strings and server paths are hidden.</p>
+          </section>
+
+          {detail.context != null && (
+            <section className="space-y-1.5">
+              <h3 className="text-[13px] font-semibold text-adm-fg">Request context</h3>
+              <CodeBlock maxHeight={240}>{JSON.stringify(detail.context, null, 2)}</CodeBlock>
+            </section>
+          )}
+
+          {(detail.aiAnalysis || detail.aiSuggestion) && (
+            <section className="space-y-1.5">
+              <h3 className="text-[13px] font-semibold text-adm-fg">Automatic analysis</h3>
+              {detail.aiAnalysis && <p className="whitespace-pre-wrap text-[13.5px] text-adm-muted">{detail.aiAnalysis}</p>}
+              {detail.aiSuggestion && <p className="whitespace-pre-wrap text-[13.5px] text-adm-muted"><span className="font-medium text-adm-fg">Suggested fix: </span>{detail.aiSuggestion}</p>}
+            </section>
+          )}
+
+          <section className="space-y-2">
+            <Field label="Notes" htmlFor="err-notes" hint="Visible to other admins. Saved with the status change, or on its own.">
+              <Textarea id="err-notes" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} maxLength={5000} />
+            </Field>
+            <Button size="sm" disabled={!notesChanged || !!busy || !canTriage} loading={busy === 'notes'} onClick={() => update({ resolutionNotes: notes }, 'notes', 'Notes saved.')}>Save notes</Button>
+          </section>
+        </div>
+      )}
+    </AdminDrawer>
   )
 }

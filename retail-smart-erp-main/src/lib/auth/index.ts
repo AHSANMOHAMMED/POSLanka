@@ -8,6 +8,7 @@ import { users, tenants, accounts, accountTenants } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
 import { getLiveCompanyUser, isAccountActive } from '@/lib/auth/live-user'
+import { consumeImpersonationToken } from '@/lib/auth/impersonation-token'
 
 // ---------------------------------------------------------------------------
 // Brute-force rate limiter (database-backed)
@@ -345,14 +346,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (!secret) return null
 
         try {
-          const payload = jwt.verify(credentials.impersonateToken as string, secret) as {
-            type: string
-            tenantId: string
-            adminId: string
-            adminEmail?: string
-          }
-          if (payload.type !== 'vendor-impersonate') {
-            throw new Error('Invalid token type')
+          const ip =
+            request?.headers?.get?.('x-forwarded-for')?.split(',')[0]?.trim() ||
+            request?.headers?.get?.('x-real-ip') ||
+            'unknown'
+          // Verifies the signature and burns the link's jti atomically: each link works once
+          const payload = await consumeImpersonationToken(credentials.impersonateToken as string, ip)
+          if (!payload) {
+            throw new Error('Invalid, expired or already used impersonation link')
           }
 
           const tenant = await db.query.tenants.findFirst({
@@ -371,10 +372,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             throw new Error('No active owner for this vendor')
           }
 
-          const ip =
-            request?.headers?.get?.('x-forwarded-for')?.split(',')[0]?.trim() ||
-            request?.headers?.get?.('x-real-ip') ||
-            'unknown'
           const userAgent = request?.headers?.get?.('user-agent') || 'unknown'
 
           return {
@@ -452,6 +449,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id
+        // Sign-in time in ms (iat is whole seconds and is re-issued on refresh)
+        token.authAt = Date.now()
         token.accountId = user.accountId
         token.role = user.role
         token.customRoleId = user.customRoleId || null
@@ -514,6 +513,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             token.tenantId as string,
             token.id as string,
             typeof token.iat === 'number' ? token.iat : undefined,
+            typeof token.authAt === 'number' ? token.authAt : undefined,
           )
           if (!live.ok) {
             token.invalid = true
@@ -753,7 +753,7 @@ export async function authWithCompany(): Promise<CompanySession | null> {
 
       // Mobile tokens live 12h: re-check the user on every request so deactivation, a
       // password change or a demotion takes effect immediately (role comes from the DB).
-      const live = await getLiveCompanyUser(payload.tenantId, payload.sub, (payload as { iat?: number }).iat)
+      const live = await getLiveCompanyUser(payload.tenantId, payload.sub, (payload as { iat?: number }).iat, (payload as { authAt?: number }).authAt)
       if (!live.ok) return null
       payload.role = live.role
       payload.customRoleId = live.customRoleId

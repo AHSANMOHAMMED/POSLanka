@@ -13,6 +13,6 @@ export async function GET() {
   const permError = requirePermission(session, 'viewActivityLogs')
   if (permError) return permError
 
-  const progress = getAuditProgress(session.user.tenantId)
+  const progress = await getAuditProgress(session.user.tenantId)
   return NextResponse.json(progress)
 }

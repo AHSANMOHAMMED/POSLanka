@@ -5,6 +5,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation'
 import { salesLookupSchema } from '@/lib/validation/schemas/sales'
 import { lookupSaleByCode } from '@/lib/sales/returns'
+import { requireModule } from '@/lib/auth/roles'
 
 /**
  * GET /api/sales/lookup?code=<INV-…|RTN-…|OFF-…>
@@ -19,6 +20,9 @@ export async function GET(request: NextRequest) {
   try {
     const session = await authWithCompany()
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'selling')
+    if (moduleError) return moduleError
 
     const parsed = validateSearchParams(request, salesLookupSchema)
     if (!parsed.success) return parsed.response

@@ -15,6 +15,7 @@ const TOKEN_KEY = 'poslanka_token'
 const USER_KEY = 'poslanka_user'
 const API_BASE_KEY = 'poslanka_api_base'
 const TENANT_SLUG_KEY = 'poslanka_tenant_slug'
+const BUSINESS_ID_KEY = 'poslanka_business_id'
 
 export const DEFAULT_API_URL = 'http://localhost:3000'
 export const REQUEST_TIMEOUT_MS = 15_000
@@ -30,6 +31,25 @@ export interface AuthUser {
   tenantSlug: string
   tenantName: string
   businessType?: string | null
+  /** Vendor Business ID (e.g. PL985633) — what staff type at sign-in. */
+  businessId?: string | null
+  customRoleId?: string | null
+  customRoleName?: string | null
+  /** Server-effective permissions (custom roles, overrides, module access applied). */
+  permissions?: Record<string, boolean> | null
+}
+
+/** "pl-482 913" → "PL482913"; null when it isn't shaped like a Business ID. */
+export function normalizeBusinessId(input: string | null | undefined): string | null {
+  if (!input) return null
+  const compact = input.trim().toUpperCase().replace(/[\s-]/g, '')
+  return /^PL\d{6}$/.test(compact) ? compact : null
+}
+
+/** PL482913 → PL-482913 (display form). */
+export function formatBusinessId(id: string | null | undefined): string {
+  if (!id) return ''
+  return /^PL\d{6}$/.test(id) ? `${id.slice(0, 2)}-${id.slice(2)}` : id
 }
 
 export type ApiResult<T> =
@@ -60,24 +80,32 @@ export function getApiBase() {
 export interface SavedSettings {
   apiUrl: string
   tenantSlug: string
+  /** Remembered Business ID (preferred over the slug); optional for old callers. */
+  businessId?: string
 }
 
-/** Loads the remembered server URL + company slug and applies the URL as the API base. */
+/** Loads the remembered server URL, Business ID + company slug and applies the URL as the API base. */
 export async function loadSavedSettings(): Promise<SavedSettings> {
-  const [savedUrl, savedSlug] = await Promise.all([
+  const [savedUrl, savedSlug, savedBusinessId] = await Promise.all([
     SecureStore.getItemAsync(API_BASE_KEY),
     SecureStore.getItemAsync(TENANT_SLUG_KEY),
+    SecureStore.getItemAsync(BUSINESS_ID_KEY),
   ])
   if (savedUrl) setApiBase(savedUrl)
-  return { apiUrl: savedUrl || apiBase, tenantSlug: savedSlug || '' }
+  return { apiUrl: savedUrl || apiBase, tenantSlug: savedSlug || '', businessId: savedBusinessId || '' }
 }
 
 export async function saveSettings(settings: SavedSettings) {
   setApiBase(settings.apiUrl)
-  await Promise.all([
+  const writes: Promise<void>[] = [
     SecureStore.setItemAsync(API_BASE_KEY, getApiBase()),
     SecureStore.setItemAsync(TENANT_SLUG_KEY, settings.tenantSlug || ''),
-  ])
+  ]
+  // Only overwrite the remembered Business ID when the caller passes one.
+  if (settings.businessId !== undefined) {
+    writes.push(SecureStore.setItemAsync(BUSINESS_ID_KEY, settings.businessId || ''))
+  }
+  await Promise.all(writes)
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +148,38 @@ export async function setUser(user: AuthUser | null) {
     return
   }
   await SecureStore.setItemAsync(USER_KEY, JSON.stringify(user))
+}
+
+interface EffectivePermissionsResponse {
+  permissions?: Record<string, boolean>
+  role?: string
+  customRoleId?: string | null
+  customRoleName?: string | null
+  businessId?: string | null
+}
+
+/**
+ * Pulls the server-effective permissions (custom roles, overrides, module access) and merges
+ * them into the stored user so role changes made by the owner show up without re-login.
+ * Offline / server errors keep the last known values; a 401 goes through the normal logout.
+ */
+export async function refreshPermissions(): Promise<AuthUser | null> {
+  const user = await getUser()
+  if (!user) return null
+  const res = await api<EffectivePermissionsResponse>('/api/role-permissions/effective', { method: 'GET' })
+  if (!res.ok || !res.data || !res.data.permissions) return user
+  const current = await getUser()
+  if (!current || current.id !== user.id) return current
+  const next: AuthUser = {
+    ...current,
+    permissions: res.data.permissions,
+    role: res.data.role || current.role,
+    customRoleId: res.data.customRoleId !== undefined ? res.data.customRoleId : current.customRoleId,
+    customRoleName: res.data.customRoleName !== undefined ? res.data.customRoleName : current.customRoleName,
+    businessId: res.data.businessId || current.businessId,
+  }
+  await setUser(next)
+  return next
 }
 
 /** Clears token + user. Remembered server URL and slug are kept. */

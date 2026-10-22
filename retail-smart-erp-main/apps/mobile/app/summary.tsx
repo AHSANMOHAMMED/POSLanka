@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, RefreshControl } from 'react-native'
 import { router } from 'expo-router'
 import { apiGet, asList, getUser, qs, type AuthUser } from '../src/lib/api'
-import { hasPermission, roleLabel } from '../src/lib/roles'
+import { hasPermission, hasAnyPermission, displayRole } from '../src/lib/roles'
 import { fetchCurrentShift, paymentMethodLabel, shiftCounterName, shiftWarehouseName, type Shift } from '../src/lib/shift'
 import { THEME, formatLKR } from '../src/lib/theme'
-import { LoadingView, ErrorView, InlineNotice } from '../src/components/StateViews'
+import { LoadingView, ErrorView, InlineNotice, EmptyView } from '../src/components/StateViews'
+import { useHeaderPad } from '../src/lib/safeArea'
+import { goBack } from '../src/lib/nav'
 
 interface DashboardStats {
   today: { totalSales: number; totalReturns: number; netSales: number; transactionCount: number; returnCount: number; pendingCount: number }
@@ -97,6 +99,7 @@ function aggregateShiftSales(rows: SaleRow[], shiftId: string, truncated: boolea
 }
 
 export default function ManagerDailySummaryScreen() {
+  const headerPad = useHeaderPad()
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
   const [shift, setShift] = useState<Shift | null>(null)
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -114,14 +117,23 @@ export default function ManagerDailySummaryScreen() {
     setError(null)
     setNotice(null)
 
+    // Only call what the role may use (server enforces the same permissions):
+    // dashboard-stats → viewReports, pos-daily-summary → managePOS, own shift → createSales.
     const wantsReports = hasPermission(u, 'viewReports')
+    const wantsDaily = hasPermission(u, 'managePOS')
+    const wantsShift = hasPermission(u, 'createSales')
+    if (!wantsReports && !wantsDaily && !wantsShift) {
+      setLoading(false)
+      setRefreshing(false)
+      return
+    }
     const [shiftRes, statsRes, dailyRes] = await Promise.all([
-      fetchCurrentShift(),
+      wantsShift ? fetchCurrentShift() : Promise.resolve(null),
       wantsReports ? apiGet<DashboardStats>('/api/sales/dashboard-stats') : Promise.resolve(null),
-      apiGet<DailySummary>(`/api/pos-daily-summary${qs({ date: todayISO() })}`),
+      wantsDaily ? apiGet<DailySummary>(`/api/pos-daily-summary${qs({ date: todayISO() })}`) : Promise.resolve(null),
     ])
 
-    const currentShift = shiftRes.ok ? shiftRes.data.shift : null
+    const currentShift = shiftRes && shiftRes.ok ? shiftRes.data.shift : null
     setShift(currentShift)
 
     let anyOk = false
@@ -139,12 +151,12 @@ export default function ManagerDailySummaryScreen() {
       setStats(null)
     }
 
-    if (dailyRes.ok) {
+    if (dailyRes && dailyRes.ok) {
       setDaily(dailyRes.data)
       anyOk = true
     } else {
       setDaily(null)
-      if (dailyRes.status !== 403) problems.push(`Daily summary: ${dailyRes.error}`)
+      if (dailyRes && dailyRes.status !== 403) problems.push(`Daily summary: ${dailyRes.error}`)
     }
 
     // Cashiers (no viewReports) see their own open shift's figures from /api/sales.
@@ -161,7 +173,7 @@ export default function ManagerDailySummaryScreen() {
       }
     } else {
       setShiftStats(null)
-      if (shiftRes.ok) anyOk = true
+      if (!shiftRes || shiftRes.ok) anyOk = true
       else problems.push(`Shift: ${shiftRes.error}`)
     }
 
@@ -181,8 +193,8 @@ export default function ManagerDailySummaryScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => (router.canGoBack() ? router.back() : router.replace('/pos'))} style={styles.backButton}>
+      <View style={[styles.header, headerPad]}>
+        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -192,11 +204,13 @@ export default function ManagerDailySummaryScreen() {
           </Text>
         </View>
         <View style={styles.syncBadge}>
-          <Text style={styles.syncBadgeText}>{roleLabel(user?.role)}</Text>
+          <Text style={styles.syncBadgeText} numberOfLines={1}>{displayRole(user)}</Text>
         </View>
       </View>
 
-      {loading ? (
+      {user && !hasAnyPermission(user, ['viewReports', 'managePOS', 'createSales']) ? (
+        <EmptyView icon="🔒" title="Not available for your role" subtitle="Sales figures are only for selling, POS or report roles." />
+      ) : loading ? (
         <LoadingView text="Loading today's figures…" />
       ) : error ? (
         <ErrorView message={error} onRetry={() => load()} />
@@ -417,7 +431,7 @@ const styles = StyleSheet.create({
   headerCenter: { alignItems: 'center', flex: 1 },
   headerTitle: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
   headerSub: { fontSize: 10, fontFamily: 'monospace', color: THEME.colors.textMuted },
-  syncBadge: { backgroundColor: THEME.colors.tertiaryLight, paddingHorizontal: 8, paddingVertical: 4, borderRadius: THEME.radius.sm },
+  syncBadge: { backgroundColor: THEME.colors.tertiaryLight, paddingHorizontal: 8, paddingVertical: 4, borderRadius: THEME.radius.sm, maxWidth: 120 },
   syncBadgeText: { fontSize: 10, fontFamily: 'monospace', fontWeight: '700', color: THEME.colors.tertiary },
   content: { flex: 1 },
   contentInner: { padding: THEME.spacing.lg, paddingBottom: 40, gap: 16 },

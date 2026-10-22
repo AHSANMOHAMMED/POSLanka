@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { subscriptions, tenants, lockoutEvents } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
-import { adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
+import { and, eq, sql } from 'drizzle-orm'
+import { adminAuthError, adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { sysUpdateSubscriptionSchema } from '@/lib/validation/schemas/sys-control'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { resumedSubscriptionStatus, syncTenantPlanExpiry } from '@/lib/billing/subscription-state'
 
 export async function PUT(
   request: NextRequest,
@@ -17,9 +18,9 @@ export async function PUT(
     const rateLimited = await withRateLimit('/api/sys-control/subscriptions', STRICT_LIMIT)
     if (rateLimited) return rateLimited
 
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('billing')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const paramsParsed = validateParams(await params, idParamSchema)
@@ -27,7 +28,7 @@ export async function PUT(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, sysUpdateSubscriptionSchema)
     if (!parsed.success) return parsed.response
-    const { extendMonths, adjustMonths, setEndDate, reason, status, overrideDatabaseBytes, overrideFileStorageBytes, lock, unlock, lockReason } = parsed.data
+    const { extendMonths, adjustMonths, setEndDate, reason, status, overrideDatabaseBytes, overrideFileStorageBytes, lock, unlock, unlockGrantMonths, lockReason } = parsed.data
 
     // Get the subscription
     const subscription = await db.query.subscriptions.findFirst({
@@ -52,13 +53,25 @@ export async function PUT(
     // Use a transaction for lock/unlock to ensure atomicity
     // and set tenant context for RLS on lockout_events table
     if (unlock) {
-      updateData.status = 'active'
-      updateData.currentPeriodStart = new Date()
-      const newEnd = new Date()
-      newEnd.setMonth(newEnd.getMonth() + 1)
-      updateData.currentPeriodEnd = newEnd
+      // Free time is an explicit choice of the admin (unlockGrantMonths); by default the
+      // subscription simply resumes on its own dates and is never resurrected as "active".
+      const grantMonths = unlockGrantMonths ?? 0
+      if (grantMonths > 0) {
+        const now = new Date()
+        const newEnd = new Date(now)
+        newEnd.setMonth(newEnd.getMonth() + grantMonths)
+        updateData.status = 'active'
+        updateData.currentPeriodStart = now
+        updateData.currentPeriodEnd = newEnd
+        auditDetails.grantedMonths = grantMonths
+        auditDetails.newPeriodEnd = newEnd.toISOString()
+      } else {
+        updateData.status = resumedSubscriptionStatus(subscription)
+        auditDetails.grantedMonths = 0
+      }
       auditDetails.action = 'unlock'
-      auditDetails.statusChange = { from: subscription.status, to: 'active' }
+      auditDetails.reason = reason || null
+      auditDetails.statusChange = { from: subscription.status, to: updateData.status }
 
       await db.transaction(async (tx) => {
         // Set tenant context for RLS on lockout_events
@@ -72,13 +85,13 @@ export async function PUT(
             lockedReason: null,
             deletionScheduledAt: null,
           })
-          .where(eq(tenants.id, subscription.tenantId))
+          .where(and(eq(tenants.id, subscription.tenantId), eq(tenants.status, 'locked')))
 
         // Log the unlock event
         await tx.insert(lockoutEvents).values({
           tenantId: subscription.tenantId,
           eventType: 'unlocked',
-          details: { unlockedBy: 'admin', adminId: session.superAdminId },
+          details: { unlockedBy: 'admin', adminId: session.superAdminId, grantedMonths: unlockGrantMonths ?? 0 },
           notificationSent: false,
         })
 
@@ -90,11 +103,8 @@ export async function PUT(
     } else if (lock) {
       updateData.status = 'locked'
       auditDetails.action = 'lock'
-      auditDetails.lockReason = lockReason || 'admin_action'
+      auditDetails.lockReason = lockReason || reason || 'admin_action'
       auditDetails.statusChange = { from: subscription.status, to: 'locked' }
-
-      const deletionDate = new Date()
-      deletionDate.setDate(deletionDate.getDate() + 7)
 
       await db.transaction(async (tx) => {
         // Set tenant context for RLS on lockout_events
@@ -104,15 +114,16 @@ export async function PUT(
           .set({
             status: 'locked',
             lockedAt: new Date(),
-            lockedReason: lockReason || 'admin_action',
-            deletionScheduledAt: deletionDate,
+            lockedReason: 'admin_locked', // the free-text reason goes to the audit log / lockout event
+            // A manual lock never schedules the automatic data deletion that billing lockouts do.
+            deletionScheduledAt: null,
           })
           .where(eq(tenants.id, subscription.tenantId))
 
         await tx.insert(lockoutEvents).values({
           tenantId: subscription.tenantId,
           eventType: 'locked',
-          details: { lockedBy: 'admin', adminId: session.superAdminId, reason: lockReason || 'admin_action' },
+          details: { lockedBy: 'admin', adminId: session.superAdminId, reason: lockReason || reason || 'admin_action' },
           notificationSent: false,
         })
 
@@ -160,7 +171,7 @@ export async function PUT(
                 lockedReason: null,
                 deletionScheduledAt: null,
               })
-              .where(eq(tenants.id, subscription.tenantId))
+              .where(and(eq(tenants.id, subscription.tenantId), eq(tenants.status, 'locked')))
           }
         }
       } else if (monthsToAdjust !== null && monthsToAdjust !== undefined && monthsToAdjust !== 0) {
@@ -205,7 +216,7 @@ export async function PUT(
                 lockedReason: null,
                 deletionScheduledAt: null,
               })
-              .where(eq(tenants.id, subscription.tenantId))
+              .where(and(eq(tenants.id, subscription.tenantId), eq(tenants.status, 'locked')))
           }
         }
       }
@@ -231,12 +242,15 @@ export async function PUT(
         .where(eq(subscriptions.id, id))
     }
 
+    // Keep the sign-in cut-off in step with the period we just changed
+    await syncTenantPlanExpiry(subscription.tenantId)
+
     // Audit log
     if (unlock || lock) {
       await adminAudit.update(session.superAdminId, 'subscription', id, auditDetails)
     } else if (adjustMonths || setEndDate || extendMonths) {
       await adminAudit.extend(session.superAdminId, 'subscription', id, auditDetails)
-    } else if (status) {
+    } else if (status || overrideDatabaseBytes !== undefined || overrideFileStorageBytes !== undefined) {
       await adminAudit.update(session.superAdminId, 'subscription', id, auditDetails)
     }
 

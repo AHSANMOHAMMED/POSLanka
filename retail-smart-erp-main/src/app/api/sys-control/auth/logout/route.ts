@@ -4,7 +4,7 @@ import { logError } from '@/lib/ai/error-logger'
 
 export async function POST() {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession({ permission: 'self', allowPendingSetup: true })
 
     if (session) {
       await destroyAdminSession()

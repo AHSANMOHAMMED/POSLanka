@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { and, desc, eq, gte, ne, sql } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { sales, tenants, warehouses, users } from '@/lib/db/schema'
-import { validateAdminSession } from '@/lib/admin'
+import { adminAuthError, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation'
 import { salesAgg, toInt, toNumber } from '../_shared'
@@ -23,9 +23,9 @@ const querySchema = z.object({
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('read')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const parsed = validateSearchParams(request, querySchema)

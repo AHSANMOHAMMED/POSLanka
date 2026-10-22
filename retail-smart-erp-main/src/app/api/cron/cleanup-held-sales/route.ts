@@ -4,6 +4,7 @@ import { heldSales } from '@/lib/db/schema'
 import { sql, lte } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { createLogger } from '@/lib/logger'
 
 // POST /api/cron/cleanup-held-sales
 // Deletes expired held sales (runs periodically via cron)
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    console.log(`[Cron] Cleaned up ${deleted.length} expired held sales across ${tenantIds.length} tenants`)
+    createLogger('cron:cleanup-held-sales').info('run complete', { deleted: deleted.length, tenants: tenantIds.length })
 
     return NextResponse.json({
       success: true,

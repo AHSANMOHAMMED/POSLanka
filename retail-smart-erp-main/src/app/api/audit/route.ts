@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { aiAlerts } from '@/lib/db/schema'
 import { desc, and, sql, isNull, eq } from 'drizzle-orm'
-import { startFullAudit, isAuditRunning } from '@/lib/audit/runner'
+import { startFullAudit } from '@/lib/audit/runner'
 import { requirePermission } from '@/lib/auth/roles'
 
 // POST — start a full audit
@@ -18,11 +18,10 @@ export async function POST() {
 
   const tenantId = session.user.tenantId
 
-  if (isAuditRunning(tenantId)) {
+  // Claimed atomically in audit_runs: a second request (on any instance) gets 409
+  if (!(await startFullAudit(tenantId))) {
     return NextResponse.json({ error: 'Audit already running' }, { status: 409 })
   }
-
-  startFullAudit(tenantId)
 
   return NextResponse.json({ success: true, message: 'Audit started' })
 }

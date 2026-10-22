@@ -6,7 +6,7 @@ import { requireTenantFeature } from '@/lib/features/check'
 import { z } from 'zod'
 import { validateBody } from '@/lib/validation/helpers'
 import { nextDocNo } from '@/lib/documents/numbering'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 
 const itemSchema = z.object({
   itemId: z.string().uuid().optional().nullable(),
@@ -34,6 +34,9 @@ const createSchema = z.object({
 
 export async function GET(request: NextRequest) {
   const result = await withAuthTenant(async (session, db) => {
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'selling')
+    if (moduleError) return { error: 'This module is switched off for your role', status: 403 }
     const feature = await requireTenantFeature(session.user.tenantId, 'quotation')
     if (!feature.ok) {
       return { error: 'Quotation module disabled', status: 403 as const }

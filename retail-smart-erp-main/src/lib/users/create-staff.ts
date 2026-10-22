@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { TenantDb } from '@/lib/db'
-import { accounts, posProfiles, posProfileUsers, users, userWarehouses, warehouses } from '@/lib/db/schema'
+import { accounts, customRoles, posProfiles, posProfileUsers, users, userWarehouses, warehouses } from '@/lib/db/schema'
 import { canModifyUser } from '@/lib/auth/roles'
 import { validatePasswordStrength } from '@/lib/utils/validation'
 
@@ -136,6 +136,8 @@ export interface CreateStaffInput {
   email: string
   fullName: string
   role: string
+  /** Custom role (validated by the caller; `role` must be its base role) */
+  customRoleId?: string | null
   password: string
   pin?: string | null
   warehouseIds?: string[] | null
@@ -147,6 +149,7 @@ export interface CreatedStaffUser {
   email: string
   fullName: string
   role: string
+  customRoleId: string | null
   isActive: boolean
   accountId: string | null
   hasPin: boolean
@@ -208,6 +211,7 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
       passwordHash,
       pinHash,
       role: role as UserRoleValue,
+      customRoleId: input.customRoleId || null,
       isActive: true,
       passwordChangedAt: now,
     }).returning({
@@ -215,6 +219,7 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
       email: users.email,
       fullName: users.fullName,
       role: users.role,
+      customRoleId: users.customRoleId,
       isActive: users.isActive,
       accountId: users.accountId,
       createdAt: users.createdAt,
@@ -237,4 +242,17 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
     warehouseIds: assignments.warehouseIds,
     posProfileIds: assignments.posProfileIds,
   }
+}
+
+/**
+ * Loads a custom role that may be assigned to staff: it must exist in this tenant (RLS) and be
+ * active. Returns its base role, which becomes the user's built-in `role`.
+ */
+export async function loadAssignableCustomRole(tx: Tx, customRoleId: string) {
+  const [cr] = await tx.select({ id: customRoles.id, name: customRoles.name, baseRole: customRoles.baseRole, isActive: customRoles.isActive })
+    .from(customRoles).where(eq(customRoles.id, customRoleId)).limit(1)
+  if (!cr) throw new StaffError('Custom role not found', 400)
+  if (!cr.isActive) throw new StaffError('This custom role is inactive', 400)
+  if (cr.baseRole === 'owner') throw new StaffError('Owner role can only be assigned through account management', 400)
+  return cr
 }

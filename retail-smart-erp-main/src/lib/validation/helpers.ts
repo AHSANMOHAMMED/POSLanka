@@ -23,7 +23,14 @@ type ValidationResult<T> = ValidationSuccess<T> | ValidationFailure
  */
 export async function validateBody<T>(
   request: Request,
-  schema: ZodType<T>
+  schema: ZodType<T>,
+  options: {
+    /**
+     * Keep empty strings (only nulls are dropped). For endpoints where '' legitimately
+     * clears a value, e.g. an admin's phone number or error-log notes.
+     */
+    keepEmptyStrings?: boolean
+  } = {}
 ): Promise<ValidationResult<T>> {
   let rawBody: unknown
   try {
@@ -39,7 +46,7 @@ export async function validateBody<T>(
   }
 
   // Convert null → undefined so Zod `.optional()` fields accept JSON nulls
-  const preprocessed = stripNullValues(rawBody)
+  const preprocessed = stripNullValues(rawBody, options.keepEmptyStrings)
 
   const result = schema.safeParse(preprocessed)
   if (!result.success) {
@@ -146,15 +153,15 @@ function formatZodErrors(error: ZodError): Array<{ field: string; message: strin
  *
  * Array elements are NOT stripped — only object properties.
  */
-export function stripNullValues(value: unknown): unknown {
+export function stripNullValues(value: unknown, keepEmptyStrings = false): unknown {
   if (Array.isArray(value)) {
-    return value.map(stripNullValues)
+    return value.map((v) => stripNullValues(v, keepEmptyStrings))
   }
   if (typeof value === 'object' && value !== null) {
     const out: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      if (v === null || v === '') continue  // skip → key absent → Zod sees undefined
-      out[k] = stripNullValues(v)           // recurse into nested objects/arrays
+      if (v === null || (v === '' && !keepEmptyStrings)) continue  // skip → key absent → Zod sees undefined
+      out[k] = stripNullValues(v, keepEmptyStrings)                // recurse into nested objects/arrays
     }
     return out
   }

@@ -1,4 +1,5 @@
 import type { TwilioConfig, SendSmsResult } from '../../types'
+import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 
 /**
  * Twilio SMS Provider
@@ -36,7 +37,7 @@ export async function sendWithTwilio(
   })
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -86,7 +87,7 @@ export async function testTwilioConnection(config: TwilioConfig): Promise<{
   const url = `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}.json`
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'GET',
       headers: {
         'Authorization': 'Basic ' + btoa(`${config.accountSid}:${config.authToken}`),
@@ -98,7 +99,7 @@ export async function testTwilioConnection(config: TwilioConfig): Promise<{
     if (response.ok && data.status === 'active') {
       // Fetch balance
       const balanceUrl = `https://api.twilio.com/2010-04-01/Accounts/${config.accountSid}/Balance.json`
-      const balanceResponse = await fetch(balanceUrl, {
+      const balanceResponse = await fetchWithTimeout(balanceUrl, {
         method: 'GET',
         headers: {
           'Authorization': 'Basic ' + btoa(`${config.accountSid}:${config.authToken}`),

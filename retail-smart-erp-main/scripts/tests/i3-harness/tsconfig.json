@@ -1,0 +1,11 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../../..",
+    "paths": {
+      "@/lib/auth": ["./scripts/tests/w8-harness/auth-mock.ts"],
+      "next/headers": ["./scripts/tests/i3-harness/next-headers-mock.ts"],
+      "@/*": ["./src/*"]
+    }
+  }
+}

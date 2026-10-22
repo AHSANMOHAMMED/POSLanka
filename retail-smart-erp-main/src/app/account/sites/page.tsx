@@ -268,7 +268,7 @@ export default function SitesPage() {
                       <div className="w-14 h-14 bg-gradient-to-br from-gray-100 to-gray-200 rounded-md flex items-center justify-center group-hover:from-gray-200 group-hover:to-gray-300 transition-colors">
                         {site.logoUrl ? (
                           /* eslint-disable-next-line @next/next/no-img-element */
-                          <img src={site.logoUrl} alt={site.name} className="w-12 h-12 rounded object-cover" />
+                          <img src={site.logoUrl} alt={site.name} className="w-12 h-12 rounded object-cover" loading="lazy" decoding="async" />
                         ) : (
                           <BusinessIcon className="w-7 h-7 text-gray-500 dark:text-gray-400" />
                         )}

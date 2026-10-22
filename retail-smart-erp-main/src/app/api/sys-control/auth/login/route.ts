@@ -45,6 +45,7 @@ export async function POST(request: NextRequest) {
       admin: {
         email: result.admin!.email,
         fullName: result.admin!.fullName,
+        role: result.admin!.role,
       },
     })
   } catch (error) {

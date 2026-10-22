@@ -1,222 +1,278 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import Link from 'next/link'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { MessageSquare, Plus, RefreshCw } from 'lucide-react'
 import {
-  MessageSquare,
-  Loader2,
-  Search,
-  Clock,
-  CheckCircle,
-  Archive,
-  AlertTriangle,
-  User,
-} from 'lucide-react'
+  AdminCard,
+  AdminModal,
+  AdminPage,
+  AdminTable,
+  AdminToolbar,
+  Alert,
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  Input,
+  SearchInput,
+  SegmentedControl,
+  Select,
+  StatusDot,
+  Textarea,
+  fmtDateTime,
+  timeAgo,
+  type AdminColumn,
+} from '@/components/admin/kit'
+import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import { Pager, adminFetch } from '@/components/admin/console-helpers'
+import { CATEGORY_LABEL, PRIORITY_TONE } from './labels'
 
-interface Conversation {
+interface ConversationRow {
   id: string
   subject: string
-  status: string
+  status: 'open' | 'closed' | 'archived'
   priority: string
   category: string | null
   lastMessageAt: string | null
   lastMessagePreview: string | null
   unreadByAdmin: boolean
+  unreadByAccount: boolean
   createdAt: string
-  account: {
-    id: string
-    email: string
-    fullName: string | null
-  }
+  account: { id: string; email: string; fullName: string }
 }
 
-const statusColors: Record<string, string> = {
-  open: 'bg-green-100 text-green-700',
-  closed: 'bg-gray-100 text-gray-600',
-  archived: 'bg-gray-100 text-gray-500',
-}
+interface Counts { open: number; unread: number; closed: number; archived: number; all: number }
 
-const priorityColors: Record<string, string> = {
-  low: 'bg-gray-100 text-gray-600',
-  normal: 'bg-blue-100 text-blue-700',
-  high: 'bg-orange-100 text-orange-700',
-  urgent: 'bg-red-100 text-red-700',
-}
+type Tab = 'unread' | 'open' | 'closed' | 'archived' | 'all'
+const PAGE_SIZE = 25
 
-function formatRelativeTime(date: string) {
-  const d = new Date(date)
-  const now = new Date()
-  const diff = now.getTime() - d.getTime()
-  if (diff < 60000) return 'Just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`
-  return d.toLocaleDateString()
-}
-
-export default function AdminMessagesPage() {
-  const [conversations, setConversations] = useState<Conversation[]>([])
+export default function MessagesPage() {
+  const canWrite = useAdminCan('messages')
+  const router = useRouter()
+  const [tab, setTab] = useState<Tab>('open')
+  const [priority, setPriority] = useState('')
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [data, setData] = useState<{ data: ConversationRow[]; counts: Counts; pagination: { total: number } } | null>(null)
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState('all')
-  const [priorityFilter, setPriorityFilter] = useState('all')
-  const [search, setSearch] = useState('')
-  const [searchDebounced, setSearchDebounced] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [composing, setComposing] = useState(false)
 
   useEffect(() => {
-    const timer = setTimeout(() => setSearchDebounced(search), 300)
-    return () => clearTimeout(timer)
-  }, [search])
+    const t = window.setTimeout(() => setDebouncedQ(q.trim()), 300)
+    return () => window.clearTimeout(t)
+  }, [q])
+  useEffect(() => { setPage(1) }, [tab, priority, debouncedQ])
 
-  const fetchConversations = useCallback(async () => {
+  const params = useMemo(() => {
+    const p = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) })
+    if (tab === 'unread') p.set('unread', '1')
+    else if (tab !== 'all') p.set('status', tab)
+    if (priority) p.set('priority', priority)
+    if (debouncedQ) p.set('search', debouncedQ)
+    return p.toString()
+  }, [tab, priority, debouncedQ, page])
+
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true)
+    setError(null)
     try {
-      const params = new URLSearchParams({ pageSize: '50' })
-      if (statusFilter !== 'all') params.set('status', statusFilter)
-      if (priorityFilter !== 'all') params.set('priority', priorityFilter)
-      if (searchDebounced) params.set('search', searchDebounced)
-
-      const res = await fetch(`/api/sys-control/messages?${params}`)
-      if (res.ok) {
-        const data = await res.json()
-        setConversations(data.data || [])
-      }
-    } catch (error) {
-      console.error('Failed to fetch conversations:', error)
+      setData(await adminFetch(`/api/sys-control/messages?${params}`))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load conversations')
     } finally {
       setLoading(false)
     }
-  }, [statusFilter, priorityFilter, searchDebounced])
+  }, [params])
 
+  useEffect(() => { load() }, [load])
+  // New vendor messages show up without a manual refresh
   useEffect(() => {
-    fetchConversations()
-    const interval = setInterval(fetchConversations, 30000)
-    return () => clearInterval(interval)
-  }, [fetchConversations])
+    const t = window.setInterval(() => { if (document.visibilityState === 'visible') load(true) }, 30_000)
+    return () => window.clearInterval(t)
+  }, [load])
 
-  const unreadCount = conversations.filter(c => c.unreadByAdmin).length
+  const c = data?.counts
+  const tabs: Array<{ value: Tab; label: string }> = [
+    { value: 'unread', label: `Needs reply${c ? ` ${c.unread}` : ''}` },
+    { value: 'open', label: `Open${c ? ` ${c.open}` : ''}` },
+    { value: 'closed', label: `Closed${c ? ` ${c.closed}` : ''}` },
+    { value: 'archived', label: `Archived${c ? ` ${c.archived}` : ''}` },
+    { value: 'all', label: `All${c ? ` ${c.all}` : ''}` },
+  ]
+
+  const columns: AdminColumn<ConversationRow>[] = [
+    {
+      key: 'subject',
+      header: 'Conversation',
+      primary: true,
+      cell: (r) => (
+        <div className="flex min-w-0 items-start gap-2">
+          <span className="mt-1.5 w-2 shrink-0">{r.unreadByAdmin && <StatusDot tone="primary" />}</span>
+          <div className="min-w-0 max-w-[480px]">
+            <p className={r.unreadByAdmin ? 'truncate font-semibold text-adm-fg' : 'truncate font-medium text-adm-fg'}>{r.subject}</p>
+            <p className="truncate text-[12.5px] text-adm-subtle">{r.lastMessagePreview || 'No messages'}</p>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'account',
+      header: 'Vendor account',
+      cell: (r) => (
+        <div className="min-w-0">
+          <p className="truncate text-adm-fg">{r.account.fullName}</p>
+          <p className="truncate text-[12.5px] text-adm-subtle">{r.account.email}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'state',
+      header: 'Status',
+      hideBelow: 'md',
+      cell: (r) => (
+        <div className="flex flex-wrap gap-1.5">
+          <Badge tone={r.status === 'open' ? 'success' : 'neutral'}>{r.status}</Badge>
+          {r.priority !== 'normal' && <Badge tone={PRIORITY_TONE[r.priority] ?? 'neutral'}>{r.priority}</Badge>}
+        </div>
+      ),
+    },
+    { key: 'cat', header: 'Category', hideBelow: 'xl', cell: (r) => <span className="text-adm-muted">{CATEGORY_LABEL[r.category ?? 'general'] ?? r.category}</span> },
+    {
+      key: 'last',
+      header: 'Last message',
+      cell: (r) => <span className="whitespace-nowrap text-adm-muted" title={r.lastMessageAt ? fmtDateTime(r.lastMessageAt) : undefined}>{timeAgo(r.lastMessageAt)}</span>,
+    },
+  ]
+
+  const filtered = !!(priority || debouncedQ)
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-            <MessageSquare className="w-6 h-6" />
-            Messages
-            {unreadCount > 0 && (
-              <span className="ml-2 inline-flex items-center justify-center w-6 h-6 text-xs font-bold text-white bg-red-500 rounded-full">
-                {unreadCount}
-              </span>
-            )}
-          </h1>
-          <p className="text-gray-500 mt-1">Manage user support conversations</p>
+    <AdminPage
+      title="Messages"
+      description="Support conversations with vendors. Vendors write from their account portal; replies appear there straight away."
+      actions={
+        <>
+          <Button variant="ghost" icon={RefreshCw} onClick={() => load()} loading={loading && !!data}>Refresh</Button>
+          {canWrite && <Button variant="primary" icon={Plus} onClick={() => setComposing(true)}>New message</Button>}
+        </>
+      }
+    >
+      <AdminCard flush>
+        <div className="space-y-3 border-b border-adm-border p-4 sm:p-5">
+          <SegmentedControl ariaLabel="Conversation status" size="sm" value={tab} onChange={setTab} options={tabs} />
+          <AdminToolbar>
+            <SearchInput size="sm" wrapperClassName="w-full sm:w-80" placeholder="Subject, message, name or email" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search conversations" />
+            <Select size="sm" className="w-full min-[480px]:w-auto" value={priority} onChange={(e) => setPriority(e.target.value)} aria-label="Priority">
+              <option value="">Any priority</option>
+              <option value="urgent">Urgent</option>
+              <option value="high">High</option>
+              <option value="normal">Normal</option>
+              <option value="low">Low</option>
+            </Select>
+          </AdminToolbar>
         </div>
-      </div>
-
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search conversations..."
-            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-        <select
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded"
-        >
-          <option value="all">All Status</option>
-          <option value="open">Open</option>
-          <option value="closed">Closed</option>
-          <option value="archived">Archived</option>
-        </select>
-        <select
-          value={priorityFilter}
-          onChange={e => setPriorityFilter(e.target.value)}
-          className="px-3 py-2 border border-gray-300 rounded"
-        >
-          <option value="all">All Priority</option>
-          <option value="urgent">Urgent</option>
-          <option value="high">High</option>
-          <option value="normal">Normal</option>
-          <option value="low">Low</option>
-        </select>
-      </div>
-
-      {/* Table */}
-      <div className="bg-white rounded-md shadow-sm border border-gray-200 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-          </div>
-        ) : conversations.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
-            No conversations found
+        {error ? (
+          <div className="p-4 sm:p-5">
+            <Alert tone="danger" title="Could not load conversations" action={<Button size="sm" onClick={() => load()}>Retry</Button>}>{error}</Alert>
           </div>
         ) : (
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">Conversation</th>
-                <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">Account</th>
-                <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">Status</th>
-                <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">Priority</th>
-                <th className="text-left text-xs font-medium text-gray-500 uppercase tracking-wider px-6 py-3">Last Message</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {conversations.map(conv => (
-                <tr key={conv.id} className={`hover:bg-gray-50 ${conv.unreadByAdmin ? 'bg-blue-50/50' : ''}`}>
-                  <td className="px-6 py-4">
-                    <Link href={`/sys-control/messages/${conv.id}`} className="block">
-                      <div className="flex items-center gap-2">
-                        <p className={`text-sm ${conv.unreadByAdmin ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
-                          {conv.subject}
-                        </p>
-                        {conv.unreadByAdmin && <span className="w-2 h-2 bg-blue-500 rounded-full" />}
-                      </div>
-                      {conv.lastMessagePreview && (
-                        <p className="text-xs text-gray-500 mt-1 truncate max-w-[300px]">{conv.lastMessagePreview}</p>
-                      )}
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
-                        <User className="w-4 h-4 text-gray-500" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">{conv.account.fullName || 'User'}</p>
-                        <p className="text-xs text-gray-500">{conv.account.email}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full ${statusColors[conv.status] || ''}`}>
-                      {conv.status === 'open' ? <Clock className="w-3 h-3" /> : conv.status === 'closed' ? <CheckCircle className="w-3 h-3" /> : <Archive className="w-3 h-3" />}
-                      {conv.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full ${priorityColors[conv.priority] || ''}`}>
-                      {conv.priority === 'urgent' && <AlertTriangle className="w-3 h-3" />}
-                      {conv.priority}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-gray-500">
-                      {conv.lastMessageAt ? formatRelativeTime(conv.lastMessageAt) : formatRelativeTime(conv.createdAt)}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <AdminTable
+            columns={columns}
+            rows={data?.data ?? []}
+            rowKey={(r) => r.id}
+            rowHref={(r) => `/sys-control/messages/${r.id}`}
+            loading={loading}
+            minWidth={720}
+            empty={
+              <EmptyState
+                icon={MessageSquare}
+                title={filtered ? 'No conversations match' : tab === 'unread' ? 'Nothing waiting for a reply' : 'No conversations here'}
+                description={!filtered && tab === 'unread' ? 'New messages from vendors appear here.' : undefined}
+                action={filtered ? <Button size="sm" onClick={() => { setQ(''); setPriority('') }}>Clear filters</Button> : undefined}
+              />
+            }
+          />
         )}
+        {data && data.pagination.total > 0 && (
+          <div className="border-t border-adm-border px-4 py-3 sm:px-5">
+            <Pager page={page} pageSize={PAGE_SIZE} total={data.pagination.total} onPage={setPage} />
+          </div>
+        )}
+      </AdminCard>
+
+      {composing && <NewConversationDialog onClose={() => setComposing(false)} onCreated={(id) => router.push(`/sys-control/messages/${id}`)} />}
+    </AdminPage>
+  )
+}
+
+function NewConversationDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => void }) {
+  const [businessId, setBusinessId] = useState('')
+  const [subject, setSubject] = useState('')
+  const [category, setCategory] = useState('general')
+  const [priority, setPriority] = useState('normal')
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const ok = businessId.trim().length >= 4 && subject.trim().length >= 3 && message.trim().length > 0
+
+  async function submit() {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await adminFetch<{ conversation: { id: string } }>('/api/sys-control/messages', {
+        method: 'POST',
+        json: { businessId: businessId.trim(), subject: subject.trim(), category, priority, message: message.trim() },
+      })
+      onCreated(res.conversation.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start the conversation')
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AdminModal
+      open
+      onClose={onClose}
+      title="New message to a vendor"
+      description="Goes to the owner’s account portal, where they can reply."
+      footer={
+        <>
+          <Button onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button variant="primary" loading={busy} disabled={!ok} onClick={submit}>Send</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        {error && <Alert tone="danger">{error}</Alert>}
+        <Field label="Business ID" htmlFor="nc-bid" required hint="For example PL-123456">
+          <Input id="nc-bid" value={businessId} onChange={(e) => setBusinessId(e.target.value)} autoComplete="off" />
+        </Field>
+        <Field label="Subject" htmlFor="nc-subject" required>
+          <Input id="nc-subject" value={subject} maxLength={255} onChange={(e) => setSubject(e.target.value)} />
+        </Field>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Field label="Category" htmlFor="nc-cat">
+            <Select id="nc-cat" value={category} onChange={(e) => setCategory(e.target.value)}>
+              {Object.entries(CATEGORY_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </Select>
+          </Field>
+          <Field label="Priority" htmlFor="nc-pri">
+            <Select id="nc-pri" value={priority} onChange={(e) => setPriority(e.target.value)}>
+              <option value="low">Low</option>
+              <option value="normal">Normal</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </Select>
+          </Field>
+        </div>
+        <Field label="Message" htmlFor="nc-msg" required>
+          <Textarea id="nc-msg" rows={5} maxLength={5000} value={message} onChange={(e) => setMessage(e.target.value)} />
+        </Field>
       </div>
-    </div>
+    </AdminModal>
   )
 }

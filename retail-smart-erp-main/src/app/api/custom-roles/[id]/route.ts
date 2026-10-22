@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { customRoles, rolePermissionOverrides, users } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
-import { requirePermission, ROLE_PERMISSIONS, OWNER_ONLY_PERMISSIONS, type Permission } from '@/lib/auth/roles'
+import { eq, and, ne } from 'drizzle-orm'
+import { requirePermission, resolveRoleDefinition } from '@/lib/auth/roles'
+import { checkRoleRank, isOwnerActor, sanitizeRequestedPermissions, requestedPermissions, escalatedPermissions } from '@/lib/auth/role-guard'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -22,7 +23,7 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const permError = requirePermission(session, 'manageTenant')
+    const permError = requirePermission(session, 'manageRoles')
     if (permError) return permError
 
     const paramsParsed = validateParams(await params, idParamSchema)
@@ -36,12 +37,43 @@ export async function PUT(
       return NextResponse.json({ error: 'Cannot base custom roles on owner' }, { status: 400 })
     }
 
+    if (baseRole !== undefined) {
+      const rankError = checkRoleRank(session, baseRole)
+      if (rankError) return rankError
+    }
+
     const result = await withTenant(session.user.tenantId, async (db) => {
       // Check role exists (RLS scopes)
       const existing = await db.query.customRoles.findFirst({
         where: eq(customRoles.id, id),
       })
       if (!existing) return { error: 'Custom role not found', status: 404 }
+
+      // Non-owners: only roles ranked below their own, and never the custom role they hold
+      // themselves (that would let them reshape their own access).
+      const rankError = checkRoleRank(session, existing.baseRole)
+      if (rankError) return { error: 'You can only change roles ranked below your own', status: 403 }
+      if (!isOwnerActor(session) && session.user.customRoleId === id) {
+        return { error: 'You cannot change your own role', status: 403 }
+      }
+
+      const previousRows = await db.select().from(rolePermissionOverrides).where(eq(rolePermissionOverrides.customRoleId, id))
+      const previous: Record<string, boolean> = {}
+      for (const r of previousRows) previous[r.permissionKey] = r.isGranted
+
+      const nextBase = baseRole ?? existing.baseRole
+      const nextExplicit = permissions !== undefined ? sanitizeRequestedPermissions(session, permissions, previous) : previous
+      // Judge the request as asked: newly granting a permission the actor lacks is refused
+      // (keys the actor lacks are otherwise kept as they were — see sanitizeRequestedPermissions)
+      const asked = permissions !== undefined ? { ...previous, ...requestedPermissions(permissions) } : previous
+      const missing = escalatedPermissions(
+        session,
+        resolveRoleDefinition(nextBase, asked, session.user.tenantId),
+        resolveRoleDefinition(existing.baseRole, previous, session.user.tenantId),
+      )
+      if (missing.length > 0) {
+        return { error: 'You cannot grant permissions you do not have yourself', status: 403, missingPermissions: missing }
+      }
 
       // Build update data
       const updateData: Record<string, unknown> = { updatedAt: new Date() }
@@ -59,35 +91,24 @@ export async function PUT(
         .where(eq(customRoles.id, id))
         .returning()
 
-      // Update permissions if provided
+      // Users on this custom role carry its base role in users.role (rank, module access,
+      // fallback permissions) — keep them in step when the base role changes.
+      if (baseRole !== undefined && baseRole !== existing.baseRole) {
+        await db.update(users)
+          .set({ role: baseRole as typeof users.$inferInsert['role'], updatedAt: new Date() })
+          .where(and(eq(users.customRoleId, id), ne(users.role, 'owner')))
+      }
+
+      // Replace permissions if provided
       if (permissions !== undefined) {
-        // Delete existing custom role permissions
-        await db.delete(rolePermissionOverrides).where(
-          and(eq(rolePermissionOverrides.customRoleId, id))
-        )
-
-        const allPermissions = Object.keys(ROLE_PERMISSIONS) as Permission[]
-        const toInsert: Array<{
-          tenantId: string
-          customRoleId: string
-          permissionKey: string
-          isGranted: boolean
-          updatedBy: string
-        }> = []
-
-        for (const [permKey, granted] of Object.entries(permissions)) {
-          if (!allPermissions.includes(permKey as Permission)) continue
-          if (granted && OWNER_ONLY_PERMISSIONS.includes(permKey as Permission)) continue
-
-          toInsert.push({
-            tenantId: session.user.tenantId,
-            customRoleId: id,
-            permissionKey: permKey,
-            isGranted: granted,
-            updatedBy: session.user.id,
-          })
-        }
-
+        await db.delete(rolePermissionOverrides).where(eq(rolePermissionOverrides.customRoleId, id))
+        const toInsert = Object.entries(nextExplicit).map(([permKey, granted]) => ({
+          tenantId: session.user.tenantId,
+          customRoleId: id,
+          permissionKey: permKey,
+          isGranted: granted,
+          updatedBy: session.user.id,
+        }))
         if (toInsert.length > 0) {
           await db.insert(rolePermissionOverrides).values(toInsert)
         }
@@ -98,7 +119,8 @@ export async function PUT(
 
     if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     if ('error' in result) {
-      return NextResponse.json({ error: result.error }, { status: (result as { status?: number }).status || 400 })
+      const r = result as { error: string; status?: number; missingPermissions?: string[] }
+      return NextResponse.json({ error: r.error, missingPermissions: r.missingPermissions }, { status: r.status || 400 })
     }
 
     invalidatePermissionCache(session.user.tenantId)
@@ -122,7 +144,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const permError = requirePermission(session, 'manageTenant')
+    const permError = requirePermission(session, 'manageRoles')
     if (permError) return permError
 
     const paramsParsed = validateParams(await params, idParamSchema)

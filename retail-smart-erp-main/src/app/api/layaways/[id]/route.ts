@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { layaways, layawayItems, layawayPayments, customers, customerCreditTransactions, users, items as itemsTable } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -21,6 +21,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'selling')
+    if (moduleError) return { error: moduleError }
     // Get layaway with joins (RLS filters by tenant)
     const [layaway] = await db
       .select({

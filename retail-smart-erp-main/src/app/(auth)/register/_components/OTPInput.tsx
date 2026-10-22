@@ -68,7 +68,9 @@ export function OTPInput({ length = 5, value, onChange, disabled }: OTPInputProp
  onKeyDown={(e) => handleKeyDown(index, e)}
  onPaste={handlePaste}
  onFocus={(e) => e.target.select()}
- className="w-12 h-14 sm:w-14 sm:h-16 text-center text-2xl font-bold border-2 border-white/20 rounded-md bg-white/5 text-white focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+ className="adm-input adm-num h-14 w-12 text-center font-semibold sm:h-16 sm:w-14"
+            style={{ fontSize: 22, padding: 0 }}
+            aria-label={`Digit ${index + 1}`}
  autoComplete="one-time-code"
  />
  ))}

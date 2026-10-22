@@ -14,6 +14,8 @@ import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { isUniqueViolation } from '@/lib/db/errors'
 import { requireUserSeat } from '@/lib/billing/user-limit'
+import { loadAssignableCustomRole, StaffError } from '@/lib/users/create-staff'
+import { getCustomRoleName } from '@/lib/auth/permission-cache'
 
 // GET single user by ID
 export async function GET(
@@ -39,6 +41,7 @@ export async function GET(
           email: true,
           fullName: true,
           role: true,
+          customRoleId: true,
           isActive: true,
           lastLoginAt: true,
           createdAt: true,
@@ -50,7 +53,10 @@ export async function GET(
         return NextResponse.json({ error: 'User not found' }, { status: 404 })
       }
 
-      return NextResponse.json(user)
+      return NextResponse.json({
+        ...user,
+        customRoleName: user.customRoleId ? getCustomRoleName(session.user.tenantId, user.customRoleId) ?? null : null,
+      })
     })
   } catch (error) {
     logError('api/users/[id]', error)
@@ -78,7 +84,7 @@ export async function PUT(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, updateUserSchema)
     if (!parsed.success) return parsed.response
-    const { fullName, email, role, isActive, password, pin, expectedUpdatedAt } = parsed.data
+    const { fullName, email, role, isActive, password, pin, customRoleId, expectedUpdatedAt } = parsed.data
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -102,9 +108,32 @@ export async function PUT(
           }
         }
 
+        // Resulting built-in role + custom role. Picking a built-in role (without customRoleId)
+        // leaves any custom role; picking a custom role sets the role to its base role.
+        const currentCustomRoleId = current.customRoleId ?? null
+        let newCustomRoleId: string | null =
+          customRoleId !== undefined ? customRoleId
+            : role !== undefined && role !== current.role ? null
+              : currentCustomRoleId
+        let newRole: string = role ?? current.role
+        if (newCustomRoleId && newCustomRoleId !== currentCustomRoleId) {
+          const cr = await loadAssignableCustomRole(tx, newCustomRoleId)
+          newRole = cr.baseRole
+        } else if (newCustomRoleId && role !== undefined && role !== current.role) {
+          // Explicit built-in role change while keeping the same custom role is contradictory
+          newCustomRoleId = null
+        }
+        const roleChanged = newRole !== current.role || newCustomRoleId !== currentCustomRoleId
+
+        // The business owner can't be demoted, given a custom role or locked out from here
+        // (ownership moves only through account management).
+        if (current.role === 'owner' && (roleChanged || isActive === false)) {
+          throw new Error('OWNER_PROTECTED')
+        }
+
         // Prevent modifying own role or isActive status
         if (current.id === session.user.id) {
-          if (role !== undefined && role !== current.role) {
+          if (roleChanged) {
             throw new Error('CANNOT_MODIFY_OWN_ROLE')
           }
           if (isActive !== undefined && isActive !== current.isActive) {
@@ -114,7 +143,7 @@ export async function PUT(
 
         // Owner role is granted only through account management (same rule as POST /api/users):
         // nobody — not even an owner — can promote staff to owner from here.
-        if (role === 'owner' && current.role !== 'owner') {
+        if (newRole === 'owner' && current.role !== 'owner') {
           throw new Error('CANNOT_ASSIGN_OWNER')
         }
 
@@ -124,20 +153,20 @@ export async function PUT(
           if (seatError) throw new Error('USER_LIMIT')
         }
 
-        // Cannot assign a role that holds permissions the actor lacks
-        if (role !== undefined && role !== current.role &&
-            rolePermissionsNotHeld(session.user.role, role, session.user.tenantId, session.user.customRoleId).length > 0) {
+        // Cannot assign a role (built-in or custom) that holds permissions the actor lacks
+        if (roleChanged &&
+            rolePermissionsNotHeld(session.user.role, newRole, session.user.tenantId, session.user.customRoleId, newCustomRoleId).length > 0) {
           throw new Error('INSUFFICIENT_RANK')
         }
-        // ...nor take over such a user by resetting their credentials (password / email / PIN)
-        if (current.id !== session.user.id && (password || pin !== undefined || (email && email !== current.email)) &&
-            rolePermissionsNotHeld(session.user.role, current.role, session.user.tenantId, session.user.customRoleId).length > 0) {
+        // ...nor take over / switch off such a user (credentials, status or role)
+        if (current.id !== session.user.id && (roleChanged || isActive !== undefined || password || pin !== undefined || (email && email !== current.email)) &&
+            rolePermissionsNotHeld(session.user.role, current.role, session.user.tenantId, session.user.customRoleId, currentCustomRoleId).length > 0) {
           throw new Error('INSUFFICIENT_RANK')
         }
 
         // Role hierarchy: cannot modify users at or above your rank
         // Owners are protected — only another owner can modify an owner
-        if (!canModifyUser(session.user.role, current.role, role)) {
+        if (!canModifyUser(session.user.role, current.role, roleChanged ? newRole : undefined)) {
           throw new Error('INSUFFICIENT_RANK')
         }
 
@@ -159,8 +188,9 @@ export async function PUT(
 
         if (fullName !== undefined) updateData.fullName = fullName
         if (email !== undefined) updateData.email = email
-        if (role !== undefined) {
-          updateData.role = role
+        if (roleChanged) {
+          updateData.role = newRole
+          updateData.customRoleId = newCustomRoleId
         }
         if (isActive !== undefined) updateData.isActive = isActive
 
@@ -189,6 +219,7 @@ export async function PUT(
             email: users.email,
             fullName: users.fullName,
             role: users.role,
+            customRoleId: users.customRoleId,
             isActive: users.isActive,
             lastLoginAt: users.lastLoginAt,
             createdAt: users.createdAt,
@@ -197,10 +228,13 @@ export async function PUT(
 
         // Sync isActive / role to accountTenants (the account-portal membership) so the
         // portal cannot hand back a role or access the owner just removed.
-        if ((isActive !== undefined || role !== undefined) && current.accountId) {
+        if ((isActive !== undefined || roleChanged) && current.accountId) {
           const memberUpdate: Record<string, unknown> = { updatedAt: new Date() }
           if (isActive !== undefined) memberUpdate.isActive = isActive
-          if (role !== undefined) memberUpdate.role = role
+          if (roleChanged) {
+            memberUpdate.role = newRole
+            memberUpdate.customRoleId = newCustomRoleId
+          }
           await tx.update(accountTenants)
             .set(memberUpdate)
             .where(and(
@@ -221,6 +255,12 @@ export async function PUT(
     const message = error instanceof Error ? error.message : ''
     logError('api/users/[id]', error)
 
+    if (error instanceof StaffError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    if (message === 'OWNER_PROTECTED') {
+      return NextResponse.json({ error: 'The business owner cannot be demoted or deactivated here. Ownership changes go through account management.' }, { status: 400 })
+    }
     if (message === 'NOT_FOUND') {
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
@@ -291,8 +331,14 @@ export async function DELETE(
         return NextResponse.json({ error: 'User not found' }, { status: 404 })
       }
 
-      // Role hierarchy: cannot deactivate users at or above your rank
-      if (!canModifyUser(session.user.role, user.role)) {
+      if (user.role === 'owner') {
+        return NextResponse.json({ error: 'The business owner cannot be deactivated here.' }, { status: 400 })
+      }
+
+      // Role hierarchy: cannot deactivate users at or above your rank, nor users holding
+      // permissions you lack (e.g. a manager switching off the system manager)
+      if (!canModifyUser(session.user.role, user.role) ||
+          rolePermissionsNotHeld(session.user.role, user.role, session.user.tenantId, session.user.customRoleId, user.customRoleId).length > 0) {
         return NextResponse.json({ error: 'You do not have permission to deactivate this user' }, { status: 403 })
       }
 

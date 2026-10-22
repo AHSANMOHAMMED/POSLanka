@@ -238,20 +238,22 @@ export default function ServiceTypesPage() {
       moduleHref="/auto-service"
       title="Service Type"
       actionContent={
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 min-w-0">
           <button
             onClick={openImport}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
           >
             <Upload size={16} />
-            Import
+            <span className="hidden sm:inline">Import</span>
+            <span className="sr-only sm:hidden">Import</span>
           </button>
           <button
             onClick={openExport}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
           >
             <Download size={16} />
-            Export
+            <span className="hidden sm:inline">Export</span>
+            <span className="sr-only sm:hidden">Export</span>
           </button>
           <button
             onClick={handleAddGroup}
@@ -310,7 +312,8 @@ export default function ServiceTypesPage() {
                 )}
               </div>
               {isExpanded && groupItems.length > 0 && (
-                <table className="w-full">
+                <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px]">
                   <caption className="sr-only">Service types in group</caption>
                   <thead className="bg-gray-50 border-t">
                     <tr>
@@ -361,6 +364,7 @@ export default function ServiceTypesPage() {
                     })}
                   </tbody>
                 </table>
+                </div>
               )}
               {isExpanded && groupItems.length === 0 && (
                 <div className="px-4 py-6 text-center text-gray-500 border-t">
@@ -385,7 +389,8 @@ export default function ServiceTypesPage() {
               </div>
             </div>
             {expandedGroups.has('ungrouped') && (
-              <table className="w-full">
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[560px]">
                 <caption className="sr-only">Ungrouped service types</caption>
                 <thead className="bg-gray-50 border-t">
                   <tr>
@@ -436,6 +441,7 @@ export default function ServiceTypesPage() {
                   })}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         )}

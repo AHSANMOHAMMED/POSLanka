@@ -1,9 +1,9 @@
 // Audit orchestrator — runs all modules, tracks progress, stores findings in aiAlerts
 
 import { withTenant } from '@/lib/db'
-import { aiAlerts } from '@/lib/db/schema'
+import { aiAlerts, auditRuns } from '@/lib/db/schema'
 import { broadcastChange } from '@/lib/websocket/broadcast'
-import { eq, and, sql } from 'drizzle-orm'
+import { eq, and, sql, or, ne, lt } from 'drizzle-orm'
 import type { AuditModule, AuditProgress } from './types'
 
 import { saleAuditModule } from './sale-audit'
@@ -30,11 +30,13 @@ const ALL_MODULES: AuditModule[] = [
   posShiftAuditModule,
 ]
 
-// In-memory progress per tenant (only one audit per tenant at a time)
-const progressMap = new Map<string, AuditProgress>()
+// Progress lives in audit_runs (one row per tenant) so every app instance reports the same run
+// and only one audit per tenant runs at a time across instances. A 'running' row whose
+// heartbeat (updated_at) is older than STALE_AFTER_MS belonged to an instance that died.
+const STALE_AFTER_MS = 10 * 60 * 1000
 
-export function getAuditProgress(tenantId: string): AuditProgress {
-  return progressMap.get(tenantId) || {
+function idleProgress(): AuditProgress {
+  return {
     status: 'idle',
     currentCategory: null,
     completedCategories: 0,
@@ -45,41 +47,73 @@ export function getAuditProgress(tenantId: string): AuditProgress {
   }
 }
 
-export function isAuditRunning(tenantId: string): boolean {
-  return progressMap.get(tenantId)?.status === 'running'
+export async function getAuditProgress(tenantId: string): Promise<AuditProgress> {
+  const row = await withTenant(tenantId, (db) =>
+    db.query.auditRuns.findFirst({ where: eq(auditRuns.tenantId, tenantId) }))
+  if (!row) return idleProgress()
+  const progress = { ...idleProgress(), ...(row.progress as Partial<AuditProgress>) }
+  if (progress.status === 'running' && Date.now() - new Date(row.updatedAt).getTime() > STALE_AFTER_MS) {
+    return { ...progress, status: 'error', error: 'Audit was interrupted (server restarted). Start it again.', currentCategory: null }
+  }
+  return progress
+}
+
+export async function isAuditRunning(tenantId: string): Promise<boolean> {
+  return (await getAuditProgress(tenantId)).status === 'running'
+}
+
+async function saveProgress(tenantId: string, progress: AuditProgress): Promise<void> {
+  await withTenant(tenantId, (db) =>
+    db.update(auditRuns)
+      .set({ status: progress.status, progress: progress as unknown as Record<string, unknown>, updatedAt: new Date() })
+      .where(eq(auditRuns.tenantId, tenantId)))
 }
 
 /**
- * Run a full system audit. Fire-and-forget — returns immediately.
- * Progress can be polled via getAuditProgress().
+ * Atomically claim the tenant's audit slot: succeeds unless a non-stale run is in progress
+ * (on any instance). Returns the fresh progress record, or null when already running.
  */
-export function startFullAudit(tenantId: string): void {
-  if (isAuditRunning(tenantId)) return
-
-  _runAudit(tenantId).catch(err => {
-    console.error('[Audit] Full audit failed:', err)
-    const progress = progressMap.get(tenantId)
-    if (progress) {
-      progress.status = 'error'
-      progress.error = err instanceof Error ? err.message : 'Unknown error'
-      progress.completedAt = new Date().toISOString()
-    }
-  })
+async function claimAudit(tenantId: string): Promise<AuditProgress | null> {
+  const progress: AuditProgress = {
+    ...idleProgress(),
+    status: 'running',
+    startedAt: new Date().toISOString(),
+  }
+  const staleBefore = new Date(Date.now() - STALE_AFTER_MS)
+  const claimed = await withTenant(tenantId, (db) =>
+    db.insert(auditRuns)
+      .values({ tenantId, status: 'running', progress: progress as unknown as Record<string, unknown>, startedAt: new Date(), updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: auditRuns.tenantId,
+        set: { status: 'running', progress: progress as unknown as Record<string, unknown>, startedAt: new Date(), updatedAt: new Date() },
+        // drizzle operators map the Date like the stored value (UTC wall time in a timestamp column)
+        setWhere: or(ne(auditRuns.status, 'running'), lt(auditRuns.updatedAt, staleBefore)),
+      })
+      .returning({ tenantId: auditRuns.tenantId }))
+  return claimed.length > 0 ? progress : null
 }
 
-async function _runAudit(tenantId: string): Promise<void> {
-  const auditId = `audit-${Date.now()}`
+/**
+ * Run a full system audit. Fire-and-forget — returns once the run is claimed.
+ * Returns false when an audit is already running for this tenant (on any instance).
+ * Progress can be polled via getAuditProgress().
+ */
+export async function startFullAudit(tenantId: string): Promise<boolean> {
+  const progress = await claimAudit(tenantId)
+  if (!progress) return false
 
-  const progress: AuditProgress = {
-    status: 'running',
-    currentCategory: null,
-    completedCategories: 0,
-    totalCategories: ALL_MODULES.length,
-    totalFindings: 0,
-    startedAt: new Date().toISOString(),
-    completedAt: null,
-  }
-  progressMap.set(tenantId, progress)
+  _runAudit(tenantId, progress).catch(async (err) => {
+    console.error('[Audit] Full audit failed:', err)
+    progress.status = 'error'
+    progress.error = err instanceof Error ? err.message : 'Unknown error'
+    progress.completedAt = new Date().toISOString()
+    await saveProgress(tenantId, progress).catch(() => undefined)
+  })
+  return true
+}
+
+async function _runAudit(tenantId: string, progress: AuditProgress): Promise<void> {
+  const auditId = `audit-${Date.now()}`
 
   // Clean up previous audit findings for this tenant
   await withTenant(tenantId, async (db) =>
@@ -93,6 +127,7 @@ async function _runAudit(tenantId: string): Promise<void> {
 
   for (const mod of ALL_MODULES) {
     progress.currentCategory = mod.label
+    await saveProgress(tenantId, progress)
     console.log(`[Audit] Running ${mod.category} audit for tenant ${tenantId}`)
 
     try {
@@ -148,6 +183,7 @@ async function _runAudit(tenantId: string): Promise<void> {
     }
 
     progress.completedCategories += 1
+    await saveProgress(tenantId, progress)
     // Update progress more frequently
     broadcastChange(tenantId, 'audit-progress', 'updated', tenantId, progress as unknown as Record<string, unknown>)
   }
@@ -155,4 +191,5 @@ async function _runAudit(tenantId: string): Promise<void> {
   progress.status = 'completed'
   progress.currentCategory = null
   progress.completedAt = new Date().toISOString()
+  await saveProgress(tenantId, progress)
 }

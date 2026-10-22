@@ -6,7 +6,7 @@ import { sales, saleItems, items, payments, customers, customerCreditTransaction
 import { eq, and, desc, sql, or, ilike, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
-import { hasPermission, requirePermission } from '@/lib/auth/roles'
+import { hasPermission, requirePermission, requireModule } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { notifyReturnAlerts } from '@/lib/notifications/sales-alerts'
 import { roundCurrency, compareCurrency, parseCurrency } from '@/lib/utils/currency'
@@ -40,6 +40,8 @@ import { assignedPosProfiles, checkSaleShift, customerOutstanding, evaluateSaleC
 import { priceSaleCart, recordPromotionRedemptions, PromotionExhaustedError, type SalePricing } from '@/lib/pricing/sale-pricing'
 import { PricingLineError } from '@/lib/pricing/load-context'
 
+const LIST_ITEM_EXCLUDED_COLUMNS = { description: false, allergens: false, alternatePartNumbers: false } as const
+
 // GET all sales for the tenant (with pagination)
 export async function GET(request: NextRequest) {
   try {
@@ -47,6 +49,9 @@ export async function GET(request: NextRequest) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'selling')
+    if (moduleError) return moduleError
 
     const parsed = validateSearchParams(request, salesListSchema)
     if (!parsed.success) return parsed.response
@@ -93,7 +98,10 @@ export async function GET(request: NextRequest) {
         .where(whereClause)
 
       // Calculate pagination
-      const limit = all ? 1000 : Math.min(pageSize, 100) // Max 100 per page
+      // all=true lifts the 100-per-page cap (up to 1000) but an explicit pageSize still applies:
+      // the POS return search asks for `pageSize=20&all=true` and must not load 1000 sales.
+      const explicitPageSize = request.nextUrl.searchParams.has('pageSize')
+      const limit = all ? Math.min(explicitPageSize ? pageSize : 1000, 1000) : Math.min(pageSize, 100) // Max 100 per page
       const offset = all ? undefined : (page - 1) * pageSize
 
       const result = await db.query.sales.findMany({
@@ -103,7 +111,8 @@ export async function GET(request: NextRequest) {
           user: SAFE_USER,
           items: {
             with: {
-              item: true,
+              // list view: skip the large free-text / JSON item columns
+              item: { columns: LIST_ITEM_EXCLUDED_COLUMNS },
             },
           },
           // tenders per sale (split / store credit / refunds out), e.g. for an exact shift summary
@@ -133,7 +142,7 @@ export async function GET(request: NextRequest) {
             user: SAFE_USER,
             items: {
               with: {
-                item: true,
+                item: { columns: LIST_ITEM_EXCLUDED_COLUMNS },
               },
             },
             payments: {

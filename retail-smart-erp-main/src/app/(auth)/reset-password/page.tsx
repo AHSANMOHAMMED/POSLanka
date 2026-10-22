@@ -2,13 +2,9 @@ import type { Metadata } from 'next'
 import ResetPasswordClient from './ResetPasswordClient'
 
 export const metadata: Metadata = {
-  title: 'Reset Password - RetailSmart ERP',
-  description: 'Set a new password for your RetailSmart ERP account.',
-  openGraph: {
-    title: 'Reset Password | RetailSmart ERP',
-    description: 'Set a new password for your account.',
-    images: [{ url: '/og/home', width: 1200, height: 630 }],
-  },
+  title: 'Set a new password',
+  description: 'Set a new password for your POSLanka account.',
+  robots: { index: false, follow: false },
 }
 
 export default function ResetPasswordPage() {

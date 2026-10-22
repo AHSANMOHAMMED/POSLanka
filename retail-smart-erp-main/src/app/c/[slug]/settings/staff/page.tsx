@@ -4,8 +4,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { toast } from '@/components/ui/toast'
-import { Edit2, Eye, EyeOff, Loader2, X, Warehouse, Check, Clock, Mail, RefreshCw, Trash2 } from 'lucide-react'
-import { hasPermission, canModifyUser, getRolesForBusinessType, ROLE_HIERARCHY, type UserRole } from '@/lib/auth/roles'
+import Link from 'next/link'
+import { Edit2, Eye, EyeOff, Loader2, X, Warehouse, Check, Clock, Mail, RefreshCw, Trash2, ShieldCheck, Shield, LayoutGrid } from 'lucide-react'
+import { canModifyUser, getRolesForBusinessType, getCategoriesForBusinessType, ROLE_HIERARCHY, PERMISSION_LABELS, type UserRole, type Permission } from '@/lib/auth/roles'
+import { usePermission } from '@/hooks/usePermission'
+import { BusinessIdBadge } from '@/components/settings/BusinessIdBadge'
 import { PermissionGuard } from '@/components/auth/PermissionGuard'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 
@@ -14,6 +17,8 @@ interface User {
   email: string
   fullName: string
   role: UserRole
+  customRoleId?: string | null
+  customRoleName?: string | null
   isActive: boolean
   lastLoginAt: string | null
   createdAt: string
@@ -31,6 +36,25 @@ interface CounterOption {
 }
 
 type CreateMode = 'create' | 'invite'
+
+interface CustomRoleOption {
+  id: string
+  name: string
+  baseRole: UserRole
+  isActive: boolean
+  color: string | null
+}
+
+interface UserPermissionsView {
+  fullName: string
+  role: string
+  customRoleName: string | null
+  permissions: Record<string, boolean>
+  blockedByModule: string[]
+}
+
+/** Role <select> value: a built-in role, or "custom:<id>" for a custom role */
+const CUSTOM_PREFIX = 'custom:'
 
 const PASSWORD_RULE = 'At least 8 characters with an uppercase letter, a lowercase letter and a number'
 
@@ -103,7 +127,14 @@ export default function StaffPage() {
     password: '',
     pin: '',
     role: 'cashier' as UserRole,
+    customRoleId: '' as string,
   })
+  const [customRoleOptions, setCustomRoleOptions] = useState<CustomRoleOption[]>([])
+  const [permView, setPermView] = useState<UserPermissionsView | null>(null)
+  const [permViewLoading, setPermViewLoading] = useState<string | null>(null)
+  const canManageUsers = usePermission('manageUsers')
+  const canManageRoles = usePermission('manageRoles')
+  const canManageModules = usePermission('manageModuleAccess')
   const [createMode, setCreateMode] = useState<CreateMode>('create')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [formWarehouseIds, setFormWarehouseIds] = useState<Set<string>>(new Set())
@@ -156,10 +187,15 @@ export default function StaffPage() {
   // Branches + counters for the create/edit forms
   const fetchOptions = useCallback(async () => {
     try {
-      const [whRes, ppRes] = await Promise.all([
+      const [whRes, ppRes, crRes] = await Promise.all([
         fetch('/api/warehouses?all=true&activeOnly=true'),
         fetch('/api/pos-profiles?all=true'),
+        fetch('/api/custom-roles'),
       ])
+      if (crRes.ok) {
+        const data = await crRes.json()
+        setCustomRoleOptions(Array.isArray(data) ? data : [])
+      }
       if (whRes.ok) {
         const data = await whRes.json()
         setBranchOptions(Array.isArray(data) ? data : data.data || [])
@@ -200,8 +236,30 @@ export default function StaffPage() {
     return counterOptions.filter(c => !c.warehouseId || formWarehouseIds.has(c.warehouseId))
   }, [counterOptions, formWarehouseIds])
 
-  // Check permission
-  if (session && !hasPermission(session.user.role, 'manageUsers')) {
+  // Custom roles the actor may hand out: active and based on an assignable built-in role
+  // (the server additionally refuses any custom role carrying permissions the actor lacks)
+  const assignableCustomRoles = customRoleOptions.filter(cr => cr.isActive && assignableRoles.includes(cr.baseRole))
+  const permissionCategories = getCategoriesForBusinessType(businessType || 'retail')
+
+  async function openPermissionsView(user: User) {
+    setPermViewLoading(user.id)
+    try {
+      const res = await fetch(`/api/users/${user.id}/permissions`)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to load permissions')
+        return
+      }
+      setPermView(data)
+    } catch {
+      toast.error('Failed to load permissions')
+    } finally {
+      setPermViewLoading(null)
+    }
+  }
+
+  // Check permission (server-effective: custom roles / overrides respected)
+  if (session && !canManageUsers) {
     return (
       <div className="p-8 text-center">
         <p className="text-gray-500">You do not have permission to access this page.</p>
@@ -214,7 +272,7 @@ export default function StaffPage() {
   function openCreateModal() {
     setEditingUser(null)
     const defaultRole: UserRole = assignableRoles.includes('cashier') ? 'cashier' : (assignableRoles[0] || 'cashier')
-    setFormData({ fullName: '', email: '', password: '', pin: '', role: defaultRole })
+    setFormData({ fullName: '', email: '', password: '', pin: '', role: defaultRole, customRoleId: '' })
     setCreateMode('create')
     setConfirmPassword('')
     setFormWarehouseIds(new Set(branchOptions.length === 1 ? [branchOptions[0].id] : []))
@@ -230,6 +288,7 @@ export default function StaffPage() {
       password: '',
       pin: '',
       role: user.role,
+      customRoleId: user.customRoleId || '',
     })
     setConfirmPassword('')
     setFormWarehouseIds(new Set((user.warehouses || []).map(w => w.warehouseId)))
@@ -240,7 +299,7 @@ export default function StaffPage() {
   function closeModal() {
     setShowModal(false)
     setEditingUser(null)
-    setFormData({ fullName: '', email: '', password: '', pin: '', role: 'cashier' })
+    setFormData({ fullName: '', email: '', password: '', pin: '', role: 'cashier', customRoleId: '' })
     setConfirmPassword('')
     setFormWarehouseIds(new Set())
     setFormCounterIds(new Set())
@@ -341,7 +400,13 @@ export default function StaffPage() {
           fullName: formData.fullName,
           email: formData.email,
           role: formData.role,
+          customRoleId: formData.customRoleId || null,
           expectedUpdatedAt: editingUser.updatedAt,
+        }
+        // Owner / own account: role is not editable (server refuses it too)
+        if (editingUser.role === 'owner' || editingUser.id === session?.user?.id) {
+          delete updateData.role
+          delete updateData.customRoleId
         }
         if (formData.password) {
           updateData.password = formData.password
@@ -383,6 +448,7 @@ export default function StaffPage() {
                 email: formData.email,
                 fullName: formData.fullName,
                 role: formData.role,
+                customRoleId: formData.customRoleId || undefined,
                 password: formData.password,
                 pin: formData.pin || undefined,
                 warehouseIds: Array.from(formWarehouseIds),
@@ -392,6 +458,7 @@ export default function StaffPage() {
                 mode: 'invite',
                 email: formData.email,
                 role: formData.role,
+                customRoleId: formData.customRoleId || undefined,
                 fullName: formData.fullName || undefined,
                 warehouseIds: Array.from(formWarehouseIds),
                 posProfileIds: Array.from(formCounterIds),
@@ -625,6 +692,21 @@ export default function StaffPage() {
         </>
       }
     >
+      {/* How staff sign in + where roles are defined */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <BusinessIdBadge />
+        {canManageRoles && (
+          <Link href={`/c/${session?.user?.tenantSlug}/settings/role-permissions`} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200">
+            <Shield size={14} /> Roles &amp; permissions
+          </Link>
+        )}
+        {canManageModules && (
+          <Link href={`/c/${session?.user?.tenantSlug}/settings/module-access`} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-200">
+            <LayoutGrid size={14} /> Module access
+          </Link>
+        )}
+      </div>
+
       {/* Pending Invitations */}
       {pendingInvites.length > 0 && (
         <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border border-amber-200 rounded-md overflow-hidden mb-4">
@@ -727,9 +809,18 @@ export default function StaffPage() {
                     {user.email}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`px-2 py-1 rounded text-xs font-medium capitalize ${roleColors[user.role]}`}>
-                      {user.role}
-                    </span>
+                    {user.customRoleId ? (
+                      <div>
+                        <span className="px-2 py-1 rounded text-xs font-medium bg-indigo-100 text-indigo-700">
+                          {user.customRoleName || 'Custom role'}
+                        </span>
+                        <div className="text-[11px] text-gray-500 mt-1">based on {roleLabel(user.role)}</div>
+                      </div>
+                    ) : (
+                      <span className={`px-2 py-1 rounded text-xs font-medium ${roleColors[user.role]}`}>
+                        {roleLabel(user.role)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-600">
                     {formatDateTime(user.lastLoginAt)}
@@ -774,7 +865,15 @@ export default function StaffPage() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {user.id !== session?.user?.id && canModifyUser(session?.user?.role || '', user.role) && (
+                      <button
+                        onClick={() => openPermissionsView(user)}
+                        disabled={permViewLoading === user.id}
+                        className="p-1.5 text-gray-500 hover:bg-gray-100 rounded"
+                        title="What can this person do?"
+                      >
+                        {permViewLoading === user.id ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                      </button>
+                      {user.id !== session?.user?.id && user.role !== 'owner' && canModifyUser(session?.user?.role || '', user.role) && (
                         <button
                           onClick={() => toggleUserStatus(user)}
                           disabled={toggling === user.id}
@@ -808,6 +907,45 @@ export default function StaffPage() {
         )}
       </div>
     </ListPageLayout>
+
+    {/* Effective permissions of one staff member (what the server enforces right now) */}
+      {permView && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setPermView(null)}>
+          <div className="bg-white dark:bg-gray-900 rounded-md w-full max-w-2xl mx-4 shadow-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3 p-4 border-b">
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold truncate">{permView.fullName}</h2>
+                <p className="text-sm text-gray-500">
+                  {permView.customRoleName ? `${permView.customRoleName} (based on ${roleLabel(permView.role)})` : roleLabel(permView.role)}
+                  {' · '}{Object.values(permView.permissions).filter(Boolean).length} permissions
+                </p>
+              </div>
+              <button onClick={() => setPermView(null)} className="p-1 hover:bg-gray-100 rounded shrink-0"><X size={20} /></button>
+            </div>
+            <div className="p-4 overflow-y-auto space-y-4">
+              {Object.entries(permissionCategories).map(([category, perms]) => (
+                <div key={category}>
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">{category}</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                    {perms.map((perm: Permission) => {
+                      const on = permView.permissions[perm] === true
+                      const blocked = permView.blockedByModule.includes(perm)
+                      return (
+                        <div key={perm} className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${on ? 'text-gray-900 dark:text-white' : 'text-gray-400'}`}>
+                          {on ? <Check size={14} className="text-green-600 shrink-0" /> : <X size={14} className="shrink-0" />}
+                          <span className="min-w-0">{PERMISSION_LABELS[perm]}</span>
+                          {blocked && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 shrink-0">module off</span>}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
+              <p className="text-xs text-gray-500">These are enforced by the server for the web app, the mobile app and the API. &ldquo;Module off&rdquo; means the role would have it but the module is switched off in Module Access.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
     {/* Create/Edit Modal */}
       {showModal && (
@@ -977,8 +1115,16 @@ export default function StaffPage() {
                   Role *
                 </label>
                 <select
-                  value={formData.role}
-                  onChange={(e) => setFormData({ ...formData, role: e.target.value as typeof formData.role })}
+                  value={formData.customRoleId ? `${CUSTOM_PREFIX}${formData.customRoleId}` : formData.role}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (v.startsWith(CUSTOM_PREFIX)) {
+                      const cr = customRoleOptions.find(o => o.id === v.slice(CUSTOM_PREFIX.length))
+                      if (cr) setFormData({ ...formData, role: cr.baseRole, customRoleId: cr.id })
+                    } else {
+                      setFormData({ ...formData, role: v as typeof formData.role, customRoleId: '' })
+                    }
+                  }}
                   className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   disabled={editingUser?.id === session?.user?.id || editingUser?.role === 'owner'}
                 >
@@ -988,10 +1134,28 @@ export default function StaffPage() {
                   {editingUser && editingUser.role !== 'owner' && !assignableRoles.includes(editingUser.role) && (
                     <option value={editingUser.role}>{roleLabel(editingUser.role)}</option>
                   )}
-                  {assignableRoles.map(r => (
-                    <option key={r} value={r}>{roleLabel(r)}</option>
-                  ))}
+                  {editingUser?.customRoleId && !assignableCustomRoles.some(cr => cr.id === editingUser.customRoleId) && (
+                    <option value={`${CUSTOM_PREFIX}${editingUser.customRoleId}`}>{editingUser.customRoleName || 'Custom role'}</option>
+                  )}
+                  <optgroup label="Built-in roles">
+                    {assignableRoles.map(r => (
+                      <option key={r} value={r}>{roleLabel(r)}</option>
+                    ))}
+                  </optgroup>
+                  {assignableCustomRoles.length > 0 && (
+                    <optgroup label="Custom roles">
+                      {assignableCustomRoles.map(cr => (
+                        <option key={cr.id} value={`${CUSTOM_PREFIX}${cr.id}`}>{cr.name} (based on {roleLabel(cr.baseRole)})</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
+                {canManageRoles && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Decide what each role may do in{' '}
+                    <Link href={`/c/${session?.user?.tenantSlug}/settings/role-permissions`} className="text-blue-600 hover:underline">Role Permissions</Link>.
+                  </p>
+                )}
                 {editingUser?.id === session?.user?.id && (
                   <p className="text-xs text-amber-600 mt-1">You cannot change your own role</p>
                 )}

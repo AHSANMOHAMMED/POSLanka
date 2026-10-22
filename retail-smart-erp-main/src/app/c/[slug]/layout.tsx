@@ -36,7 +36,9 @@ export default async function CompanyLayout({
 
   // ── PUBLIC PAGES: No auth required (breaks redirect loop for unauthenticated users) ──
   const isLoginPage = pathname === `/c/${slug}/login`
-  if (isLoginPage) {
+  // Staff password reset must work while signed out (it was redirected to login before)
+  const isPasswordResetPage = pathname === `/c/${slug}/forgot-password`
+  if (isLoginPage || isPasswordResetPage) {
     return (
       <>
         <SubdomainUrlCleaner />

@@ -2,8 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { authenticateSuperAdmin, createAdminSession, withRateLimit, LOGIN_LIMIT } from '@/lib/admin'
 import { checkAdminTotp } from '@/lib/admin/totp'
+import { adminPermissionsOf } from '@/lib/admin/roles'
 import { validateBody } from '@/lib/validation/helpers'
 import { logError } from '@/lib/ai/error-logger'
+import { db } from '@/lib/db'
+import { superAdmins } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 
 const schema = z.object({
   email: z.string().email(),
@@ -36,8 +40,28 @@ export async function POST(request: NextRequest) {
     if (totp === 'required') return NextResponse.json({ requires2fa: true, error: 'Two-factor code required' }, { status: 428 })
     if (totp === 'invalid') return NextResponse.json({ requires2fa: true, error: 'Invalid two-factor code' }, { status: 401 })
 
+    // Setup another admin requires (new password / 2FA enrolment) can only be completed in the web console
+    const state = await db.query.superAdmins.findFirst({
+      where: eq(superAdmins.id, result.admin.id),
+      columns: { mustChangePassword: true, totpRequired: true, totpEnabled: true },
+    })
+    if (state && (state.mustChangePassword || (state.totpRequired && !state.totpEnabled))) {
+      return NextResponse.json({
+        error: state.mustChangePassword
+          ? 'Choose a new password in the web console before using the app.'
+          : 'Set up two-factor authentication in the web console before using the app.',
+        code: 'ACCOUNT_SETUP_REQUIRED',
+        setup: { mustChangePassword: state.mustChangePassword, totpRequired: state.totpRequired && !state.totpEnabled },
+      }, { status: 403 })
+    }
+
     const token = await createAdminSession(result.admin.id, { setCookie: false })
-    return NextResponse.json({ token, admin: { id: result.admin.id, name: result.admin.fullName, email: result.admin.email } })
+    // The role decides what the companion app shows; every sys-control route enforces it again
+    return NextResponse.json({
+      token,
+      admin: { id: result.admin.id, name: result.admin.fullName, email: result.admin.email, role: result.admin.role },
+      permissions: adminPermissionsOf(result.admin.role),
+    })
   } catch (error) {
     logError('api/sys-control/auth/mobile-login', error)
     return NextResponse.json({ error: 'Login failed' }, { status: 500 })

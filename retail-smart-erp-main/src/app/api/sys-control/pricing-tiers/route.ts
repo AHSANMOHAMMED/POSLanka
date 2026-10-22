@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { pricingTiers, subscriptions } from '@/lib/db/schema'
 import { asc, eq, count, sql } from 'drizzle-orm'
-import { adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
+import { adminAuthError, adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
 import { sysCreatePricingTierSchema } from '@/lib/validation/schemas/sys-control'
@@ -10,9 +10,9 @@ import { sysCreatePricingTierSchema } from '@/lib/validation/schemas/sys-control
 // GET /api/sys-control/pricing-tiers - List all pricing tiers with subscriber counts
 export async function GET() {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('read')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const tiers = await db.query.pricingTiers.findMany({
@@ -49,9 +49,9 @@ export async function POST(request: NextRequest) {
     const rateLimited = await withRateLimit('/api/sys-control/pricing-tiers', STRICT_LIMIT)
     if (rateLimited) return rateLimited
 
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('billing')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const parsed = await validateBody(request, sysCreatePricingTierSchema)

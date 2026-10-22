@@ -1,10 +1,15 @@
 import { db } from '@/lib/db'
 import { sql } from 'drizzle-orm'
 
-interface RateLimitConfig {
+export interface RateLimitConfig {
   maxAttempts: number
   windowMs: number
   category: string
+  /**
+   * When the database cannot be reached: true = treat as limited (login, PIN — a brute-force
+   * window must never open because the limiter is down), false/undefined = allow (fail open).
+   */
+  failClosed?: boolean
 }
 
 interface RateLimitResult {
@@ -74,9 +79,64 @@ export async function checkRateLimit(
 
     return { limited: false, remaining: maxAttempts - attempts }
   } catch {
-    // If database is unavailable, fail open (don't block legitimate users)
+    // Database unavailable: fail closed for credential checks, open for everything else
+    if (config.failClosed) return { limited: true, remaining: 0, retryAfterMs: 60_000 }
     return { limited: false, remaining: maxAttempts }
   }
+}
+
+/**
+ * Count one request against `key` and report whether it exceeds the limit — a single atomic
+ * upsert, so it is correct across app instances (unlike per-process Maps). Use for endpoints
+ * that limit every request (lookups, forgot-password, contact form) rather than only failures.
+ */
+export async function consumeRateLimit(
+  key: string,
+  config: RateLimitConfig
+): Promise<RateLimitResult> {
+  const { maxAttempts, windowMs, category } = config
+  const now = new Date()
+  const windowStart = new Date(now.getTime() - windowMs)
+  try {
+    const result = await db.execute(sql`
+      INSERT INTO rate_limit_attempts (key, category, attempts, first_attempt_at, updated_at)
+      VALUES (${key}, ${category}, 1, ${now}, ${now})
+      ON CONFLICT (key, category) DO UPDATE SET
+        attempts = CASE WHEN rate_limit_attempts.first_attempt_at < ${windowStart}
+          THEN 1 ELSE rate_limit_attempts.attempts + 1 END,
+        first_attempt_at = CASE WHEN rate_limit_attempts.first_attempt_at < ${windowStart}
+          THEN ${now} ELSE rate_limit_attempts.first_attempt_at END,
+        locked_until = NULL,
+        updated_at = ${now}
+      RETURNING attempts, first_attempt_at
+    `)
+    const row = result.rows?.[0] as { attempts: number | string; first_attempt_at: Date | string } | undefined
+    const attempts = Number(row?.attempts ?? 1)
+    if (attempts > maxAttempts) {
+      const first = row ? new Date(row.first_attempt_at).getTime() : now.getTime()
+      return { limited: true, remaining: 0, retryAfterMs: Math.max(1000, first + windowMs - now.getTime()) }
+    }
+    return { limited: false, remaining: maxAttempts - attempts }
+  } catch {
+    if (config.failClosed) return { limited: true, remaining: 0, retryAfterMs: 60_000 }
+    return { limited: false, remaining: maxAttempts }
+  }
+}
+
+/** Client IP from proxy headers (first x-forwarded-for hop), for rate-limit keys. */
+export function clientIp(request: Request): string {
+  const fwd = request.headers.get('x-forwarded-for')
+  if (fwd) return fwd.split(',')[0].trim() || 'unknown'
+  return request.headers.get('x-real-ip') || 'unknown'
+}
+
+/** Standard 429 body + Retry-After header. */
+export function rateLimitedResponse(result: RateLimitResult, message = 'Too many requests. Please try again later.'): Response {
+  const seconds = Math.max(1, Math.ceil((result.retryAfterMs ?? 60_000) / 1000))
+  return new Response(JSON.stringify({ error: message }), {
+    status: 429,
+    headers: { 'Content-Type': 'application/json', 'Retry-After': String(seconds) },
+  })
 }
 
 /**
@@ -139,19 +199,16 @@ export async function clearRateLimit(
 }
 
 /**
- * Clean up expired rate limit entries (call periodically).
+ * Clean up expired rate limit entries (called by /api/cron/retention). Returns rows deleted.
  */
-export async function cleanupRateLimits(): Promise<void> {
-  try {
-    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000) // 24 hours ago
-    await db.execute(sql`
-      DELETE FROM rate_limit_attempts
-      WHERE first_attempt_at < ${cutoff}
-        AND (locked_until IS NULL OR locked_until < now())
-    `)
-  } catch {
-    // Fail silently
-  }
+export async function cleanupRateLimits(maxAgeMs = 24 * 60 * 60 * 1000): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMs)
+  const res = await db.execute(sql`
+    DELETE FROM rate_limit_attempts
+    WHERE first_attempt_at < ${cutoff}
+      AND (locked_until IS NULL OR locked_until < now())
+  `)
+  return res.rowCount ?? 0
 }
 
 // Pre-configured rate limit configs
@@ -159,6 +216,7 @@ export const LOGIN_RATE_LIMIT: RateLimitConfig = {
   maxAttempts: 5,
   windowMs: 15 * 60 * 1000, // 15 minutes
   category: 'login',
+  failClosed: true,
 }
 
 export const RESET_PASSWORD_RATE_LIMIT: RateLimitConfig = {

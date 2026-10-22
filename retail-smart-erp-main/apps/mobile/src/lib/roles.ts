@@ -1,5 +1,8 @@
 // Mirrors the server-side defaults in src/lib/auth/roles.ts (ROLE_PERMISSIONS).
 // Used only to hide UI the user cannot use; the server remains the authority.
+// When the signed-in user carries server-effective permissions (login response /
+// GET /api/role-permissions/effective — custom roles, tenant overrides and module access
+// applied) those win; this table is only the fallback for sessions from older servers.
 import type { AuthUser } from './api'
 
 export const ROLE_PERMISSIONS = {
@@ -14,14 +17,42 @@ export const ROLE_PERMISSIONS = {
   manageCustomers: ['owner', 'manager', 'waiter', 'sales_manager', 'dealer_sales'],
   manageUsers: ['owner', 'manager', 'system_manager'],
   manageSales: ['owner', 'manager', 'sales_manager'],
+  voidSales: ['owner', 'manager', 'sales_manager'],
+  processReturns: ['owner', 'manager', 'sales_manager'],
+  manageItems: ['owner', 'manager', 'stock_manager'],
+  managePurchases: ['owner', 'manager', 'purchase_manager'],
+  createRequisitions: ['owner', 'manager', 'technician', 'purchase_manager'],
+  manageSettings: ['owner', 'system_manager'],
+  viewAccounting: ['owner', 'manager', 'accounts_manager'],
+  manageEmployees: ['owner', 'manager', 'hr_manager'],
 } as const
 
 export type Permission = keyof typeof ROLE_PERMISSIONS
 
 export function hasPermission(user: AuthUser | null | undefined, permission: Permission): boolean {
   if (!user?.role) return false
+  const effective = user.permissions
+  if (effective && typeof effective === 'object' && Object.keys(effective).length > 0) {
+    return effective[permission] === true
+  }
   if (user.role === 'owner') return true
   return (ROLE_PERMISSIONS[permission] as readonly string[]).includes(user.role)
+}
+
+/** True when any of the permissions is held. */
+export function hasAnyPermission(user: AuthUser | null | undefined, permissions: Permission[]): boolean {
+  return permissions.some((p) => hasPermission(user, p))
+}
+
+/** Role name shown to the user: the custom role name when assigned, else the built-in label. */
+export function displayRole(user: Pick<AuthUser, 'role' | 'customRoleName'> | null | undefined): string {
+  if (!user) return ''
+  return user.customRoleName || roleLabel(user.role)
+}
+
+/** Where a user lands / falls back to: the register for sellers, the hub otherwise. */
+export function homeRoute(user: AuthUser | null | undefined): '/pos' | '/home' {
+  return hasPermission(user, 'createSales') ? '/pos' : '/home'
 }
 
 export function roleLabel(role: string | undefined | null): string {

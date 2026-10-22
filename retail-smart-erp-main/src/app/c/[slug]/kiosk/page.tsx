@@ -456,7 +456,7 @@ export default function SelfServiceKioskPage() {
                     <div className="aspect-square bg-slate-100 dark:bg-slate-800 flex items-center justify-center overflow-hidden">
                       {item.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" loading="lazy" />
+                        <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" loading="lazy" decoding="async" />
                       ) : (
                         <ShoppingBag className="w-10 h-10 text-slate-300 dark:text-slate-600" />
                       )}
@@ -515,7 +515,7 @@ export default function SelfServiceKioskPage() {
                     <div className="w-12 h-12 rounded-xl bg-teal-50 dark:bg-teal-950/50 flex items-center justify-center text-teal-700 dark:text-teal-300 shrink-0 overflow-hidden">
                       {item.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
-                        <img src={item.imageUrl} alt="" className="w-full h-full object-cover" />
+                        <img src={item.imageUrl} alt="" className="w-full h-full object-cover" loading="lazy" decoding="async" />
                       ) : (
                         <ShoppingBag className="w-5 h-5" />
                       )}

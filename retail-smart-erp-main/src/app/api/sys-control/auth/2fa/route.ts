@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { superAdmins } from '@/lib/db/schema'
-import { validateAdminSession, adminAudit } from '@/lib/admin'
+import { adminAuthError, validateAdminSession, adminAudit } from '@/lib/admin'
 import { generateTotpSecret, totpQrDataUrl, verifyTotp } from '@/lib/admin/totp'
 import { validateBody } from '@/lib/validation/helpers'
 import { logError } from '@/lib/ai/error-logger'
@@ -13,12 +13,12 @@ const actionSchema = z.object({
   code: z.string().regex(/^\d{6}$/).optional(),
 })
 
-/** GET /api/sys-control/auth/2fa → { enabled } */
+/** GET /api/sys-control/auth/2fa → { enabled, required, email } */
 export async function GET() {
-  const session = await validateAdminSession()
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const admin = await db.query.superAdmins.findFirst({ where: eq(superAdmins.id, session.superAdminId), columns: { totpEnabled: true, email: true } })
-  return NextResponse.json({ enabled: !!admin?.totpEnabled, email: admin?.email })
+  const session = await validateAdminSession({ permission: 'self', allowPendingSetup: true })
+  if (!session) return adminAuthError()
+  const admin = await db.query.superAdmins.findFirst({ where: eq(superAdmins.id, session.superAdminId), columns: { totpEnabled: true, totpRequired: true, email: true } })
+  return NextResponse.json({ enabled: !!admin?.totpEnabled, required: !!admin?.totpRequired, email: admin?.email })
 }
 
 /**
@@ -29,8 +29,8 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await validateAdminSession()
-    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const session = await validateAdminSession({ permission: 'self', allowPendingSetup: true })
+    if (!session) return adminAuthError()
     const parsed = await validateBody(request, actionSchema)
     if (!parsed.success) return parsed.response
     const { action, code } = parsed.data
@@ -54,6 +54,9 @@ export async function POST(request: NextRequest) {
       await db.update(superAdmins).set({ totpEnabled: true, updatedAt: new Date() }).where(eq(superAdmins.id, admin.id))
       await adminAudit.update(session.superAdminId, 'super_admin', admin.id, { twoFactor: 'enabled' })
       return NextResponse.json({ enabled: true })
+    }
+    if (admin.totpRequired) {
+      return NextResponse.json({ error: 'Two-factor authentication is required for your account. Another admin must waive the requirement first.' }, { status: 403 })
     }
     await db.update(superAdmins).set({ totpEnabled: false, totpSecret: null, updatedAt: new Date() }).where(eq(superAdmins.id, admin.id))
     await adminAudit.update(session.superAdminId, 'super_admin', admin.id, { twoFactor: 'disabled' })

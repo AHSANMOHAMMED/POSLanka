@@ -151,6 +151,22 @@ CRON_SECRET=GENERATE_WITH_OPENSSL_RAND_HEX_32
 # Mobile push (Expo). Optional access token for the Expo push API.
 EXPO_ACCESS_TOKEN=
 
+# ==================== Operations (see §7) ====================
+# METRICS_TOKEN=GENERATE_WITH_OPENSSL_RAND_HEX_32   # enables GET /api/metrics (Bearer)
+# LOG_FORMAT=json            # json (default in production) | pretty
+# LOG_LEVEL=info
+# DB_STATEMENT_TIMEOUT_MS=30000
+# DB_IDLE_IN_TRANSACTION_TIMEOUT_MS=60000
+# SLOW_QUERY_MS=500
+# SLOW_REQUEST_MS=2000
+# SHUTDOWN_TIMEOUT_MS=25000
+# OUTBOUND_TIMEOUT_MS=10000
+# UPLOAD_MAX_MB=20
+# SSE_TOKEN_MAX_AGE_SEC=300
+# BROADCAST_FANOUT=on        # off = no cross-instance realtime (single instance only)
+# ALLOW_LOCAL_UPLOADS=false  # true only for one host with a persistent public/uploads volume
+# AI_ERROR_ANALYSIS=on       # off = never send error text to the AI provider
+
 # ==================== Migration Behavior ====================
 SKIP_MIGRATIONS=false
 REQUIRE_MIGRATIONS=true
@@ -175,7 +191,8 @@ npm run db:migrate
 npm run db:seed-admin
 # Follow prompt: sets up email & password for /sys-control access
 
-# 4. Apply high-throughput performance indexes for POS & sales
+# 4. (optional, legacy) extra indexes from add-indexes.sql — the ones that matter are
+#    applied by migration 0168 (CREATE INDEX CONCURRENTLY) during db:migrate
 npm run db:indexes
 ```
 
@@ -285,11 +302,91 @@ To support wildcards for multi-tenancy, configure your DNS provider (e.g. Cloudf
 
 ---
 
-## 7. Operational Scaling & Single-Instance Guidelines
+## 7. Scaling, Health Checks & Observability
 
-The WebSocket server (`server.ts` / `src/lib/websocket/server.ts`) manages active terminal connections in memory:
-- **Single Instance (Recommended for Launch)**: Deploy 1 solid container or VPS with 2GB–4GB RAM and 2 vCPUs. This comfortably handles 100+ concurrent businesses and thousands of daily sales.
-- **Multi-Instance / Autoscaling**: If you scale out to 2+ replicas behind a round-robin load balancer, real-time broadcasts on Container A will not reach terminals connected to Container B. Keep to **1 vertical instance** until you attach a Redis Pub/Sub adapter.
+### Horizontal scaling (2+ instances)
+
+Running several app instances behind a load balancer is supported; no Redis is needed.
+
+- **Realtime:** every broadcast is delivered to the instance's own WebSocket/SSE clients and also
+  published with Postgres `NOTIFY ws_broadcast`. Each instance keeps one dedicated `LISTEN`
+  connection (reconnects with 1 s → 60 s backoff) and delivers other instances' messages to its
+  clients (`src/lib/websocket/fanout.ts`). Payloads over 8 kB go out without `data`
+  (clients refetch). `BROADCAST_FANOUT=off` turns this off for a single instance.
+- **Rate limits** for login, PIN, lookups, forgot-password, invites, coupons, contact form and
+  client error reports are stored in `rate_limit_attempts`, so they hold across instances.
+- **Caches:** permission, billing-settings, alert-settings and storage-quota caches are
+  invalidated on every instance through `NOTIFY` (`permission_cache_invalidate`,
+  `cache_invalidate`). The system-audit progress lives in `audit_runs`. Imports were already
+  DB-coordinated (job row lock + heartbeat).
+- **Uploads** must go to object storage (Spaces/R2/S3). In production the local-disk fallback is
+  refused unless `ALLOW_LOCAL_UPLOADS=true` (single host with a persistent volume only);
+  `/api/health` reports `storage`.
+- **Sticky sessions are not required.** WebSocket/SSE clients reconnect to any instance.
+
+**Connection budget.** Each instance uses up to `DATABASE_POOL_MAX` pooled connections (default
+15) **plus 2 dedicated LISTEN connections** (realtime/cache fan-out and permission cache). Keep
+
+    instances × (DATABASE_POOL_MAX + 2) + migrate job + admin headroom (≈5) < DB connection limit
+
+e.g. a DO 1 GB cluster (≈22 usable): 1 instance × 15; a 2 GB cluster (≈47): 2 × 15 or 3 × 10;
+a 4 GB cluster (≈97): 4 × 15. Prefer a bigger database or fewer, larger instances over many
+small ones. If you put PgBouncer in front, use **session** mode (transaction mode breaks
+`SET LOCAL ROLE`, `LISTEN` and advisory locks); the per-session timeouts are applied with `SET`
+after connect, so PgBouncer's startup-parameter filter is not a problem.
+
+### Database safety limits
+
+Every pooled connection gets `statement_timeout = 30 s` (`DB_STATEMENT_TIMEOUT_MS`) and
+`idle_in_transaction_session_timeout = 60 s` (`DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`); `0` disables
+either. The company backup export lifts the statement timeout for its own transaction; the
+retention job uses 5 min. Queries slower than `SLOW_QUERY_MS` (default 500) are logged as
+`slow query` (SQL text only, never parameters).
+
+### Health endpoints
+
+| Endpoint | Meaning | Use for |
+|---|---|---|
+| `GET /api/health/live` | process answers; never touches the DB | liveness probe (restart only when this fails) |
+| `GET /api/health/ready` | 200 when the DB answers `SELECT 1` within 2 s and the instance is not draining; 503 otherwise | readiness / load-balancer health check |
+| `GET /api/health` | backward compatible (status, database, tenantIsolation, storage, version); 503 when the DB is down | Docker `HEALTHCHECK`, uptime monitors |
+
+On `SIGTERM` the server flips readiness to 503, stops accepting connections, closes WebSockets,
+ends SSE streams, closes idle keep-alive sockets, waits for in-flight requests and closes the DB
+pool; `SHUTDOWN_TIMEOUT_MS` (default 25 s) bounds it. An uncaught exception always exits
+(after logging) so the orchestrator starts a clean instance.
+
+### Logs, request ids and metrics
+
+- Logs are one JSON object per line in production (`LOG_FORMAT=json|pretty`, `LOG_LEVEL`).
+  Server, websocket, DB pool, cron, health and error-logger output is structured; other modules
+  still print plain lines.
+- Every request gets an `x-request-id` (the load balancer's value is kept when present). It is
+  returned in the response, attached to every structured log line and stored in
+  `ai_error_logs.context.requestId`, so a user-reported error can be traced end to end.
+  5xx responses and requests slower than `SLOW_REQUEST_MS` (default 2000) are logged.
+- `GET /api/metrics` (Prometheus text format) — set `METRICS_TOKEN` and scrape with
+  `Authorization: Bearer <METRICS_TOKEN>`; without the variable the endpoint returns 404. Reports
+  per instance: HTTP requests by status class and latency, DB pool total/idle/waiting, query count,
+  errors and slow queries, realtime clients, fan-out counters, memory, uptime, draining flag.
+- Errors sent to the AI analyser are scrubbed of e-mail addresses, phone/card numbers and
+  Postgres key values; `AI_ERROR_ANALYSIS=off` disables the analysis completely.
+- Outbound calls (SMS, e-mail, push, WhatsApp, AI) time out after `OUTBOUND_TIMEOUT_MS`
+  (default 10 s; AI 30 s).
+
+### Security notes
+
+- **CSRF:** `src/proxy.ts` rejects state-changing `/api/*` requests that carry a session cookie
+  (`company-session`, `account-session`, `admin_session`) when their `Origin` (or `Referer`) is
+  not this host, the base domain or one of its subdomains, `*.poslanka.lk`, or a host in
+  `ALLOWED_HOSTS`. Exempt: `/api/payhere/notify`, `/api/webxpay/webhook`, `/api/cron/*`,
+  `/api/v1/*`, `/api/client-errors`, and requests without a session cookie (mobile app Bearer
+  tokens, API keys). A custom domain that serves the web app must be added to `ALLOWED_HOSTS`.
+- **SSE** (`/_events?token=`) accepts only tokens issued in the last `SSE_TOKEN_MAX_AGE_SEC`
+  (default 300 s; the web client fetches a fresh one before connecting) and returns CORS headers
+  only to the origins above.
+- **Uploads** are checked against their file signature (magic bytes) and limited to
+  `UPLOAD_MAX_MB` (default 20 MB).
 
 ---
 
@@ -340,10 +437,35 @@ npx expo start
 
 ## 10. Routine Maintenance & Backup Protocol
 
-### Database Backups (Daily Cron)
-```bash
-pg_dump -U postgres -h your-db-host poslanka | gzip > /backups/poslanka_$(date +\%Y\%m\%d_\%H\%M\%S).sql.gz
-```
+### Database Backups
+
+- **Managed PostgreSQL** (DigitalOcean): daily snapshots + 7-day point-in-time recovery, nothing
+  to schedule.
+- **Off-provider copies:** App Platform has no host cron, so `deploy/backup/pg-backup.sh` is not
+  scheduled by the app. Run it daily from a small Droplet / backup host (system cron, see
+  `deploy/backup/README.md`) or from a scheduled CI job with `postgresql-client`, writing to a
+  bucket you control (`S3_URI`, optional GPG). Test a restore with `pg-restore.sh` quarterly.
+- Object storage (Spaces/R2) is in neither backup: enable bucket versioning / lifecycle rules.
+
+### Data retention (`/api/cron/retention`, daily)
+
+Operational logs are deleted in batches of 5 000 rows (policy in
+`src/lib/maintenance/retention.ts`, `RETENTION_POLICY`):
+
+| Table | Kept | |
+|---|---|---|
+| `activity_logs` | 400 days | user activity feed |
+| `ai_error_logs` | 90 days | application error log |
+| `notification_logs` | 180 days | SMS / e-mail delivery log |
+| `file_audit_logs` | 365 days | file access log |
+| `rate_limit_attempts` | 1 day | expired counters only (active lockouts stay) |
+| `admin_rate_limits` | 1 day | |
+| `admin_impersonation_tokens` | 30 days after expiry | |
+
+Usage-counter deltas are folded into `tenant_usage`, never deleted. Business and audit records
+(journal/GL, sales, payments, stock movements, `admin_audit_logs`, `supplier_balance_audit`,
+`item_change_log`, `lockout_events`) are kept indefinitely. Override a window with
+`RETENTION_<TABLE>_DAYS` (e.g. `RETENTION_ACTIVITY_LOGS_DAYS=730`; `0` disables that rule).
 
 ### Scheduled Jobs (`/api/cron/*`)
 
@@ -365,12 +487,13 @@ cron-job.org) works the same way:
 |---|---|---|
 | `stock-alerts` | hourly | low-stock digest + expiring stock at each stock manager's local digest hour; inbox housekeeping |
 | `import-maintenance` | every 15 min | resume interrupted bulk imports (stale heartbeat); delete import jobs finished > 30 days ago |
-| `enforce-subscriptions` | every 6 h | trial / subscription lockouts |
+| `enforce-subscriptions` | every 6 h | first activates PayHere payments recorded as paid but not yet applied (`activated_at` NULL), then trial / subscription lockouts |
 | `subscription-reminders` | daily | trial / plan ending in 7 and 1 days → company owners (push + in-app) |
 | `calculate-storage` | daily | tenant storage usage |
 | `cleanup-held-sales` | daily | delete expired held sales |
 | `refresh-exchange-rates` | daily | currency rates |
 | `auto-reorder` | daily 02:30 LKT (21:00 UTC) | automatic reorder run (`POST /api/cron/auto-reorder`) |
+| `retention` | daily 02:15 LKT (20:45 UTC) | delete old operational logs per the retention policy (see *Data retention*) |
 | `einvoice-sync` | every 10 min | e-invoicing (IRD RAMIS readiness): queues an `einvoice_outbox` row for each new sale / return / credit note / debit note of companies with e-invoicing enabled (**Accounting → Settings → E-invoicing**) and transmits due rows with exponential backoff (1 min doubling, max 12 h, 10 attempts). Transmitter chosen by `EINVOICE_TRANSMITTER` (default `disabled` = queue only, nothing sent) |
 
 Run a single job manually from the Actions tab (**Scheduled jobs → Run workflow → job**).

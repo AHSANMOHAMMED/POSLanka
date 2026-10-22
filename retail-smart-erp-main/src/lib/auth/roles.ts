@@ -6,6 +6,15 @@ import type { CompanySession } from '@/lib/auth'
 let _getPermissionOverride: ((tenantId: string, role: string, permission: string) => boolean | undefined) | null = null
 let _getCustomRolePermission: ((tenantId: string, customRoleId: string, permission: string) => boolean | undefined) | null = null
 let _getCustomRoleBaseRole: ((tenantId: string, customRoleId: string) => string | undefined) | null = null
+let _isModuleDisabled: ((tenantId: string, role: string, moduleKey: string) => boolean) | null = null
+
+/**
+ * Called by permission-cache.ts when it loads (server only): lets hasPermission refuse
+ * permissions whose module the owner switched off for a role (Settings → Module Access).
+ */
+export function registerModuleAccessLookup(fn: (tenantId: string, role: string, moduleKey: string) => boolean) {
+  _isModuleDisabled = fn
+}
 
 /**
  * Called once from authWithCompany() after dynamic-importing permission-cache.
@@ -116,6 +125,9 @@ export const ROLE_PERMISSIONS = {
   approveAdvances: ['owner', 'manager', 'hr_manager'],
   disburseAdvances: ['owner', 'hr_manager'],
   manageModuleAccess: ['owner'],
+  // Define custom roles and per-role permission overrides. Owner by default; the owner may
+  // delegate it, but holders can never grant a permission they do not hold themselves.
+  manageRoles: ['owner'],
 } as const
 
 export type Permission = keyof typeof ROLE_PERMISSIONS
@@ -123,7 +135,7 @@ export type Permission = keyof typeof ROLE_PERMISSIONS
 // Permissions grouped by category for the settings UI
 export const PERMISSION_CATEGORIES: Record<string, Permission[]> = {
   'Settings & System': ['manageSettings', 'manageTenant', 'manageModuleAccess'],
-  'User Management': ['manageUsers'],
+  'User Management': ['manageUsers', 'manageRoles'],
   'Inventory': ['manageItems', 'manageCategories', 'manageInventory', 'submitStockIntake', 'postStockIntake'],
   'Sales': ['createSales', 'voidSales', 'processReturns', 'manageSales', 'managePOS'],
   'Purchases': ['managePurchases', 'createRequisitions', 'approveRequisitions'],
@@ -152,6 +164,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   manageTenant: 'Manage Tenant',
   manageModuleAccess: 'Manage Module Access',
   manageUsers: 'Manage Users',
+  manageRoles: 'Manage Roles & Permissions',
   manageItems: 'Manage Items',
   manageCategories: 'Manage Categories',
   manageInventory: 'Manage Inventory',
@@ -203,6 +216,33 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
 
 // Permissions that cannot be granted to non-owner roles (protected)
 export const OWNER_ONLY_PERMISSIONS: Permission[] = ['manageTenant', 'manageModuleAccess']
+
+/**
+ * Module (Settings → Module Access) each permission belongs to. When the owner disables a
+ * module for a role, every permission of that module is refused for that role server-side
+ * (requirePermission → hasPermission) and disappears from /api/role-permissions/effective.
+ * Permissions not listed here are never affected by module toggles. Owners are never affected.
+ */
+export const PERMISSION_MODULES: Partial<Record<Permission, string>> = {
+  manageItems: 'stock', manageCategories: 'stock', manageInventory: 'stock',
+  submitStockIntake: 'stock', postStockIntake: 'stock',
+  createSales: 'selling', voidSales: 'selling', processReturns: 'selling', manageSales: 'selling',
+  managePOS: 'selling', manageCustomers: 'selling', manageCustomerCredit: 'selling',
+  managePurchases: 'buying', createRequisitions: 'buying', approveRequisitions: 'buying',
+  manageServiceTypes: 'auto-service', manageVehicleTypes: 'auto-service', manageInspectionTemplates: 'auto-service',
+  manageVehicles: 'auto-service', manageWorkOrders: 'auto-service', deleteWorkOrders: 'auto-service',
+  invoiceWorkOrders: 'auto-service', manageInsuranceEstimates: 'auto-service', manageInsuranceCompanies: 'auto-service',
+  manageRestaurantOrders: 'restaurant', manageTables: 'restaurant',
+  manageEmployees: 'hr', manageSalaryComponents: 'hr', processPayroll: 'hr', viewPayroll: 'hr',
+  approveAdvances: 'hr', disburseAdvances: 'hr',
+  viewAccounting: 'accounting', manageAccounting: 'accounting',
+  viewReports: 'reports', manageSavedReports: 'reports',
+  viewOwnPaySlips: 'my', viewOwnCommissions: 'my', requestAdvance: 'my',
+  manageSettings: 'settings', manageUsers: 'settings', manageRoles: 'settings', managePrintTemplates: 'settings',
+}
+
+/** Module keys the owner can toggle per role (matches MODULE_TABS keys). */
+export const MODULE_KEYS = ['dashboard', 'stock', 'selling', 'buying', 'auto-service', 'restaurant', 'hr', 'accounting', 'reports', 'my', 'settings'] as const
 
 // Roles that are specific to certain business types
 // Roles NOT listed here are shown for ALL business types
@@ -346,15 +386,58 @@ export function rolePermissionsNotHeld(
   targetRole: string,
   tenantId?: string,
   actorCustomRoleId?: string | null,
+  targetCustomRoleId?: string | null,
 ): Permission[] {
   if (actorRole === 'owner' && !actorCustomRoleId) return []
   const missing: Permission[] = []
   for (const perm of Object.keys(ROLE_PERMISSIONS) as Permission[]) {
-    if (hasPermission(targetRole, perm, tenantId) && !hasPermission(actorRole, perm, tenantId, actorCustomRoleId)) {
+    if (hasPermission(targetRole, perm, tenantId, targetCustomRoleId) && !hasPermission(actorRole, perm, tenantId, actorCustomRoleId)) {
       missing.push(perm)
     }
   }
   return missing
+}
+
+/** Of `permissions`, those the actor does not hold (owners hold everything). */
+export function permissionsNotHeld(
+  actorRole: string,
+  permissions: Permission[],
+  tenantId?: string,
+  actorCustomRoleId?: string | null,
+): Permission[] {
+  if (actorRole === 'owner' && !actorCustomRoleId) return []
+  return permissions.filter((p) => !hasPermission(actorRole, p, tenantId, actorCustomRoleId))
+}
+
+/**
+ * Permission map a role definition resolves to, before module toggles: explicit entries
+ * (custom-role permissions) win, then the tenant's override for the base role, then the
+ * system default. Used to preview a role and to check a role edit for privilege escalation.
+ */
+export function resolveRoleDefinition(
+  baseRole: string,
+  explicit: Record<string, boolean> = {},
+  tenantId?: string,
+): Record<Permission, boolean> {
+  const result = {} as Record<Permission, boolean>
+  for (const perm of Object.keys(ROLE_PERMISSIONS) as Permission[]) {
+    if (explicit[perm] !== undefined) {
+      result[perm] = explicit[perm]
+      continue
+    }
+    const override = tenantId && typeof _getPermissionOverride === 'function'
+      ? _getPermissionOverride(tenantId, baseRole, perm)
+      : undefined
+    result[perm] = override !== undefined ? override : (ROLE_PERMISSIONS[perm] as readonly string[]).includes(baseRole)
+  }
+  return result
+}
+
+/** True when the owner switched off the module this permission belongs to for `role`. */
+export function isPermissionModuleDisabled(role: string, permission: Permission, tenantId?: string): boolean {
+  if (!tenantId || role === 'owner' || typeof _isModuleDisabled !== 'function') return false
+  const moduleKey = PERMISSION_MODULES[permission]
+  return !!moduleKey && _isModuleDisabled(tenantId, role, moduleKey)
 }
 
 /**
@@ -372,6 +455,9 @@ export function hasPermission(
 
   // Owner always has all permissions (cannot be overridden)
   if (role === 'owner' && !customRoleId) return true
+
+  // 0. Module access: a module the owner switched off for this role refuses all its permissions
+  if (isPermissionModuleDisabled(role, permission, tenantId)) return false
 
   let effectiveRole = role
 
@@ -440,6 +526,25 @@ export function getEffectivePermissions(
     result[perm] = hasPermission(role, perm, tenantId, customRoleId)
   }
   return result
+}
+
+/**
+ * API route helper for read endpoints that have no permission of their own: refuses (403)
+ * when the owner switched off the module for the caller's role (Settings → Module Access).
+ * With several modules the caller needs at least one of them enabled — e.g. item lookups
+ * stay available to POS roles (`['stock', 'selling']`). Owners are never refused.
+ */
+export function requireModule(session: Session | CompanySession | null, modules: string | string[]): NextResponse | null {
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const u = session.user as Record<string, unknown>
+  const role = u?.role as string | undefined
+  const tenantId = u?.tenantId as string | undefined
+  if (!role || !tenantId || role === 'owner' || typeof _isModuleDisabled !== 'function') return null
+  const list = Array.isArray(modules) ? modules : [modules]
+  if (list.some((m) => !_isModuleDisabled!(tenantId, role, m))) return null
+  return NextResponse.json({ error: 'This module is switched off for your role', code: 'MODULE_DISABLED' }, { status: 403 })
 }
 
 /**

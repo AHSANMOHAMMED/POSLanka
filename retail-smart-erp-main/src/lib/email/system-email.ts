@@ -1,6 +1,7 @@
 // System-level email transport for OTP and system emails
 // Independent of tenant email settings
 // Uses Resend API (retailsmarterp.com verified domain)
+import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 
 /** Escape HTML entities to prevent XSS in email templates */
 function escapeHtml(s: string): string {
@@ -32,7 +33,7 @@ export async function sendSystemEmail(options: {
   const senderEmail = process.env.SYSTEM_EMAIL_FROM || 'noreply@poslanka.lk'
   const senderName = process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka'
 
-  const res = await fetch('https://api.resend.com/emails', {
+  const res = await fetchWithTimeout('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,

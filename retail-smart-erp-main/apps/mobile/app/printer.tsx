@@ -25,6 +25,8 @@ import {
   type PrinterTransport,
   type UsbDevice,
 } from '../src/lib/printer'
+import { useHeaderPad } from '../src/lib/safeArea'
+import { goBack } from '../src/lib/nav'
 
 const ROLES: Array<{ id: PrinterRole; emoji: string; sub: string }> = [
   { id: 'receipt', emoji: '🧾', sub: 'Sale receipts, Z-reports, cash drawer' },
@@ -56,6 +58,7 @@ function mediaDetail(p: PrinterConfig): string {
 
 /** Printer list: add / edit / remove printers and test each one. */
 export default function PrintersScreen() {
+  const headerPad = useHeaderPad()
   const [printers, setPrinters] = useState<PrinterConfig[] | null>(null)
   const [editing, setEditing] = useState<PrinterConfig | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
@@ -101,8 +104,8 @@ export default function PrintersScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => (router.canGoBack() ? router.back() : router.replace('/pos'))}>
+      <View style={[styles.header, headerPad]}>
+        <Pressable style={styles.backBtn} onPress={() => goBack()}>
           <Text style={styles.backBtnText}>←</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
@@ -182,6 +185,7 @@ const TRANSPORTS: Array<{ id: PrinterTransport; emoji: string; sub: string; nati
 ]
 
 function PrinterEditor({ initial, isNew, onDone }: { initial: PrinterConfig; isNew: boolean; onDone: (list: PrinterConfig[] | null) => void }) {
+  const headerPad = useHeaderPad()
   const [settings, setSettings] = useState<PrinterConfig>(initial)
   const loaded = true
   const [saving, setSaving] = useState(false)
@@ -360,7 +364,7 @@ function PrinterEditor({ initial, isNew, onDone }: { initial: PrinterConfig; isN
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, headerPad]}>
         <Pressable style={styles.backBtn} onPress={close}>
           <Text style={styles.backBtnText}>←</Text>
         </Pressable>

@@ -5,7 +5,7 @@ import { withTenant } from '@/lib/db'
 import { posCashMovements, posOpeningEntries, sales, saleItems, payments, customers, customerCreditTransactions, warehouseStock, loyaltyTransactions, salesOrders, salesOrderItems, giftCards, giftCardTransactions } from '@/lib/db/schema'
 import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { eq, and, sql } from 'drizzle-orm'
-import { hasPermission, requirePermission } from '@/lib/auth/roles'
+import { hasPermission, requirePermission, requireModule } from '@/lib/auth/roles'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { notifySaleVoided } from '@/lib/notifications/sales-alerts'
@@ -28,6 +28,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'selling')
+    if (moduleError) return moduleError
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response

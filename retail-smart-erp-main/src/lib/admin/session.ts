@@ -1,20 +1,24 @@
+import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { adminSessions, superAdmins } from '@/lib/db/schema'
 import { and, eq, gte, lt, like, notLike } from 'drizzle-orm'
 import { headers, cookies } from 'next/headers'
 import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'
+import { adminCan, adminDeniedMessage, normalizeAdminRole, type AdminPermission, type AdminRole } from './roles'
 
 // Admin session timeout: 15 minutes of inactivity
 const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutes
 const SESSION_COOKIE_NAME = 'admin_session'
 
-interface AdminSession {
+export interface AdminSession {
   id: string
   superAdminId: string
   sessionToken: string
   lastActivityAt: Date
   expiresAt: Date
+  /** Platform role of the signed-in admin (super_admins.role) */
+  role: AdminRole
 }
 
 /**
@@ -84,34 +88,136 @@ async function readAdminToken(): Promise<string | undefined> {
   return undefined
 }
 
-export async function validateAdminSession(): Promise<AdminSession | null> {
-  const sessionToken = await readAdminToken()
+export interface AdminSessionOptions {
+  /** What the caller is about to do (see src/lib/admin/roles.ts). */
+  permission: AdminPermission
+  /**
+   * Allow an admin whose account setup is pending (password change forced by another admin,
+   * or required 2FA not enrolled yet). Only the endpoints that complete the setup pass this:
+   * change own password, 2FA setup/verify, logout and the console layout that shows the gate.
+   */
+  allowPendingSetup?: boolean
+}
 
-  if (!sessionToken) {
-    return null
-  }
+/**
+ * What a route needs: a permission name, or the permission plus options. Required on every call
+ * so a sys-control route cannot forget to state it (TypeScript refuses the call otherwise).
+ */
+export type AdminNeed = AdminPermission | AdminSessionOptions
+
+function needOf(need: AdminNeed): AdminSessionOptions {
+  return typeof need === 'string' ? { permission: need } : need
+}
+
+/** Account setup another admin requires before this admin may use the console / API. */
+export interface PendingSetup {
+  mustChangePassword: boolean
+  totpRequired: boolean
+}
+
+function pendingSetupOf(a: { mustChangePassword: boolean; totpRequired: boolean; totpEnabled: boolean }): PendingSetup | null {
+  const needTotp = a.totpRequired && !a.totpEnabled
+  return a.mustChangePassword || needTotp ? { mustChangePassword: a.mustChangePassword, totpRequired: needTotp } : null
+}
+
+/** Live session row + the admin's state, or null (no/expired/idle session, deactivated admin). */
+async function loadSession(sessionToken: string, now: Date) {
+  const [row] = await db.select({
+    session: adminSessions,
+    isActive: superAdmins.isActive,
+    mustChangePassword: superAdmins.mustChangePassword,
+    totpRequired: superAdmins.totpRequired,
+    totpEnabled: superAdmins.totpEnabled,
+    role: superAdmins.role,
+  })
+    .from(adminSessions)
+    .innerJoin(superAdmins, eq(superAdmins.id, adminSessions.superAdminId))
+    .where(and(eq(adminSessions.sessionToken, sessionToken), gte(adminSessions.expiresAt, now)))
+    .limit(1)
+  if (!row || !row.isActive) return null
+  return { session: { ...row.session, role: normalizeAdminRole(row.role) } as AdminSession, pending: pendingSetupOf(row) }
+}
+
+/**
+ * Validate admin session (read-only, for Server Components and Route Handlers).
+ * Returns the session if valid, null if invalid/expired/idle, the admin is deactivated, or —
+ * unless `allowPendingSetup` — the admin still has account setup pending (see adminAuthError()).
+ */
+export async function validateAdminSession(need: AdminNeed): Promise<AdminSession | null> {
+  const options = needOf(need)
+  const sessionToken = await readAdminToken()
+  if (!sessionToken) return null
 
   const now = new Date()
-
-  // Find valid session
-  const session = await db.query.adminSessions.findFirst({
-    where: and(
-      eq(adminSessions.sessionToken, sessionToken),
-      gte(adminSessions.expiresAt, now)
-    ),
-  })
-
-  if (!session) {
-    return null
-  }
+  const found = await loadSession(sessionToken, now)
+  if (!found) return null
 
   // Check if session has timed out due to inactivity
   const inactivityLimit = new Date(now.getTime() - SESSION_TIMEOUT_MS)
-  if (session.lastActivityAt < inactivityLimit) {
-    return null
-  }
+  if (found.session.lastActivityAt < inactivityLimit) return null
 
-  return session
+  if (found.pending && !options.allowPendingSetup) return null
+  if (!adminCan(found.session.role, options.permission)) return null
+  return found.session
+}
+
+/**
+ * Setup still pending for the current (otherwise valid) admin session, or null.
+ * Used to tell "finish your account setup" (403) apart from "not signed in" (401).
+ */
+export async function getPendingSetup(): Promise<PendingSetup | null> {
+  const sessionToken = await readAdminToken()
+  if (!sessionToken) return null
+  const now = new Date()
+  const found = await loadSession(sessionToken, now)
+  if (!found || found.session.lastActivityAt < new Date(now.getTime() - SESSION_TIMEOUT_MS)) return null
+  return found.pending
+}
+
+/** Role of the current (valid, not idle) admin session, or null. Ignores pending setup. */
+async function currentRole(): Promise<AdminRole | null> {
+  const sessionToken = await readAdminToken()
+  if (!sessionToken) return null
+  const now = new Date()
+  const found = await loadSession(sessionToken, now)
+  if (!found || found.session.lastActivityAt < new Date(now.getTime() - SESSION_TIMEOUT_MS)) return null
+  return found.session.role
+}
+
+/** 403 for a signed-in admin whose role lacks the permission a route / action needs. */
+export function adminForbidden(role: AdminRole | null | undefined): NextResponse {
+  return NextResponse.json({ error: adminDeniedMessage(role), code: 'ROLE_FORBIDDEN', role: role ?? null }, { status: 403 })
+}
+
+/**
+ * For handlers with several actions: null when the session's role may perform `permission`,
+ * otherwise the 403 response to return.
+ */
+export function requireAdminPermission(session: Pick<AdminSession, 'role'>, ...permissions: AdminPermission[]): NextResponse | null {
+  for (const p of permissions) if (!adminCan(session.role, p)) return adminForbidden(session.role)
+  return null
+}
+
+/**
+ * Response for a sys-control route whose validateAdminSession() returned null:
+ * 403 { code: 'ACCOUNT_SETUP_REQUIRED' } when the admin is signed in but must first change
+ * their password or enrol 2FA, 403 { code: 'ROLE_FORBIDDEN' } when the admin's role does not
+ * allow the route, otherwise 401.
+ */
+export async function adminAuthError(): Promise<NextResponse> {
+  const pending = await getPendingSetup().catch(() => null)
+  if (pending) {
+    return NextResponse.json({
+      error: pending.mustChangePassword
+        ? 'Choose a new password before using the console.'
+        : 'Set up two-factor authentication before using the console.',
+      code: 'ACCOUNT_SETUP_REQUIRED',
+      setup: pending,
+    }, { status: 403 })
+  }
+  const role = await currentRole().catch(() => null)
+  if (role) return adminForbidden(role)
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 }
 
 /**
@@ -119,7 +225,8 @@ export async function validateAdminSession(): Promise<AdminSession | null> {
  * Returns the session if valid, null if invalid/expired
  * Refreshes the cookie expiry on each valid access
  */
-export async function validateAdminSessionWithRefresh(): Promise<AdminSession | null> {
+export async function validateAdminSessionWithRefresh(need: AdminNeed): Promise<AdminSession | null> {
+  const options = needOf(need)
   const cookieStore = await cookies()
   const sessionToken = await readAdminToken()
 
@@ -128,20 +235,14 @@ export async function validateAdminSessionWithRefresh(): Promise<AdminSession | 
   }
 
   const now = new Date()
+  const found = await loadSession(sessionToken, now)
 
-  // Find valid session
-  const session = await db.query.adminSessions.findFirst({
-    where: and(
-      eq(adminSessions.sessionToken, sessionToken),
-      gte(adminSessions.expiresAt, now)
-    ),
-  })
-
-  if (!session) {
+  if (!found) {
     // Clear invalid cookie
     cookieStore.delete(SESSION_COOKIE_NAME)
     return null
   }
+  const session = found.session
 
   // Check if session has timed out due to inactivity
   const inactivityLimit = new Date(now.getTime() - SESSION_TIMEOUT_MS)
@@ -150,6 +251,9 @@ export async function validateAdminSessionWithRefresh(): Promise<AdminSession | 
     await destroyAdminSession(sessionToken)
     return null
   }
+
+  if (found.pending && !options.allowPendingSetup) return null
+  if (!adminCan(session.role, options.permission)) return null
 
   // Refresh session - update last activity and extend expiry
   const newExpiresAt = new Date(now.getTime() + SESSION_TIMEOUT_MS)
@@ -160,14 +264,16 @@ export async function validateAdminSessionWithRefresh(): Promise<AdminSession | 
     })
     .where(eq(adminSessions.id, session.id))
 
-  // Refresh cookie
-  cookieStore.set(SESSION_COOKIE_NAME, sessionToken, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
-    maxAge: SESSION_TIMEOUT_MS / 1000,
-    path: '/',
-  })
+  // Refresh cookie (web console only; bearer tokens carry no cookie)
+  if (!sessionToken.startsWith('sa_')) {
+    cookieStore.set(SESSION_COOKIE_NAME, sessionToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: SESSION_TIMEOUT_MS / 1000,
+      path: '/',
+    })
+  }
 
   return session
 }
@@ -194,7 +300,7 @@ export async function destroyAdminSession(sessionToken?: string): Promise<void> 
  * Get remaining session time in seconds
  */
 export async function getSessionTimeRemaining(): Promise<number | null> {
-  const session = await validateAdminSession()
+  const session = await validateAdminSession({ permission: 'self', allowPendingSetup: true })
   if (!session) return null
 
   const now = new Date()
@@ -232,8 +338,13 @@ export async function getAdminFromSession(): Promise<{
   id: string
   email: string
   fullName: string
+  totpEnabled: boolean
+  totpRequired: boolean
+  mustChangePassword: boolean
+  role: AdminRole
 } | null> {
-  const session = await validateAdminSession()
+  // The console layout shows the setup gate, so a pending admin is let through here
+  const session = await validateAdminSession({ permission: 'self', allowPendingSetup: true })
   if (!session) return null
 
   const admin = await db.query.superAdmins.findFirst({
@@ -242,10 +353,18 @@ export async function getAdminFromSession(): Promise<{
       id: true,
       email: true,
       fullName: true,
+      isActive: true,
+      totpEnabled: true,
+      totpRequired: true,
+      mustChangePassword: true,
+      role: true,
     },
   })
 
-  return admin || null
+  // A deactivated admin's remaining session (if any) no longer opens the console
+  if (!admin || !admin.isActive) return null
+  const { isActive: _isActive, role, ...rest } = admin
+  return { ...rest, role: normalizeAdminRole(role) }
 }
 
 /**
@@ -255,7 +374,7 @@ export async function getAdminFromSession(): Promise<{
 export async function authenticateSuperAdmin(email: string, password: string, ipAddress?: string): Promise<{
   success: boolean
   error?: string
-  admin?: { id: string; email: string; fullName: string }
+  admin?: { id: string; email: string; fullName: string; role: AdminRole }
 }> {
   const admin = await db.query.superAdmins.findFirst({
     where: eq(superAdmins.email, email.toLowerCase()),
@@ -316,6 +435,7 @@ export async function authenticateSuperAdmin(email: string, password: string, ip
       id: admin.id,
       email: admin.email,
       fullName: admin.fullName,
+      role: normalizeAdminRole(admin.role),
     },
   }
 }

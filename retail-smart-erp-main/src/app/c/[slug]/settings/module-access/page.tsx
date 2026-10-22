@@ -64,7 +64,8 @@ export default function ModuleAccessPage() {
   const [dirty, setDirty] = useState(false)
 
   // Filter roles and modules by business type
-  const visibleRoles = useMemo(() => getRolesForBusinessType(businessType), [businessType])
+  // Owner is never restricted (the server ignores owner rows), so no owner column
+  const visibleRoles = useMemo(() => getRolesForBusinessType(businessType).filter((r) => r !== 'owner'), [businessType])
   const visibleModuleKeys = useMemo(() => {
     const allSpecificModules = new Set<string>()
     for (const mods of Object.values(BUSINESS_TYPE_MODULES)) {
@@ -116,7 +117,7 @@ export default function ModuleAccessPage() {
       const res = await fetch('/api/module-access', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries: rows }),
+        body: JSON.stringify({ entries: rows.filter((r) => r.role !== 'owner') }),
       })
       if (res.ok) {
         invalidateShared('/api/module-access')
@@ -143,14 +144,15 @@ export default function ModuleAccessPage() {
 
   return (
     <PermissionGuard permission="manageModuleAccess">
-      <div className="p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-6">
         <Breadcrumb items={[{ label: 'Settings' }, { label: 'Module Access' }]} />
 
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold">Module Access Control</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Control which modules each role can access. Unchecked modules will be hidden from the sidebar.
+              Control which modules each role can access. Unchecked modules are hidden and their actions are refused
+              by the server (web, mobile app and API). Custom roles follow their base role. The owner always has full access.
             </p>
           </div>
           <button
@@ -202,8 +204,9 @@ export default function ModuleAccessPage() {
         </div>
 
         <div className="text-sm text-gray-500 bg-amber-50 border border-amber-200 rounded p-3">
-          <strong>Note:</strong> Module access controls visibility only. Permission checks still apply at the API level.
-          Modules with no row default to enabled for all roles.
+          <strong>Note:</strong> Switching a module off for a role removes every permission of that module from the role
+          (e.g. Selling off for Cashier blocks sales and shifts, Stock off blocks stock intake). Role permissions still apply
+          inside enabled modules. Modules default to enabled.
         </div>
       </div>
     </PermissionGuard>

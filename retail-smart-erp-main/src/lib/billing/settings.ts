@@ -1,10 +1,12 @@
 import { db } from '@/lib/db'
 import { systemSettings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
+import { invalidate, registerCache } from '@/lib/cache/invalidation'
 
-// In-memory cache with 5-minute TTL
+// In-memory cache with 5-minute TTL (dropped on every instance when a setting changes)
 const cache = new Map<string, { value: unknown; expiresAt: number }>()
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+registerCache('billing-settings', (key) => { if (key) cache.delete(key); else cache.clear() })
 
 async function getCachedSetting<T>(key: string, fallback: T): Promise<T> {
   const cached = cache.get(key)
@@ -26,11 +28,7 @@ async function getCachedSetting<T>(key: string, fallback: T): Promise<T> {
 }
 
 export function invalidateSettingsCache(key?: string) {
-  if (key) {
-    cache.delete(key)
-  } else {
-    cache.clear()
-  }
+  invalidate('billing-settings', key ?? null)
 }
 
 // --- Volume Discount Tiers ---

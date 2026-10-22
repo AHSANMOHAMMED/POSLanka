@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { subscriptions, pricingTiers, accounts, creditTransactions } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { quotePlanChange } from '@/lib/billing/plan-change'
+import { quoteCoupon, recordCouponRedemption } from '@/lib/billing/coupons'
 import { logError } from '@/lib/ai/error-logger'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -27,7 +28,7 @@ export async function POST(
     const { tenantId } = paramsParsed.data
     const parsed = await validateBody(request, upgradeSubscriptionSchema)
     if (!parsed.success) return parsed.response
-    const { newTierId, billingCycle, action } = parsed.data
+    const { newTierId, billingCycle, action, couponCode } = parsed.data
 
     // Verify user is the billing account
     const subscription = await db.query.subscriptions.findFirst({
@@ -74,27 +75,43 @@ export async function POST(
     })
     const walletBalance = Number(account?.walletBalance || 0)
 
+    // Promo code: discounts the amount due of an upgrade (never a downgrade credit)
+    const grossDue = quote.noProration ? newPrice : quote.proration!.amountDue
+    let coupon: { id: string; code: string; label: string; listAmount: number; discount: number; finalAmount: number } | null = null
+    if (couponCode) {
+      if (grossDue <= 0) {
+        return NextResponse.json({ error: 'Promo codes apply only to plan changes that cost money', code: 'COUPON_INVALID' }, { status: 400 })
+      }
+      const q = await quoteCoupon({ code: couponCode, accountId, tierId: newTier.id, billingCycle: billingCycle as 'monthly' | 'yearly', amount: grossDue })
+      if (!q.ok) return NextResponse.json({ error: q.error, code: 'COUPON_INVALID' }, { status: 400 })
+      coupon = { id: q.coupon.id, code: q.code, label: q.label, listAmount: q.listAmount, discount: q.discount, finalAmount: q.finalAmount }
+    }
+    const couponInfo = coupon ? { code: coupon.code, label: coupon.label, discount: coupon.discount, amountBeforeDiscount: coupon.listAmount } : undefined
+
     // For trial subscriptions, no proration needed - full price for new plan
     if (quote.noProration) {
       if (action === 'preview') {
         return NextResponse.json({
           currentTier: { id: currentTier.id, name: currentTier.displayName, price: currentPrice },
           newTier: { id: newTier.id, name: newTier.displayName, price: newPrice },
-          amountDue: newPrice,
+          amountDue: coupon ? coupon.finalAmount : newPrice,
           isUpgrade: true,
           billingCycle,
           noProration: true,
           walletBalance,
+          coupon: couponInfo,
         })
       }
 
-      // For trial → paid, require PayHere payment (return info for checkout)
+      // For trial → paid, require PayHere payment (return info for checkout; the checkout
+      // re-validates and applies the promo code server-side)
       return NextResponse.json({
         requiresPayment: true,
         newTierId,
-        amount: newPrice,
+        amount: coupon ? coupon.finalAmount : newPrice,
         billingCycle,
         subscriptionId: subscription.id,
+        couponCode: coupon?.code,
       })
     }
 
@@ -113,12 +130,13 @@ export async function POST(
           creditAmount: proration.creditAmount,
           newPlanCost: proration.newPlanCost,
         },
-        amountDue: proration.amountDue,
+        amountDue: coupon ? coupon.finalAmount : proration.amountDue,
         isUpgrade: proration.isUpgrade,
         billingCycle,
         currentBillingCycle,
         cycleChanging,
         walletBalance,
+        coupon: couponInfo,
       })
     }
 
@@ -142,9 +160,10 @@ export async function POST(
       return NextResponse.json({ success: true, amountDue: 0 })
     }
 
-    // UPGRADE: amountDue > 0
+    // UPGRADE: amountDue > 0 (less the promo code discount)
     if (proration.amountDue > 0) {
-      if (walletBalance >= proration.amountDue) {
+      const due = coupon ? coupon.finalAmount : proration.amountDue
+      if (walletBalance >= due) {
         // Wallet covers the full amount - deduct and apply atomically. The debit is a
         // conditional decrement so two concurrent requests cannot both spend the same balance.
         const debited = await db.transaction(async (tx) => {
@@ -168,25 +187,40 @@ export async function POST(
 
           const [row] = await tx.update(accounts)
             .set({
-              walletBalance: sql`${accounts.walletBalance} - ${proration.amountDue.toFixed(2)}::numeric`,
+              walletBalance: sql`${accounts.walletBalance} - ${due.toFixed(2)}::numeric`,
               updatedAt: new Date(),
             })
             .where(and(
               eq(accounts.id, accountId),
-              sql`${accounts.walletBalance} >= ${proration.amountDue.toFixed(2)}::numeric`,
+              sql`${accounts.walletBalance} >= ${due.toFixed(2)}::numeric`,
             ))
             .returning({ walletBalance: accounts.walletBalance })
           if (!row) throw new Error('WALLET_INSUFFICIENT') // rolls back the plan change
           const newBalance = Number(row.walletBalance)
 
-          await tx.insert(creditTransactions).values({
-            accountId: accountId,
-            type: 'debit',
-            amount: proration.amountDue.toFixed(2),
-            description: `Plan upgrade: ${currentTier.displayName} → ${newTier.displayName} (prorated)`,
-            balanceAfter: newBalance.toFixed(2),
-            subscriptionId: subscription.id,
-          })
+          if (due > 0) {
+            await tx.insert(creditTransactions).values({
+              accountId: accountId,
+              type: 'debit',
+              amount: due.toFixed(2),
+              description: `Plan upgrade: ${currentTier.displayName} → ${newTier.displayName} (prorated)${coupon ? `, promo ${coupon.code} −${coupon.discount.toFixed(2)}` : ''}`,
+              balanceAfter: newBalance.toFixed(2),
+              subscriptionId: subscription.id,
+            })
+          }
+          // Promo code use, counted with the wallet charge (same transaction)
+          if (coupon) {
+            await recordCouponRedemption(tx, {
+              couponId: coupon.id,
+              couponCode: coupon.code,
+              accountId,
+              source: 'wallet',
+              subscriptionId: subscription.id,
+              listAmount: coupon.listAmount,
+              discountAmount: coupon.discount,
+              paidAmount: due,
+            })
+          }
           return newBalance
         }).catch((err) => {
           if (err instanceof Error && err.message === 'WALLET_INSUFFICIENT') return null
@@ -203,8 +237,9 @@ export async function POST(
         return NextResponse.json({
           success: true,
           paidFromWallet: true,
-          amountCharged: proration.amountDue,
+          amountCharged: due,
           newWalletBalance: debited,
+          coupon: couponInfo,
         })
       }
 
@@ -213,7 +248,7 @@ export async function POST(
       // PayHere notify webhook deducts it only once the card payment succeeds — so an
       // abandoned / failed payment no longer silently empties the wallet.
       const walletCredit = walletBalance > 0 ? walletBalance : 0
-      const paymentNeeded = Math.round((proration.amountDue - walletCredit) * 100) / 100
+      const paymentNeeded = Math.round((due - walletCredit) * 100) / 100
 
       // Return info for PayHere checkout - include newTierId so checkout can store it
       return NextResponse.json({
@@ -223,6 +258,7 @@ export async function POST(
         walletCredit,
         billingCycle,
         subscriptionId: subscription.id,
+        couponCode: coupon?.code,
       })
     }
 

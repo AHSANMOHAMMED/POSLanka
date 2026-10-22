@@ -180,15 +180,34 @@ class WebSocketClient {
    * Connect via SSE (Server-Sent Events) fallback
    */
   connectSSE(): void {
-    if (this.eventSource) return
+    if (this.eventSource || this.sseConnecting) return
     if (typeof EventSource === 'undefined') return
 
     this.setStatus('connecting')
+    this.sseConnecting = true
+    // The SSE token travels in the URL, so the server only accepts freshly issued tokens
+    // (SSE_TOKEN_MAX_AGE_SEC): fetch a new one right before opening the stream.
+    const refresh = this.options.tokenRefresher
+      ? this.options.tokenRefresher().catch(() => null)
+      : Promise.resolve(null)
+    void refresh.then((fresh) => {
+      this.sseConnecting = false
+      if (fresh) this.options.token = fresh
+      if (this.eventSource || !this.options.token) return
+      this.openEventSource()
+    })
+  }
+
+  private sseConnecting = false
+  private sseRetriedWithFreshToken = false
+
+  private openEventSource(): void {
     const url = `${this.getSSEUrl()}?token=${encodeURIComponent(this.options.token)}`
     this.eventSource = new EventSource(url)
 
     this.eventSource.onopen = () => {
       this.transport = 'sse'
+      this.sseRetriedWithFreshToken = false
       this.setStatus('connected')
       console.log('[Realtime] SSE connected')
     }
@@ -207,8 +226,15 @@ class WebSocketClient {
     this.eventSource.onerror = () => {
       // EventSource auto-reconnects, but if it keeps failing, give up
       if (this.eventSource?.readyState === EventSource.CLOSED) {
-        console.log('[Realtime] SSE connection failed — using polling fallback')
         this.disconnectSSE()
+        // An automatic EventSource reconnect reuses the original (now possibly expired) token:
+        // retry once with a fresh one before giving up.
+        if (!this.sseRetriedWithFreshToken && typeof this.options.tokenRefresher === 'function') {
+          this.sseRetriedWithFreshToken = true
+          this.connectSSE()
+          return
+        }
+        console.log('[Realtime] SSE connection failed — using polling fallback')
         this.transport = 'polling'
         this.setStatus('disconnected')
       }

@@ -20,6 +20,8 @@ export async function getLiveCompanyUser(
   tenantId: string,
   userId: string,
   issuedAtSec?: number,
+  /** Millisecond sign-in time (`authAt` claim). Preferred: `iat` has 1 s resolution. */
+  issuedAtMs?: number,
 ): Promise<LiveCompanyUser> {
   const row = await withTenant(tenantId, async (tdb) =>
     tdb.query.users.findFirst({
@@ -29,9 +31,15 @@ export async function getLiveCompanyUser(
   )
   if (!row) return { ok: false, reason: 'not_found' }
   if (!row.isActive) return { ok: false, reason: 'inactive' }
-  if (row.passwordChangedAt && issuedAtSec) {
-    const pwChangedSec = Math.floor(row.passwordChangedAt.getTime() / 1000)
-    if (pwChangedSec >= issuedAtSec) return { ok: false, reason: 'password_changed' }
+  if (row.passwordChangedAt && (issuedAtMs || issuedAtSec)) {
+    // Compare at millisecond precision when the token carries its sign-in time. With whole
+    // seconds, a sign-in in the same second the password was set (a new vendor's owner, a reset
+    // followed by an immediate sign-in) looked older than the change and was rejected at random.
+    const changedMs = row.passwordChangedAt.getTime()
+    const stale = issuedAtMs
+      ? changedMs > issuedAtMs
+      : Math.floor(changedMs / 1000) > (issuedAtSec as number)
+    if (stale) return { ok: false, reason: 'password_changed' }
   }
   if (row.accountId && !(await isAccountActive(row.accountId))) {
     return { ok: false, reason: 'account_inactive' }

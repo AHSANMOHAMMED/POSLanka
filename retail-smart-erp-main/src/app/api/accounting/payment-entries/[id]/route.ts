@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { paymentEntries, paymentEntryReferences, paymentEntryDeductions, chartOfAccounts, modesOfPayment, users } from '@/lib/db/schema'
 import { eq, asc } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -13,6 +13,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
   const result = await withAuthTenant(async (session, db) => {
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'accounting')
+    if (moduleError) return moduleError
     const [entry] = await db.select({
       id: paymentEntries.id,
       tenantId: paymentEntries.tenantId,

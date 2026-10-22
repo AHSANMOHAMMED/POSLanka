@@ -73,6 +73,8 @@ interface ProrationPreview {
   cycleChanging?: boolean
   walletBalance: number
   noProration?: boolean
+  /** Promo code applied server-side (amountDue already includes the discount) */
+  coupon?: { code: string; label: string; discount: number; amountBeforeDiscount: number }
 }
 
 
@@ -112,6 +114,11 @@ export default function SubscriptionPage({
   const [prorationPreview, setProrationPreview] = useState<ProrationPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [selectedTierId, setSelectedTierId] = useState<string | null>(null)
+  // Promo code for the plan change (validated and priced by the server)
+  const [promoInput, setPromoInput] = useState('')
+  const [appliedCoupon, setAppliedCoupon] = useState<string | null>(null)
+  const [promoError, setPromoError] = useState('')
+  const [promoBusy, setPromoBusy] = useState(false)
 
   const fetchSubscription = useCallback(async () => {
     try {
@@ -155,6 +162,9 @@ export default function SubscriptionPage({
     setPreviewLoading(true)
     setError('')
     setSuccess('')
+    setPromoInput('')
+    setAppliedCoupon(null)
+    setPromoError('')
 
     try {
       const res = await fetch(`/api/account/subscriptions/${tenantId}/upgrade`, {
@@ -184,6 +194,32 @@ export default function SubscriptionPage({
     }
   }
 
+  // Apply (or remove, with an empty code) a promo code: re-prices the change on the server
+  const handleApplyPromo = async (code: string | null) => {
+    if (!selectedTierId) return
+    setPromoBusy(true)
+    setPromoError('')
+    try {
+      const res = await fetch(`/api/account/subscriptions/${tenantId}/upgrade`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newTierId: selectedTierId, billingCycle, action: 'preview', ...(code ? { couponCode: code } : {}) }),
+      })
+      const body = await res.json()
+      if (!res.ok) {
+        setPromoError(body.error || 'This promo code cannot be used')
+        return
+      }
+      setProrationPreview(body)
+      setAppliedCoupon(body.coupon?.code ?? null)
+      if (!code) setPromoInput('')
+    } catch {
+      setPromoError('Could not check the promo code')
+    } finally {
+      setPromoBusy(false)
+    }
+  }
+
   // Execute the upgrade/downgrade
   const handleExecuteChange = async () => {
     if (!selectedTierId || !prorationPreview) return
@@ -199,6 +235,7 @@ export default function SubscriptionPage({
           newTierId: selectedTierId,
           billingCycle,
           action: 'execute',
+          ...(appliedCoupon ? { couponCode: appliedCoupon } : {}),
         }),
       })
 
@@ -223,6 +260,7 @@ export default function SubscriptionPage({
               newTierId: result.newTierId,
               walletCreditApplied: result.walletCredit || 0,
               amount: result.amount,
+              ...(result.couponCode ? { couponCode: result.couponCode } : {}),
             }),
           })
 
@@ -285,7 +323,7 @@ export default function SubscriptionPage({
       setSelectedTierId(null)
 
       if (result.paidFromWallet) {
-        setSuccess(`Plan upgraded successfully! ${formatCurrencyWithSymbol(result.amountCharged, walletCurrency)} charged from wallet.`)
+        setSuccess(`Plan upgraded successfully! ${formatCurrencyWithSymbol(result.amountCharged, walletCurrency)} charged from wallet${result.coupon ? ` (promo ${result.coupon.code} saved ${formatCurrencyWithSymbol(result.coupon.discount, walletCurrency)})` : ''}.`)
         setWalletBalance(Number(result.newWalletBalance))
       } else if (result.creditApplied) {
         setSuccess(`Plan changed successfully! ${formatCurrencyWithSymbol(result.creditApplied, walletCurrency)} credited to your wallet.`)
@@ -876,6 +914,49 @@ export default function SubscriptionPage({
                   </div>
                 </div>
               ) : null}
+
+              {/* Promo code (upgrades that cost money) */}
+              {(prorationPreview.amountDue > 0 || prorationPreview.coupon) && (
+                <div className="mb-4">
+                  {prorationPreview.coupon ? (
+                    <div className="flex items-center justify-between gap-3 p-3 rounded-md bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-sm">
+                      <div>
+                        <p className="font-medium text-emerald-800 dark:text-emerald-300">Promo {prorationPreview.coupon.code} · {prorationPreview.coupon.label}</p>
+                        <p className="text-emerald-700 dark:text-emerald-400">
+                          {formatCurrencyWithSymbol(prorationPreview.coupon.amountBeforeDiscount, walletCurrency)} − {formatCurrencyWithSymbol(prorationPreview.coupon.discount, walletCurrency)}
+                        </p>
+                      </div>
+                      <button type="button" onClick={() => handleApplyPromo(null)} disabled={promoBusy || updating} className="text-xs text-emerald-700 dark:text-emerald-400 hover:underline disabled:opacity-50">
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <div>
+                      <label htmlFor="promo-code" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Promo code</label>
+                      <div className="flex gap-2">
+                        <input
+                          id="promo-code"
+                          value={promoInput}
+                          onChange={(e) => { setPromoInput(e.target.value.toUpperCase()); setPromoError('') }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' && promoInput.trim()) { e.preventDefault(); handleApplyPromo(promoInput.trim()) } }}
+                          maxLength={50}
+                          placeholder="Enter a code"
+                          className="flex-1 min-w-0 px-3 py-2 rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm uppercase"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleApplyPromo(promoInput.trim())}
+                          disabled={!promoInput.trim() || promoBusy || updating}
+                          className="px-4 py-2 rounded-md text-sm font-medium border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                        >
+                          {promoBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Apply'}
+                        </button>
+                      </div>
+                      {promoError && <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{promoError}</p>}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Amount Due */}
               <div className={`p-4 rounded-md mb-4 ${

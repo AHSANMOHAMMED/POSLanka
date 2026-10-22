@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { recurringJournalTemplates, chartOfAccounts, costCenters } from '@/lib/db/schema'
 import { and, ilike, sql, desc, eq } from 'drizzle-orm'
@@ -45,6 +45,9 @@ export async function GET(request: NextRequest) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'accounting')
+    if (moduleError) return moduleError
 
     const parsed = validateSearchParams(request, recurringEntriesListSchema)
     if (!parsed.success) return parsed.response

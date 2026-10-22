@@ -17,4 +17,22 @@ export {
   hasActiveAdminSession,
   getAdminFromSession,
   authenticateSuperAdmin,
+  adminAuthError,
+  adminForbidden,
+  requireAdminPermission,
+  getPendingSetup,
+  type AdminSession,
+  type AdminNeed,
+  type AdminSessionOptions,
+  type PendingSetup,
 } from './session'
+export {
+  ADMIN_ROLES,
+  ADMIN_ROLE_LABELS,
+  ADMIN_ROLE_DESCRIPTIONS,
+  adminCan,
+  isAdminRole,
+  normalizeAdminRole,
+  type AdminRole,
+  type AdminPermission,
+} from './roles'

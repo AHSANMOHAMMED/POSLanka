@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { pricingTiers, subscriptions } from '@/lib/db/schema'
 import { eq, and, ne, sql } from 'drizzle-orm'
-import { adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
+import { adminAuthError, adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { sysUpdatePricingTierSchema } from '@/lib/validation/schemas/sys-control'
@@ -17,9 +17,9 @@ export async function PUT(
     const rateLimited = await withRateLimit('/api/sys-control/pricing-tiers', STRICT_LIMIT)
     if (rateLimited) return rateLimited
 
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('billing')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const paramsParsed = validateParams(await params, idParamSchema)
@@ -63,30 +63,40 @@ export async function PUT(
     if (sortOrder !== undefined) updateData.sortOrder = sortOrder
     if (isActive !== undefined) updateData.isActive = isActive
 
-    const [tier] = await db.update(pricingTiers)
-      .set(updateData)
-      .where(eq(pricingTiers.id, id))
-      .returning()
+    const priceChanged =
+      (priceMonthly !== undefined && Number(priceMonthly) !== Number(existing.priceMonthly)) ||
+      (priceYearly !== undefined && Number(priceYearly) !== Number(existing.priceYearly))
+
+    const { tier, grandfatheredCount } = await db.transaction(async (tx) => {
+      let grandfathered = 0
+      if (priceChanged) {
+        // Existing subscribers keep what they signed up for: anyone without a locked-in price
+        // is pinned to the tier's current price before it changes. Their period is untouched;
+        // the new price applies to new sign-ups and plan changes only.
+        const pinned = await tx.update(subscriptions)
+          .set({
+            subscribedPriceMonthly: sql`coalesce(${subscriptions.subscribedPriceMonthly}, ${existing.priceMonthly})`,
+            subscribedPriceYearly: sql`coalesce(${subscriptions.subscribedPriceYearly}, ${existing.priceYearly})`,
+            priceLockedAt: sql`coalesce(${subscriptions.priceLockedAt}, now())`,
+          })
+          .where(and(eq(subscriptions.tierId, id), ne(subscriptions.status, 'cancelled')))
+          .returning({ id: subscriptions.id })
+        grandfathered = pinned.length
+      }
+      const [updated] = await tx.update(pricingTiers)
+        .set(updateData)
+        .where(eq(pricingTiers.id, id))
+        .returning()
+      return { tier: updated, grandfatheredCount: grandfathered }
+    })
 
     await adminAudit.update(session.superAdminId, 'pricing_tier', id, {
       name: existing.name,
       changes: Object.keys(updateData),
+      before: { priceMonthly: existing.priceMonthly, priceYearly: existing.priceYearly },
+      after: { priceMonthly: tier.priceMonthly, priceYearly: tier.priceYearly },
+      grandfatheredSubscribers: grandfatheredCount,
     })
-
-    // If price changed, count how many active subscribers will be grandfathered
-    let grandfatheredCount = 0
-    if (priceMonthly !== undefined && String(priceMonthly) !== existing.priceMonthly) {
-      const result = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(subscriptions)
-        .where(
-          and(
-            eq(subscriptions.tierId, id),
-            ne(subscriptions.status, 'cancelled')
-          )
-        )
-      grandfatheredCount = result[0]?.count || 0
-    }
 
     return NextResponse.json({ ...tier, grandfatheredCount })
   } catch (error) {
@@ -104,9 +114,9 @@ export async function DELETE(
     const rateLimited = await withRateLimit('/api/sys-control/pricing-tiers', STRICT_LIMIT)
     if (rateLimited) return rateLimited
 
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('billing')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const paramsParsed = validateParams(await params, idParamSchema)

@@ -11,9 +11,10 @@ import { validateBody } from '@/lib/validation'
 import { updateTenantSchema } from '@/lib/validation/schemas/users'
 import { resolveReceiptSettings, sanitizeReceiptSettingsPatch } from '@/lib/print/receipt-settings'
 import { resolveBatchSettings, resolveReturnSettings } from '@/lib/sales/return-settings'
+import { jsonWithEtag } from '@/lib/api/etag'
 
 // GET tenant settings (tax rate, currency, etc.)
-export async function GET() {
+export async function GET(request?: Request) {
   try {
     const session = await authWithCompany()
     if (!session) {
@@ -26,6 +27,8 @@ export async function GET() {
         columns: {
           id: true,
           name: true,
+          // Permanent vendor identifier staff type at sign-in (read-only)
+          businessId: true,
           businessType: true,
           currency: true,
           country: true,
@@ -55,7 +58,7 @@ export async function GET() {
       const scaleBarcode = normalizeScaleConfig(((settings || {}) as { scaleBarcode?: Partial<ScaleBarcodeConfig> }).scaleBarcode)
       // receiptSettings = tenant-level effective settings (defaults merged in);
       // receiptSettingsRaw = what is actually stored (for editors).
-      return NextResponse.json({
+      return jsonWithEtag(request, {
         ...rest,
         scaleBarcode,
         returnSettings: resolveReturnSettings(settings),

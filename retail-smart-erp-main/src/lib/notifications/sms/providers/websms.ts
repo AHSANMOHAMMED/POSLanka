@@ -1,4 +1,5 @@
 import type { WebSmsConfig, SendSmsResult } from '../../types'
+import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 
 /**
  * WebSMS.lk / Newsletters.lk SMS Provider
@@ -44,7 +45,7 @@ export async function sendWithWebSms(
   })
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -118,7 +119,7 @@ export async function testWebSmsConnection(config: WebSmsConfig): Promise<{
   })
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',

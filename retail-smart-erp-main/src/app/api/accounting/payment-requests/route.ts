@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { paymentRequests, tenants } from '@/lib/db/schema'
 import { eq, desc, and, ilike, sql, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
@@ -15,6 +15,9 @@ export async function GET(request: NextRequest) {
   if (!qp.success) return qp.response
 
   const result = await withAuthTenant(async (session, db) => {
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'accounting')
+    if (moduleError) return moduleError
     const { search, status, page, pageSize } = qp.data
 
     const conditions = []

@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 /**
  * WhatsApp sharing for POSLanka documents.
  * Primary path: wa.me deep links (no Cloud API required).
@@ -70,7 +71,7 @@ export async function sendWhatsAppCloudText(
   const to = normalizePhoneForWhatsApp(toPhone)
 
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`,
       {
         method: 'POST',

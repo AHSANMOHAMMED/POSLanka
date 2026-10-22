@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Switch, Alert, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native'
 import { useLocalSearchParams } from 'expo-router'
-import { adminGet, adminPut } from '../../../src/lib/adminApi'
+import { adminGet, adminPut, useAdminUser } from '../../../src/lib/adminApi'
 import { THEME, formatLKR } from '../../../src/lib/theme'
 import { ErrorView, InlineNotice, LoadingView } from '../../../src/components/StateViews'
 import { AdminShell, Card, Kpi, ListRow, Pill, SectionTitle, adminStyles, businessTypeLabel, compactLKR, statusTone, timeAgo } from '../../../src/components/admin/AdminShell'
@@ -65,6 +65,9 @@ export default function AdminVendorDetailScreen() {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState<'lock' | string | null>(null)
+  // Lock / unlock and feature switches are vendor management (owner role); the server enforces it
+  const { can } = useAdminUser()
+  const canManage = can('vendors.manage')
 
   const load = useCallback(
     async (silent = false) => {
@@ -179,9 +182,11 @@ export default function AdminVendorDetailScreen() {
                 Locked {vendor.lockedAt ? timeAgo(vendor.lockedAt) : ''}{vendor.lockedReason ? ` (${vendor.lockedReason})` : ''}
               </Text>
             ) : null}
-            <Pressable style={[locked ? adminStyles.primaryBtn : adminStyles.dangerBtn, { marginTop: 12 }, busy === 'lock' && { opacity: 0.6 }]} onPress={toggleLock} disabled={busy === 'lock'}>
-              {busy === 'lock' ? <ActivityIndicator color="#FFF" /> : <Text style={adminStyles.primaryBtnText}>{locked ? '🔓 Unlock vendor' : '🔒 Lock vendor'}</Text>}
-            </Pressable>
+            {canManage ? (
+              <Pressable style={[locked ? adminStyles.primaryBtn : adminStyles.dangerBtn, { marginTop: 12 }, busy === 'lock' && { opacity: 0.6 }]} onPress={toggleLock} disabled={busy === 'lock'}>
+                {busy === 'lock' ? <ActivityIndicator color="#FFF" /> : <Text style={adminStyles.primaryBtnText}>{locked ? '🔓 Unlock vendor' : '🔒 Lock vendor'}</Text>}
+              </Pressable>
+            ) : null}
           </Card>
 
           {/* Sales */}
@@ -251,7 +256,7 @@ export default function AdminVendorDetailScreen() {
                   <Switch
                     value={!!vendor.featureFlags?.[flag]}
                     onValueChange={(v) => toggleFlag(flag, v)}
-                    disabled={busy !== null}
+                    disabled={busy !== null || !canManage}
                     trackColor={{ false: THEME.colors.border, true: THEME.colors.primary }}
                   />
                 )}

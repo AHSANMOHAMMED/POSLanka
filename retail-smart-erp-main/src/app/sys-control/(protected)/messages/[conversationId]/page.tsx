@@ -1,312 +1,267 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { useParams } from 'next/navigation'
+import { Archive, Lock, MessageSquare, RotateCcw, Send } from 'lucide-react'
 import {
-  ArrowLeft,
-  Send,
-  Loader2,
-  User,
-  Headphones,
-  Clock,
-  CheckCircle,
-  Lock,
-  Unlock,
-  Archive,
-  Mail,
-} from 'lucide-react'
+  AdminCard,
+  AdminPage,
+  Alert,
+  Badge,
+  Button,
+  EmptyState,
+  KeyValueList,
+  Select,
+  Skeleton,
+  Textarea,
+  fmtDateTime,
+  statusTone,
+} from '@/components/admin/kit'
+import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import { adminFetch } from '@/components/admin/console-helpers'
+import { formatBusinessId } from '@/lib/tenant/business-id-format'
+import { cn } from '@/lib/utils'
+import { CATEGORY_LABEL, PRIORITY_TONE } from '../labels'
 
 interface Message {
   id: string
-  senderType: string
+  senderType: 'admin' | 'account' | string
   senderName: string | null
   content: string
   isSystemMessage: boolean
+  metadata: { adminName?: string | null } | null
   createdAt: string
 }
 
-interface Conversation {
-  id: string
-  subject: string
-  status: string
-  priority: string
-  category: string | null
-  createdAt: string
+interface Detail {
+  conversation: {
+    id: string
+    subject: string
+    status: 'open' | 'closed' | 'archived'
+    priority: string
+    category: string | null
+    createdAt: string
+    closedAt: string | null
+    unreadByAccount: boolean
+  }
+  account: { id: string; email: string; fullName: string; phone: string | null }
+  vendors: Array<{ id: string; name: string; businessId: string; status: string; isOwner: boolean }>
+  messages: Message[]
 }
 
-interface Account {
-  id: string
-  email: string
-  fullName: string | null
-}
-
-function formatTime(date: string) {
-  const d = new Date(date)
-  const now = new Date()
-  const diff = now.getTime() - d.getTime()
-  if (diff < 86400000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-export default function AdminConversationPage() {
-  const params = useParams()
-  const router = useRouter()
-  const conversationId = params.conversationId as string
-  const [conversation, setConversation] = useState<Conversation | null>(null)
-  const [account, setAccount] = useState<Account | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
-  const [loading, setLoading] = useState(true)
-  const [newMessage, setNewMessage] = useState('')
+export default function ConversationPage() {
+  const canReply = useAdminCan('messages')
+  const { conversationId } = useParams<{ conversationId: string }>()
+  const [data, setData] = useState<Detail | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [reply, setReply] = useState('')
   const [sending, setSending] = useState(false)
-  const [priority, setPriority] = useState('normal')
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  const lastCount = useRef(0)
 
-  const fetchConversation = useCallback(async () => {
+  const load = useCallback(async () => {
     try {
-      const res = await fetch(`/api/sys-control/messages/${conversationId}`)
-      if (res.ok) {
-        const data = await res.json()
-        setConversation(data.conversation)
-        setAccount(data.account)
-        setMessages(data.messages)
-        setPriority(data.conversation.priority)
-      } else {
-        router.push('/sys-control/messages')
-      }
-    } catch {
-      router.push('/sys-control/messages')
-    } finally {
-      setLoading(false)
+      const d = await adminFetch<Detail>(`/api/sys-control/messages/${conversationId}`)
+      setData(d)
+      setError(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load the conversation')
     }
-  }, [conversationId, router])
+  }, [conversationId])
 
+  useEffect(() => { load() }, [load])
+  // Pick up vendor replies while the page is open
   useEffect(() => {
-    fetchConversation()
-    const interval = setInterval(fetchConversation, 15000)
-    return () => clearInterval(interval)
-  }, [fetchConversation])
-
+    const t = window.setInterval(() => { if (document.visibilityState === 'visible') load() }, 15_000)
+    return () => window.clearInterval(t)
+  }, [load])
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    const n = data?.messages.length ?? 0
+    if (n !== lastCount.current) {
+      lastCount.current = n
+      endRef.current?.scrollIntoView({ block: 'end' })
+    }
+  }, [data])
 
-  const sendReply = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newMessage.trim() || sending) return
-
+  async function send() {
+    const content = reply.trim()
+    if (!content) return
     setSending(true)
+    setActionError(null)
     try {
-      const res = await fetch(`/api/sys-control/messages/${conversationId}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: newMessage }),
-      })
-
-      if (res.ok) {
-        const msg = await res.json()
-        setMessages(prev => [...prev, msg])
-        setNewMessage('')
-      }
-    } catch {
-      alert('Failed to send reply')
+      await adminFetch(`/api/sys-control/messages/${conversationId}`, { method: 'POST', json: { content } })
+      setReply('')
+      await load()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'The reply was not sent')
     } finally {
       setSending(false)
     }
   }
 
-  const updateConversation = async (action: string) => {
+  async function update(body: Record<string, unknown>, key: string) {
+    setBusy(key)
+    setActionError(null)
     try {
-      await fetch(`/api/sys-control/messages/${conversationId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      })
-      fetchConversation()
-    } catch {
-      alert('Failed to update conversation')
+      await adminFetch(`/api/sys-control/messages/${conversationId}`, { method: 'PUT', json: body })
+      await load()
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : 'Update failed')
+    } finally {
+      setBusy(null)
     }
   }
 
-  const updatePriority = async (newPriority: string) => {
-    setPriority(newPriority)
-    try {
-      await fetch(`/api/sys-control/messages/${conversationId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ priority: newPriority }),
-      })
-    } catch {
-      alert('Failed to update priority')
-    }
-  }
+  const c = data?.conversation
+  const crumbs = [{ label: 'Messages', href: '/sys-control/messages' }, { label: c?.subject ?? 'Conversation' }]
 
-  if (loading) {
+  if (error && !data) {
     return (
-      <div className="flex items-center justify-center py-24">
-        <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-      </div>
+      <AdminPage title="Conversation" breadcrumbs={crumbs}>
+        <Alert tone="danger" title="Could not load the conversation" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Alert>
+      </AdminPage>
     )
   }
 
-  if (!conversation) return null
-
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-      {/* Main Chat Area */}
-      <div className="lg:col-span-3 flex flex-col h-[calc(100vh-12rem)]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white rounded-t-xl">
-          <div className="flex items-center gap-3">
-            <Link href="/sys-control/messages" className="p-2 hover:bg-gray-100 rounded">
-              <ArrowLeft className="w-5 h-5 text-gray-500" />
-            </Link>
-            <div>
-              <h2 className="font-semibold text-gray-900">{conversation.subject}</h2>
-              <div className="flex items-center gap-2 text-xs text-gray-500">
-                <span className={`inline-flex items-center gap-1 ${conversation.status === 'open' ? 'text-green-600' : 'text-gray-500'}`}>
-                  {conversation.status === 'open' ? <Clock className="w-3 h-3" /> : <CheckCircle className="w-3 h-3" />}
-                  {conversation.status}
-                </span>
-                {conversation.category && <span className="capitalize">| {conversation.category}</span>}
+    <AdminPage
+      title={c?.subject ?? <Skeleton className="h-7 w-64" />}
+      breadcrumbs={crumbs}
+      titleAside={c ? <Badge tone={c.status === 'open' ? 'success' : 'neutral'} dot>{c.status}</Badge> : undefined}
+      actions={c ? (
+        <>
+          {canReply && c.status === 'open' && <Button icon={Lock} loading={busy === 'close'} onClick={() => update({ action: 'close' }, 'close')}>Close</Button>}
+          {canReply && c.status !== 'open' && <Button icon={RotateCcw} loading={busy === 'reopen'} onClick={() => update({ action: 'reopen' }, 'reopen')}>Reopen</Button>}
+          {canReply && c.status !== 'archived' && <Button variant="ghost" icon={Archive} loading={busy === 'archive'} onClick={() => update({ action: 'archive' }, 'archive')}>Archive</Button>}
+        </>
+      ) : undefined}
+    >
+      {actionError && <Alert tone="danger">{actionError}</Alert>}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <AdminCard flush className="flex min-h-[420px] flex-col">
+          <div className="adm-scroll max-h-[60vh] min-h-[280px] flex-1 space-y-3 overflow-y-auto p-4 sm:p-5">
+            {!data ? (
+              <div className="space-y-3">
+                <Skeleton className="h-16 w-2/3" />
+                <Skeleton className="ml-auto h-16 w-1/2" />
+                <Skeleton className="h-16 w-3/5" />
               </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {conversation.status === 'open' && (
-              <button
-                onClick={() => updateConversation('close')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded"
-              >
-                <Lock className="w-3.5 h-3.5" /> Close
-              </button>
-            )}
-            {conversation.status === 'closed' && (
-              <>
-                <button
-                  onClick={() => updateConversation('reopen')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded"
-                >
-                  <Unlock className="w-3.5 h-3.5" /> Reopen
-                </button>
-                <button
-                  onClick={() => updateConversation('archive')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded"
-                >
-                  <Archive className="w-3.5 h-3.5" /> Archive
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
-          {messages.map(msg => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.senderType === 'admin' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div className="max-w-[75%]">
-                <div className="flex items-center gap-2 mb-1">
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center ${
-                    msg.senderType === 'admin' ? 'bg-purple-100' : 'bg-blue-100'
-                  }`}>
-                    {msg.senderType === 'admin'
-                      ? <Headphones className="w-3.5 h-3.5 text-purple-600" />
-                      : <User className="w-3.5 h-3.5 text-blue-600" />
-                    }
-                  </div>
-                  <span className="text-xs text-gray-500">{msg.senderName || (msg.senderType === 'admin' ? 'Support' : 'User')}</span>
-                  <span className="text-[11px] text-gray-400">{formatTime(msg.createdAt)}</span>
-                </div>
-                <div className={`rounded-md px-4 py-2.5 ${
-                  msg.senderType === 'admin'
-                    ? 'bg-purple-600 text-white'
-                    : 'bg-white text-gray-900 border border-gray-200'
-                }`}>
-                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Reply */}
-        <form onSubmit={sendReply} className="p-4 border-t border-gray-200 bg-white rounded-b-xl">
-          <div className="flex items-end gap-3">
-            <textarea
-              value={newMessage}
-              onChange={e => setNewMessage(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  sendReply(e)
+            ) : data.messages.length === 0 ? (
+              <EmptyState icon={MessageSquare} title="No messages yet" compact />
+            ) : (
+              data.messages.map((m) => {
+                const mine = m.senderType === 'admin'
+                if (m.isSystemMessage) {
+                  return <p key={m.id} className="text-center text-[12.5px] text-adm-subtle">{m.content} · {fmtDateTime(m.createdAt)}</p>
                 }
-              }}
-              placeholder="Type your reply..."
-              rows={1}
-              className="flex-1 px-4 py-2.5 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-none"
-            />
-            <button
-              type="submit"
-              disabled={sending || !newMessage.trim()}
-              className="p-2.5 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
-            >
-              {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-            </button>
+                return (
+                  <div key={m.id} className={cn('flex', mine ? 'justify-end' : 'justify-start')}>
+                    <div className={cn('max-w-[85%] sm:max-w-[75%]')}>
+                      <div
+                        className={cn(
+                          'whitespace-pre-wrap break-words rounded-2xl px-3.5 py-2.5 text-[14px]',
+                          mine ? 'rounded-br-md bg-adm-primary text-adm-primary-fg' : 'rounded-bl-md border border-adm-border bg-adm-surface-2 text-adm-fg',
+                        )}
+                      >
+                        {m.content}
+                      </div>
+                      <p className={cn('mt-1 text-[12px] text-adm-subtle', mine && 'text-right')}>
+                        {mine ? `${m.metadata?.adminName ?? m.senderName ?? 'Support'} (support)` : m.senderName ?? data.account.fullName} · {fmtDateTime(m.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })
+            )}
+            <div ref={endRef} />
           </div>
-        </form>
-      </div>
-
-      {/* Sidebar */}
-      <div className="space-y-4">
-        {/* Account Info */}
-        {account && (
-          <div className="bg-white rounded-md border border-gray-200 p-4">
-            <h3 className="font-semibold text-gray-900 text-sm mb-3">Account</h3>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <User className="w-4 h-4 text-gray-400" />
-                <span className="text-sm text-gray-900">{account.fullName || 'User'}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Mail className="w-4 h-4 text-gray-400" />
-                <span className="text-sm text-gray-600">{account.email}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Conversation Details */}
-        <div className="bg-white rounded-md border border-gray-200 p-4">
-          <h3 className="font-semibold text-gray-900 text-sm mb-3">Details</h3>
-          <div className="space-y-3">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Priority</label>
-              <select
-                value={priority}
-                onChange={e => updatePriority(e.target.value)}
-                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded"
+          <div className="border-t border-adm-border p-3 sm:p-4">
+            {!canReply ? (
+              <p className="text-[13px] text-adm-muted">Your role can read conversations but not reply.</p>
+            ) : c?.status === 'archived' ? (
+              <p className="text-[13px] text-adm-muted">This conversation is archived. Reopen it to reply.</p>
+            ) : (
+              <form
+                className="flex flex-col gap-2 sm:flex-row sm:items-end"
+                onSubmit={(e) => { e.preventDefault(); send() }}
               >
-                <option value="low">Low</option>
-                <option value="normal">Normal</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Category</label>
-              <p className="text-sm text-gray-900 capitalize">{conversation.category || 'General'}</p>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Created</label>
-              <p className="text-sm text-gray-900">{new Date(conversation.createdAt).toLocaleString()}</p>
-            </div>
+                <Textarea
+                  rows={3}
+                  value={reply}
+                  maxLength={5000}
+                  onChange={(e) => setReply(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send() } }}
+                  placeholder={c?.status === 'closed' ? 'Replying reopens the conversation…' : 'Write a reply… (Ctrl+Enter to send)'}
+                  aria-label="Reply"
+                  className="min-h-[80px]"
+                />
+                <Button type="submit" variant="primary" icon={Send} loading={sending} disabled={!reply.trim() || !data}>Send</Button>
+              </form>
+            )}
           </div>
+        </AdminCard>
+
+        <div className="space-y-5">
+          <AdminCard title="Vendor account">
+            {!data ? <Skeleton className="h-24 w-full" /> : (
+              <div className="space-y-3">
+                <KeyValueList
+                  items={[
+                    { label: 'Name', value: data.account.fullName },
+                    { label: 'Email', value: <a href={`mailto:${data.account.email}`} className="break-all text-adm-primary hover:underline">{data.account.email}</a> },
+                    ...(data.account.phone ? [{ label: 'Phone', value: data.account.phone }] : []),
+                  ]}
+                />
+                {data.vendors.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[12.5px] font-medium text-adm-muted">Businesses</p>
+                    <ul className="space-y-1.5">
+                      {data.vendors.map((v) => (
+                        <li key={v.id} className="flex items-center justify-between gap-2 text-[13px]">
+                          <Link href={`/sys-control/vendors/${v.id}`} className="min-w-0 truncate text-adm-primary hover:underline">{v.name}</Link>
+                          <span className="flex shrink-0 items-center gap-1.5">
+                            <span className="adm-num text-adm-subtle">{formatBusinessId(v.businessId)}</span>
+                            {v.status !== 'active' && <Badge tone={statusTone(v.status)}>{v.status}</Badge>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </AdminCard>
+          <AdminCard title="Details">
+            {!c ? <Skeleton className="h-24 w-full" /> : (
+              <div className="space-y-3">
+                <KeyValueList
+                  items={[
+                    { label: 'Category', value: CATEGORY_LABEL[c.category ?? 'general'] ?? c.category },
+                    { label: 'Started', value: fmtDateTime(c.createdAt) },
+                    ...(c.closedAt ? [{ label: 'Closed', value: fmtDateTime(c.closedAt) }] : []),
+                    { label: 'Vendor has read the last reply', value: c.unreadByAccount ? 'Not yet' : 'Yes' },
+                  ]}
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <label htmlFor="cv-priority" className="text-[13px] text-adm-muted">Priority</label>
+                  <div className="flex items-center gap-2">
+                    <Badge tone={PRIORITY_TONE[c.priority] ?? 'neutral'}>{c.priority}</Badge>
+                    <Select id="cv-priority" size="sm" className="w-28" value={c.priority} disabled={busy === 'priority'} onChange={(e) => update({ priority: e.target.value }, 'priority')}>
+                      <option value="low">Low</option>
+                      <option value="normal">Normal</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Urgent</option>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            )}
+          </AdminCard>
         </div>
       </div>
-    </div>
+    </AdminPage>
   )
 }

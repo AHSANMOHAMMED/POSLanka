@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import {
   fiscalYears,
@@ -25,6 +25,9 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'accounting')
+    if (moduleError) return moduleError
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data

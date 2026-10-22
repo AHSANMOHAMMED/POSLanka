@@ -1,6 +1,7 @@
 'use client'
 
 import { Check } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 interface ProgressStepsProps {
   steps: string[]
@@ -9,42 +10,31 @@ interface ProgressStepsProps {
 
 export function ProgressSteps({ steps, currentStep }: ProgressStepsProps) {
   return (
-    <div className="flex items-center justify-center gap-0 mb-6">
-      {steps.map((label, index) => (
-        <div key={label} className="flex items-center">
-          <div className="flex flex-col items-center">
-            <div
-              className={`w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                index < currentStep
-                  ? 'bg-gradient-to-br from-emerald-600 to-emerald-500 text-white shadow-lg shadow-emerald-600/25'
-                  : index === currentStep
-                  ? 'bg-gradient-to-br from-emerald-600 to-emerald-500 text-white ring-4 ring-emerald-500/20 shadow-lg shadow-emerald-600/25'
-                  : 'bg-white/10 text-zinc-500 border border-white/10'
-              }`}
-            >
-              {index < currentStep ? <Check size={14} strokeWidth={3} /> : index + 1}
-            </div>
-            <span
-              className={`text-[10px] mt-1.5 font-semibold whitespace-nowrap ${
-                index <= currentStep
-                  ? 'text-emerald-400'
-                  : 'text-zinc-500'
-              }`}
-            >
-              {label}
+    <ol className="mb-7 flex items-center" aria-label={`Step ${currentStep + 1} of ${steps.length}`}>
+      {steps.map((label, index) => {
+        const done = index < currentStep
+        const current = index === currentStep
+        return (
+          <li key={label} className={cn('flex items-center', index < steps.length - 1 && 'flex-1')} aria-current={current ? 'step' : undefined}>
+            <span className="flex flex-col items-center gap-1.5">
+              <span
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-full text-[12px] font-semibold transition-colors',
+                  done && 'bg-adm-primary text-adm-primary-fg',
+                  current && 'bg-adm-primary text-adm-primary-fg ring-4 ring-[var(--adm-ring)]',
+                  !done && !current && 'border border-adm-border-strong bg-adm-surface text-adm-subtle'
+                )}
+              >
+                {done ? <Check size={14} strokeWidth={3} aria-hidden /> : index + 1}
+              </span>
+              <span className={cn('whitespace-nowrap text-[11.5px] font-medium', done || current ? 'text-adm-fg' : 'text-adm-subtle')}>{label}</span>
             </span>
-          </div>
-          {index < steps.length - 1 && (
-            <div
-              className={`w-8 sm:w-12 h-1 mx-1 mt-[-14px] rounded-full transition-all ${
-                index < currentStep
-                  ? 'bg-gradient-to-r from-emerald-600 to-emerald-500'
-                  : 'bg-zinc-700'
-              }`}
-            />
-          )}
-        </div>
-      ))}
-    </div>
+            {index < steps.length - 1 && (
+              <span aria-hidden className={cn('mx-2 mb-5 h-0.5 flex-1 rounded-full', done ? 'bg-adm-primary' : 'bg-adm-border')} />
+            )}
+          </li>
+        )
+      })}
+    </ol>
   )
 }

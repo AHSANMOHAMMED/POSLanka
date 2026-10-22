@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
+import Link from 'next/link'
 import { useRealtimeData } from '@/hooks'
 import { toast } from '@/components/ui/toast'
 import { PermissionGuard } from '@/components/auth/PermissionGuard'
@@ -36,6 +37,10 @@ interface OverrideData {
   builtinOverrides: Record<string, Record<string, boolean>>
   customRoles: CustomRole[]
   systemDefaults: typeof ROLE_PERMISSIONS
+  /** Module each permission belongs to (Settings → Module Access) */
+  permissionModules?: Record<string, string>
+  /** Modules switched off per built-in role */
+  disabledModules?: Record<string, string[]>
 }
 
 
@@ -116,9 +121,13 @@ export default function RolePermissionsPage() {
         const perms: Record<string, boolean> = {}
         for (const p of allPerms) {
           // Custom role: explicit permission or base role system default
+          // Same resolution as the server: explicit → base role's tenant override → default
           const explicit = customRole.permissions[p]
+          const baseOverride = data.builtinOverrides[customRole.baseRole]?.[p]
           if (explicit !== undefined) {
             perms[p] = explicit
+          } else if (baseOverride !== undefined) {
+            perms[p] = baseOverride
           } else {
             const defaults = ROLE_PERMISSIONS[p] as readonly string[]
             perms[p] = defaults.includes(customRole.baseRole)
@@ -251,9 +260,18 @@ export default function RolePermissionsPage() {
   }, [isCustomRole, selectedRole, localOverrides])
 
   const isOwnerSelected = selectedRole === 'owner' && !isCustomRole
+  const selectedBaseRole = isCustomRole
+    ? data?.customRoles.find(r => r.id === selectedRole)?.baseRole || ''
+    : selectedRole
+  // Permissions whose module is switched off for this role are refused by the server
+  const isModuleOff = (perm: string): boolean => {
+    if (isOwnerSelected) return false
+    const mod = data?.permissionModules?.[perm]
+    return !!mod && (data?.disabledModules?.[selectedBaseRole] || []).includes(mod)
+  }
 
   return (
-    <PermissionGuard permission="manageTenant">
+    <PermissionGuard permission="manageRoles">
       <div className="space-y-4">
         <Breadcrumb
           items={[
@@ -269,7 +287,11 @@ export default function RolePermissionsPage() {
               Role Permissions
             </h1>
             <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-              Customize what each role can access across your business
+              Customize what each role can access across your business. Changes apply to the web app,
+              the mobile app and the API on the next request.{' '}
+              <Link href={`/c/${tenantSlug}/settings/staff`} className="text-blue-600 hover:underline">Assign roles to staff</Link>
+              {' · '}
+              <Link href={`/c/${tenantSlug}/settings/module-access`} className="text-blue-600 hover:underline">Module access</Link>
             </p>
           </div>
         </div>
@@ -279,9 +301,9 @@ export default function RolePermissionsPage() {
             <Loader2 size={24} className="animate-spin text-gray-400" />
           </div>
         ) : (
-          <div className="flex gap-4 min-h-[600px]">
+          <div className="flex flex-col lg:flex-row gap-4 lg:min-h-[600px]">
             {/* Left Panel - Role List */}
-            <div className="w-72 flex-shrink-0 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+            <div className="w-full lg:w-72 flex-shrink-0 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
               <div className="p-3 border-b border-gray-200 dark:border-gray-700">
                 <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Built-in Roles</h3>
               </div>
@@ -372,7 +394,7 @@ export default function RolePermissionsPage() {
             </div>
 
             {/* Right Panel - Permission Grid */}
-            <div className="flex-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden flex flex-col">
+            <div className="flex-1 min-w-0 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden flex flex-col">
               {/* Header */}
               <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-3">
@@ -387,16 +409,16 @@ export default function RolePermissionsPage() {
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                   {/* Search */}
-                  <div className="relative">
+                  <div className="relative flex-1 sm:flex-none">
                     <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input
                       type="text"
                       placeholder="Search permissions..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 w-48 focus:ring-1 focus:ring-blue-500"
+                      className="pl-8 pr-3 py-1.5 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 w-full sm:w-48 focus:ring-1 focus:ring-blue-500"
                     />
                   </div>
                   {/* Reset to defaults */}
@@ -460,7 +482,7 @@ export default function RolePermissionsPage() {
                             }`}
                           >
                             <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
                                 <span className="text-sm text-gray-900 dark:text-white">
                                   {PERMISSION_LABELS[perm]}
                                 </span>
@@ -472,6 +494,11 @@ export default function RolePermissionsPage() {
                                 {isProtected && (
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
                                     owner only
+                                  </span>
+                                )}
+                                {granted && isModuleOff(perm) && (
+                                  <span title="Granted, but the module is switched off for this role in Module Access, so the server refuses it" className="text-[10px] px-1.5 py-0.5 rounded bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
+                                    module off
                                   </span>
                                 )}
                               </div>
@@ -524,7 +551,8 @@ export default function RolePermissionsPage() {
               setIsCustomRole(true)
               fetchData()
             }}
-            availableRoles={builtinRoles}
+            availableRoles={builtinRoles.filter(r =>
+              session?.user?.role === 'owner' || (ROLE_HIERARCHY[r] || 0) < (ROLE_HIERARCHY[(session?.user?.role || '') as UserRole] || 0))}
           />
         )}
       </div>

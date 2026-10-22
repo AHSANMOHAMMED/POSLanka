@@ -20,7 +20,7 @@ const unregisterSchema = z.object({ pushToken: z.string().min(10).max(255) })
 async function resolveOwner() {
   const company = await authWithCompany()
   if (company?.user?.tenantId) return { tenantId: company.user.tenantId, userId: company.user.id, accountId: company.user.accountId || null, superAdminId: null }
-  const admin = await validateAdminSession()
+  const admin = await validateAdminSession('self')
   if (admin) return { tenantId: null, userId: null, accountId: null, superAdminId: admin.superAdminId }
   const account = await accountAuth()
   const accountId = (account?.user as { accountId?: string } | undefined)?.accountId

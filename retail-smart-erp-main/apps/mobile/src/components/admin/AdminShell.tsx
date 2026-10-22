@@ -4,7 +4,8 @@ import React, { useEffect, useState } from 'react'
 import { View, Text, Pressable, StyleSheet, Alert } from 'react-native'
 import { router, usePathname } from 'expo-router'
 import { THEME } from '../../lib/theme'
-import { adminLogout, getAdminUser, type AdminUser } from '../../lib/adminApi'
+import { ADMIN_ROLE_LABEL, adminLogout, getAdminUser, type AdminUser } from '../../lib/adminApi'
+import { useHeaderPad, useBottomPad } from '../../lib/safeArea'
 
 export type AdminTab = 'pulse' | 'live' | 'vendors' | 'approvals'
 
@@ -26,6 +27,8 @@ interface AdminShellProps {
 }
 
 export function AdminShell({ title, subtitle, tab, back, right, children }: AdminShellProps) {
+  const headerPad = useHeaderPad()
+  const bottomPad = useBottomPad(8)
   const [admin, setAdmin] = useState<AdminUser | null>(null)
   const pathname = usePathname()
 
@@ -42,7 +45,7 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, headerPad]}>
         {back ? (
           <Pressable style={styles.backBtn} onPress={() => (router.canGoBack() ? router.back() : router.replace('/admin/vendors'))}>
             <Text style={styles.backBtnText}>←</Text>
@@ -57,7 +60,7 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
             {title}
           </Text>
           <Text style={styles.headerSub} numberOfLines={1}>
-            {subtitle || (admin ? `${admin.name} • ${admin.email}` : 'Platform console')}
+            {subtitle || (admin ? `${admin.name}${admin.role ? ` • ${ADMIN_ROLE_LABEL[admin.role] ?? admin.role}` : ''} • ${admin.email}` : 'Platform console')}
           </Text>
         </View>
         {right}
@@ -68,7 +71,7 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
 
       <View style={{ flex: 1 }}>{children}</View>
 
-      <View style={styles.tabBar}>
+      <View style={[styles.tabBar, { paddingBottom: bottomPad }]}>
         {TABS.map((t) => {
           const active = t.id === tab || pathname === t.href
           return (

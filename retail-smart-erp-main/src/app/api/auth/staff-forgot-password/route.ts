@@ -7,13 +7,10 @@ import { sendSystemEmail } from '@/lib/email/system-email'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
 import { staffForgotPasswordSchema } from '@/lib/validation/schemas/auth'
+import { consumeRateLimit } from '@/lib/auth/rate-limit'
 
-// Rate limiting: max 3 requests per email per hour (in-memory)
-const forgotAttempts = new Map<string, { count: number; resetAt: number }>()
-const FORGOT_LIMIT = 3
-const FORGOT_WINDOW = 60 * 60 * 1000 // 1 hour
-let lastCleanup = Date.now()
-const CLEANUP_INTERVAL = 5 * 60 * 1000 // 5 minutes
+// Rate limiting: max 3 requests per email+company per hour (database-backed, shared by all instances)
+const FORGOT_RATE_LIMIT = { maxAttempts: 3, windowMs: 60 * 60 * 1000, category: 'staff_forgot_password' }
 
 // Always return success to prevent email enumeration
 const SUCCESS_RESPONSE = {
@@ -27,30 +24,9 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return parsed.response
     const { email: normalizedEmail, tenantSlug } = parsed.data
 
-    const now = Date.now()
-
-    // Periodically clean expired entries to prevent memory leaks
-    if (now - lastCleanup > CLEANUP_INTERVAL) {
-      lastCleanup = now
-      for (const [key, entry] of forgotAttempts) {
-        if (now > entry.resetAt) forgotAttempts.delete(key)
-      }
-    }
-
     // Rate limit by email+slug
-    const rateLimitKey = `${normalizedEmail}:${tenantSlug}`
-    const attempts = forgotAttempts.get(rateLimitKey)
-    if (attempts) {
-      if (now < attempts.resetAt) {
-        if (attempts.count >= FORGOT_LIMIT) {
-          return NextResponse.json(SUCCESS_RESPONSE)
-        }
-        attempts.count++
-      } else {
-        forgotAttempts.set(rateLimitKey, { count: 1, resetAt: now + FORGOT_WINDOW })
-      }
-    } else {
-      forgotAttempts.set(rateLimitKey, { count: 1, resetAt: now + FORGOT_WINDOW })
+    if ((await consumeRateLimit(`${normalizedEmail}:${tenantSlug}`, FORGOT_RATE_LIMIT)).limited) {
+      return NextResponse.json(SUCCESS_RESPONSE)
     }
 
     // Find tenant

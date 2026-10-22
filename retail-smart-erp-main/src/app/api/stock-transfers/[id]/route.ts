@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { stockTransfers, stockTransferItems, warehouseStock, warehouses, items as itemsTable, itemSerialNumbers } from '@/lib/db/schema'
 import { applyStockChange, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
@@ -28,6 +28,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'stock')
+    if (moduleError) return moduleError
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response

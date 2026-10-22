@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI, type GenerateContentResult } from '@google/generative-ai'
+import { fetchWithTimeout, outboundTimeoutMs } from '@/lib/utils/fetch-timeout'
 
 // Lazy-loaded Gemini client
 let genAI: GoogleGenerativeAI | null = null
@@ -136,7 +137,7 @@ async function callDeepSeek(
   }
   messages.push({ role: 'user', content: prompt })
 
-  const response = await fetch('https://api.deepseek.com/chat/completions', {
+  const response = await fetchWithTimeout('https://api.deepseek.com/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -148,8 +149,7 @@ async function callDeepSeek(
       max_tokens: options?.maxTokens || 1024,
       temperature: options?.temperature ?? 0.7,
     }),
-    signal: AbortSignal.timeout(30000), // 30s timeout
-  })
+  }, outboundTimeoutMs(30_000))
 
   if (!response.ok) {
     const errorBody = await response.text()
@@ -184,7 +184,7 @@ async function callGemini(
       temperature: options?.temperature ?? 0.7,
     },
     ...(options?.systemPrompt ? { systemInstruction: options.systemPrompt } : {}),
-  })
+  }, { timeout: outboundTimeoutMs(30_000) })
 
   const result: GenerateContentResult = await model.generateContent(prompt)
   const response = result.response

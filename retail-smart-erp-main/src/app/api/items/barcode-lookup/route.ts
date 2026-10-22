@@ -8,6 +8,7 @@ import { validateSearchParams } from '@/lib/validation/helpers'
 import { barcodeLookupSchema } from '@/lib/validation/schemas/items'
 import { analyseScan, normalizeScaleConfig, type ScaleBarcodeConfig } from '@/lib/inventory/barcode-parse'
 import { logError } from '@/lib/ai/error-logger'
+import { requireModule } from '@/lib/auth/roles'
 
 // GET /api/items/barcode-lookup?barcode=xxx&warehouseId=yyy
 // Fast exact-match lookup for POS scanning. Understands EAN-13/8, UPC-A/E, ITF-14,
@@ -19,6 +20,9 @@ export async function GET(request: NextRequest) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, ['stock', 'selling'])
+    if (moduleError) return moduleError
 
     const parsed = validateSearchParams(request, barcodeLookupSchema)
     if (!parsed.success) return parsed.response

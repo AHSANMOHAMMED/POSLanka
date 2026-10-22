@@ -817,6 +817,8 @@ export interface LookupLine extends SaleItemRow {
   remainingSerialNumberIds: string[]
   /** Batch allocations of this line (D1). */
   batches: SaleLineBatchInfo[]
+  /** The item's base unit (items.unit); `uom` / `uomFactor` say what the line was sold in. */
+  baseUnit: string | null
 }
 
 export interface SaleLookupResult {
@@ -882,9 +884,11 @@ export async function lookupSaleByCode(tx: DbTx, code: string): Promise<SaleLook
 export async function buildLookup(tx: DbTx, sale: SaleRow, matchedBy: LookupMatch, matchedReturn: { id: string; invoiceNo: string } | null): Promise<SaleLookupResult> {
   const lines = await tx.select().from(saleItems).where(eq(saleItems.saleId, sale.id))
   const itemIds = [...new Set(lines.map((l) => l.itemId).filter((x): x is string => !!x))]
-  const giftIds = new Set(itemIds.length
-    ? (await tx.select({ id: items.id }).from(items).where(and(inArray(items.id, itemIds), eq(items.isGiftCard, true)))).map((r) => r.id)
-    : [])
+  const itemRows = itemIds.length
+    ? await tx.select({ id: items.id, isGiftCard: items.isGiftCard, unit: items.unit }).from(items).where(inArray(items.id, itemIds))
+    : []
+  const giftIds = new Set(itemRows.filter((r) => r.isGiftCard).map((r) => r.id))
+  const baseUnitOf = new Map(itemRows.map((r) => [r.id, r.unit]))
   const pricing = computeSalePricing(sale, lines)
   const linked = await tx.select({ id: sales.id, invoiceNo: sales.invoiceNo, total: sales.total, createdAt: sales.createdAt })
     .from(sales)
@@ -917,6 +921,7 @@ export async function buildLookup(tx: DbTx, sale: SaleRow, matchedBy: LookupMatc
       isGiftCard: !!(l.itemId && giftIds.has(l.itemId)),
       remainingSerialNumberIds: ((l.serialNumberIds as string[] | null) || []).filter((sid) => !returnedSerials.has(sid)),
       batches: batchesByLine.get(l.id) || [],
+      baseUnit: (l.itemId && baseUnitOf.get(l.itemId)) || null,
     }
   })
 

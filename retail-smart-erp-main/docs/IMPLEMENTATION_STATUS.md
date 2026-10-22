@@ -139,3 +139,31 @@ Measured in a real browser (22 page loads): **dev** 1,550 → 529 API requests, 
 - Instant click feedback: top progress bar (`NavigationProgress`) and a `loading.tsx` skeleton for company pages.
 - Dev: `server.ts` loads `.env.local` (it only read `.env` before and exited with "DATABASE_URL is required"); the main modules are pre-compiled in the background (`src/lib/dev/warmup.ts`, capped at 3.5 GB — compiling every route pushed `next dev` past 9 GB and the OS killed it). `npm run preview` runs the app locally in production mode.
 - The onboarding checklist linked to a non-existent `/settings/users` page (now `/settings/staff`).
+
+## Round 9 — super-admin console, roles, Business ID, production hardening (2026-10-22)
+Migrations 0162–0168.
+
+| Area | What changed |
+|---|---|
+| Business ID (0162) | Every vendor gets a permanent ID like `PL-985633` (DB default, backfilled, immutable). Staff sign in with it on the web (`/login` → Staff sign-in) and mobile; shown on the staff page, business profile, vendor login page and admin console. |
+| Super-admin console | Rebuilt on one design kit (`src/components/admin/kit`), light/dark, collapsible on phones; all fake telemetry removed (fake IPs, "142 vendors online", uptime, cluster health, displayed TOTP code, lockdown button…). Real health API (`/api/sys-control/health`). Vendors: search by Business ID, detail tabs, real lifecycle actions (suspend/reactivate, extend trial, change plan, reset owner password, resend welcome, single-use audited impersonation, soft archive). Users, audit log (filters + CSV), error log (resolve/ignore/reopen), broadcasts/email by plan/type/Business ID, settings. Forced password change / required 2FA enforced on every admin API (0166). |
+| Billing fixes | Renewals now extend plan expiry; payments no longer reactivate admin-suspended vendors; manual lock no longer schedules data deletion; wallet top-ups credit once; slip approval idempotent; tier price edits don't change existing subscribers; unlock no longer gives a free month unless chosen. |
+| Vendor roles | Owner/managers with `manageRoles` create admins, cashiers and custom roles; nobody can grant more than they hold; owner protected; module switches enforced by the server (incl. read endpoints) and the sidebar; invites carry custom roles; permission changes apply instantly across processes. Mobile app screens follow each role's effective permissions. |
+| Sign-in pages | Admin, vendor staff, root, register, forgot/reset, invite rebuilt: visible labels, no icon overlap, brand-consistent, responsive. |
+| Non-functional (0167–0168) | Realtime fan-out and rate limits across instances (Postgres LISTEN/NOTIFY, DB rate limits) → horizontal scaling supported; statement/idle-transaction timeouts; 22 indexes; real health/live/ready probes; graceful shutdown; PayHere activation atomic; CSRF Origin check; upload signature checks + 20 MB limit; JSON logs with request IDs; `/api/metrics`; retention cron; outbound timeouts; xlsx CVE fixed, unused three.js removed. |
+| Bug found in verification | A sign-in in the same second the password was set (every new vendor owner, reset-then-login) was randomly rejected (1-second token precision). Tokens now carry a millisecond sign-in time. |
+
+Verification (fresh DB 0000–0168): 44 suites pass (new: i2 80, i3 71, i4 94, i5 84); web + mobile typecheck and lint clean; production build OK; all 14 admin pages and 45 vendor pages have no horizontal overflow at 390/768 px and settle in < 0.6 s; load test 105/105 concurrent checkouts (p95 1.4 s), exact stock and invoices, zero variance.
+
+Ops must set: `METRICS_TOKEN`, S3 storage credentials (or `ALLOW_LOCAL_UPLOADS=true` on a single host), custom domains in `ALLOWED_HOSTS`; see `.env.example` and docs/DEPLOY_DIGITALOCEAN.md. Open: platform-admin roles (every admin has full access), promo codes not applied at checkout, PayHere refunds via the PayHere portal, broadcast push notifications, `npm audit` items in drizzle-orm/@auth/core.
+
+## Round 10 — security updates and remaining features (2026-10-23)
+- **Dependencies:** critical `@auth/core` advisory fixed (next-auth 5.0.0-beta.32 / @auth/core 0.41.3; patch renamed to `patches/next-auth+5.0.0-beta.32.patch`), Next.js 16.4.2, drizzle-orm 0.45.4, sharp 0.35.5 (libvips/libheif/librsvg CVEs), `exceljs` → uuid 11 via override, unused `query-string` removed. Remaining web advisories are install/CLI-only (`braces` via patch-package, `sprintf-js` via mammoth's CLI). Mobile advisories are all Expo build tooling and need an Expo SDK upgrade (`npm audit fix --force`), planned separately.
+- **Platform-admin roles (0169):** owner / support / billing / viewer, enforced per route (`validateAdminSession(permission)` — a route without a permission does not compile), last owner protected, role changes audited; console and mobile admin follow the role.
+- **Promo codes at checkout:** applied server-side on PayHere, wallet and bank-slip payments; one redemption per payment (PayHere retries can't double count).
+- **PayHere refunds:** full refunds from the console (billing/owner), idempotent, audited; the admin chooses what happens to the subscription. Needs `PAYHERE_APP_ID` / `PAYHERE_APP_SECRET` (PayHere Business App with refund permission).
+- **Broadcast push:** "Push to phones" channel via Expo push, per-vendor delivery status; broadcast links clickable in the web bell and mobile inbox.
+- **Mobile returns** show the unit and conversion (e.g. 1 Box = 12 pcs).
+- **Verified in a browser:** web POS offline sale → `OFF-…` receipt number → receipt printed → synced once on reconnect.
+
+Verification: fresh DB 0000–0169, 45 suites pass (new i6 61/61), web + mobile typecheck and lint clean, production build OK, admin and vendor pages without overflow and < 1 s.

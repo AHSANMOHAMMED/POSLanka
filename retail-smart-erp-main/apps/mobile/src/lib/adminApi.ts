@@ -3,6 +3,7 @@
 // The admin token lives under its own SecureStore key and is sent as a Bearer
 // header ONLY to /api/sys-control/* routes; it never touches the tenant client
 // in src/lib/api.ts and the tenant token is never sent to sys-control.
+import { useEffect, useState } from 'react'
 import * as SecureStore from 'expo-secure-store'
 import { router } from 'expo-router'
 import { getApiBase, REQUEST_TIMEOUT_MS, type ApiResult } from './api'
@@ -12,9 +13,48 @@ const ADMIN_USER_KEY = 'poslanka_admin_user'
 
 export const SYS_CONTROL_PREFIX = '/api/sys-control/'
 
+export type AdminRole = 'owner' | 'support' | 'billing' | 'viewer'
+
 export interface AdminUser {
   name: string
   email: string
+  /** Platform role from mobile-login (absent for sessions saved by an older app version) */
+  role?: AdminRole
+  /** Permissions granted by the role (same names as src/lib/admin/roles.ts on the server) */
+  permissions?: string[]
+}
+
+/** Server permission names (src/lib/admin/roles.ts); the server enforces them on every request. */
+const ROLE_PERMISSIONS: Record<AdminRole, string[]> = {
+  owner: ['read', 'self', 'vendors.manage', 'vendors.impersonate', 'messages', 'notifications', 'error_logs', 'billing', 'settings', 'admins'],
+  support: ['read', 'self', 'vendors.impersonate', 'messages', 'notifications', 'error_logs'],
+  billing: ['read', 'self', 'billing'],
+  viewer: ['read', 'self'],
+}
+
+export const ADMIN_ROLE_LABEL: Record<AdminRole, string> = { owner: 'Owner', support: 'Support', billing: 'Billing', viewer: 'Viewer' }
+
+/**
+ * Whether the signed-in admin's role allows `permission`. Only hides controls: every
+ * /api/sys-control route checks the role again. A session saved before roles existed has no
+ * role; its controls stay visible and the server answers 403 where the role does not allow it.
+ */
+export function adminCan(user: AdminUser | null | undefined, permission: string): boolean {
+  if (!user) return false
+  if (Array.isArray(user.permissions)) return user.permissions.includes(permission)
+  if (user.role && ROLE_PERMISSIONS[user.role]) return ROLE_PERMISSIONS[user.role].includes(permission)
+  return true
+}
+
+/** React hook: the stored admin (null until loaded) and a permission check. */
+export function useAdminUser(): { admin: AdminUser | null; can: (permission: string) => boolean } {
+  const [admin, setAdmin] = useState<AdminUser | null>(cachedAdmin ?? null)
+  useEffect(() => {
+    let alive = true
+    getAdminUser().then((a) => { if (alive) setAdmin(a) }).catch(() => undefined)
+    return () => { alive = false }
+  }, [])
+  return { admin, can: (permission: string) => adminCan(admin, permission) }
 }
 
 let cachedAdmin: AdminUser | null | undefined
@@ -121,7 +161,7 @@ export async function adminApi<T = any>(path: string, init: RequestInit = {}, op
     (body && typeof body.error === 'string' && body.error) ||
     (body && typeof body.message === 'string' && body.message) ||
     (res.status === 401 ? 'Admin session expired. Please sign in again.' : '') ||
-    (res.status === 403 ? 'You do not have permission to do this.' : '') ||
+    (res.status === 403 ? 'Your admin role does not allow this.' : '') ||
     `Request failed (${res.status})`
   return { ok: false, status: res.status, data: body as T, error: message }
 }
@@ -134,7 +174,8 @@ export const adminPost = <T = any>(path: string, body?: unknown, options?: Admin
 
 export interface AdminLoginResponse {
   token: string
-  admin: AdminUser
+  admin: AdminUser & { id?: string }
+  permissions?: string[]
 }
 
 /** POST /api/sys-control/auth/mobile-login. 428 + { requires2fa:true } → caller must ask for a TOTP code. */

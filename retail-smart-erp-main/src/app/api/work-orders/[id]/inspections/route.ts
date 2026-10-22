@@ -7,7 +7,7 @@ import { eq, and, or, isNull } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createInspectionSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -22,6 +22,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'auto-service')
+    if (moduleError) return moduleError
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response

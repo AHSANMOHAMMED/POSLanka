@@ -7,6 +7,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 import { validateBody } from '@/lib/validation/helpers'
 import { createPaymentDepositSchema } from '@/lib/validation/schemas/account'
+import { quoteCouponForDeposit } from '@/lib/billing/coupons'
 
 // GET - List user's payment deposits
 export async function GET() {
@@ -55,6 +56,7 @@ export async function POST(request: NextRequest) {
       notes,
       periodMonths,
       isWalletDeposit,
+      couponCode,
     } = parsed.data
 
     // For subscription payments (not wallet, not pending company), validate subscriptionId
@@ -112,6 +114,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Promo code: priced here against the plan the slip pays for; counted when the slip is approved
+    let coupon: { id: string; code: string; listAmount: number; discount: number } | null = null
+    if (couponCode) {
+      if (isWalletDeposit) {
+        return NextResponse.json({ error: 'Promo codes apply to plan payments, not wallet top-ups', code: 'COUPON_INVALID' }, { status: 400 })
+      }
+      const q = await quoteCouponForDeposit({
+        code: couponCode,
+        accountId: session.user.accountId,
+        subscriptionId: pendingCompanyId ? null : subscriptionId,
+        pendingCompanyId,
+        periodMonths: periodMonths || 1,
+      })
+      if (!q.ok) return NextResponse.json({ error: q.error, code: 'COUPON_INVALID' }, { status: 400 })
+      coupon = { id: q.coupon.id, code: q.code, listAmount: q.listAmount, discount: q.discount }
+    }
+
     // Create payment deposit
     // Format depositDate as YYYY-MM-DD string for Drizzle date type
     const formattedDepositDate = new Date(depositDate).toISOString().split('T')[0]
@@ -129,6 +148,12 @@ export async function POST(request: NextRequest) {
         periodMonths: isWalletDeposit ? 0 : periodMonths,
         isWalletDeposit,
         status: 'pending',
+        ...(coupon ? {
+          couponId: coupon.id,
+          couponCode: coupon.code,
+          listAmount: coupon.listAmount.toFixed(2),
+          discountAmount: coupon.discount.toFixed(2),
+        } : {}),
       })
       .returning()
 

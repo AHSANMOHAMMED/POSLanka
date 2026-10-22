@@ -4,6 +4,7 @@
 
 import type { EntityType } from './events'
 import type { ActivityAction } from '@/lib/utils/activity-log'
+import { publishFanout } from './fanout'
 
 /**
  * Broadcast message structure
@@ -89,17 +90,20 @@ export function broadcastChange(
     data,
   }
 
+  // Other app instances (horizontal scaling): Postgres NOTIFY, delivered by their listeners
+  publishFanout('tenant', message)
+
   // Try direct processor first (if in same context as WebSocket server)
   const processor = globalThis.__broadcastProcessor
   if (processor) {
-    console.log(`[Broadcast] Direct: ${action} ${entityType} ${id}`)
+    if (process.env.DEBUG_BROADCAST) console.log(`[Broadcast] Direct: ${action} ${entityType} ${id}`)
     processor(message)
     return
   }
 
   // Fall back to internal HTTP request
   // Use fire-and-forget pattern - don't await
-  console.log(`[Broadcast] HTTP: ${action} ${entityType} ${id}`)
+  if (process.env.DEBUG_BROADCAST) console.log(`[Broadcast] HTTP: ${action} ${entityType} ${id}`)
 
   fetch(getBroadcastUrl(), {
     method: 'POST',
@@ -192,16 +196,19 @@ export function broadcastAccountChange(
     data,
   }
 
+  // Other app instances (horizontal scaling): Postgres NOTIFY, delivered by their listeners
+  publishFanout('account', message)
+
   // Try direct processor first (if in same context as WebSocket server)
   const processor = globalThis.__accountBroadcastProcessor
   if (processor) {
-    console.log(`[Broadcast] Account direct: ${action} ${entityType} ${id}`)
+    if (process.env.DEBUG_BROADCAST) console.log(`[Broadcast] Account direct: ${action} ${entityType} ${id}`)
     processor(message)
     return
   }
 
   // Fall back to internal HTTP request (only works with custom server via `npm run dev`)
-  console.log(`[Broadcast] Account HTTP fallback: ${action} ${entityType} ${id}`)
+  if (process.env.DEBUG_BROADCAST) console.log(`[Broadcast] Account HTTP fallback: ${action} ${entityType} ${id}`)
 
   fetch(getAccountBroadcastUrl(), {
     method: 'POST',

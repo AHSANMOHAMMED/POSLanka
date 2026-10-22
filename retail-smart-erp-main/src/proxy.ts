@@ -5,6 +5,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { edgeDb } from '@/lib/edge-db'
+import { isTrustedOrigin } from '@/lib/security/origin'
 
 // Domain configuration from environment
 const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'retailsmarterp.com'
@@ -53,8 +54,74 @@ function addSubdomainCors(response: NextResponse, origin: string): NextResponse 
   return response
 }
 
+// ==================== API: request id + CSRF ====================
+// Cookies that carry an authenticated session (company, account, platform admin).
+const SESSION_COOKIES = ['company-session', 'account-session', 'admin_session']
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+// Routes called by other servers or by non-browser clients that authenticate without cookies.
+const CSRF_EXEMPT_PREFIXES = [
+  '/api/payhere/notify',   // PayHere server-to-server notification (signed md5sig)
+  '/api/webxpay/webhook',  // WebXPay server-to-server notification (signed)
+  '/api/cron/',            // GitHub Actions scheduler (Bearer CRON_SECRET)
+  '/api/v1/',              // public API (API keys)
+  '/api/client-errors',    // error beacon; rate limited, writes only error reports
+]
+
+function hasSessionCookie(request: NextRequest): boolean {
+  return request.cookies.getAll().some(({ name }) =>
+    SESSION_COOKIES.some((c) => name === c || name === `__Secure-${c}` || name.startsWith(`${c}.`) || name.startsWith(`__Secure-${c}.`)))
+}
+
+/**
+ * CSRF defence for cookie-authenticated API writes (SameSite=lax alone does not cover
+ * same-site subdomains or older browsers): a state-changing request that carries a session
+ * cookie must come from one of our origins. Browsers always attach Origin to cross-origin
+ * POST/PUT/PATCH/DELETE; when it is absent we fall back to Referer, and when both are absent the
+ * caller is not a browser (mobile app, curl, server) and cannot be a CSRF vector.
+ * Returns a reason string when the request must be rejected.
+ */
+export function csrfViolation(request: NextRequest): string | null {
+  if (SAFE_METHODS.has(request.method.toUpperCase())) return null
+  const { pathname } = request.nextUrl
+  if (CSRF_EXEMPT_PREFIXES.some((p) => (p.endsWith('/') ? pathname.startsWith(p) : pathname === p || pathname.startsWith(`${p}/`)))) return null
+  if (!hasSessionCookie(request)) return null // Bearer / API-key / anonymous: nothing ambient to forge
+  const publicHosts = [request.headers.get('x-forwarded-host'), request.headers.get('host'), request.nextUrl.host]
+  const trusted = (value: string) => publicHosts.some((h) => isTrustedOrigin(value, h)) || isTrustedOrigin(value)
+  const origin = request.headers.get('origin')
+  if (origin) {
+    if (origin === 'null' || !trusted(origin)) return `untrusted origin ${origin}`
+    return null
+  }
+  const referer = request.headers.get('referer')
+  if (referer && !trusted(referer)) return 'untrusted referer'
+  return null
+}
+
+function handleApi(request: NextRequest): NextResponse {
+  const incoming = request.headers.get('x-request-id')
+  const requestId = incoming && /^[A-Za-z0-9._:-]{8,128}$/.test(incoming) ? incoming : crypto.randomUUID()
+  const violation = csrfViolation(request)
+  if (violation) {
+    console.warn(JSON.stringify({ level: 'warn', component: 'csrf', msg: 'blocked cross-site API request', requestId, method: request.method, path: request.nextUrl.pathname, reason: violation }))
+    const res = NextResponse.json({ error: 'Cross-site request blocked' }, { status: 403 })
+    res.headers.set('x-request-id', requestId)
+    return res
+  }
+  const headers = new Headers(request.headers)
+  headers.set('x-request-id', requestId)
+  const res = NextResponse.next({ request: { headers } })
+  res.headers.set('x-request-id', requestId)
+  return res
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams, hostname } = request.nextUrl
+
+  // API routes: only request id + CSRF; no host routing / tenant rewrites (unchanged behaviour)
+  if (pathname === '/api' || pathname.startsWith('/api/')) {
+    return handleApi(request)
+  }
   
   // Get the actual host from headers (respecting x-forwarded-host and Host header)
   // Try multiple headers in order of preference:
@@ -379,6 +446,8 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
+    // API routes: request id + CSRF origin check only (see handleApi)
+    '/api/:path*',
     // Match all paths except static files, API routes, SSE endpoint, etc.
     '/((?!api|ws|_events|_internal|_next/static|_next/image|favicon.ico|uploads|images|public|icons|sw\\.js|manifest\\.webmanifest).*)',
   ],

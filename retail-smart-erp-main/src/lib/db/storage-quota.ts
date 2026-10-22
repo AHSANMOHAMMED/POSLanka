@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { tenantUsage, subscriptions } from '@/lib/db/schema'
 import { eq, sql } from 'drizzle-orm'
+import { invalidate, registerCache } from '@/lib/cache/invalidation'
 
 export interface StorageQuota {
   dbUsedBytes: number
@@ -19,6 +20,7 @@ export interface StorageQuota {
 // In-memory cache with 60-second TTL
 const quotaCache = new Map<string, { data: StorageQuota; expires: number }>()
 const CACHE_TTL_MS = 60_000
+registerCache('storage-quota', (key) => { if (key) quotaCache.delete(key); else quotaCache.clear() })
 
 function getWarningLevel(dbPercent: number, filePercent: number): StorageQuota['warningLevel'] {
   const maxPercent = Math.max(dbPercent, filePercent)
@@ -200,12 +202,12 @@ function formatBytes(bytes: number): string {
 
 // Clear cache for a specific tenant (call after storage-changing operations)
 export function invalidateStorageCache(tenantId: string) {
-  quotaCache.delete(tenantId)
+  invalidate('storage-quota', tenantId)
 }
 
 // Clear all tenant caches (call after bulk recalculation like cron job)
 export function invalidateAllStorageCache() {
-  quotaCache.clear()
+  invalidate('storage-quota', null)
 }
 
 /**

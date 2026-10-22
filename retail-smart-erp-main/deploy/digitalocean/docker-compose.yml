@@ -13,7 +13,7 @@ services:
       SKIP_MIGRATIONS: "true"
     expose: ["3000"]
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]   # /api/health/live = liveness only, /api/health/ready = readiness
       interval: 30s
       timeout: 5s
       start_period: 60s

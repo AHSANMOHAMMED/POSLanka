@@ -59,7 +59,8 @@ export const MODULE_TABS: ModuleTab[] = [
   { key: 'accounting', label: 'Accounting', href: '/accounting', icon: 'BookOpen', permission: 'manageAccounting' },
   { key: 'reports', label: 'Reports', href: '/reports', icon: 'BarChart3', permission: 'viewReports' },
   { key: 'my', label: 'My Portal', href: '/my', icon: 'User', permission: 'viewOwnPaySlips' },
-  { key: 'settings', label: 'Settings', href: '/settings', icon: 'Settings', permission: 'manageSettings' },
+  // Staff managers (manageUsers / manageRoles without manageSettings) still reach Settings → Staff
+  { key: 'settings', label: 'Settings', href: '/settings', icon: 'Settings', permission: 'manageSettings', altPermissions: ['manageUsers', 'manageRoles'], limitedHref: '/settings/staff' },
 ]
 
 // Route-to-module mapping: which module does each route belong to?
@@ -842,13 +843,16 @@ export function isModuleTabVisible(
   tab: ModuleTab,
   businessType?: string,
   role?: string,
-  isModuleEnabled?: (moduleKey: string, role?: string) => boolean
+  isModuleEnabled?: (moduleKey: string, role?: string) => boolean,
+  /** Server-effective permission check (custom roles, overrides); defaults to role defaults */
+  can?: (permission: Permission) => boolean,
 ): boolean {
   if (tab.autoServiceOnly && businessType !== 'auto_service') return false
   if (tab.dealershipOnly && businessType !== 'dealership') return false
   if (tab.restaurantOnly && businessType !== 'restaurant') return false
-  if (tab.permission && role && !hasPermission(role, tab.permission)
-    && !(tab.altPermissions || []).some((p) => hasPermission(role, p))) return false
+  const check = can || ((p: Permission) => !!role && hasPermission(role, p))
+  if (tab.permission && role && !check(tab.permission)
+    && !(tab.altPermissions || []).some((p) => check(p))) return false
   if (isModuleEnabled && role && !isModuleEnabled(tab.key, role)) return false
   return true
 }
@@ -857,8 +861,9 @@ export function isModuleTabVisible(
  * The href a role should open for a module tab: the module workspace, or the
  * tab's `limitedHref` when the role only qualifies through `altPermissions`.
  */
-export function getModuleTabHref(tab: ModuleTab, role?: string): string {
-  if (tab.limitedHref && tab.permission && role && !hasPermission(role, tab.permission)) {
+export function getModuleTabHref(tab: ModuleTab, role?: string, can?: (permission: Permission) => boolean): string {
+  const check = can || ((p: Permission) => !!role && hasPermission(role, p))
+  if (tab.limitedHref && tab.permission && role && !check(tab.permission)) {
     return tab.limitedHref
   }
   return tab.href
@@ -872,8 +877,10 @@ export function getModuleSidebar(
   moduleKey: string,
   businessType?: string,
   role?: string,
-  isModuleEnabled?: (moduleKey: string, role?: string) => boolean
+  isModuleEnabled?: (moduleKey: string, role?: string) => boolean,
+  can?: (permission: Permission) => boolean,
 ): SidebarSection[] {
+  const check = can || ((p: Permission) => !!role && hasPermission(role, p))
   // If module access check is provided and module is disabled, return empty
   if (isModuleEnabled && role && !isModuleEnabled(moduleKey, role)) {
     return []
@@ -896,7 +903,7 @@ export function getModuleSidebar(
           if (item.supermarketOnly && !isSupermarket) return false
           if (item.restaurantOnly && !isRestaurant) return false
           if (item.dealershipOnly && !isDealership) return false
-          if (item.permission && role && !hasPermission(role, item.permission)) return false
+          if (item.permission && role && !check(item.permission)) return false
           return true
         })
         .map((item) => {

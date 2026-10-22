@@ -31,6 +31,17 @@ export function isS3Configured(): boolean {
   )
 }
 
+/** Local public/uploads fallback: development, or explicitly allowed (ALLOW_LOCAL_UPLOADS=true). */
+export function localUploadsAllowed(): boolean {
+  return process.env.NODE_ENV !== 'production' || process.env.ALLOW_LOCAL_UPLOADS === 'true'
+}
+
+/** 's3' | 'local' | 'unconfigured' — reported by /api/health. */
+export function storageMode(): 's3' | 'local' | 'unconfigured' {
+  if (isS3Configured()) return 's3'
+  return localUploadsAllowed() ? 'local' : 'unconfigured'
+}
+
 const r2 = new S3Client({
   region: process.env.STORAGE_REGION || 'auto',
   endpoint: env('STORAGE_ENDPOINT', 'R2_ENDPOINT') || undefined,
@@ -59,8 +70,13 @@ export async function uploadToR2(
 ): Promise<string> {
   const cleanKey = key.replace(/^\/+/, '')
 
-  // Fallback to local storage when S3/R2 is not configured
+  // Fallback to local storage when S3/R2 is not configured. In production that would silently
+  // put uploads on the container's ephemeral disk (lost on redeploy, invisible to other
+  // instances), so it is refused unless ALLOW_LOCAL_UPLOADS=true (single host with a volume).
   if (!isS3Configured()) {
+    if (!localUploadsAllowed()) {
+      throw new Error('Object storage is not configured (set STORAGE_ACCESS_KEY_ID / STORAGE_SECRET_ACCESS_KEY / STORAGE_BUCKET, or ALLOW_LOCAL_UPLOADS=true)')
+    }
     try {
       const localFile = path.join(process.cwd(), 'public', 'uploads', cleanKey)
       await fs.promises.mkdir(path.dirname(localFile), { recursive: true })

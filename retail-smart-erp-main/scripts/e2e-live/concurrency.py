@@ -1,4 +1,4 @@
-import os
+import os, re
 import json, uuid, time, subprocess, statistics, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor
 BASE = os.environ.get('BASE_URL', 'http://127.0.0.1:3000')
@@ -32,16 +32,21 @@ st,p,_=call('GET','/api/pos-profiles',token=otok); prof=(p if isinstance(p,list)
 st,p,_=call('POST','/api/items',{'name':'Milk 1L','sellingPrice':480,'costPrice':400,'barcode':f'LOAD{uid}','trackStock':True,'currentStock':500,'warehouseId':wh_id},token=otok)
 item_id=p['id']
 st,p,_=call('GET',f'/api/items/barcode-lookup?barcode=LOAD{uid}&warehouseId={wh_id}',token=otok); print('initial stock', p.get('availableStock'), p.get('currentStock'))
-# 4 extra cashiers cloned from the owner's password hash, assigned to the counter
+# 4 extra cashiers cloned from the owner's password hash. One open shift per counter (cash
+# drawer) is enforced, so each cashier gets their own counter on the same warehouse.
+counters={owner_email: prof_id}
 for i in range(1,5):
-    psql(f"""INSERT INTO users (tenant_id,email,password_hash,full_name,role,is_active) SELECT tenant_id,'cashier{i}-{uid}@ex.com',password_hash,'Cashier {i}','cashier',true FROM users WHERE id='{owner_id}';
-    INSERT INTO pos_profile_users (tenant_id,pos_profile_id,user_id,is_default) SELECT '{tenant_id}','{prof_id}',id,false FROM users WHERE email='cashier{i}-{uid}@ex.com';""")
+    counter_id=psql(f"""INSERT INTO users (tenant_id,email,password_hash,full_name,role,is_active) SELECT tenant_id,'cashier{i}-{uid}@ex.com',password_hash,'Cashier {i}','cashier',true FROM users WHERE id='{owner_id}';
+    INSERT INTO pos_profiles (tenant_id,name,code,warehouse_id,is_default) VALUES ('{tenant_id}','Counter {i}','C{i}','{wh_id}',false) RETURNING id;""")
+    counter_id=re.search(r'[0-9a-f]{8}-[0-9a-f-]{27}', counter_id).group(0)
+    psql(f"""INSERT INTO pos_profile_users (tenant_id,pos_profile_id,user_id,is_default) SELECT '{tenant_id}','{counter_id}',id,true FROM users WHERE email='cashier{i}-{uid}@ex.com';""")
+    counters[f'cashier{i}']=counter_id
 users=[(owner_email,otok)]
 for i in range(1,5):
     st,p,_=call('POST','/api/auth/mobile-login',{'email':f'cashier{i}-{uid}@ex.com','password':'Owner@12345','tenantSlug':slug}); assert st==200,(st,p); users.append((f'cashier{i}',p['token']))
 shifts={}
 for name,tok in users:
-    st,p,_=call('POST','/api/pos-opening-entries',{'posProfileId':prof_id,'openingBalances':[{'paymentMethod':'cash','amount':2000}]},token=tok); assert st==200,(name,st,p); shifts[name]=p['id']
+    st,p,_=call('POST','/api/pos-opening-entries',{'posProfileId':counters[name],'openingBalances':[{'paymentMethod':'cash','amount':2000}]},token=tok); assert st==200,(name,st,p); shifts[name]=p['id']
 print('cashiers with open shifts:', len(shifts))
 
 def sale(args):

@@ -12,6 +12,16 @@ import {
 } from './events'
 import { canSubscribe, parseChannel, getDefaultTenantChannels, getAccountChannel } from './channels'
 import { registerBroadcastProcessor, registerAccountBroadcastProcessor } from './broadcast'
+import { startFanoutListener, stopFanoutListener } from './fanout'
+import { createLogger } from '@/lib/logger'
+
+const log = createLogger('websocket')
+
+/** SSE tokens travel in the URL (logs, proxies): only freshly issued ones are accepted. */
+function sseTokenMaxAgeSec(): number {
+  const n = parseInt(process.env.SSE_TOKEN_MAX_AGE_SEC || '', 10)
+  return Number.isFinite(n) && n > 0 ? n : 300
+}
 
 // Connection limits to prevent resource exhaustion
 const MAX_CONNECTIONS_PER_IP = 20
@@ -35,6 +45,7 @@ interface SSEClient {
   tenantId?: string
   mode: 'tenant' | 'account'
   write: (data: string) => boolean
+  end?: () => void
 }
 
 class WebSocketManager {
@@ -51,8 +62,14 @@ class WebSocketManager {
    * Initialize the WebSocket server (noServer mode for manual upgrade handling)
    */
   init() {
-    console.log('[WebSocket] Initializing WebSocket server...')
-    console.log('[WebSocket] NEXTAUTH_SECRET configured:', !!process.env.NEXTAUTH_SECRET)
+    log.info('initializing', { secretConfigured: !!process.env.NEXTAUTH_SECRET })
+
+    // Expose live connection counts to API routes (bundled separately) for /api/sys-control/health
+    ;(globalThis as { __wsStats?: () => { connections: number; tenants: number } }).__wsStats = () => {
+      const tenantIds = new Set<string>()
+      this.clients.forEach((c) => { if (c.tenantId) tenantIds.add(c.tenantId) })
+      return { connections: this.getClientCount(), tenants: tenantIds.size }
+    }
     
     this.wss = new WebSocketServer({
       noServer: true,
@@ -110,7 +127,23 @@ class WebSocketManager {
       this.broadcastToUser(msg.userId, event)
     })
 
-    console.log('[WebSocket] Server initialized successfully')
+    // Cross-instance fan-out: broadcasts published by other app instances (Postgres NOTIFY)
+    // are delivered to this instance's clients. Own messages are filtered out by instance id.
+    const listening = startFanoutListener((kind, m) => {
+      if (this.isShuttingDown) return
+      const event: DataChangeEvent = {
+        type: m.entityType as EntityType,
+        action: m.action,
+        id: m.id,
+        data: m.data,
+        timestamp: Date.now(),
+        ...(kind === 'tenant' ? { tenantId: m.tenantId } : { userId: m.userId }),
+      }
+      if (kind === 'tenant' && m.tenantId) this.broadcastToTenant(m.tenantId, event.type, event)
+      else if (kind === 'account' && m.userId) this.broadcastToUser(m.userId, event)
+    })
+
+    log.info('initialized', { crossInstanceFanout: listening })
   }
 
   /**
@@ -128,7 +161,7 @@ class WebSocketManager {
     if (decoded.mode === 'tenant' && decoded.tenantId) {
       const currentTenantCount = this.connectionsByTenant.get(decoded.tenantId) || 0
       if (currentTenantCount >= MAX_CONNECTIONS_PER_TENANT) {
-        console.warn(`[WebSocket] Connection rejected: tenant ${decoded.tenantId} exceeded limit (${currentTenantCount}/${MAX_CONNECTIONS_PER_TENANT})`)
+        log.warn('connection rejected: tenant limit', { tenantId: decoded.tenantId, count: currentTenantCount, limit: MAX_CONNECTIONS_PER_TENANT })
         this.sendError(ws, 'Too many connections for this tenant', 'TENANT_LIMIT_EXCEEDED')
         ws.close(4029, 'Too many connections')
         return false
@@ -172,7 +205,7 @@ class WebSocketManager {
         mode: decoded.mode,
       })
 
-      console.log(`[WebSocket] Client re-authenticated: ${decoded.id} (mode: ${decoded.mode})`)
+      log.debug('client re-authenticated', { userId: decoded.id, mode: decoded.mode })
       return true
     }
 
@@ -213,7 +246,7 @@ class WebSocketManager {
       mode: decoded.mode,
     })
 
-    console.log(`[WebSocket] Client connected: ${decoded.id} (mode: ${decoded.mode}${decoded.tenantId ? `, tenant: ${decoded.tenantId}` : ''})`)
+    log.debug('client connected', { userId: decoded.id, mode: decoded.mode, tenantId: decoded.tenantId })
     return true
   }
 
@@ -236,7 +269,7 @@ class WebSocketManager {
       })
       ws.on('close', () => this.handleDisconnect(ws))
       ws.on('error', (err) => {
-        console.error('[WebSocket] Client error:', err)
+        log.warn('client error', { err })
         this.removeClient(ws)
       })
 
@@ -281,7 +314,7 @@ class WebSocketManager {
         })
       }
     } catch (error) {
-      console.error('[WebSocket] Connection error:', error)
+      log.error('connection error', { err: error })
       logError('websocket-server', error, {
         errorSource: 'system' as const,
         path: req.url || 'unknown',
@@ -308,7 +341,7 @@ class WebSocketManager {
     try {
       const secret = process.env.NEXTAUTH_SECRET
       if (!secret) {
-        console.error('[WebSocket] NEXTAUTH_SECRET not set')
+        log.error('NEXTAUTH_SECRET not set')
         logError('websocket-server', new Error('NEXTAUTH_SECRET not configured for WebSocket authentication'), {
           errorSource: 'system' as const,
           path: 'verifyToken'
@@ -351,9 +384,9 @@ class WebSocketManager {
     } catch (error) {
       const err = error as Error & { name?: string }
       if (err?.name === 'TokenExpiredError') {
-        console.warn('[WebSocket] Token expired')
+        log.debug('token expired')
       } else {
-        console.error('[WebSocket] Token verification failed:', err?.message || error)
+        log.warn('token verification failed', { err: err?.message || String(error) })
         logError('websocket-server', error, {
           errorSource: 'system' as const,
           path: 'verifyToken',
@@ -556,9 +589,15 @@ class WebSocketManager {
   /**
    * Register an SSE client. Returns client ID on success, null on auth failure.
    */
-  addSSEClient(token: string, writeFn: (data: string) => boolean): string | null {
+  addSSEClient(token: string, writeFn: (data: string) => boolean, endFn?: () => void): string | null {
+    if (this.isShuttingDown) return null
     const decoded = this.verifyToken(token)
     if (!decoded) return null
+    const iat = (jwt.decode(token) as { iat?: number } | null)?.iat
+    if (!iat || Date.now() / 1000 - iat > sseTokenMaxAgeSec()) {
+      log.warn('SSE token too old, client must fetch a fresh one', { userId: decoded.id })
+      return null
+    }
 
     const id = `sse-${++this.sseIdCounter}`
     this.sseClients.set(id, {
@@ -567,9 +606,10 @@ class WebSocketManager {
       tenantId: decoded.tenantId,
       mode: decoded.mode,
       write: writeFn,
+      end: endFn,
     })
 
-    console.log(`[SSE] Client connected: ${decoded.id} (mode: ${decoded.mode}${decoded.tenantId ? `, tenant: ${decoded.tenantId}` : ''})`)
+    log.debug('SSE client connected', { userId: decoded.id, mode: decoded.mode, tenantId: decoded.tenantId })
     return id
   }
 
@@ -635,7 +675,7 @@ class WebSocketManager {
     const currentIpCount = this.connectionsByIp.get(ip) || 0
 
     if (currentIpCount >= MAX_CONNECTIONS_PER_IP) {
-      console.warn(`[WebSocket] Connection rejected: IP ${ip} exceeded limit (${currentIpCount}/${MAX_CONNECTIONS_PER_IP})`)
+      log.warn('connection rejected: IP limit', { ip, count: currentIpCount, limit: MAX_CONNECTIONS_PER_IP })
       // Complete the WebSocket handshake then immediately close with a custom
       // close code.  Writing raw HTTP (e.g. 429) on the socket can confuse
       // reverse proxies (Railway/Cloudflare) and corrupt the stream.
@@ -666,13 +706,18 @@ class WebSocketManager {
     this.clients.clear()
     this.connectionsByIp.clear()
     this.connectionsByTenant.clear()
+    // End open SSE responses, otherwise server.close() waits for them until the forced exit
+    this.sseClients.forEach((client) => {
+      try { client.end?.() } catch { /* already closed */ }
+    })
     this.sseClients.clear()
 
     if (this.wss) {
       this.wss.close()
     }
+    void stopFanoutListener()
 
-    console.log('[WebSocket] Server shutdown complete')
+    log.info('shutdown complete')
   }
 
   /**

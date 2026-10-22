@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { View, Text, FlatList, Pressable, Modal, TextInput, ActivityIndicator, Alert, StyleSheet, RefreshControl } from 'react-native'
 import * as Linking from 'expo-linking'
-import { adminGet, adminList, adminPut } from '../../src/lib/adminApi'
+import { adminGet, adminList, adminPut, useAdminUser } from '../../src/lib/adminApi'
 import { THEME, formatLKR } from '../../src/lib/theme'
 import { ErrorView, LoadingView } from '../../src/components/StateViews'
 import { AdminShell, Pill, adminStyles, timeAgo } from '../../src/components/admin/AdminShell'
@@ -36,6 +36,9 @@ export default function AdminApprovalsScreen() {
   const [review, setReview] = useState<{ payment: PaymentDeposit; decision: 'approved' | 'rejected' } | null>(null)
   const [notes, setNotes] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Approving / rejecting slips is billing work (owner or billing role); others see the list
+  const { can } = useAdminUser()
+  const canReview = can('billing')
 
   const load = useCallback(
     async (silent = false) => {
@@ -146,7 +149,7 @@ export default function AdminApprovalsScreen() {
                     <Text style={adminStyles.ghostBtnText}>🧾 Slip</Text>
                   </Pressable>
                 ) : null}
-                {item.status === 'pending' ? (
+                {item.status === 'pending' && canReview ? (
                   <>
                     <Pressable style={[adminStyles.dangerBtn, { flex: 1, height: 42 }]} onPress={() => openReview(item, 'rejected')}>
                       <Text style={adminStyles.dangerBtnText}>Reject</Text>

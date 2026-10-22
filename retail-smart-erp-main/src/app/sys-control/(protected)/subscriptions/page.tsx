@@ -1,737 +1,445 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import Link from 'next/link'
+import { Receipt, RefreshCw } from 'lucide-react'
 import {
-  Loader2, Building2, CheckCircle, Clock, AlertCircle, XCircle,
-  Database, HardDrive, Settings, Save, X, Lock, Unlock, CalendarClock,
-} from 'lucide-react'
-import { formatCurrencyWithSymbol } from '@/lib/utils/currency'
+  AdminCard,
+  AdminModal,
+  AdminPage,
+  AdminTable,
+  AdminToolbar,
+  Alert,
+  Badge,
+  Button,
+  Checkbox,
+  EmptyState,
+  Field,
+  Input,
+  KeyValueList,
+  SearchInput,
+  SegmentedControl,
+  Select,
+  Textarea,
+  fmtLKR,
+  statusTone,
+  type AdminColumn,
+} from '@/components/admin/kit'
+import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import {
+  LOCK_REASON_LABEL,
+  Pager,
+  SUBSCRIPTION_STATUS_LABEL,
+  adminFetch,
+  daysUntil,
+  fmtBytes,
+  fmtDate,
+  isNeverEnding,
+  labelFor,
+} from '@/components/admin/console-helpers'
+import { formatBusinessId } from '@/lib/tenant/business-id-format'
 
-interface Subscription {
+interface SubRow {
   id: string
-  tenantId: string
-  status: 'trial' | 'active' | 'past_due' | 'cancelled' | 'locked'
+  status: string
+  billingCycle: string | null
   currentPeriodStart: string | null
   currentPeriodEnd: string | null
   trialEndsAt: string | null
-  billingCycle: string | null
-  overrideDatabaseBytes: number | null
-  overrideFileStorageBytes: number | null
+  lastPaymentAt: string | null
   subscribedPriceMonthly: string | null
   subscribedPriceYearly: string | null
-  priceLockedAt: string | null
-  createdAt: string
-  tenant: {
-    id: string
-    name: string
-    slug: string
-    businessType: string
-    lockedReason: string | null
-    deletionScheduledAt: string | null
-  } | null
-  tier: {
-    id: string
-    name: string
-    displayName: string
-    priceMonthly: string
-    maxDatabaseBytes: number | null
-    maxFileStorageBytes: number | null
-  } | null
-  billingAccount: {
-    id: string
-    email: string
-    fullName: string
-  } | null
-  usage?: {
-    storageBytes: number
-    fileStorageBytes: number
-  } | null
+  overrideDatabaseBytes: number | null
+  overrideFileStorageBytes: number | null
+  tenant: { id: string; name: string; slug: string; businessId: string; status: string; lockedReason: string | null }
+  tier: { id: string; name: string; displayName: string; priceMonthly: string | null; priceYearly: string | null; maxDatabaseBytes: number | null; maxFileStorageBytes: number | null }
+  billingAccount: { id: string; email: string; fullName: string }
+  usage: { storageBytes: number; fileStorageBytes: number }
 }
 
-
-function formatBytes(bytes: number): string {
-  if (!bytes || bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+interface ListResponse {
+  subscriptions: SubRow[]
+  pagination: { page: number; pageSize: number; total: number }
+  statusCounts: Record<string, number>
+  tiers: Array<{ id: string; displayName: string }>
 }
 
-function bytesToGB(bytes: number): string {
-  if (!bytes) return ''
-  return (bytes / (1024 * 1024 * 1024)).toFixed(2).replace(/\.?0+$/, '')
-}
+type View = 'all' | 'expiring' | 'trial' | 'active' | 'past_due' | 'locked' | 'cancelled'
+const PAGE_SIZE = 25
+const GB = 1024 ** 3
 
-function gbToBytes(gb: string): number | null {
-  if (!gb) return null
-  return Math.round(parseFloat(gb) * 1024 * 1024 * 1024)
-}
+const isFreeRow = (s: SubRow) => (s.status === 'trial' && !s.trialEndsAt) || isNeverEnding(s.currentPeriodEnd)
 
-function StorageMiniBar({ used, limit, className = '' }: { used: number; limit: number | null; className?: string }) {
-  if (!limit) return <span className="text-xs text-gray-400">No limit</span>
-  const percent = Math.min((used / limit) * 100, 100)
-  const isWarning = percent >= 80
-  const isCritical = percent >= 95
-
-  return (
-    <div className={`flex items-center gap-2 ${className}`}>
-      <div className="flex-1 h-2 bg-gray-100 dark:bg-gray-700 rounded-full overflow-hidden min-w-[60px]">
-        <div
-          className={`h-full rounded-full ${
-            isCritical ? 'bg-red-500' : isWarning ? 'bg-yellow-500' : 'bg-blue-500'
-          }`}
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-      <span className={`text-xs font-medium whitespace-nowrap ${
-        isCritical ? 'text-red-600' : isWarning ? 'text-yellow-600' : 'text-gray-500 dark:text-gray-400'
-      }`}>
-        {percent.toFixed(0)}%
-      </span>
-    </div>
-  )
+function endsOf(s: SubRow): string | null {
+  return s.status === 'trial' && s.trialEndsAt ? s.trialEndsAt : s.currentPeriodEnd
 }
 
 export default function SubscriptionsPage() {
-  const [subscriptions, setSubscriptions] = useState<Subscription[]>([])
+  // Changing a subscription is billing work; other roles see the list read-only
+  const canBill = useAdminCan('billing')
+  const [data, setData] = useState<ListResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'trial' | 'active' | 'past_due' | 'cancelled' | 'locked'>('all')
-  const [locking, setLocking] = useState<string | null>(null)
-  const [overrideModal, setOverrideModal] = useState<Subscription | null>(null)
-  const [periodModal, setPeriodModal] = useState<Subscription | null>(null)
-  const [periodMode, setPeriodMode] = useState<'adjust' | 'exact'>('adjust')
-  const [periodMonths, setPeriodMonths] = useState(1)
-  const [periodDate, setPeriodDate] = useState('')
-  const [periodReason, setPeriodReason] = useState('')
-  const [savingPeriod, setSavingPeriod] = useState(false)
-  const [overrideData, setOverrideData] = useState({ dbGB: '', fileGB: '' })
-  const [savingOverride, setSavingOverride] = useState(false)
+  const [view, setView] = useState<View>('all')
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
+  const [tierId, setTierId] = useState('')
+  const [page, setPage] = useState(1)
+  const [managing, setManaging] = useState<SubRow | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
 
-  const fetchSubscriptions = useCallback(async () => {
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQ(q.trim()), 300)
+    return () => window.clearTimeout(t)
+  }, [q])
+  useEffect(() => { setPage(1) }, [view, debouncedQ, tierId])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
-      const res = await fetch(`/api/sys-control/subscriptions?status=${filter}&includeUsage=true`)
-      if (res.ok) {
-        const data = await res.json()
-        setSubscriptions(data)
-      }
-    } catch (error) {
-      console.error('Failed to fetch subscriptions:', error)
+      const p = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE) })
+      if (view === 'expiring') p.set('view', 'expiring')
+      else if (view !== 'all') p.set('status', view)
+      if (debouncedQ) p.set('q', debouncedQ)
+      if (tierId) p.set('tierId', tierId)
+      setData(await adminFetch<ListResponse>(`/api/sys-control/subscriptions?${p.toString()}`))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load subscriptions')
     } finally {
       setLoading(false)
     }
-  }, [filter])
+  }, [page, view, debouncedQ, tierId])
 
-  useEffect(() => {
-    fetchSubscriptions()
-  }, [fetchSubscriptions])
+  useEffect(() => { load() }, [load])
 
-  const openPeriodModal = (sub: Subscription) => {
-    setPeriodModal(sub)
-    setPeriodMode('adjust')
-    setPeriodMonths(1)
-    setPeriodReason('')
-    // Default the date picker to current end date
-    const endDate = sub.status === 'trial' && sub.trialEndsAt
-      ? sub.trialEndsAt
-      : sub.currentPeriodEnd
-    setPeriodDate(endDate ? new Date(endDate).toISOString().split('T')[0] : '')
-  }
+  const c = data?.statusCounts ?? {}
+  const total = Object.values(c).reduce((a, b) => a + b, 0)
+  const views: Array<{ value: View; label: string }> = [
+    { value: 'all', label: `All ${data ? total : ''}`.trim() },
+    { value: 'expiring', label: 'Ending in 7 days' },
+    { value: 'trial', label: `Trial / free ${c.trial ?? 0}` },
+    { value: 'active', label: `Active ${c.active ?? 0}` },
+    { value: 'past_due', label: `Past due ${c.past_due ?? 0}` },
+    { value: 'locked', label: `Locked ${c.locked ?? 0}` },
+    { value: 'cancelled', label: `Cancelled ${c.cancelled ?? 0}` },
+  ]
 
-  const getPreviewDate = () => {
-    if (!periodModal) return null
-    if (periodMode === 'exact') {
-      return periodDate ? new Date(periodDate) : null
-    }
-    const currentEnd = periodModal.currentPeriodEnd
-      ? new Date(periodModal.currentPeriodEnd)
-      : new Date()
-    const base = new Date(Math.max(currentEnd.getTime(), Date.now()))
-    base.setMonth(base.getMonth() + periodMonths)
+  const columns: AdminColumn<SubRow>[] = [
+    {
+      key: 'vendor',
+      header: 'Vendor',
+      primary: true,
+      cell: (s) => (
+        <div className="min-w-0">
+          <p className="font-medium text-adm-fg">{s.tenant.name}</p>
+          <p className="text-[12.5px] text-adm-subtle">
+            <span className="adm-num text-adm-muted">{formatBusinessId(s.tenant.businessId)}</span> · {s.billingAccount.email}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'plan',
+      header: 'Plan',
+      cell: (s) => (
+        <div>
+          <p className="text-adm-fg">{s.tier.displayName}</p>
+          <p className="adm-num text-[12.5px] text-adm-subtle">
+            {isFreeRow(s) ? 'Free' : `${fmtLKR(Number(s.billingCycle === 'yearly' ? s.subscribedPriceYearly ?? s.tier.priceYearly : s.subscribedPriceMonthly ?? s.tier.priceMonthly))} / ${s.billingCycle === 'yearly' ? 'year' : 'month'}`}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      cell: (s) => (
+        <div className="flex flex-col items-start gap-1">
+          <Badge tone={statusTone(s.status)}>{isFreeRow(s) ? 'Free' : labelFor(SUBSCRIPTION_STATUS_LABEL, s.status)}</Badge>
+          {s.tenant.status !== 'active' && <span className="text-[12px] text-adm-danger">{labelFor(LOCK_REASON_LABEL, s.tenant.lockedReason) || s.tenant.status}</span>}
+        </div>
+      ),
+    },
+    {
+      key: 'ends',
+      header: 'Ends',
+      cell: (s) => {
+        if (isFreeRow(s)) return <span className="text-adm-subtle">Never</span>
+        const e = endsOf(s)
+        const d = daysUntil(e)
+        return (
+          <div>
+            <p className="text-adm-fg">{fmtDate(e)}</p>
+            <p className={`text-[12.5px] ${d !== null && d <= 7 ? (d < 0 ? 'text-adm-danger' : 'text-adm-warning') : 'text-adm-subtle'}`}>
+              {d === null ? '' : d < 0 ? `${-d} days ago` : d === 0 ? 'today' : `in ${d} days`}
+              {s.status === 'trial' && s.trialEndsAt ? ' · trial' : ''}
+            </p>
+          </div>
+        )
+      },
+    },
+    {
+      key: 'storage',
+      header: 'Storage',
+      hideBelow: 'lg',
+      cell: (s) => {
+        const limit = s.overrideDatabaseBytes ?? s.tier.maxDatabaseBytes
+        return (
+          <span className="adm-num text-adm-muted">
+            {fmtBytes(s.usage.storageBytes)}
+            {limit ? ` / ${fmtBytes(limit)}` : ''}
+            {s.overrideDatabaseBytes != null && <Badge tone="info" className="ml-1.5">Custom</Badge>}
+          </span>
+        )
+      },
+    },
+    { key: 'paid', header: 'Last payment', hideBelow: 'xl', cell: (s) => <span className="text-adm-muted">{s.lastPaymentAt ? fmtDate(s.lastPaymentAt) : '—'}</span> },
+  ]
+
+  return (
+    <AdminPage
+      title="Subscriptions"
+      description="Plan, period and storage of every vendor. Soonest to lapse first."
+      actions={<Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading && !!data}>Refresh</Button>}
+    >
+      {flash && <Alert tone="success" action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash}</Alert>}
+
+      <AdminCard flush>
+        <div className="space-y-3 border-b border-adm-border p-4 sm:p-5">
+          <SegmentedControl ariaLabel="Subscription view" value={view} onChange={setView} options={views} size="sm" />
+          <AdminToolbar>
+            <SearchInput size="sm" wrapperClassName="w-full sm:w-80" placeholder="Vendor, PL-123456 or billing email" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search subscriptions" />
+            <Select size="sm" className="w-full min-[480px]:w-auto" value={tierId} onChange={(e) => setTierId(e.target.value)} aria-label="Plan">
+              <option value="">All plans</option>
+              {(data?.tiers ?? []).map((t) => <option key={t.id} value={t.id}>{t.displayName}</option>)}
+            </Select>
+          </AdminToolbar>
+        </div>
+        {error ? (
+          <div className="p-4 sm:p-5"><Alert tone="danger" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Alert></div>
+        ) : (
+          <AdminTable
+            columns={columns}
+            rows={data?.subscriptions ?? []}
+            rowKey={(s) => s.id}
+            onRowClick={canBill ? setManaging : undefined}
+            loading={loading}
+            minWidth={760}
+            empty={<EmptyState icon={Receipt} title="No subscriptions match" description="Try another view or search." />}
+          />
+        )}
+        {data && data.pagination.total > 0 && (
+          <div className="border-t border-adm-border px-4 py-3 sm:px-5">
+            <Pager page={page} pageSize={PAGE_SIZE} total={data.pagination.total} onPage={setPage} />
+          </div>
+        )}
+      </AdminCard>
+
+      {managing && (
+        <ManageDialog
+          sub={managing}
+          onClose={() => setManaging(null)}
+          onDone={(msg) => { setManaging(null); setFlash(msg); load() }}
+        />
+      )}
+    </AdminPage>
+  )
+}
+
+/* ------------------------------------------------------------------ manage dialog */
+
+type Mode = 'period' | 'storage' | 'access'
+
+function ManageDialog({ sub, onClose, onDone }: { sub: SubRow; onClose: () => void; onDone: (msg: string) => void }) {
+  const free = isFreeRow(sub)
+  const [mode, setMode] = useState<Mode>(free ? 'storage' : 'period')
+  const [months, setMonths] = useState('1')
+  const [endDate, setEndDate] = useState('')
+  const [periodHow, setPeriodHow] = useState<'months' | 'date'>('months')
+  const [reason, setReason] = useState('')
+  const [dbGb, setDbGb] = useState(sub.overrideDatabaseBytes != null ? String(+(sub.overrideDatabaseBytes / GB).toFixed(2)) : '')
+  const [fileGb, setFileGb] = useState(sub.overrideFileStorageBytes != null ? String(+(sub.overrideFileStorageBytes / GB).toFixed(2)) : '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // Unlock: free access is opt-in (default: no extension)
+  const [grantFree, setGrantFree] = useState(false)
+  const [grantMonths, setGrantMonths] = useState('1')
+  const locked = sub.status === 'locked' || sub.tenant.status === 'locked'
+  const ends = endsOf(sub)
+  const periodOver = !free && !!ends && new Date(ends) <= new Date()
+
+  const preview = useMemo(() => {
+    if (periodHow === 'date') return endDate ? new Date(endDate) : null
+    const m = Number(months)
+    if (!Number.isInteger(m) || m === 0) return null
+    const base = endsOf(sub) && new Date(endsOf(sub)!) > new Date() ? new Date(endsOf(sub)!) : new Date()
+    base.setMonth(base.getMonth() + m)
     return base
-  }
+  }, [periodHow, endDate, months, sub])
 
-  const savePeriod = async () => {
-    if (!periodModal) return
-    setSavingPeriod(true)
+  async function put(body: Record<string, unknown>, msg: string) {
+    setBusy(true)
+    setError(null)
     try {
-      const payload: Record<string, unknown> = {}
-      if (periodMode === 'exact') {
-        payload.setEndDate = periodDate
-      } else {
-        payload.adjustMonths = periodMonths
-      }
-      if (periodReason) payload.reason = periodReason
-
-      const res = await fetch(`/api/sys-control/subscriptions/${periodModal.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-
-      if (res.ok) {
-        setPeriodModal(null)
-        fetchSubscriptions()
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to update period')
-      }
-    } catch (error) {
-      console.error('Failed to update period:', error)
-      alert('Failed to update period')
+      await adminFetch(`/api/sys-control/subscriptions/${sub.id}`, { method: 'PUT', json: body })
+      onDone(msg)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Update failed')
     } finally {
-      setSavingPeriod(false)
+      setBusy(false)
     }
   }
 
-  const openOverrideModal = (sub: Subscription) => {
-    setOverrideModal(sub)
-    setOverrideData({
-      dbGB: sub.overrideDatabaseBytes ? bytesToGB(sub.overrideDatabaseBytes) : '',
-      fileGB: sub.overrideFileStorageBytes ? bytesToGB(sub.overrideFileStorageBytes) : '',
-    })
-  }
-
-  const saveOverride = async () => {
-    if (!overrideModal) return
-    setSavingOverride(true)
-    try {
-      const res = await fetch(`/api/sys-control/subscriptions/${overrideModal.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          overrideDatabaseBytes: gbToBytes(overrideData.dbGB),
-          overrideFileStorageBytes: gbToBytes(overrideData.fileGB),
-        }),
-      })
-
-      if (res.ok) {
-        setOverrideModal(null)
-        fetchSubscriptions()
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to save override')
-      }
-    } catch (error) {
-      console.error('Failed to save override:', error)
-      alert('Failed to save override')
-    } finally {
-      setSavingOverride(false)
-    }
-  }
-
-  const toggleLock = async (subscriptionId: string, tenantId: string, isLocked: boolean) => {
-    if (!confirm(isLocked
-      ? 'Unlock this company? It will be reactivated and the deletion timer will be cleared.'
-      : 'Lock this company? Users will be unable to access it.'
-    )) return
-
-    setLocking(subscriptionId)
-    try {
-      const res = await fetch(`/api/sys-control/subscriptions/${subscriptionId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(isLocked
-          ? { unlock: true }
-          : { lock: true, lockReason: 'admin_action' }
-        ),
-      })
-
-      if (res.ok) {
-        fetchSubscriptions()
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to update subscription')
-      }
-    } catch (error) {
-      console.error('Failed to toggle lock:', error)
-      alert('Failed to update subscription')
-    } finally {
-      setLocking(null)
-    }
-  }
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'active':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-full">
-            <CheckCircle className="w-3 h-3" />
-            Active
-          </span>
-        )
-      case 'trial':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-full">
-            <Clock className="w-3 h-3" />
-            Free
-          </span>
-        )
-      case 'past_due':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-yellow-100 text-yellow-700 rounded-full">
-            <AlertCircle className="w-3 h-3" />
-            Past Due
-          </span>
-        )
-      case 'cancelled':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-full">
-            <XCircle className="w-3 h-3" />
-            Cancelled
-          </span>
-        )
-      case 'locked':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-full">
-            <Lock className="w-3 h-3" />
-            Locked
-          </span>
-        )
-      default:
-        return null
-    }
+  const reasonOk = reason.trim().length >= 3
+  let footer: ReactNode = null
+  if (mode === 'period') {
+    const ok = reasonOk && !!preview && preview > new Date()
+    footer = (
+      <>
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button
+          variant="primary"
+          loading={busy}
+          disabled={!ok}
+          onClick={() => put(
+            periodHow === 'date' ? { setEndDate: new Date(endDate).toISOString(), reason } : { adjustMonths: Number(months), reason },
+            `${sub.tenant.name}: period now ends ${fmtDate(preview)}.`,
+          )}
+        >
+          Save period
+        </Button>
+      </>
+    )
+  } else if (mode === 'storage') {
+    const toBytes = (v: string) => (v.trim() === '' ? null : Math.round(Number(v) * GB))
+    const valid = [dbGb, fileGb].every((v) => v.trim() === '' || (Number(v) >= 0 && Number.isFinite(Number(v))))
+    footer = (
+      <>
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button variant="primary" loading={busy} disabled={!valid}
+          onClick={() => put({ overrideDatabaseBytes: toBytes(dbGb), overrideFileStorageBytes: toBytes(fileGb) }, `${sub.tenant.name}: storage limits updated.`)}>
+          Save limits
+        </Button>
+      </>
+    )
+  } else {
+    footer = (
+      <>
+        <Button onClick={onClose} disabled={busy}>Cancel</Button>
+        {locked ? (
+          <Button
+            variant="primary"
+            loading={busy}
+            onClick={() => put(
+              { unlock: true, unlockGrantMonths: grantFree ? Number(grantMonths) : 0, ...(reason.trim() ? { reason: reason.trim() } : {}) },
+              grantFree
+                ? `${sub.tenant.name} unlocked with ${grantMonths} free month${grantMonths === '1' ? '' : 's'}.`
+                : `${sub.tenant.name} unlocked. The subscription keeps its current dates.`,
+            )}
+          >
+            {grantFree ? `Unlock and add ${grantMonths} month${grantMonths === '1' ? '' : 's'}` : 'Unlock'}
+          </Button>
+        ) : (
+          <Button variant="danger" loading={busy} disabled={!reasonOk} onClick={() => put({ lock: true, reason: reason.trim() }, `${sub.tenant.name} locked.`)}>Lock vendor</Button>
+        )}
+      </>
+    )
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Subscriptions</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">Manage company subscriptions and storage overrides</p>
-        </div>
-      </div>
+    <AdminModal open onClose={onClose} title={sub.tenant.name} description={`${sub.tier.displayName} · ${formatBusinessId(sub.tenant.businessId)}`} footer={footer} size="md">
+      <div className="space-y-4">
+        <KeyValueList
+          items={[
+            { label: 'Status', value: <Badge tone={statusTone(sub.status)}>{free ? 'Free' : labelFor(SUBSCRIPTION_STATUS_LABEL, sub.status)}</Badge> },
+            { label: free ? 'Expires' : sub.status === 'trial' ? 'Trial ends' : 'Period', value: free ? 'Never' : sub.status === 'trial' ? fmtDate(sub.trialEndsAt) : `${fmtDate(sub.currentPeriodStart)} – ${fmtDate(sub.currentPeriodEnd)}` },
+            { label: 'Billing account', value: <span className="break-all">{sub.billingAccount.fullName} · {sub.billingAccount.email}</span> },
+            { label: 'Vendor', value: <Link href={`/sys-control/vendors/${sub.tenant.id}`} className="text-adm-primary hover:underline">Open vendor page</Link> },
+          ]}
+        />
+        <SegmentedControl
+          ariaLabel="What to change"
+          value={mode}
+          onChange={(m) => { setMode(m); setError(null) }}
+          options={[
+            ...(free ? [] : [{ value: 'period' as Mode, label: 'Period' }]),
+            { value: 'storage', label: 'Storage limits' },
+            { value: 'access', label: locked ? 'Unlock' : 'Lock' },
+          ]}
+        />
+        {error && <Alert tone="danger">{error}</Alert>}
 
-      {/* Filters */}
-      <div className="flex gap-2">
-        {(['all', 'trial', 'active', 'past_due', 'locked', 'cancelled'] as const).map((status) => (
-          <button
-            key={status}
-            onClick={() => setFilter(status)}
-            className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-              filter === status
-                ? 'bg-gray-900 text-white'
-                : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700'
-            }`}
-          >
-            {status === 'past_due' ? 'Past Due' : status === 'locked' ? 'Locked' : status === 'trial' ? 'Free' : status.charAt(0).toUpperCase() + status.slice(1)}
-          </button>
-        ))}
-      </div>
-
-      {/* Subscriptions Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-md shadow-sm border border-gray-200 dark:border-gray-700 overflow-x-auto">
-        {loading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+        {mode === 'period' && (
+          <div className="space-y-3">
+            <SegmentedControl ariaLabel="How" size="sm" value={periodHow} onChange={setPeriodHow} options={[{ value: 'months', label: 'Add or remove months' }, { value: 'date', label: 'Set end date' }]} />
+            {periodHow === 'months' ? (
+              <Field label="Months" htmlFor="m-months" hint="Negative numbers shorten the period. Counted from the current end, or today if it has passed.">
+                <Input id="m-months" type="number" inputMode="numeric" min={-24} max={36} value={months} onChange={(e) => setMonths(e.target.value)} />
+              </Field>
+            ) : (
+              <Field label="New end date" htmlFor="m-date">
+                <Input id="m-date" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} min={new Date().toISOString().slice(0, 10)} />
+              </Field>
+            )}
+            {preview && <p className="text-[13px] text-adm-muted">New end date: <strong className="text-adm-fg">{fmtDate(preview)}</strong>{locked ? ' — the vendor is unlocked.' : ''}</p>}
+            <Field label="Reason" htmlFor="m-reason" required hint="Recorded in the audit log.">
+              <Textarea id="m-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+            </Field>
           </div>
-        ) : subscriptions.length === 0 ? (
-          <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-            No subscriptions found
-          </div>
-        ) : (
-          <table className="w-full">
-            <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
-              <tr>
-                <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                  Company
-                </th>
-                <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                  Owner
-                </th>
-                <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                  Plan
-                </th>
-                <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                  DB Storage
-                </th>
-                <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                  File Storage
-                </th>
-                <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                  Status
-                </th>
-                <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                  Expires
-                </th>
-                <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-              {subscriptions.map((sub) => {
-                const dbLimit = sub.overrideDatabaseBytes || sub.tier?.maxDatabaseBytes || null
-                const fileLimit = sub.overrideFileStorageBytes || sub.tier?.maxFileStorageBytes || null
-                const dbUsed = sub.usage?.storageBytes || 0
-                const fileUsed = sub.usage?.fileStorageBytes || 0
-                const dbPercent = dbLimit ? (dbUsed / dbLimit) * 100 : 0
-                const filePercent = fileLimit ? (fileUsed / fileLimit) * 100 : 0
-                const isNearLimit = dbPercent >= 80 || filePercent >= 80
+        )}
 
-                return (
-                  <tr key={sub.id} className={`hover:bg-gray-50 dark:hover:bg-gray-700 ${isNearLimit ? 'bg-amber-50/50 dark:bg-amber-900/20' : ''}`}>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded flex items-center justify-center ${
-                          isNearLimit ? 'bg-amber-100' : 'bg-gray-100 dark:bg-gray-700'
-                        }`}>
-                          <Building2 className={`w-5 h-5 ${isNearLimit ? 'text-amber-600' : 'text-gray-500 dark:text-gray-400'}`} />
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-900 dark:text-white">{sub.tenant?.name || 'Unknown'}</p>
-                          <p className="text-sm text-gray-500 dark:text-gray-400">{sub.tenant?.slug}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div>
-                        <p className="text-gray-900 dark:text-white">{sub.billingAccount?.fullName}</p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">{sub.billingAccount?.email}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-gray-900 dark:text-white">{sub.tier?.displayName || sub.tier?.name || 'N/A'}</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">
-                        {sub.subscribedPriceMonthly
-                          ? `${formatCurrencyWithSymbol(Number(sub.subscribedPriceMonthly), 'LKR')}/mo`
-                          : sub.tier?.priceMonthly ? `${formatCurrencyWithSymbol(Number(sub.tier.priceMonthly), 'LKR')}/mo` : ''}
-                      </p>
-                      {sub.subscribedPriceMonthly && sub.tier?.priceMonthly && Number(sub.subscribedPriceMonthly) !== Number(sub.tier.priceMonthly) && (
-                        <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 mt-1">
-                          Grandfathered
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="min-w-[120px]">
-                        <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 mb-1">
-                          <Database className="w-3 h-3" />
-                          {formatBytes(dbUsed)} / {dbLimit ? formatBytes(dbLimit) : '∞'}
-                        </div>
-                        <StorageMiniBar used={dbUsed} limit={dbLimit} />
-                        {sub.overrideDatabaseBytes && (
-                          <p className="text-[10px] text-purple-600 mt-0.5">Override active</p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="min-w-[120px]">
-                        <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 mb-1">
-                          <HardDrive className="w-3 h-3" />
-                          {formatBytes(fileUsed)} / {fileLimit ? formatBytes(fileLimit) : '∞'}
-                        </div>
-                        <StorageMiniBar used={fileUsed} limit={fileLimit} />
-                        {sub.overrideFileStorageBytes && (
-                          <p className="text-[10px] text-purple-600 mt-0.5">Override active</p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      {getStatusBadge(sub.status)}
-                    </td>
-                    <td className="px-6 py-4">
-                      <p className="text-gray-600 dark:text-gray-400">
-                        {sub.status === 'trial' && sub.trialEndsAt
-                          ? new Date(sub.trialEndsAt).toLocaleDateString()
-                          : sub.currentPeriodEnd
-                          ? new Date(sub.currentPeriodEnd).toLocaleDateString()
-                          : '-'}
-                      </p>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => openOverrideModal(sub)}
-                          className="p-2 text-purple-600 hover:text-purple-700 hover:bg-purple-50 rounded"
-                          title="Storage Override"
-                        >
-                          <Settings className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => toggleLock(sub.id, sub.tenantId, sub.status === 'locked')}
-                          disabled={locking === sub.id}
-                          className={`p-2 rounded ${
-                            sub.status === 'locked'
-                              ? 'text-green-600 hover:text-green-700 hover:bg-green-50'
-                              : 'text-red-600 hover:text-red-700 hover:bg-red-50'
-                          }`}
-                          title={sub.status === 'locked' ? 'Unlock Company' : 'Lock Company'}
-                        >
-                          {locking === sub.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : sub.status === 'locked' ? (
-                            <Unlock className="w-4 h-4" />
-                          ) : (
-                            <Lock className="w-4 h-4" />
-                          )}
-                        </button>
-                        <button
-                          onClick={() => openPeriodModal(sub)}
-                          className="p-2 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded"
-                          title="Manage Period"
-                        >
-                          <CalendarClock className="w-4 h-4" />
-                        </button>
-                      </div>
-                      {sub.status === 'locked' && sub.tenant?.lockedReason && (
-                        <p className="text-xs text-red-500 mt-1">
-                          Reason: {sub.tenant.lockedReason.replace(/_/g, ' ')}
-                          {sub.tenant.deletionScheduledAt && (
-                            <> — Deletion: {new Date(sub.tenant.deletionScheduledAt).toLocaleDateString()}</>
-                          )}
-                        </p>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        {mode === 'storage' && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Database (GB)" htmlFor="s-db" hint={`Plan: ${sub.tier.maxDatabaseBytes ? fmtBytes(sub.tier.maxDatabaseBytes) : 'no limit'} · used ${fmtBytes(sub.usage.storageBytes)}`}>
+              <Input id="s-db" type="number" min={0} step="0.1" value={dbGb} onChange={(e) => setDbGb(e.target.value)} placeholder="Plan default" />
+            </Field>
+            <Field label="Files (GB)" htmlFor="s-file" hint={`Plan: ${sub.tier.maxFileStorageBytes ? fmtBytes(sub.tier.maxFileStorageBytes) : 'no limit'} · used ${fmtBytes(sub.usage.fileStorageBytes)}`}>
+              <Input id="s-file" type="number" min={0} step="0.1" value={fileGb} onChange={(e) => setFileGb(e.target.value)} placeholder="Plan default" />
+            </Field>
+            <p className="text-[12.5px] text-adm-subtle sm:col-span-2">A custom limit replaces the plan’s limit for this vendor only. Leave a box empty to use the plan’s limit.</p>
+          </div>
+        )}
+
+        {mode === 'access' && (
+          locked ? (
+            <div className="space-y-3">
+              <p className="text-[13.5px] text-adm-muted">
+                Unlocking restores sign-in. By default the subscription keeps its current dates
+                {ends && !free ? <> (ends <strong className="text-adm-fg">{fmtDate(ends)}</strong>)</> : null} — no free time is added.
+              </p>
+              {periodOver && !grantFree && (
+                <Alert tone="warning">
+                  The paid period has already ended. Without extra time the vendor stays past due and the next billing check locks it again unless it pays.
+                </Alert>
+              )}
+              <Checkbox
+                label="Also give free access"
+                description="Starts a new period from today at no charge. Recorded in the audit log."
+                checked={grantFree}
+                onChange={(e) => setGrantFree(e.target.checked)}
+              />
+              {grantFree && (
+                <Field label="Free months" htmlFor="u-months">
+                  <Select id="u-months" value={grantMonths} onChange={(e) => setGrantMonths(e.target.value)} className="sm:w-48">
+                    {['1', '2', '3', '6', '12'].map((m) => <option key={m} value={m}>{m} month{m === '1' ? '' : 's'}</option>)}
+                  </Select>
+                </Field>
+              )}
+              <Field label="Note" htmlFor="u-reason" hint="Optional. Recorded in the audit log.">
+                <Textarea id="u-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+              </Field>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-[13.5px] text-adm-muted">Locking blocks sign-in until the vendor is unlocked or pays. No data is deleted.</p>
+              <Field label="Reason" htmlFor="l-reason" required hint="Recorded in the audit log.">
+                <Textarea id="l-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+              </Field>
+            </div>
+          )
         )}
       </div>
-
-      {/* Storage Override Modal */}
-      {overrideModal && (
-        <div
-          className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50"
-          onClick={() => setOverrideModal(null)}
-        >
-          <div
-            className="bg-white dark:bg-gray-800 rounded-md p-6 max-w-md w-full mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="font-semibold text-gray-900 dark:text-white text-lg">Storage Override</h3>
-              <button
-                onClick={() => setOverrideModal(null)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="mb-6">
-              <p className="text-gray-600 dark:text-gray-400 text-sm">
-                Override storage limits for <strong>{overrideModal.tenant?.name}</strong>.
-                Leave blank to use the plan defaults.
-              </p>
-              {overrideModal.tier && (
-                <p className="text-gray-500 dark:text-gray-400 text-xs mt-2">
-                  Plan defaults: DB {overrideModal.tier.maxDatabaseBytes ? formatBytes(overrideModal.tier.maxDatabaseBytes) : 'Unlimited'} / Files {overrideModal.tier.maxFileStorageBytes ? formatBytes(overrideModal.tier.maxFileStorageBytes) : 'Unlimited'}
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  <Database className="w-4 h-4 inline mr-1" />
-                  Database Storage Override (GB)
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={overrideData.dbGB}
-                  onChange={(e) => setOverrideData({ ...overrideData, dbGB: e.target.value })}
-                  placeholder="Leave blank for plan default"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  <HardDrive className="w-4 h-4 inline mr-1" />
-                  File Storage Override (GB)
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={overrideData.fileGB}
-                  onChange={(e) => setOverrideData({ ...overrideData, fileGB: e.target.value })}
-                  placeholder="Leave blank for plan default"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-                />
-              </div>
-            </div>
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={saveOverride}
-                disabled={savingOverride}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-900 text-white rounded hover:bg-gray-800 disabled:opacity-50 font-medium"
-              >
-                {savingOverride ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                Save Override
-              </button>
-              <button
-                onClick={() => setOverrideModal(null)}
-                className="px-4 py-2.5 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Manage Period Modal */}
-      {periodModal && (
-        <div
-          className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50"
-          onClick={() => setPeriodModal(null)}
-        >
-          <div
-            className="bg-white dark:bg-gray-800 rounded-md p-6 max-w-md w-full mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-6">
-              <h3 className="font-semibold text-gray-900 dark:text-white text-lg">Manage Period</h3>
-              <button
-                onClick={() => setPeriodModal(null)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="mb-4">
-              <p className="text-gray-600 dark:text-gray-400 text-sm">
-                Adjust subscription period for <strong>{periodModal.tenant?.name}</strong>
-              </p>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Current end: {periodModal.currentPeriodEnd
-                  ? new Date(periodModal.currentPeriodEnd).toLocaleDateString()
-                  : 'Not set'}
-              </p>
-            </div>
-
-            {/* Mode Tabs */}
-            <div className="flex gap-1 p-1 bg-gray-100 dark:bg-gray-700 rounded mb-4">
-              <button
-                onClick={() => setPeriodMode('adjust')}
-                className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  periodMode === 'adjust'
-                    ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm'
-                    : 'text-gray-600 dark:text-gray-400'
-                }`}
-              >
-                Add/Remove Months
-              </button>
-              <button
-                onClick={() => setPeriodMode('exact')}
-                className={`flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
-                  periodMode === 'exact'
-                    ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm'
-                    : 'text-gray-600 dark:text-gray-400'
-                }`}
-              >
-                Set Exact Date
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {periodMode === 'adjust' ? (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Months to add/remove
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setPeriodMonths(prev => prev - 1)}
-                      disabled={periodMonths <= -12}
-                      className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300"
-                    >
-                      -
-                    </button>
-                    <input
-                      type="number"
-                      value={periodMonths}
-                      onChange={(e) => setPeriodMonths(parseInt(e.target.value) || 0)}
-                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-center dark:bg-gray-700 dark:text-white"
-                    />
-                    <button
-                      onClick={() => setPeriodMonths(prev => prev + 1)}
-                      disabled={periodMonths >= 36}
-                      className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300"
-                    >
-                      +
-                    </button>
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    {[1, 3, 6, 12].map(m => (
-                      <button
-                        key={m}
-                        onClick={() => setPeriodMonths(m)}
-                        className={`flex-1 px-2 py-1 text-xs rounded border transition-colors ${
-                          periodMonths === m
-                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-                            : 'border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700'
-                        }`}
-                      >
-                        +{m}mo
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    New end date
-                  </label>
-                  <input
-                    type="date"
-                    value={periodDate}
-                    min={new Date().toISOString().split('T')[0]}
-                    onChange={(e) => setPeriodDate(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Reason (optional)
-                </label>
-                <input
-                  type="text"
-                  value={periodReason}
-                  onChange={(e) => setPeriodReason(e.target.value)}
-                  placeholder="e.g. Customer requested extension"
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
-                />
-              </div>
-            </div>
-
-            {/* Preview */}
-            {(() => {
-              const previewDate = getPreviewDate()
-              return previewDate ? (
-                <div className="mt-4 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded">
-                  <p className="text-sm text-blue-700 dark:text-blue-400">
-                    New end date: <strong>{previewDate.toLocaleDateString()}</strong>
-                  </p>
-                </div>
-              ) : null
-            })()}
-
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={savePeriod}
-                disabled={savingPeriod || (periodMode === 'adjust' && periodMonths === 0) || (periodMode === 'exact' && !periodDate)}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-900 text-white rounded hover:bg-gray-800 disabled:opacity-50 font-medium"
-              >
-                {savingPeriod ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />}
-                Update Period
-              </button>
-              <button
-                onClick={() => setPeriodModal(null)}
-                className="px-4 py-2.5 text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </AdminModal>
   )
 }

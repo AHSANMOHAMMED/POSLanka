@@ -1,4 +1,5 @@
 import type { SmsSettings, SendSmsResult } from '../types'
+import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 
 /**
  * Format phone number with country code
@@ -79,7 +80,7 @@ export async function sendSms(
       fetchOptions.body = params.toString()
     }
 
-    const response = await fetch(url, fetchOptions)
+    const response = await fetchWithTimeout(url, fetchOptions)
     const responseText = await response.text()
 
     console.log('SMS Gateway Response:', responseText)
@@ -166,7 +167,7 @@ export async function testSmsConnection(settings: SmsSettings): Promise<{
 
   try {
     // Just check if the endpoint is reachable
-    const response = await fetch(settings.genericApiUrl, { method: 'HEAD' })
+    const response = await fetchWithTimeout(settings.genericApiUrl, { method: 'HEAD' })
     return {
       success: true,
       message: `Gateway reachable. Status: ${response.status}`,

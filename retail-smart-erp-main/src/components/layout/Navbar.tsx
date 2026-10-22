@@ -25,6 +25,8 @@ import { useChatStore } from '@/lib/stores/chat-store'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 import { MODULE_TABS, getModuleFromPathname, getModuleTabHref, isModuleTabVisible } from '@/lib/navigation/module-sidebar'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions'
+import type { Permission } from '@/lib/auth/roles'
 import { useFeatureFlags } from '@/hooks/useFeatureFlag'
 import { isModuleAllowedByFeatures } from '@/lib/features/nav-gate'
 import { getTerms } from '@/lib/terminology'
@@ -44,6 +46,9 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
   const company = useCompanyOptional()
   const { mobileOpen, setMobileOpen } = useSidebar()
   const { isModuleEnabled } = useModuleAccess()
+  // Server-effective permissions (custom roles, overrides, module toggles); role defaults until loaded
+  const { permissions: effective } = useEffectivePermissions()
+  const can = effective ? (p: Permission) => effective[p] ?? false : undefined
   const { flags } = useFeatureFlags()
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [helpMenuOpen, setHelpMenuOpen] = useState(false)
@@ -150,10 +155,10 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
   // Filter tabs based on business type, permissions, module access, and platform feature flags
   const visibleTabs = MODULE_TABS.filter((tab) => {
     if (!isModuleAllowedByFeatures(tab.key, flags)) return false
-    return isModuleTabVisible(tab, businessType, userRole, isModuleEnabled)
+    return isModuleTabVisible(tab, businessType, userRole, isModuleEnabled, can)
   }).map((tab) => ({
     ...tab,
-    href: getModuleTabHref(tab, userRole),
+    href: getModuleTabHref(tab, userRole, can),
     label: moduleTabLabelOverrides[tab.key] || tab.label,
   }))
 

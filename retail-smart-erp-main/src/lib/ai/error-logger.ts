@@ -5,6 +5,9 @@ import { generateText, isAIEnabled } from './gemini'
 import { SYSTEM_PROMPTS, formatErrorForPrompt } from './prompts'
 import { eq, and, gte, sql } from 'drizzle-orm'
 import crypto from 'crypto'
+import { createLogger, currentRequestId } from '@/lib/logger'
+
+const log = createLogger('error-logger')
 
 export type ErrorSource = 'system' | 'user_report' | 'frontend'
 
@@ -33,9 +36,12 @@ export function logError(
   error: unknown,
   context?: ErrorContext
 ): void {
+  // Request id of the current HTTP request (server.ts / proxy x-request-id), for correlation
+  const ctx = withRequestId(context)
+  log.error(source, { err: error, tenantId: ctx?.tenantId, path: ctx?.path, requestId: ctx?.requestId })
   // Fire-and-forget — don't block the API route
-  _logErrorAsync(source, error, context).catch(err => {
-    console.error('[AI ErrorLogger] Failed to log error:', err)
+  _logErrorAsync(source, error, ctx).catch(err => {
+    log.error('failed to persist error log', { err, source })
   })
 }
 
@@ -45,8 +51,8 @@ export function logWarning(
   message: string,
   context?: ErrorContext
 ): void {
-  _logAsync('warning', source, message, undefined, context).catch(err => {
-    console.error('[AI ErrorLogger] Failed to log warning:', err)
+  _logAsync('warning', source, message, undefined, withRequestId(context)).catch(err => {
+    log.error('failed to persist warning', { err, source })
   })
 }
 
@@ -56,9 +62,28 @@ export function logInfo(
   message: string,
   context?: ErrorContext
 ): void {
-  _logAsync('info', source, message, undefined, context).catch(err => {
-    console.error('[AI ErrorLogger] Failed to log info:', err)
+  _logAsync('info', source, message, undefined, withRequestId(context)).catch(err => {
+    log.error('failed to persist info', { err, source })
   })
+}
+
+function withRequestId(context?: ErrorContext): ErrorContext | undefined {
+  const requestId = (context?.requestId as string | undefined) || currentRequestId()
+  if (!requestId) return context
+  return { ...(context || {}), requestId }
+}
+
+/**
+ * Remove personal data before error text leaves our infrastructure (Gemini analysis):
+ * e-mail addresses, Postgres "Key (col)=(value)" details, phone and long card/ID numbers.
+ */
+export function scrubPII(text: string | undefined): string | undefined {
+  if (!text) return text
+  return text
+    .replace(/Key \(([^)]*)\)=\((?:[^()]|\([^()]*\))*\)/g, 'Key ($1)=(<redacted>)')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '<email>')
+    .replace(/(?:\+94[\s-]?|\b0)7\d[\s-]?\d{3}[\s-]?\d{4}\b/g, '<phone>')
+    .replace(/\b\d{9,19}\b/g, '<number>')
 }
 
 async function _logErrorAsync(
@@ -146,8 +171,9 @@ async function _logAsync(
     return // Deduplicated — just incremented count
   }
 
-  // Queue AI analysis asynchronously (only for errors, respecting tenant AI opt-in)
-  if (level === 'error' && result.logEntry && isAIEnabled()) {
+  // Queue AI analysis asynchronously (only for errors, respecting tenant AI opt-in).
+  // AI_ERROR_ANALYSIS=off keeps error text inside our infrastructure entirely.
+  if (level === 'error' && result.logEntry && isAIEnabled() && process.env.AI_ERROR_ANALYSIS !== 'off') {
     // Skip AI analysis if tenant has AI disabled
     const shouldAnalyze = tenantId
       ? await withTenant(tenantId, async (dbInst) => {
@@ -173,7 +199,8 @@ async function analyzeErrorAsync(
   path?: string,
   tenantId?: string | null
 ): Promise<void> {
-  const prompt = formatErrorForPrompt({ message, stack, source, method, path })
+  // Never send personal data to the AI provider
+  const prompt = formatErrorForPrompt({ message: scrubPII(message) || '', stack: scrubPII(stack), source, method, path })
 
   const result = await generateText(prompt, {
     systemPrompt: SYSTEM_PROMPTS.errorAnalysis,
@@ -241,6 +268,7 @@ function sanitizeContext(context: ErrorContext): Record<string, unknown> {
   if (context.method) safe.method = context.method
   if (context.path) safe.path = context.path
   if (context.params) safe.params = context.params
+  if (typeof context.requestId === 'string') safe.requestId = context.requestId
 
   // Don't store request body — may contain passwords/tokens
   return safe

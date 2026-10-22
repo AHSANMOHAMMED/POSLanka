@@ -5,13 +5,15 @@
 // Tapping an alert marks it read and deep-links like a push tap (data.screen).
 import React, { useCallback, useEffect, useState } from 'react'
 import {
-  View, Text, StyleSheet, FlatList, Pressable, TouchableOpacity, RefreshControl, Switch, ScrollView, TextInput, Alert, ActivityIndicator,
+  View, Text, StyleSheet, FlatList, Pressable, TouchableOpacity, RefreshControl, Switch, ScrollView, TextInput, Alert, ActivityIndicator, Linking,
 } from 'react-native'
 import { router } from 'expo-router'
-import { api, apiGet, apiPost } from '../src/lib/api'
+import { api, apiGet, apiPost, getApiBase } from '../src/lib/api'
 import { openNotificationTarget } from '../src/lib/notifications'
 import { THEME } from '../src/lib/theme'
 import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
+import { useHeaderPad } from '../src/lib/safeArea'
+import { goBack } from '../src/lib/nav'
 
 interface InboxItem {
   id: string
@@ -52,10 +54,19 @@ const ICONS: Record<string, string> = {
   low_stock: '📉', out_of_stock: '⛔', expiring_stock: '⏳', stock_digest: '📦', large_refund: '💸', sale_void: '🚫',
   manual_return: '↩', shift_variance: '🧮', offline_sale_rejected: '📴', offline_price_difference: '🏷️',
   intake_sync_errors: '⚠️', intake_awaiting_approval: '📥', requisition_submitted: '📝', advance_requested: '💰',
-  subscription_expiring: '📅', import_finished: '✅',
+  subscription_expiring: '📅', import_finished: '✅', platform_announcement: '📣',
+}
+
+/** Link attached to a platform announcement: https URLs as-is, site paths on the server. */
+function broadcastUrl(data: Record<string, unknown> | null): string | null {
+  const link = typeof data?.link === 'string' ? data.link.trim() : ''
+  if (/^https:\/\/\S+$/i.test(link)) return link
+  if (/^\/(?!\/)/.test(link)) return `${getApiBase().replace(/\/$/, '')}${link}`
+  return null
 }
 
 export default function AlertsScreen() {
+  const headerPad = useHeaderPad()
   const [tab, setTab] = useState<'inbox' | 'settings'>('inbox')
   const [items, setItems] = useState<InboxItem[]>([])
   const [unread, setUnread] = useState(0)
@@ -101,6 +112,14 @@ export default function AlertsScreen() {
 
   function openItem(item: InboxItem) {
     if (!item.readAt) void markRead({ ids: [item.id] })
+    const url = broadcastUrl(item.data)
+    if (url) {
+      Alert.alert(item.title, item.body || '', [
+        { text: 'Close', style: 'cancel' },
+        { text: 'Open link', onPress: () => { Linking.openURL(url).catch(() => Alert.alert('Cannot open the link', url)) } },
+      ])
+      return
+    }
     if (!openNotificationTarget(item.data)) {
       Alert.alert(item.title, item.body || '')
     }
@@ -108,8 +127,8 @@ export default function AlertsScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => (router.canGoBack() ? router.back() : router.replace('/pos'))} style={styles.backButton}>
+      <View style={[styles.header, headerPad]}>
+        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -152,6 +171,7 @@ export default function AlertsScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardTitle}>{item.title}</Text>
                 {item.body ? <Text style={styles.cardBody} numberOfLines={3}>{item.body}</Text> : null}
+                {broadcastUrl(item.data) ? <Text style={styles.cardLink}>Open link ↗</Text> : null}
                 <Text style={styles.cardTime}>{relTime(item.createdAt)}</Text>
               </View>
               {!item.readAt ? <View style={styles.dot} /> : null}
@@ -320,6 +340,7 @@ const styles = StyleSheet.create({
   icon: { fontSize: 20, marginTop: 1 },
   cardTitle: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
   cardBody: { fontSize: 12, color: THEME.colors.textMuted, marginTop: 2 },
+  cardLink: { fontSize: 12, color: THEME.colors.primary, marginTop: 4, fontWeight: '600' },
   cardTime: { fontSize: 10, color: THEME.colors.textSubtle, marginTop: 4, fontFamily: 'monospace' },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: THEME.colors.primary, marginTop: 6 },
   section: { backgroundColor: THEME.colors.card, borderRadius: THEME.radius.lg, borderWidth: 1, borderColor: THEME.colors.border, padding: 12, marginBottom: 12 },

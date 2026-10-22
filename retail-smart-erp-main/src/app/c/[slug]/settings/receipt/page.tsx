@@ -22,6 +22,7 @@ import { buildReceiptModel, SAMPLE_RECEIPT_SALE } from '@/lib/print/receipt-mode
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
 import { invalidateTenantInfo } from '@/lib/print/receipt-loader'
 import { ReturnsSettingsCard } from '@/components/settings/ReturnsSettingsCard'
+import { BusinessIdBadge } from '@/components/settings/BusinessIdBadge'
 
 interface BusinessForm {
   name: string
@@ -73,6 +74,7 @@ export default function ReceiptSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [business, setBusiness] = useState<BusinessForm>(EMPTY_BUSINESS)
+  const [businessId, setBusinessId] = useState<string | null>(null)
   const [settings, setSettings] = useState<ReceiptSettings>(DEFAULT_RECEIPT_SETTINGS)
   const [headerText, setHeaderText] = useState('')
   const [footerText, setFooterText] = useState('')
@@ -89,6 +91,7 @@ export default function ReceiptSettingsPage() {
         if (!res.ok) throw new Error('Failed to load')
         const t = await res.json()
         if (cancelled) return
+        setBusinessId(t.businessId || null)
         setBusiness({
           name: t.name || '',
           legalName: t.legalName || '',
@@ -233,6 +236,15 @@ export default function ReceiptSettingsPage() {
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-6 items-start">
         <div className="space-y-6">
           <SectionCard title="Business details" icon={<Building2 size={16} />}>
+            {businessId && (
+              <div className="mb-4">
+                <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Business ID</div>
+                <BusinessIdBadge businessId={businessId} variant="field" />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Permanent ID of this business. Staff enter it to sign in on the web and in the mobile app. It never changes.
+                </p>
+              </div>
+            )}
             <fieldset disabled={!canEdit} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <FormField label="Trading name" required>
                 <FormInput value={business.name} onChange={(e) => setB('name', e.target.value)} maxLength={255} />

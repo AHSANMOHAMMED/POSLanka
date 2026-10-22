@@ -36,3 +36,37 @@ export function poolMax(): number {
   const n = parseInt(process.env.DATABASE_POOL_MAX || '', 10)
   return Number.isFinite(n) && n > 0 ? n : 15
 }
+
+function envMs(name: string, fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+  const n = parseInt(raw, 10)
+  return Number.isFinite(n) && n >= 0 ? n : fallback
+}
+
+/**
+ * Server-side safety limits for every pooled connection:
+ *
+ *   DB_STATEMENT_TIMEOUT_MS            default 30000 (0 = off). Long jobs (backups) raise it
+ *                                      per transaction with set_config('statement_timeout', …, true).
+ *   DB_IDLE_IN_TRANSACTION_TIMEOUT_MS  default 60000 (0 = off). Kills sessions that hold locks
+ *                                      while the app forgot to COMMIT/ROLLBACK.
+ *
+ * Applied with SET right after each pooled connection opens (not as startup parameters, which
+ * PgBouncer — e.g. DigitalOcean connection pools — rejects as "unsupported startup parameter").
+ */
+export function sessionTimeouts(): { statementTimeoutMs: number; idleInTransactionMs: number } {
+  return {
+    statementTimeoutMs: envMs('DB_STATEMENT_TIMEOUT_MS', 30000),
+    idleInTransactionMs: envMs('DB_IDLE_IN_TRANSACTION_TIMEOUT_MS', 60000),
+  }
+}
+
+/** SQL that (re)applies the session limits; empty string when both are disabled. */
+export function sessionTimeoutsSql(): string {
+  const { statementTimeoutMs, idleInTransactionMs } = sessionTimeouts()
+  const parts: string[] = []
+  if (statementTimeoutMs > 0) parts.push(`SET statement_timeout = ${Math.floor(statementTimeoutMs)}`)
+  if (idleInTransactionMs > 0) parts.push(`SET idle_in_transaction_session_timeout = ${Math.floor(idleInTransactionMs)}`)
+  return parts.join('; ')
+}

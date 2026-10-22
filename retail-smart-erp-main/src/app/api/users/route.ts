@@ -13,7 +13,8 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { requireUserSeat } from '@/lib/billing/user-limit'
 import { validateBody } from '@/lib/validation'
 import { createUserBodySchema } from '@/lib/validation/schemas/users'
-import { createStaffUser, resolveStaffAssignments, addUserWarehouses, replaceUserPosProfiles, StaffError } from '@/lib/users/create-staff'
+import { createStaffUser, resolveStaffAssignments, addUserWarehouses, replaceUserPosProfiles, loadAssignableCustomRole, StaffError } from '@/lib/users/create-staff'
+import { getCustomRoleName } from '@/lib/auth/permission-cache'
 
 // GET all users for the tenant with optional role filter
 // Query params:
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
-      const result = await db.query.users.findMany({
+      const rows = await db.query.users.findMany({
         where: whereClause,
         orderBy: (users, { asc }) => [asc(users.fullName)],
         columns: {
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest) {
           email: true,
           fullName: true,
           role: true,
+          customRoleId: true,
           isActive: true,
           lastLoginAt: true,
           createdAt: true,
@@ -60,6 +62,11 @@ export async function GET(request: NextRequest) {
           // Exclude passwordHash for security
         },
       })
+      const tenantId = session.user.tenantId
+      const result = rows.map((u) => ({
+        ...u,
+        customRoleName: u.customRoleId ? getCustomRoleName(tenantId, u.customRoleId) ?? null : null,
+      }))
 
       // Include warehouse assignments if requested (RLS scopes the query)
       if (includeWarehouses && result.length > 0) {
@@ -169,9 +176,16 @@ export async function POST(request: NextRequest) {
     const parsed = await validateBody(request, createUserBodySchema)
     if (!parsed.success) return parsed.response
 
+    // A custom role decides the built-in role: users.role = the custom role's base role
+    const customRoleId = parsed.data.customRoleId || null
+    if (customRoleId) {
+      const cr = await withTenant(session.user.tenantId, (tenantDb) => loadAssignableCustomRole(tenantDb, customRoleId))
+      parsed.data.role = cr.baseRole as typeof parsed.data.role
+    }
+
     // No privilege escalation through a new account: the role may not carry permissions
     // the creator does not have (e.g. a manager creating a system_manager to reach settings).
-    const notHeld = rolePermissionsNotHeld(session.user.role, parsed.data.role, session.user.tenantId, session.user.customRoleId)
+    const notHeld = rolePermissionsNotHeld(session.user.role, parsed.data.role, session.user.tenantId, session.user.customRoleId, customRoleId)
     if (notHeld.length > 0) {
       return NextResponse.json({ error: 'You cannot create users with this role', missingPermissions: notHeld }, { status: 403 })
     }
@@ -185,6 +199,7 @@ export async function POST(request: NextRequest) {
           email: body.email,
           fullName: body.fullName,
           role: body.role,
+          customRoleId,
           password: body.password,
           pin: body.pin || null,
           warehouseIds: body.warehouseIds,
@@ -237,6 +252,7 @@ export async function POST(request: NextRequest) {
             fullName: existingAccount.fullName || normalizedEmail,
             passwordHash: existingAccount.passwordHash || '',
             role: role as 'owner' | 'manager' | 'cashier' | 'technician',
+            customRoleId,
             isActive: true,
           }).returning({
             id: users.id,
@@ -303,6 +319,9 @@ export async function POST(request: NextRequest) {
       tenantAssignments: [{
         tenantId: session.user.tenantId,
         role,
+        // Custom role travels with the invite (validated above: active, inviter holds all of it);
+        // re-checked when the invite is accepted
+        ...(customRoleId ? { customRoleId } : {}),
         warehouseIds: inviteAssignments.warehouseIds,
         posProfileIds: inviteAssignments.posProfileIds,
       }],

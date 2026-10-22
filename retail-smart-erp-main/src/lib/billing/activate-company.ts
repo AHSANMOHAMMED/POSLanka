@@ -38,7 +38,7 @@ import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 const VALID_PLANS = ['trial', 'basic', 'standard', 'premium'] as const
 type PlanName = (typeof VALID_PLANS)[number]
 
-function tierNameToPlan(tierName: string | null | undefined): PlanName {
+export function tierNameToPlan(tierName: string | null | undefined): PlanName {
   if (!tierName) return 'standard'
   const lower = tierName.toLowerCase()
   if (VALID_PLANS.includes(lower as PlanName)) return lower as PlanName

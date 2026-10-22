@@ -4,7 +4,7 @@ import { withTenant } from '@/lib/db'
 import { vehicles, customers, vehicleTypes } from '@/lib/db/schema'
 import { eq, and, or, isNull, ilike, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -18,6 +18,9 @@ export async function GET(request: NextRequest) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'auto-service')
+    if (moduleError) return moduleError
 
     const parsed = validateSearchParams(request, vehiclesListSchema)
     if (!parsed.success) return parsed.response

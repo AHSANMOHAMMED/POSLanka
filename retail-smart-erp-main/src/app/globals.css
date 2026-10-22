@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./admin-kit.css";
 
 /* Configure dark mode to use class selector instead of media query */
 @custom-variant dark (&:where(.dark, .dark *));

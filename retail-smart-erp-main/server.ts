@@ -9,52 +9,55 @@ import { wsManager } from './src/lib/websocket/server'
 import type { EntityType } from './src/lib/websocket/events'
 import { logError } from './src/lib/ai/error-logger'
 import { startDevWarmup } from './src/lib/dev/warmup'
+import { createLogger, ensureRequestId, runWithRequestContext } from './src/lib/logger'
+import { recordHttpRequest, setShuttingDown } from './src/lib/observability/metrics'
+import { isTrustedOrigin } from './src/lib/security/origin'
+
+const log = createLogger('server')
+const SLOW_REQUEST_MS = (() => {
+  const n = parseInt(process.env.SLOW_REQUEST_MS || '', 10)
+  return Number.isFinite(n) && n > 0 ? n : 2000
+})()
 
 // Validate and set default environment variables for Railway
 if (!process.env.NEXTAUTH_URL && process.env.RAILWAY_PUBLIC_URL) {
   process.env.NEXTAUTH_URL = process.env.RAILWAY_PUBLIC_URL
-  console.log('[Server] Set NEXTAUTH_URL from RAILWAY_PUBLIC_URL:', process.env.NEXTAUTH_URL)
+  log.info('NEXTAUTH_URL set from RAILWAY_PUBLIC_URL', { url: process.env.NEXTAUTH_URL })
 }
 
 if (!process.env.NEXTAUTH_SECRET) {
   if (process.env.NODE_ENV === 'production') {
-    console.error('[Server] FATAL: NEXTAUTH_SECRET is required in production')
+    log.error('FATAL: NEXTAUTH_SECRET is required in production')
     process.exit(1)
   }
   // Generate a stable dev-only secret (not secure for production!)
-  console.warn('[Server] WARNING: NEXTAUTH_SECRET is not set. Using a dev-only secret.')
+  log.warn('NEXTAUTH_SECRET is not set. Using a dev-only secret.')
   process.env.NEXTAUTH_SECRET = 'dev-only-secret-do-not-use-in-production'
 }
 
 if (!process.env.DATABASE_URL) {
-  console.error('[Server] ERROR: DATABASE_URL is required')
+  log.error('DATABASE_URL is required')
   process.exit(1)
 }
 
-// Global Node handlers: log uncaught errors to AI error logger, then exit (uncaughtException) or continue (unhandledRejection)
+// Global Node handlers. An uncaught exception leaves the process in an undefined state (even
+// "network" ones: a half-handled socket, a pool client mid-query), so we always exit and let the
+// orchestrator (App Platform / Docker restart policy) start a clean instance. Readiness flips to
+// 503 first so the load balancer stops routing here while the error is persisted.
+let fatalExitScheduled = false
 process.on('uncaughtException', (err: Error) => {
   logError('uncaughtException', err)
-  console.error('[Server] Uncaught exception:', err)
-  const code = (err as unknown as { code?: string })?.code
-  const msg = err?.message || ''
-  if (
-    code === 'ETIMEDOUT' ||
-    code === 'ECONNRESET' ||
-    code === 'EPIPE' ||
-    code === '57P01' ||
-    msg.includes('Connection terminated unexpectedly')
-  ) {
-    console.warn('[Server] Recoverable network error, continuing...')
-    return
-  }
-  setTimeout(() => process.exit(1), 2000)
-
+  log.error('uncaught exception, exiting', { err })
+  if (fatalExitScheduled) return
+  fatalExitScheduled = true
+  setShuttingDown(true)
+  setTimeout(() => process.exit(1), 2000).unref()
 })
 
 process.on('unhandledRejection', (reason: unknown) => {
   const err = reason instanceof Error ? reason : new Error(String(reason))
   logError('unhandledRejection', err)
-  console.error('[Server] Unhandled rejection:', err)
+  log.error('unhandled rejection', { err })
 })
 
 const dev = process.env.NODE_ENV !== 'production'
@@ -189,7 +192,7 @@ async function handleInternalBroadcast(
     res.setHeader('Content-Type', 'application/json')
     res.end(JSON.stringify({ success: true }))
   } catch (err) {
-    console.error('[Server] Error handling internal broadcast:', err)
+    log.error('internal broadcast failed', { err })
     res.statusCode = 500
     res.end('Internal Server Error')
   }
@@ -206,13 +209,22 @@ function handleSSE(req: IncomingMessage, res: ServerResponse): boolean {
 
   if (url.pathname !== '/_events') return false
 
+  // CORS: only our own origins (same host, base domain + subdomains, ALLOWED_HOSTS) may read
+  // the stream with credentials. Other origins get no CORS headers, so browsers block them.
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : ''
+  const publicHost = (req.headers['x-forwarded-host'] as string | undefined) || req.headers.host
+  const corsHeaders: Record<string, string> = origin && isTrustedOrigin(origin, publicHost)
+    ? { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Credentials': 'true', 'Vary': 'Origin' }
+    : {}
+
   if (req.method === 'OPTIONS') {
     // CORS preflight for SSE
     res.writeHead(204, {
-      'Access-Control-Allow-Origin': req.headers.origin || '*',
-      'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Allow-Methods': 'GET',
-      'Access-Control-Allow-Headers': 'Content-Type',
+      ...corsHeaders,
+      ...(corsHeaders['Access-Control-Allow-Origin'] ? {
+        'Access-Control-Allow-Methods': 'GET',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      } : {}),
     })
     res.end()
     return true
@@ -240,7 +252,11 @@ function handleSSE(req: IncomingMessage, res: ServerResponse): boolean {
     }
   }
 
-  const clientId = wsManager.addSSEClient(token, writeFn)
+  const endFn = () => {
+    try { res.end() } catch { /* already closed */ }
+  }
+
+  const clientId = wsManager.addSSEClient(token, writeFn, endFn)
   if (!clientId) {
     res.statusCode = 403
     res.end('Invalid token')
@@ -253,8 +269,7 @@ function handleSSE(req: IncomingMessage, res: ServerResponse): boolean {
     'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
     'X-Accel-Buffering': 'no', // Disable Nginx/proxy buffering
-    'Access-Control-Allow-Origin': req.headers.origin || '*',
-    'Access-Control-Allow-Credentials': 'true',
+    ...corsHeaders,
   })
 
   // Send initial authenticated event
@@ -280,27 +295,52 @@ function handleSSE(req: IncomingMessage, res: ServerResponse): boolean {
 }
 
 app.prepare().then(() => {
-  const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-    try {
-      // Handle SSE connections first (before Next.js)
-      if (handleSSE(req, res)) return
-
-      // Handle internal broadcast endpoint (before Next.js)
-      const handled = await handleInternalBroadcast(req, res)
-      if (handled) {
-        return
-      }
-
-      // Let Next.js handle all other requests (central API wrapper: any error bubbling out is logged)
-      await handle(req, res)
-    } catch (err) {
-      const url = req.url ? new URL(req.url, `http://${req.headers.host}`).pathname : undefined
-      logError('api-route-handler', err, { path: url })
-      console.error('Error handling request:', err)
-      res.statusCode = 500
-      res.end('Internal Server Error')
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    // Correlation id: accept the load balancer's x-request-id or mint one; it is visible to
+    // route handlers (request header), returned to the client, and attached to every log line
+    // and logError() record written while this request is being handled.
+    const incoming = req.headers['x-request-id']
+    const requestId = ensureRequestId(Array.isArray(incoming) ? incoming[0] : incoming)
+    req.headers['x-request-id'] = requestId
+    res.setHeader('x-request-id', requestId)
+    const path = (req.url || '/').split('?')[0]
+    const started = performance.now()
+    if (path !== '/_events') {
+      res.once('finish', () => {
+        const ms = performance.now() - started
+        const slow = ms >= SLOW_REQUEST_MS
+        recordHttpRequest(res.statusCode, ms, slow)
+        if (res.statusCode >= 500 || slow) {
+          log[res.statusCode >= 500 ? 'error' : 'warn'](slow ? 'slow request' : 'request failed', {
+            requestId, method: req.method, path, status: res.statusCode, durationMs: Math.round(ms),
+          })
+        }
+      })
     }
+
+    return runWithRequestContext({ requestId, method: req.method, path }, async () => {
+      try {
+        // Handle SSE connections first (before Next.js)
+        if (handleSSE(req, res)) return
+
+        // Handle internal broadcast endpoint (before Next.js)
+        const handled = await handleInternalBroadcast(req, res)
+        if (handled) {
+          return
+        }
+
+        // Let Next.js handle all other requests (central API wrapper: any error bubbling out is logged)
+        await handle(req, res)
+      } catch (err) {
+        logError('api-route-handler', err, { path, requestId })
+        log.error('unhandled error in request', { err, method: req.method, path })
+        if (!res.headersSent) res.statusCode = 500
+        res.end('Internal Server Error')
+      }
+    })
   })
+
+  let shuttingDown = false
 
   // Initialize WebSocket server for our app (noServer mode)
   wsManager.init()
@@ -310,13 +350,17 @@ app.prepare().then(() => {
     ? app.getUpgradeHandler()
     : null
 
-  console.log('[Server] Next.js upgrade handler available:', !!nextUpgradeHandler)
+  log.debug('Next.js upgrade handler available', { available: !!nextUpgradeHandler })
 
   // Handle ALL upgrade requests - route to appropriate handler
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url || '', `http://${req.headers.host}`)
 
     if (url.pathname === '/ws') {
+      if (shuttingDown) {
+        socket.destroy()
+        return
+      }
       // Route to our WebSocket server
       wsManager.handleUpgrade(req, socket as Socket, head)
     } else if (nextUpgradeHandler) {
@@ -325,38 +369,50 @@ app.prepare().then(() => {
     }
   })
 
-  // Graceful shutdown — close WS, HTTP, and DB pools
-  const shutdown = () => {
-    console.log('\nShutting down server...')
+  // Graceful shutdown: readiness → 503 (load balancer drains us), stop accepting connections,
+  // close WS + end SSE streams, close idle keep-alive sockets, let in-flight requests finish,
+  // then close the DB pool. SHUTDOWN_TIMEOUT_MS (default 25 s, below App Platform's 30 s kill)
+  // bounds the whole thing.
+  const shutdownTimeoutMs = (() => {
+    const n = parseInt(process.env.SHUTDOWN_TIMEOUT_MS || '', 10)
+    return Number.isFinite(n) && n > 0 ? n : 25000
+  })()
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    setShuttingDown(true)
+    log.info('shutting down', { signal })
     wsManager.shutdown()
     server.close(async () => {
       // Close database pools to release connections
       try {
         const { closeAllPools } = await import('./src/lib/db')
         await closeAllPools()
-        console.log('Database pools closed')
+        log.info('database pool closed')
       } catch {
         // Pool module may not be loaded yet
       }
-      console.log('Server closed')
+      log.info('server closed')
       process.exit(0)
     })
-    // Force exit after 10s if graceful shutdown hangs
+    // Keep-alive sockets without an in-flight request would otherwise hold server.close() open
+    server.closeIdleConnections()
+    // Force exit if graceful shutdown hangs
     setTimeout(() => {
-      console.error('Forced shutdown after timeout')
+      log.error('forced shutdown after timeout', { timeoutMs: shutdownTimeoutMs })
+      server.closeAllConnections()
       process.exit(1)
-    }, 10000).unref()
+    }, shutdownTimeoutMs).unref()
   }
 
-  process.on('SIGTERM', shutdown)
-  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
 
   server.listen(port, hostname, () => {
-    console.log(`> Ready on http://${hostname}:${port}`)
-    console.log(`> WebSocket server running on ws://${hostname}:${port}/ws`)
+    log.info(`ready on http://${hostname}:${port} (WebSocket /ws, SSE /_events)`, { port, dev })
     if (dev) startDevWarmup(port)
   })
 }).catch((err) => {
-  console.error('Failed to prepare Next.js app:', err)
+  log.error('failed to prepare Next.js app', { err })
   process.exit(1)
 })

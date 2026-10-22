@@ -14,6 +14,7 @@ import { THEME, formatLKR } from '../lib/theme'
 import { receiptFromSale, type BusinessInfo } from '../lib/receipt'
 import type { SaleResultData } from './TenderModal'
 import { IdempotencyKey } from '../lib/idempotency'
+import { useHeaderPad } from '../lib/safeArea'
 
 /**
  * Refund back to how the customer paid: several methods → 'original' (server splits the refund
@@ -30,6 +31,21 @@ export function chooseRefundMethod(sale: Pick<ReturnableSale, 'paidByMethod' | '
   const only = paid[0]?.[0] || sale.paymentMethod || 'cash'
   if (only === 'card') return { method: 'card', description: 'Back to the card used', pill: '💳 CARD' }
   return { method: 'cash', description: 'Cash from the drawer', pill: '💵 CASH' }
+}
+
+/**
+ * Unit text for a sold line: "" for the base unit, "Box" for a named unit, and the conversion
+ * ("1 Box = 12 pcs") when it was sold in a non-base unit. Quantities on the line are in `uom`.
+ */
+export function returnLineUnit(l: { uom?: string | null; uomFactor?: string | number | null; baseUnit?: string | null }): { unit: string; conversion: string | null } {
+  const factor = Number(l.uomFactor)
+  const uom = (l.uom || '').trim()
+  const nonBase = (Number.isFinite(factor) && factor > 0 && Math.abs(factor - 1) > 1e-9) || (!!uom && !!l.baseUnit && uom.toLowerCase() !== String(l.baseUnit).toLowerCase())
+  if (!uom) return { unit: '', conversion: null }
+  if (!nonBase) return { unit: uom, conversion: null }
+  const f = Number.isFinite(factor) && factor > 0 ? factor : 1
+  const fText = Number.isInteger(f) ? String(f) : String(Math.round(f * 1000) / 1000)
+  return { unit: uom, conversion: `1 ${uom} = ${fText}${l.baseUnit ? ` ${l.baseUnit}` : ' base units'}` }
 }
 
 export interface ReturnableSale {
@@ -56,6 +72,11 @@ export interface ReturnableSale {
     remainingQuantity?: number
     refundUnitAmount?: number
     isGiftCard?: boolean
+    /** H5: unit the line was sold in and base units per 1 of it (sale_items.uom / uom_factor) */
+    uom?: string | null
+    uomFactor?: string | number | null
+    /** from /api/sales/lookup: the item's base unit (items.unit) */
+    baseUnit?: string | null
   }>
   returnStatus?: 'none' | 'partial' | 'full'
   returns?: Array<{ id: string; invoiceNo: string; total: string }>
@@ -78,6 +99,7 @@ function num(v: unknown): number {
 }
 
 export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, cashierName, onReturnComplete }: ReturnModalProps) {
+  const headerPad = useHeaderPad()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [matches, setMatches] = useState<ReturnableSale[]>([])
@@ -191,6 +213,11 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
         discount: 0,
         total: roundCurrency(-q * l.refundUnit),
       }))
+    // Unit of each returned line, for the fallback slip (the server keeps the original line's unit)
+    const lineUoms = lines
+      .map((l, idx) => ({ l, q: qty[idx] || 0 }))
+      .filter(({ q }) => q > 0)
+      .map(({ l }) => l.uom || null)
     const subtotal = roundCurrency(cartItems.reduce((s, c) => s + c.total, 0)) // negative
     const total = subtotal
     const refund = Math.abs(total)
@@ -229,7 +256,7 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
       // Refund method actually used (the return row's paymentMethod), for the slip / result screen
       const paidOutMethod = typeof sale.paymentMethod === 'string' && sale.paymentMethod ? sale.paymentMethod : refundChoice.method === 'card' ? 'card' : 'cash'
       const receipt = receiptFromSale(
-        { ...sale, invoiceNo: sale.invoiceNo || 'Return recorded', total: sale.total ?? total, items: sale.items?.length ? sale.items : cartItems.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: c.unitPrice, total: c.total })), isReturn: true },
+        { ...sale, invoiceNo: sale.invoiceNo || 'Return recorded', total: sale.total ?? total, items: sale.items?.length ? sale.items : cartItems.map((c, i) => ({ itemName: c.name, quantity: c.quantity, unitPrice: c.unitPrice, total: c.total, uom: lineUoms[i] ?? null })), isReturn: true },
         {
           business: business || { name: 'POSLanka' },
           shift,
@@ -261,7 +288,7 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, headerPad]}>
           <Pressable style={styles.backBtn} onPress={onClose} disabled={busy}>
             <Text style={styles.backBtnText}>←</Text>
           </Pressable>
@@ -340,13 +367,15 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
                   ) : (
                     lines.map((l, idx) => {
                       const q = qty[idx] || 0
+                      const u = returnLineUnit(l)
                       return (
                         <View key={`${l.id || l.itemId || l.itemName}-${idx}`} style={styles.lineRow}>
                           <View style={{ flex: 1 }}>
                             <Text style={styles.lineName}>{l.itemName}</Text>
                             <Text style={styles.muted}>
-                              {l.maxQty} returnable × {formatLKR(l.refundUnit)}
+                              {l.maxQty}{u.unit ? ` ${u.unit}` : ''} returnable × {formatLKR(l.refundUnit)}{u.unit ? ` per ${u.unit}` : ''}
                             </Text>
+                            {u.conversion ? <Text style={styles.unitNote}>Sold in {u.unit} · {u.conversion}</Text> : null}
                           </View>
                           <View style={styles.stepper}>
                             <Pressable style={styles.stepBtn} onPress={() => bump(idx, -1)} disabled={q <= 0}>
@@ -426,6 +455,7 @@ const styles = StyleSheet.create({
   matchTotal: { fontSize: 13, fontWeight: '800', color: THEME.colors.text },
   lineRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: THEME.colors.border, gap: 10 },
   lineName: { fontSize: 13, fontWeight: '700', color: THEME.colors.text },
+  unitNote: { fontSize: 11, color: THEME.colors.primary, marginTop: 2, fontWeight: '600' },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   stepBtn: { width: 34, height: 34, borderRadius: 8, backgroundColor: THEME.colors.surfaceContainerLow, borderWidth: 1, borderColor: THEME.colors.border, alignItems: 'center', justifyContent: 'center' },
   stepText: { fontSize: 18, fontWeight: '800', color: THEME.colors.text },

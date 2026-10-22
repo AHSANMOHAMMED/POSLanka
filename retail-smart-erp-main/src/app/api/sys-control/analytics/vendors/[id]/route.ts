@@ -11,7 +11,7 @@ import {
   posClosingEntries,
   posClosingReconciliation,
 } from '@/lib/db/schema'
-import { validateAdminSession } from '@/lib/admin'
+import { adminAuthError, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -27,9 +27,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('read')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const paramsParsed = validateParams(await params, idParamSchema)

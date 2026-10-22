@@ -5,42 +5,17 @@ import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
 import { validateCouponSchema } from '@/lib/validation/schemas/public'
+import { consumeRateLimit, clientIp, rateLimitedResponse } from '@/lib/auth/rate-limit'
 
-// Rate limiting for coupon validation
-const couponValidateAttempts = new Map<string, { count: number; resetAt: number }>()
-const COUPON_VALIDATE_LIMIT = 5 // max attempts
-const COUPON_VALIDATE_WINDOW = 60 * 1000 // 1 minute
-let couponLastCleanup = Date.now()
-const CLEANUP_INTERVAL = 5 * 60 * 1000 // 5 minutes
+// Rate limiting for coupon validation: 5 per minute per IP (database-backed, shared by all instances)
+const COUPON_VALIDATE_RATE_LIMIT = { maxAttempts: 5, windowMs: 60 * 1000, category: 'coupon_validate' }
 
 // POST /api/public/coupons/validate - Validate a coupon code (public, no auth)
 export async function POST(request: NextRequest) {
   try {
     // Rate limiting by IP
-    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
-    const now = Date.now()
-
-    // Periodically clean expired entries to prevent memory leaks
-    if (now - couponLastCleanup > CLEANUP_INTERVAL) {
-      couponLastCleanup = now
-      for (const [key, entry] of couponValidateAttempts) {
-        if (now > entry.resetAt) couponValidateAttempts.delete(key)
-      }
-    }
-
-    const attempts = couponValidateAttempts.get(ip)
-    if (attempts) {
-      if (now < attempts.resetAt) {
-        if (attempts.count >= COUPON_VALIDATE_LIMIT) {
-          return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 })
-        }
-        attempts.count++
-      } else {
-        couponValidateAttempts.set(ip, { count: 1, resetAt: now + COUPON_VALIDATE_WINDOW })
-      }
-    } else {
-      couponValidateAttempts.set(ip, { count: 1, resetAt: now + COUPON_VALIDATE_WINDOW })
-    }
+    const limit = await consumeRateLimit(clientIp(request), COUPON_VALIDATE_RATE_LIMIT)
+    if (limit.limited) return rateLimitedResponse(limit)
 
     const parsed = await validateBody(request, validateCouponSchema)
     if (!parsed.success) return parsed.response

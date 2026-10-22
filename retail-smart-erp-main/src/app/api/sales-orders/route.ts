@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { salesOrders, salesOrderItems, customers, warehouses, users } from '@/lib/db/schema'
 import { eq, and, ilike, sql, desc, asc, or } from 'drizzle-orm'
@@ -21,6 +21,9 @@ export async function GET(request: NextRequest) {
     const { all, page, pageSize, search, status, customerId: filterCustomerId, warehouseId: filterWarehouseId, sortBy, sortOrder: sortOrderParam } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
+      // Module Access: refused when the owner switched this module off for the caller's role
+      const moduleError = requireModule(session, 'selling')
+      if (moduleError) return { moduleError }
       // Build where conditions - RLS handles tenant filtering
       const conditions: ReturnType<typeof eq>[] = []
 
@@ -142,6 +145,7 @@ export async function GET(request: NextRequest) {
     if (!result) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    if ('moduleError' in result) return result.moduleError
 
     if ('isAll' in result && result.isAll) {
       return NextResponse.json(result.data)

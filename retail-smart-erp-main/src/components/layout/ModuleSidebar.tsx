@@ -7,6 +7,8 @@ import { useCompanyOptional } from '@/components/providers/CompanyContextProvide
 import { useSidebar } from './Sidebar'
 import { getModuleFromPathname, getModuleSidebar, isDetailPage } from '@/lib/navigation/module-sidebar'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions'
+import type { Permission } from '@/lib/auth/roles'
 import { useFeatureFlags } from '@/hooks/useFeatureFlag'
 import { isHrefAllowedByFeatures, isModuleAllowedByFeatures } from '@/lib/features/nav-gate'
 import { ICON_MAP } from '@/components/workspace/icon-map'
@@ -22,6 +24,9 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
   const company = useCompanyOptional()
   const { mobileOpen, setMobileOpen } = useSidebar()
   const { isModuleEnabled } = useModuleAccess()
+  // Server-effective permissions (custom roles, overrides, module toggles); role defaults until loaded
+  const { permissions: effective } = useEffectivePermissions()
+  const can = effective ? (p: Permission) => effective[p] ?? false : undefined
   const { flags } = useFeatureFlags()
 
   const businessType = company?.businessType || session?.user?.businessType
@@ -41,7 +46,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
   }
 
   // Get sidebar sections for this module, filtered by role, module access, and feature flags
-  const sections = getModuleSidebar(currentModule, businessType, userRole, isModuleEnabled)
+  const sections = getModuleSidebar(currentModule, businessType, userRole, isModuleEnabled, can)
     .map((section) => ({
       ...section,
       items: section.items.filter((item) => isHrefAllowedByFeatures(item.href, flags)),

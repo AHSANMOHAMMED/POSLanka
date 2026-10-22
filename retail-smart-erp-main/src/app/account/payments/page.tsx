@@ -58,6 +58,8 @@ interface Payment {
   reviewNotes: string | null
   periodMonths: number
   isWalletDeposit: boolean
+  couponCode?: string | null
+  discountAmount?: string | null
   createdAt: string
   subscription: {
     tenant: {
@@ -109,6 +111,40 @@ function PaymentsContent() {
     pendingCompanyId ? 'pending_company' : isWalletDeposit ? 'wallet' : 'subscription'
   )
   const [pendingCompany, setPendingCompany] = useState<PendingCompany | null>(null)
+  // Promo code on a plan slip: priced by the server, counted when the slip is approved
+  const [promoInput, setPromoInput] = useState('')
+  const [promo, setPromo] = useState<{ code: string; label: string; listAmount: number; discount: number; finalAmount: number } | null>(null)
+  const [promoError, setPromoError] = useState('')
+  const [promoBusy, setPromoBusy] = useState(false)
+
+  const applyPromo = async () => {
+    const code = promoInput.trim()
+    if (!code) return
+    setPromoBusy(true)
+    setPromoError('')
+    try {
+      const res = await fetch('/api/account/coupons/quote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          ...(depositType === 'pending_company' && pendingCompany ? { pendingCompanyId: pendingCompany.id, periodMonths: pendingCompany.billingCycle === 'yearly' ? 12 : 1 } : { subscriptionId: formData.subscriptionId, periodMonths: formData.periodMonths }),
+        }),
+      })
+      const body = await res.json()
+      if (!res.ok || !body.valid) {
+        setPromo(null)
+        setPromoError(body.message || body.error || 'This promo code cannot be used')
+        return
+      }
+      setPromo(body)
+      setFormData((prev) => ({ ...prev, amount: String(body.finalAmount) }))
+    } catch {
+      setPromoError('Could not check the promo code')
+    } finally {
+      setPromoBusy(false)
+    }
+  }
 
   const [formData, setFormData] = useState({
     subscriptionId: '',
@@ -118,6 +154,9 @@ function PaymentsContent() {
     notes: '',
     periodMonths: 1,
   })
+
+  // A quote is for one subscription / period: changing either drops it
+  useEffect(() => { setPromo(null) }, [formData.subscriptionId, formData.periodMonths, depositType])
 
   const fetchPayments = useCallback(async () => {
     try {
@@ -229,6 +268,7 @@ function PaymentsContent() {
           pendingCompanyId: pendingCompany.id,
           periodMonths: pendingCompany.billingCycle === 'yearly' ? 12 : 1,
           isWalletDeposit: false,
+          ...(promo ? { couponCode: promo.code } : {}),
         }
       } else {
         payload = {
@@ -239,6 +279,7 @@ function PaymentsContent() {
           notes: formData.notes,
           periodMonths: formData.periodMonths,
           isWalletDeposit: false,
+          ...(promo ? { couponCode: promo.code } : {}),
         }
       }
 
@@ -261,6 +302,8 @@ function PaymentsContent() {
         })
         setDepositType('subscription')
         setPendingCompany(null)
+        setPromo(null)
+        setPromoInput('')
         fetchPayments()
       } else {
         const data = await res.json()
@@ -556,6 +599,43 @@ function PaymentsContent() {
                   )}
                 </div>
 
+                {depositType !== 'wallet' && (
+                  <div>
+                    <label htmlFor="slip-promo" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Promo code <span className="font-normal text-gray-400">(optional)</span>
+                    </label>
+                    {promo ? (
+                      <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-md bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 text-sm">
+                        <span className="text-emerald-800 dark:text-emerald-300">
+                          {promo.code} · {promo.label}: {formatCurrencyWithSymbol(promo.listAmount, wallet.currency)} − {formatCurrencyWithSymbol(promo.discount, wallet.currency)} = <strong>{formatCurrencyWithSymbol(promo.finalAmount, wallet.currency)}</strong>
+                        </span>
+                        <button type="button" className="text-xs text-emerald-700 dark:text-emerald-400 hover:underline" onClick={() => { setPromo(null); setPromoInput('') }}>Remove</button>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <input
+                          id="slip-promo"
+                          value={promoInput}
+                          onChange={(e) => { setPromoInput(e.target.value.toUpperCase()); setPromoError('') }}
+                          maxLength={50}
+                          placeholder="Enter a code"
+                          className="flex-1 min-w-0 px-4 py-3 border border-gray-200 dark:border-gray-600 rounded-md uppercase dark:bg-gray-700 dark:text-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={applyPromo}
+                          disabled={!promoInput.trim() || promoBusy || (depositType === 'subscription' && !formData.subscriptionId)}
+                          className="px-4 py-3 rounded-md text-sm font-medium border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                        >
+                          {promoBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Apply'}
+                        </button>
+                      </div>
+                    )}
+                    {promoError && <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">{promoError}</p>}
+                    {promo && <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Transfer the discounted amount. The code is counted when we approve your slip.</p>}
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Bank Reference / Receipt No.
@@ -677,6 +757,7 @@ function PaymentsContent() {
                       {payment.isWalletDeposit
                         ? 'Adding funds to wallet'
                         : `${payment.subscription?.tier?.displayName || 'Subscription'} - ${payment.periodMonths} month${payment.periodMonths > 1 ? 's' : ''}`}
+                      {payment.couponCode ? ` · promo ${payment.couponCode} (−${formatCurrencyWithSymbol(Number(payment.discountAmount || 0), payment.currency)})` : ''}
                     </p>
                     <div className="flex items-center gap-4 mt-2 text-sm text-gray-500 dark:text-gray-400">
                       <span className="flex items-center gap-1.5">

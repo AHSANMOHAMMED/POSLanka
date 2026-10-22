@@ -122,8 +122,9 @@ export async function withRateLimit(
 /**
  * Clean up old rate limit entries (run periodically)
  */
-export async function cleanupRateLimits(): Promise<void> {
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000)
-  await db.delete(adminRateLimits)
-    .where(sql`${adminRateLimits.windowStart} < ${oneHourAgo}`)
+export async function cleanupRateLimits(maxAgeMs = 60 * 60 * 1000): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMs)
+  const res = await db.delete(adminRateLimits)
+    .where(sql`${adminRateLimits.windowStart} < ${cutoff}`)
+  return res.rowCount ?? 0
 }

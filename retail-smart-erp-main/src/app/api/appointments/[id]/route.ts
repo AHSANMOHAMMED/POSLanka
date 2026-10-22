@@ -3,7 +3,7 @@ import { resolveUserId } from '@/lib/auth/resolve-user'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { appointments, workOrders, workOrderServices, customers, vehicles, serviceTypes, warehouses, tenants } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { triggerNotification } from '@/lib/notifications/auto-trigger'
@@ -61,6 +61,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, 'auto-service')
+    if (moduleError) return { error: moduleError }
     const appointment = await db.query.appointments.findFirst({
       where: eq(appointments.id, id),
       with: {

@@ -4,6 +4,7 @@ import { tenants, subscriptions, lockoutEvents, accountNotifications } from '@/l
 import { inArray, eq, and, lt, isNull, isNotNull, sql, or } from 'drizzle-orm'
 import { cascadeDeleteTenant } from '@/lib/billing/delete-tenant'
 import { logError } from '@/lib/ai/error-logger'
+import { retryUnactivatedPayments } from '@/lib/payhere/activate-payment'
 
 // POST /api/cron/enforce-subscriptions
 // Runs every 6 hours to enforce subscription limits and lockouts
@@ -23,6 +24,16 @@ export async function POST(request: NextRequest) {
       storageLocked: 0,
       companiesDeleted: 0,
       warningsSent: 0,
+      paymentsActivated: 0,
+    }
+
+    // 0. Paid but not yet activated (activation failed and PayHere did not notify again):
+    // apply those payments first, so the enforcement below never locks a company that paid.
+    try {
+      const retry = await retryUnactivatedPayments()
+      stats.paymentsActivated = retry.activated
+    } catch (err) {
+      logError('api/cron/enforce-subscriptions/payment-retry', err)
     }
 
     // 1. Expire trials: status='trial' AND trialEndsAt IS NOT NULL AND trialEndsAt < NOW()

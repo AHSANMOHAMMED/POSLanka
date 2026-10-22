@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { logError } from '@/lib/ai/error-logger'
 import { requireCronSecret } from '@/lib/notifications/cron-auth'
 import { runStockAlerts } from '@/lib/notifications/scheduled'
+import { createLogger } from '@/lib/logger'
 
 // POST /api/cron/stock-alerts — run HOURLY.
 // Sends each stock manager the low-stock digest and expiring-stock alert at their local digest hour.
@@ -10,7 +11,7 @@ export async function POST(request: NextRequest) {
   if (denied) return denied
   try {
     const summary = await runStockAlerts()
-    console.log(`[Cron] stock-alerts: ${summary.tenants} tenants, ${summary.dueUsers} due users, ${summary.digests} digests, ${summary.expiring} expiry alerts`)
+    createLogger('cron:stock-alerts').info('run complete', { ...summary })
     return NextResponse.json({
       success: true,
       tenants: summary.tenants,

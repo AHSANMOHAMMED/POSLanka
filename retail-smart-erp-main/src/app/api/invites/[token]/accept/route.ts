@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { staffInvites, tenants, accounts, users, accountTenants, warehouses, posProfiles } from '@/lib/db/schema'
+import { staffInvites, tenants, accounts, users, accountTenants, warehouses, posProfiles, customRoles } from '@/lib/db/schema'
 import { eq, and, isNull, gt, sql, inArray } from 'drizzle-orm'
 import bcrypt from 'bcryptjs'
 import { logError } from '@/lib/ai/error-logger'
@@ -9,12 +9,31 @@ import { validateBody } from '@/lib/validation'
 import { acceptInviteSchema } from '@/lib/validation/schemas/auth'
 import { addUserWarehouses, replaceUserPosProfiles } from '@/lib/users/create-staff'
 import { getUserLimit } from '@/lib/billing/user-limit'
+import { consumeRateLimit, clientIp } from '@/lib/auth/rate-limit'
 
 type InviteAssignment = {
   tenantId: string
   role: string
+  /** Custom role chosen by the inviter (its base role is `role`) */
+  customRoleId?: string
   warehouseIds?: string[]
   posProfileIds?: string[]
+}
+
+/**
+ * Custom role from the invite, if it still exists, is active and still has the invited base role;
+ * otherwise the person joins with the plain built-in role. Runs with the tenant RLS context set.
+ */
+async function inviteCustomRoleId(
+  tx: { select: typeof db.select },
+  assignment: InviteAssignment,
+): Promise<string | null> {
+  if (!assignment.customRoleId) return null
+  const [cr] = await tx.select({ id: customRoles.id, baseRole: customRoles.baseRole, isActive: customRoles.isActive })
+    .from(customRoles)
+    .where(and(eq(customRoles.id, assignment.customRoleId), eq(customRoles.tenantId, assignment.tenantId)))
+    .limit(1)
+  return cr && cr.isActive && cr.baseRole === assignment.role ? cr.id : null
 }
 
 /**
@@ -66,12 +85,8 @@ async function assertSeat(tenantId: string) {
   }
 }
 
-// Rate limiting map for accept attempts
-const rateLimitMap = new Map<string, { count: number; firstRequest: number }>()
-const RATE_LIMIT_WINDOW = 60 * 1000 // 1 minute
-const RATE_LIMIT_MAX = 5 // Max 5 attempts per minute per token
-let acceptLastCleanup = Date.now()
-const CLEANUP_INTERVAL = 5 * 60 * 1000 // 5 minutes
+// Accept attempts: 5 per minute per client IP (database-backed, shared by all instances)
+const INVITE_ACCEPT_RATE_LIMIT = { maxAttempts: 5, windowMs: 60 * 1000, category: 'invite_accept' }
 
 // POST /api/invites/[token]/accept - Accept invite
 export async function POST(
@@ -81,30 +96,9 @@ export async function POST(
   try {
     const { token } = await params
 
-    // Periodically clean expired entries to prevent memory leaks
-    const now = Date.now()
-    if (now - acceptLastCleanup > CLEANUP_INTERVAL) {
-      acceptLastCleanup = now
-      for (const [key, entry] of rateLimitMap) {
-        if (now - entry.firstRequest > RATE_LIMIT_WINDOW) rateLimitMap.delete(key)
-      }
-    }
-
-    // Rate limiting by token to prevent brute force
-    const rateLimitKey = `accept:${token.substring(0, 8)}`
-    const rateLimit = rateLimitMap.get(rateLimitKey)
-
-    if (rateLimit) {
-      if (now - rateLimit.firstRequest < RATE_LIMIT_WINDOW) {
-        if (rateLimit.count >= RATE_LIMIT_MAX) {
-          return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 })
-        }
-        rateLimit.count++
-      } else {
-        rateLimitMap.set(rateLimitKey, { count: 1, firstRequest: now })
-      }
-    } else {
-      rateLimitMap.set(rateLimitKey, { count: 1, firstRequest: now })
+    // Rate limiting by client IP to prevent brute force
+    if ((await consumeRateLimit(clientIp(request), INVITE_ACCEPT_RATE_LIMIT)).limited) {
+      return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 })
     }
 
     const parsed = await validateBody(request, acceptInviteSchema)
@@ -141,6 +135,7 @@ export async function POST(
         for (const assignment of assignments) {
           // Set tenant context for RLS
           await tx.execute(sql`SELECT set_config('app.tenant_id', ${assignment.tenantId}, true)`)
+          const customRoleId = await inviteCustomRoleId(tx, assignment)
 
           // Create user record for this tenant
           const existingUser = await tx.query.users.findFirst({
@@ -157,6 +152,7 @@ export async function POST(
                 .set({
                   isActive: true,
                   role: assignment.role as 'owner' | 'manager' | 'cashier' | 'technician',
+                  customRoleId,
                 })
                 .where(eq(users.id, existingUser.id))
             }
@@ -169,6 +165,7 @@ export async function POST(
               passwordHash: existingAccount.passwordHash,
               fullName: existingAccount.fullName,
               role: assignment.role as 'owner' | 'manager' | 'cashier' | 'technician',
+              customRoleId,
               isActive: true,
             }).returning({ id: users.id })
             await applyInviteAssignments(tx, assignment, created.id)
@@ -188,6 +185,7 @@ export async function POST(
                 .set({
                   isActive: true,
                   role: assignment.role as 'owner' | 'manager' | 'cashier' | 'technician',
+                  customRoleId,
                   acceptedAt: new Date(),
                 })
                 .where(eq(accountTenants.id, existingMembership.id))
@@ -197,6 +195,7 @@ export async function POST(
               accountId: existingAccount.id,
               tenantId: assignment.tenantId,
               role: assignment.role as 'owner' | 'manager' | 'cashier' | 'technician',
+              customRoleId,
               isOwner: false,
               isActive: true,
               invitedBy: invite.invitedBy,
@@ -231,6 +230,7 @@ export async function POST(
         for (const assignment of assignments) {
           // Set tenant context for RLS
           await tx.execute(sql`SELECT set_config('app.tenant_id', ${assignment.tenantId}, true)`)
+          const customRoleId = await inviteCustomRoleId(tx, assignment)
 
           // Check if user already exists for this tenant
           const existingUser = await tx.query.users.findFirst({
@@ -249,6 +249,7 @@ export async function POST(
                   passwordHash,
                   fullName: fullName.trim(),
                   role: assignment.role as 'owner' | 'manager' | 'cashier' | 'technician',
+                  customRoleId,
                 })
                 .where(eq(users.id, existingUser.id))
             }
@@ -262,6 +263,7 @@ export async function POST(
               passwordHash,
               fullName: fullName.trim(),
               role: assignment.role as 'owner' | 'manager' | 'cashier' | 'technician',
+              customRoleId,
               isActive: true,
               passwordChangedAt: new Date(),
             }).returning({ id: users.id })

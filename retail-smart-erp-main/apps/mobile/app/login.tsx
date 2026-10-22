@@ -18,13 +18,17 @@ import {
   saveSettings,
   setToken,
   setUser,
+  normalizeBusinessId,
+  formatBusinessId,
   type AuthUser,
 } from '../src/lib/api'
+import { hasPermission } from '../src/lib/roles'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { syncNow } from '../src/lib/offlineQueue'
 import { uploadAllPending } from '../src/lib/intakeStore'
 import { fetchCurrentShift } from '../src/lib/shift'
 import { THEME } from '../src/lib/theme'
-import { adminLogin, setAdminSession } from '../src/lib/adminApi'
+import { adminLogin, setAdminSession, type AdminUser } from '../src/lib/adminApi'
 import { registerPushToken } from '../src/lib/notifications'
 
 interface LoginResponse {
@@ -37,6 +41,10 @@ export default function LoginScreen() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [tenantSlug, setTenantSlug] = useState('')
+  const [businessId, setBusinessId] = useState('')
+  // Older installs signed in with the company slug; keep that path available.
+  const [useSlug, setUseSlug] = useState(false)
+  const insets = useSafeAreaInsets()
   const [busy, setBusy] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   // Platform admin (super-admin console) mode: separate endpoint, separate token.
@@ -50,6 +58,9 @@ export default function LoginScreen() {
       .then((s) => {
         setApiUrl(s.apiUrl || DEFAULT_API_URL)
         setTenantSlug(s.tenantSlug || '')
+        setBusinessId(formatBusinessId(s.businessId || ''))
+        // Remembered slug but no Business ID yet (install from before Business IDs): keep slug mode.
+        if (!s.businessId && s.tenantSlug) setUseSlug(true)
       })
       .finally(() => setSettingsLoaded(true))
   }, [])
@@ -81,7 +92,12 @@ export default function LoginScreen() {
         return
       }
       const admin = res.data.admin || { name: 'Platform admin', email: email.trim() }
-      await setAdminSession(res.data.token, { name: admin.name || 'Platform admin', email: admin.email || email.trim() })
+      await setAdminSession(res.data.token, {
+        name: admin.name || 'Platform admin',
+        email: admin.email || email.trim(),
+        role: (admin as { role?: AdminUser['role'] }).role,
+        permissions: Array.isArray(res.data.permissions) ? res.data.permissions : undefined,
+      })
       setPassword('')
       setTotpCode('')
       setNeedsTotp(false)
@@ -102,8 +118,13 @@ export default function LoginScreen() {
       await onAdminLogin(url)
       return
     }
-    if (!slug) {
+    const bid = normalizeBusinessId(businessId)
+    if (useSlug && !slug) {
       Alert.alert('Company Slug', 'Enter your company slug (subdomain).')
+      return
+    }
+    if (!useSlug && !bid) {
+      Alert.alert('Business ID', 'Enter your Business ID — it looks like PL-123456. Ask your manager or owner, it is shown on the Staff page.')
       return
     }
     if (!email.trim() || !password) {
@@ -113,13 +134,17 @@ export default function LoginScreen() {
 
     setBusy(true)
     try {
-      await saveSettings({ apiUrl: url, tenantSlug: slug })
+      await saveSettings({ apiUrl: url, tenantSlug: slug, ...(useSlug ? {} : { businessId: bid || '' }) })
 
       const res = await api<LoginResponse>(
         '/api/auth/mobile-login',
         {
           method: 'POST',
-          body: JSON.stringify({ email: email.trim(), password, tenantSlug: slug }),
+          body: JSON.stringify(
+            useSlug
+              ? { email: email.trim(), password, tenantSlug: slug }
+              : { email: email.trim(), password, businessId: bid }
+          ),
         },
         { skipUnauthorizedHandler: true }
       )
@@ -127,7 +152,7 @@ export default function LoginScreen() {
       if (!res.ok) {
         Alert.alert(
           res.status === 0 ? 'Network Error' : 'Login Failed',
-          res.status === 401 ? 'Invalid credentials or company slug.' : res.error
+          res.status === 401 ? `Invalid credentials or ${useSlug ? 'company slug' : 'Business ID'}.` : res.error
         )
         return
       }
@@ -135,6 +160,15 @@ export default function LoginScreen() {
       await setToken(res.data.token)
       await setUser(res.data.user)
       setPassword('')
+      // Remember what the server resolved so next time the Business ID is pre-filled.
+      if (res.data.user?.businessId || res.data.user?.tenantSlug) {
+        await saveSettings({
+          apiUrl: url,
+          tenantSlug: res.data.user.tenantSlug || slug,
+          ...(res.data.user.businessId ? { businessId: res.data.user.businessId } : {}),
+        })
+        if (res.data.user.businessId) setBusinessId(formatBusinessId(res.data.user.businessId))
+      }
 
       // Push registration (permission prompt + POST /api/account/devices); never blocks login.
       registerPushToken().catch(() => undefined)
@@ -143,6 +177,11 @@ export default function LoginScreen() {
       syncNow().catch(() => undefined)
       uploadAllPending().catch(() => undefined)
 
+      // Roles that cannot sell (stock, purchasing, reports, HR...) land on the hub.
+      if (!hasPermission(res.data.user, 'createSales')) {
+        router.replace('/home')
+        return
+      }
       // Route by shift state: open shift -> POS, otherwise -> open a shift first.
       const shiftRes = await fetchCurrentShift()
       if (shiftRes.ok && shiftRes.data.hasOpenShift) {
@@ -156,7 +195,11 @@ export default function LoginScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, { paddingTop: 24 + insets.top, paddingBottom: 24 + insets.bottom }]}
+      keyboardShouldPersistTaps="handled"
+    >
       <View style={styles.brandBox}>
         <View style={styles.logoBadge}>
           <Text style={styles.logoBadgeText}>PL</Text>
@@ -166,7 +209,7 @@ export default function LoginScreen() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardHeader}>{adminMode ? 'Platform Admin Console' : 'Cashier Station Authentication'}</Text>
+        <Text style={styles.cardHeader}>{adminMode ? 'Platform Admin Console' : 'Staff Sign In'}</Text>
 
         <View style={styles.modeRow}>
           <View style={{ flex: 1, marginRight: 12 }}>
@@ -196,7 +239,27 @@ export default function LoginScreen() {
           onChangeText={setApiUrl}
         />
 
-        {!adminMode && (
+        {!adminMode && !useSlug && (
+          <>
+            <Text style={styles.label}>BUSINESS ID</Text>
+            <TextInput
+              style={[styles.input, styles.businessIdInput]}
+              placeholder="PL-123456"
+              placeholderTextColor={THEME.colors.textSubtle}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              maxLength={12}
+              value={businessId}
+              onChangeText={(v) => setBusinessId(v.toUpperCase())}
+              onBlur={() => {
+                const n = normalizeBusinessId(businessId)
+                if (n) setBusinessId(formatBusinessId(n))
+              }}
+            />
+            <Text style={styles.hint}>Your company&apos;s Business ID — shown to the owner on the Staff page.</Text>
+          </>
+        )}
+        {!adminMode && useSlug && (
           <>
             <Text style={styles.label}>COMPANY SLUG (SUBDOMAIN)</Text>
             <TextInput
@@ -204,16 +267,24 @@ export default function LoginScreen() {
               placeholder="e.g. lanka-super"
               placeholderTextColor={THEME.colors.textSubtle}
               autoCapitalize="none"
+              autoCorrect={false}
               value={tenantSlug}
               onChangeText={setTenantSlug}
             />
           </>
         )}
+        {!adminMode && (
+          <Pressable onPress={() => setUseSlug((v) => !v)} style={styles.linkBtn} hitSlop={8}>
+            <Text style={styles.linkText}>
+              {useSlug ? 'Use Business ID instead' : 'Use company slug instead (older setups)'}
+            </Text>
+          </Pressable>
+        )}
 
-        <Text style={styles.label}>{adminMode ? 'ADMIN EMAIL' : 'CASHIER EMAIL'}</Text>
+        <Text style={styles.label}>{adminMode ? 'ADMIN EMAIL' : 'STAFF EMAIL'}</Text>
         <TextInput
           style={styles.input}
-          placeholder={adminMode ? 'admin@poslanka.lk' : 'cashier@poslanka.lk'}
+          placeholder={adminMode ? 'admin@poslanka.lk' : 'you@company.lk'}
           placeholderTextColor={THEME.colors.textSubtle}
           autoCapitalize="none"
           keyboardType="email-address"
@@ -256,13 +327,13 @@ export default function LoginScreen() {
           {busy || !settingsLoaded ? (
             <ActivityIndicator color="#FFF" />
           ) : (
-            <Text style={styles.buttonText}>{adminMode ? (needsTotp ? 'Verify Code & Open Console →' : 'Sign In to Admin Console →') : 'Sign In to Register →'}</Text>
+            <Text style={styles.buttonText}>{adminMode ? (needsTotp ? 'Verify Code & Open Console →' : 'Sign In to Admin Console →') : 'Sign In →'}</Text>
           )}
         </Pressable>
 
         <View style={styles.footerNote}>
           <Text style={styles.footerNoteText}>
-            Server address and company slug are remembered on this device.
+            Server address and Business ID are remembered on this device.
           </Text>
         </View>
       </View>
@@ -272,7 +343,11 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: THEME.colors.background },
-  content: { padding: 24, justifyContent: 'center', minHeight: '100%' },
+  content: { padding: 24, justifyContent: 'center', minHeight: '100%', width: '100%', maxWidth: 520, alignSelf: 'center' },
+  businessIdInput: { fontFamily: 'monospace', fontSize: 18, letterSpacing: 2, marginBottom: 4 },
+  hint: { fontSize: 11, color: THEME.colors.textSubtle, marginBottom: 10 },
+  linkBtn: { alignSelf: 'flex-start', marginBottom: 14 },
+  linkText: { fontSize: 12, fontWeight: '700', color: THEME.colors.primary },
   brandBox: { alignItems: 'center', marginBottom: 28 },
   logoBadge: {
     width: 60,

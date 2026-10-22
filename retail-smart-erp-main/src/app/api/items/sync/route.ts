@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { validateSearchParams } from '@/lib/validation'
 import { logError } from '@/lib/ai/error-logger'
 import { canSyncCatalog, fetchItemSyncPage, InvalidCursorError, ITEM_SYNC_DEFAULT_LIMIT, ITEM_SYNC_MAX_LIMIT } from '@/lib/inventory/item-sync'
+import { requireModule } from '@/lib/auth/roles'
 
 const itemSyncSchema = z.object({
   warehouseId: z.string().uuid().optional(),
@@ -18,6 +19,9 @@ export async function GET(request: NextRequest) {
   try {
     const session = await authWithCompany()
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, ['stock', 'selling'])
+    if (moduleError) return moduleError
     if (!canSyncCatalog(session)) {
       return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }

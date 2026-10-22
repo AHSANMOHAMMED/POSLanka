@@ -1,4 +1,5 @@
 import type { GenericHttpConfig, SendSmsResult } from '../../types'
+import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 
 /**
  * Generic HTTP SMS Gateway Provider (ERPNext-style)
@@ -70,7 +71,7 @@ export async function sendWithGenericHttp(
       fetchOptions.body = params.toString()
     }
 
-    const response = await fetch(url, fetchOptions)
+    const response = await fetchWithTimeout(url, fetchOptions)
     const responseText = await response.text()
 
     // Try to parse as JSON
@@ -155,7 +156,7 @@ export async function testGenericHttpConnection(
   try {
     // Just check if the endpoint is reachable
     // We don't actually send a message during test
-    const response = await fetch(config.apiUrl, {
+    const response = await fetchWithTimeout(config.apiUrl, {
       method: 'HEAD',
       headers,
     })

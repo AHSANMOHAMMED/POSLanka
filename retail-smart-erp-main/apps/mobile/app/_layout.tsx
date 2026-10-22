@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
+import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { startAutoSync } from '../src/lib/offlineQueue'
 import { startIntakeAutoSync } from '../src/lib/intakeStore'
 import { installNotificationHandlers } from '../src/lib/notifications'
@@ -16,10 +17,11 @@ export default function RootLayout() {
   }, [])
 
   return (
-    <>
+    <SafeAreaProvider>
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
+        <Stack.Screen name="home" />
         <Stack.Screen name="login" />
         <Stack.Screen name="pos" />
         <Stack.Screen name="shifts" />
@@ -33,6 +35,6 @@ export default function RootLayout() {
         <Stack.Screen name="alerts" />
         <Stack.Screen name="labels" />
       </Stack>
-    </>
+    </SafeAreaProvider>
   )
 }

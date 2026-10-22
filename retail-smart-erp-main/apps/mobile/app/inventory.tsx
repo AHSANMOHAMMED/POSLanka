@@ -11,11 +11,13 @@ import {
 } from 'react-native'
 import { router } from 'expo-router'
 import { apiGet, getUser, qs, type AuthUser } from '../src/lib/api'
-import { hasPermission, roleLabel } from '../src/lib/roles'
+import { hasPermission, roleLabel, displayRole } from '../src/lib/roles'
 import { fetchCurrentShift, shiftWarehouseName, type Shift } from '../src/lib/shift'
 import { THEME } from '../src/lib/theme'
 import { BarcodeScannerModal } from '../src/components/BarcodeScannerModal'
 import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
+import { useHeaderPad } from '../src/lib/safeArea'
+import { goBack } from '../src/lib/nav'
 
 type MovementType = 'in' | 'out' | 'adjustment'
 
@@ -67,6 +69,7 @@ function referenceLabel(m: StockMovement) {
 }
 
 export default function InventoryScreen() {
+  const headerPad = useHeaderPad()
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
   const [shift, setShift] = useState<Shift | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -204,8 +207,8 @@ export default function InventoryScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => (router.canGoBack() ? router.back() : router.replace('/pos'))} style={styles.backButton}>
+      <View style={[styles.header, headerPad]}>
+        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -222,7 +225,7 @@ export default function InventoryScreen() {
       {user === undefined ? (
         <LoadingView />
       ) : !canView ? (
-        <EmptyView icon="🔒" title="Not available for your role" subtitle={`${roleLabel(user?.role)} accounts cannot view the stock ledger.`} />
+        <EmptyView icon="🔒" title="Not available for your role" subtitle={`${displayRole(user)} accounts cannot view the stock ledger.`} />
       ) : (
         <FlatList
           data={movements}

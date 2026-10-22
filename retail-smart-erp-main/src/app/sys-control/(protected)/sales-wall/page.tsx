@@ -1,25 +1,30 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import { Building2, Clock, Pause, Play, Receipt, ShoppingBag, Store, TrendingUp, Volume2, VolumeX, Zap } from 'lucide-react'
 import {
-  Radio,
-  Pause,
-  Play,
-  Volume2,
-  VolumeX,
-  Receipt,
-  DollarSign,
-  Zap,
-  ShoppingBag,
-  CheckCircle2,
-  Building,
-  Search,
-  TrendingUp,
-  AlertOctagon,
-  Loader2,
-  Cpu,
-} from 'lucide-react'
+  AdminCard,
+  AdminPage,
+  AdminTable,
+  AdminToolbar,
+  Alert,
+  Badge,
+  Button,
+  EmptyState,
+  SearchInput,
+  SegmentedControl,
+  Select,
+  Skeleton,
+  StatCard,
+  StatGrid,
+  StatusDot,
+  businessTypeLabel,
+  fmtLKR,
+  fmtNumber,
+  type AdminColumn,
+} from '@/components/admin/kit'
+import { cn } from '@/lib/utils'
 
 type RangeKey = 'today' | '7d' | '30d'
 
@@ -59,44 +64,42 @@ const SALES_POLL_MS = 60_000
 const MAX_FEED_ROWS = 200
 const HIGH_VALUE_THRESHOLD = 30_000
 
-const BUSINESS_TYPES: Array<{ id: string; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'supermarket', label: 'Supermarket' },
-  { id: 'retail', label: 'Retail' },
-  { id: 'restaurant', label: 'Restaurant' },
-  { id: 'auto_service', label: 'Auto Service' },
-  { id: 'dealership', label: 'Dealership' },
+const BUSINESS_TYPES: Array<{ value: string; label: string }> = [
+  { value: 'all', label: 'All types' },
+  { value: 'supermarket', label: 'Supermarket' },
+  { value: 'retail', label: 'Retail' },
+  { value: 'restaurant', label: 'Restaurant' },
+  { value: 'auto_service', label: 'Auto service' },
+  { value: 'dealership', label: 'Dealership' },
 ]
-
-const TYPE_LABEL: Record<string, string> = {
-  supermarket: 'Supermarket',
-  retail: 'Retail',
-  restaurant: 'Restaurant',
-  auto_service: 'Auto Service',
-  dealership: 'Dealership',
-}
 
 const PAYMENT_LABEL: Record<string, string> = {
   cash: 'Cash',
   card: 'Card',
-  bank_transfer: 'Bank',
+  bank_transfer: 'Bank transfer',
   credit: 'Credit',
-  gift_card: 'Gift Card',
+  gift_card: 'Gift card',
 }
 
-const BAR_COLORS = ['#6bd8cb', '#4fdbc8', '#29a195', '#04b4a2', '#222a3d']
+const RANGE_OPTIONS: Array<{ value: RangeKey; label: string }> = [
+  { value: 'today', label: 'Today' },
+  { value: '7d', label: '7 days' },
+  { value: '30d', label: '30 days' },
+]
+const RANGE_TEXT: Record<RangeKey, string> = { today: 'today', '7d': 'last 7 days', '30d': 'last 30 days' }
 
-function fmtMoney(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const MIN_AMOUNTS = [
+  { value: '0', label: 'Any amount' },
+  { value: '5000', label: 'Over LKR 5,000' },
+  { value: '25000', label: 'Over LKR 25,000' },
+  { value: '50000', label: 'Over LKR 50,000' },
+]
+
+function fmtTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('en-LK', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
-function fmtCompact(n: number): string {
-  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`
-  if (Math.abs(n) >= 1_000) return `${(n / 1_000).toFixed(1)}k`
-  return n.toFixed(0)
-}
-
-export default function RealTimeSalesWallPage() {
+export default function LiveSalesPage() {
   const [receipts, setReceipts] = useState<LiveReceipt[]>([])
   const [analytics, setAnalytics] = useState<SalesAnalytics | null>(null)
   const [range, setRange] = useState<RangeKey>('today')
@@ -106,10 +109,9 @@ export default function RealTimeSalesWallPage() {
   const [selectedPayment, setSelectedPayment] = useState<string>('all')
   const [minAmount, setMinAmount] = useState<number>(0)
   const [searchQuery, setSearchQuery] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [liveLoaded, setLiveLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastLiveAt, setLastLiveAt] = useState<Date | null>(null)
-  const [feedLatency, setFeedLatency] = useState<number | null>(null)
 
   const soundRef = useRef(soundEnabled)
   useEffect(() => {
@@ -142,18 +144,16 @@ export default function RealTimeSalesWallPage() {
   const knownIdsRef = useRef<Set<string> | null>(null)
 
   const loadLive = useCallback(async () => {
-    const started = performance.now()
     try {
       const res = await fetch('/api/sys-control/analytics/live', { cache: 'no-store' })
       if (res.status === 401) {
-        window.location.href = '/sys-control/login'
+        window.location.href = '/sys-control/login?session=expired'
         return
       }
-      if (!res.ok) throw new Error('Failed to load live feed')
+      if (!res.ok) throw new Error('The live receipt feed could not be loaded.')
       const data: LiveResponse = await res.json()
-      setFeedLatency(Math.round(performance.now() - started))
-
       const incoming = data.receipts || []
+
       if (knownIdsRef.current) {
         const fresh = incoming.filter((r) => !knownIdsRef.current!.has(r.id))
         if (fresh.some((r) => r.total >= HIGH_VALUE_THRESHOLD)) playChime()
@@ -161,7 +161,7 @@ export default function RealTimeSalesWallPage() {
       knownIdsRef.current = new Set(incoming.map((r) => r.id))
 
       setReceipts((prev) => {
-        // Merge: keep rows we've already seen (within window) so the feed never "jumps"
+        // Merge so rows already shown (within the 60 min window) never jump out
         const map = new Map<string, LiveReceipt>()
         for (const r of incoming) map.set(r.id, r)
         const cutoff = Date.now() - 60 * 60 * 1000
@@ -175,7 +175,9 @@ export default function RealTimeSalesWallPage() {
       setLastLiveAt(new Date())
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load live feed')
+      setError(err instanceof Error ? err.message : 'The live receipt feed could not be loaded.')
+    } finally {
+      setLiveLoaded(true)
     }
   }, [playChime])
 
@@ -185,48 +187,36 @@ export default function RealTimeSalesWallPage() {
       if (type !== 'all') params.set('businessType', type)
       const res = await fetch(`/api/sys-control/analytics/sales?${params.toString()}`, { cache: 'no-store' })
       if (res.status === 401) {
-        window.location.href = '/sys-control/login'
+        window.location.href = '/sys-control/login?session=expired'
         return
       }
-      if (!res.ok) throw new Error('Failed to load sales analytics')
+      if (!res.ok) throw new Error('Sales totals could not be loaded.')
       setAnalytics(await res.json())
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load sales analytics')
+      setError(err instanceof Error ? err.message : 'Sales totals could not be loaded.')
     }
   }, [])
 
-  // Initial load
-  useEffect(() => {
-    let cancelled = false
-    Promise.all([loadLive(), loadAnalytics('today', 'all')]).finally(() => {
-      if (!cancelled) setLoading(false)
-    })
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Live feed polling (5s) – paused when frozen
+  // Live feed: immediately, then every 5 s while visible and not paused
   useEffect(() => {
     if (isFrozen) return
-    const id = setInterval(() => {
+    loadLive()
+    const id = window.setInterval(() => {
       if (!document.hidden) loadLive()
     }, LIVE_POLL_MS)
-    return () => clearInterval(id)
+    return () => window.clearInterval(id)
   }, [isFrozen, loadLive])
 
-  // Analytics polling (60s) – refetch immediately on range / type change
+  // Totals: immediately on range/type change, then every 60 s
   useEffect(() => {
     loadAnalytics(range, selectedType)
-    const id = setInterval(() => {
+    const id = window.setInterval(() => {
       if (!document.hidden) loadAnalytics(range, selectedType)
     }, SALES_POLL_MS)
-    return () => clearInterval(id)
+    return () => window.clearInterval(id)
   }, [range, selectedType, loadAnalytics])
 
-  // Filtered feed
   const q = searchQuery.trim().toLowerCase()
   const filtered = receipts.filter((tx) => {
     if (selectedType !== 'all' && tx.businessType !== selectedType) return false
@@ -243,445 +233,247 @@ export default function RealTimeSalesWallPage() {
     return true
   })
 
-  // Velocity: receipts in the last 60 minutes (from the live window)
   const lastHourCount = receipts.filter((r) => !r.isReturn).length
-  const txPerMin = lastHourCount / 60
   const lastHourNet = receipts.reduce((s, r) => s + r.total, 0)
-
   const totals = analytics?.totals
-  const typeTotal = (analytics?.byBusinessType || []).reduce((s, t) => s + t.netSales, 0)
-  const rangeLabel = range === 'today' ? 'Today' : range === '7d' ? '7 Days' : '30 Days'
+  const typeTotal = (analytics?.byBusinessType || []).reduce((s, t) => s + Math.max(0, t.netSales), 0)
+  const filtersActive = selectedType !== 'all' || selectedPayment !== 'all' || minAmount > 0 || q.length > 0
 
-  if (loading) {
-    return (
-      <div className="py-24 text-center text-[#bcc9c6] space-y-3">
-        <Loader2 className="w-8 h-8 animate-spin mx-auto text-[#6bd8cb]" />
-        <div className="font-mono text-xs">Connecting to live sales stream...</div>
-      </div>
-    )
-  }
+  const columns: AdminColumn<LiveReceipt>[] = [
+    { key: 'time', header: 'Time', width: '96px', cell: (tx) => <span className="adm-num text-adm-muted">{fmtTime(tx.createdAt)}</span> },
+    {
+      key: 'vendor',
+      header: 'Vendor',
+      primary: true,
+      cell: (tx) => (
+        <span className="block min-w-0">
+          <Link href={`/sys-control/vendors/${tx.tenantId}`} className="font-medium text-adm-fg hover:text-adm-primary">{tx.tenantName}</Link>
+          {tx.warehouseName && <span className="block text-[12px] text-adm-subtle">{tx.warehouseName}</span>}
+        </span>
+      ),
+    },
+    { key: 'invoice', header: 'Receipt', cell: (tx) => <span className="adm-num">{tx.invoiceNo}</span> },
+    { key: 'cashier', header: 'Cashier', hideBelow: 'lg', cell: (tx) => tx.cashierName || <span className="text-adm-subtle">—</span> },
+    {
+      key: 'payment',
+      header: 'Payment',
+      hideBelow: 'lg',
+      cell: (tx) => (tx.paymentMethod ? PAYMENT_LABEL[tx.paymentMethod] || tx.paymentMethod : <span className="text-adm-subtle">—</span>),
+    },
+    {
+      key: 'type',
+      header: 'Type',
+      hideBelow: 'xl',
+      cell: (tx) => (tx.isReturn ? <Badge tone="danger">Return</Badge> : <span className="text-adm-muted">{businessTypeLabel(tx.businessType)}</span>),
+    },
+    {
+      key: 'amount',
+      header: 'Amount',
+      align: 'right',
+      cell: (tx) => (
+        <span className={cn('adm-num font-medium', tx.isReturn ? 'text-adm-danger' : tx.total >= HIGH_VALUE_THRESHOLD ? 'text-adm-primary' : 'text-adm-fg')}>
+          {fmtLKR(tx.total, 2)}
+        </span>
+      ),
+    },
+  ]
 
   return (
-    <div className="space-y-6 pb-12">
-      {/* Live Telemetry Status Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-4 px-5 py-3 bg-[#131b2e] border border-[#2d3449] rounded-xl shadow-sm">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="relative flex items-center justify-center w-3 h-3">
-            {!isFrozen && (
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#4fdbc8] opacity-75"></span>
-            )}
-            <span className={`relative inline-flex rounded-full h-2 w-2 ${isFrozen ? 'bg-[#ff5451]' : 'bg-[#4fdbc8]'}`}></span>
-          </div>
-          <div className="flex items-center gap-2 truncate">
-            <span className="font-mono text-xs text-[#4fdbc8] font-bold uppercase tracking-widest">
-              {isFrozen ? 'STREAM FROZEN' : 'LIVE RECEIPT STREAM'}
-            </span>
-            <span className="text-[#3d4947]">•</span>
-            <span className="font-mono text-xs text-[#bcc9c6] truncate">
-              LAST SYNC {lastLiveAt ? lastLiveAt.toLocaleTimeString('en-LK', { hour12: false }) : '—'}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#222a3d] border border-[#3d4947] text-[#6bd8cb] font-mono text-xs">
-            <Zap className="w-3.5 h-3.5 text-[#6bd8cb]" />
-            FEED LATENCY: {feedLatency !== null ? `${feedLatency}ms` : '—'}
-          </span>
-
-          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#171f33] border border-[#2d3449] text-[#4fdbc8] font-mono text-xs">
-            <CheckCircle2 className="w-3.5 h-3.5 text-[#4fdbc8]" />
-            POLL 5s / 60s
-          </span>
-
-          <button
-            type="button"
+    <AdminPage
+      title="Live sales"
+      titleAside={
+        <Badge tone={isFrozen ? 'warning' : 'success'} dot>
+          {isFrozen ? 'Paused' : 'Live'}
+        </Badge>
+      }
+      description={
+        <>
+          Receipts from every vendor in the last 60 minutes, refreshed every 5 seconds.
+          {lastLiveAt && <> Last update {lastLiveAt.toLocaleTimeString('en-LK', { hour12: false })}.</>}
+        </>
+      }
+      actions={
+        <>
+          <Button
+            icon={soundEnabled ? Volume2 : VolumeX}
             onClick={() => setSoundEnabled(!soundEnabled)}
-            className={`p-1.5 rounded-lg border transition-colors ${
-              soundEnabled
-                ? 'bg-[#6bd8cb]/20 border-[#6bd8cb] text-[#6bd8cb]'
-                : 'bg-[#171f33] border-[#2d3449] text-[#879391] hover:text-white'
-            }`}
-            title={soundEnabled ? 'Mute Large Transaction Chime' : 'Enable Large Transaction Chime'}
+            aria-pressed={soundEnabled}
+            title={`Chime for receipts over ${fmtLKR(HIGH_VALUE_THRESHOLD)}`}
           >
-            {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-          </button>
+            {soundEnabled ? 'Chime on' : 'Chime off'}
+          </Button>
+          <Button variant={isFrozen ? 'primary' : 'secondary'} icon={isFrozen ? Play : Pause} onClick={() => setIsFrozen(!isFrozen)}>
+            {isFrozen ? 'Resume' : 'Pause'}
+          </Button>
+        </>
+      }
+    >
+      {error && <Alert tone="danger">{error}</Alert>}
 
-          <button
-            type="button"
-            onClick={() => setIsFrozen(!isFrozen)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all ${
-              isFrozen
-                ? 'bg-[#ff5451] border-[#ff5451] text-white hover:bg-[#ff897d]'
-                : 'bg-[#222a3d] border-[#3d4947] text-white hover:bg-[#2d3449]'
-            }`}
+      <StatGrid>
+        <StatCard
+          label={`Net sales, ${RANGE_TEXT[range]}`}
+          icon={TrendingUp}
+          loading={!analytics}
+          value={fmtLKR(totals?.netSales)}
+          hint={`Gross ${fmtLKR(totals?.grossSales)} · returns ${fmtLKR(totals?.returns)}`}
+        />
+        <StatCard
+          label={`Receipts, ${RANGE_TEXT[range]}`}
+          icon={Receipt}
+          tone="info"
+          loading={!analytics}
+          value={fmtNumber(totals?.receipts)}
+          hint={`${fmtNumber(totals?.voids)} voided`}
+        />
+        <StatCard
+          label="Last 60 minutes"
+          icon={Zap}
+          tone="warning"
+          loading={!liveLoaded}
+          value={fmtLKR(lastHourNet)}
+          hint={`${lastHourCount} receipts · ${(lastHourCount / 60).toFixed(1)} per minute`}
+        />
+        <StatCard
+          label="Average basket"
+          icon={ShoppingBag}
+          tone="success"
+          loading={!analytics}
+          value={fmtLKR(totals?.avgBasket)}
+          hint={`${analytics?.openShifts.count ?? 0} POS shifts open now`}
+        />
+      </StatGrid>
+
+      <AdminCard flush>
+        <div className="space-y-3 p-4 sm:p-5">
+          <AdminToolbar
+            end={<SegmentedControl ariaLabel="Totals range" value={range} onChange={setRange} options={RANGE_OPTIONS} size="sm" />}
           >
-            {isFrozen ? (
-              <>
-                <Play className="w-3.5 h-3.5" />
-                <span>Resume Stream</span>
-              </>
-            ) : (
-              <>
-                <Pause className="w-3.5 h-3.5" />
-                <span>Freeze Stream</span>
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {error && (
-        <div className="p-3 bg-[#93000a]/30 border border-[#ff5451]/50 rounded-xl text-xs text-[#ffdad6] flex items-center gap-2">
-          <AlertOctagon className="w-4 h-4 text-[#ffb4ab]" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      {/* KPI Ticker Metrics Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm relative overflow-hidden group hover:border-[#6bd8cb]/50 transition-all">
-          <div className="flex items-center justify-between text-xs text-[#879391] mb-1 font-mono uppercase font-semibold">
-            <span>Receipts {rangeLabel}</span>
-            <Receipt className="w-4 h-4 text-[#6bd8cb]" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-2xl font-bold text-white tracking-tight">
-              {(totals?.receipts ?? 0).toLocaleString()}
-            </span>
-            <span className="font-mono text-xs text-[#ff5451] font-semibold">{totals?.voids ?? 0} voids</span>
-          </div>
-          <div className="flex items-center gap-2 mt-2.5 font-mono text-[10px] text-[#bcc9c6]">
-            <span>RETURNS: LKR {fmtCompact(totals?.returns ?? 0)}</span>
-          </div>
-        </div>
-
-        <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm relative overflow-hidden group hover:border-[#4fdbc8]/50 transition-all">
-          <div className="flex items-center justify-between text-xs text-[#879391] mb-1 font-mono uppercase font-semibold">
-            <span>Net Sales {rangeLabel} (LKR)</span>
-            <DollarSign className="w-4 h-4 text-[#4fdbc8]" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-2xl font-bold text-[#4fdbc8] tracking-tight">
-              {fmtMoney(totals?.netSales ?? 0)}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 mt-2.5 font-mono text-[10px] text-[#bcc9c6]">
-            <span className="text-[#4fdbc8] font-semibold">GROSS: {fmtCompact(totals?.grossSales ?? 0)}</span>
-            <span>•</span>
-            <span>LAST 60 MIN: {fmtCompact(lastHourNet)}</span>
-          </div>
-        </div>
-
-        <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm relative overflow-hidden group hover:border-[#6bd8cb]/50 transition-all">
-          <div className="flex items-center justify-between text-xs text-[#879391] mb-1 font-mono uppercase font-semibold">
-            <span>Throughput Velocity</span>
-            <Zap className="w-4 h-4 text-[#6bd8cb]" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-2xl font-bold text-white tracking-tight">{txPerMin.toFixed(2)}</span>
-            <span className="font-mono text-sm text-[#6bd8cb] font-semibold">tx / min</span>
-          </div>
-          <div className="flex items-center gap-2 mt-2.5 font-mono text-[10px] text-[#bcc9c6]">
-            <span>{lastHourCount} RECEIPTS IN LAST 60 MIN</span>
-          </div>
-        </div>
-
-        <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm relative overflow-hidden group hover:border-[#4fdbc8]/50 transition-all">
-          <div className="flex items-center justify-between text-xs text-[#879391] mb-1 font-mono uppercase font-semibold">
-            <span>Average Basket</span>
-            <ShoppingBag className="w-4 h-4 text-[#4fdbc8]" />
-          </div>
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono text-2xl font-bold text-white tracking-tight">
-              LKR {fmtMoney(totals?.avgBasket ?? 0)}
-            </span>
-          </div>
-          <div className="flex items-center gap-2 mt-2.5 font-mono text-[10px] text-[#bcc9c6]">
-            <Cpu className="w-3 h-3 text-[#4fdbc8]" />
-            <span className="text-[#4fdbc8] font-semibold">{analytics?.openShifts.count ?? 0} OPEN SHIFTS</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Filter Strip */}
-      <div className="bg-[#131b2e] border border-[#2d3449] p-4 rounded-xl shadow-sm space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10px] text-[#879391] uppercase tracking-wider font-semibold mr-1">
-              SECTOR:
-            </span>
-            {BUSINESS_TYPES.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                onClick={() => setSelectedType(t.id)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
-                  selectedType === t.id
-                    ? 'bg-[#29a195] text-[#00302b]'
-                    : 'bg-[#171f33] text-[#bcc9c6] hover:bg-[#222a3d] hover:text-white border border-[#2d3449]'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          <div className="relative min-w-[220px]">
-            <Search className="absolute left-3 top-2.5 w-3.5 h-3.5 text-[#879391]" />
-            <input
-              type="text"
-              placeholder="Search vendor, invoice, cashier..."
+            <SearchInput
+              size="sm"
+              wrapperClassName="w-full sm:w-72"
+              placeholder="Vendor, receipt no. or cashier"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-8 pr-3 py-1.5 bg-[#060e20] border border-[#2d3449] rounded-lg text-white font-mono text-xs placeholder:text-[#879391] focus:border-[#6bd8cb] outline-none"
+              aria-label="Filter receipts"
             />
-          </div>
+            <Select size="sm" className="w-full min-[480px]:w-auto" value={selectedType} onChange={(e) => setSelectedType(e.target.value)} aria-label="Business type">
+              {BUSINESS_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </Select>
+            <Select size="sm" className="w-full min-[480px]:w-auto" value={selectedPayment} onChange={(e) => setSelectedPayment(e.target.value)} aria-label="Payment method">
+              <option value="all">All payments</option>
+              {Object.entries(PAYMENT_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </Select>
+            <Select size="sm" className="w-full min-[480px]:w-auto" value={String(minAmount)} onChange={(e) => setMinAmount(Number(e.target.value))} aria-label="Minimum amount">
+              {MIN_AMOUNTS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </Select>
+          </AdminToolbar>
         </div>
+      </AdminCard>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[#2d3449]/40 text-xs">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[10px] text-[#879391] uppercase font-semibold">RANGE:</span>
-              <div className="flex items-center gap-1 bg-[#060e20] p-0.5 rounded-lg font-mono text-[11px]">
-                {(['today', '7d', '30d'] as RangeKey[]).map((r) => (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => setRange(r)}
-                    className={`px-2 py-0.5 rounded ${
-                      range === r ? 'bg-[#6bd8cb] text-[#003732] font-bold' : 'text-[#bcc9c6] hover:text-white'
-                    }`}
-                  >
-                    {r === 'today' ? 'Today' : r.toUpperCase()}
-                  </button>
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+        <AdminCard
+          className="xl:col-span-8"
+          title="Receipts, last 60 minutes"
+          description={`${filtered.length} of ${receipts.length} shown`}
+          icon={<StatusDot tone={isFrozen ? 'warning' : 'success'} pulse={!isFrozen} />}
+          flush
+        >
+          <AdminTable
+            columns={columns}
+            rows={filtered}
+            rowKey={(r) => r.id}
+            loading={!liveLoaded}
+            maxHeight={640}
+            minWidth={560}
+            empty={
+              <EmptyState
+                icon={Receipt}
+                title={filtersActive ? 'No receipts match these filters' : 'No receipts in the last hour'}
+                description={filtersActive ? 'Clear a filter to see more.' : 'New receipts appear here a few seconds after they’re rung up.'}
+                action={
+                  filtersActive ? (
+                    <Button size="sm" onClick={() => { setSelectedType('all'); setSelectedPayment('all'); setMinAmount(0); setSearchQuery('') }}>
+                      Clear filters
+                    </Button>
+                  ) : undefined
+                }
+              />
+            }
+          />
+        </AdminCard>
+
+        <div className="space-y-5 xl:col-span-4">
+          <AdminCard title="By business type" description={`Net sales, ${RANGE_TEXT[range]}`} icon={<Store size={17} />}>
+            {!analytics ? (
+              <Skeleton className="h-20 w-full" />
+            ) : analytics.byBusinessType.length === 0 ? (
+              <EmptyState compact title="No sales in this range" />
+            ) : (
+              <ul className="space-y-3">
+                {analytics.byBusinessType.map((t) => {
+                  const pct = typeTotal > 0 ? Math.round((Math.max(0, t.netSales) / typeTotal) * 100) : 0
+                  return (
+                    <li key={t.businessType}>
+                      <div className="mb-1 flex items-baseline justify-between gap-3 text-[13px]">
+                        <span className="text-adm-fg">{businessTypeLabel(t.businessType)}</span>
+                        <span className="adm-num text-adm-muted">{fmtLKR(t.netSales)} · {pct}%</span>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-adm-surface-3">
+                        <div className="h-full rounded-full bg-adm-primary" style={{ width: `${pct}%` }} />
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </AdminCard>
+
+          <AdminCard title="Top branches" description={`Net sales, ${RANGE_TEXT[range]}`} icon={<Building2 size={17} />} flush>
+            {!analytics ? (
+              <div className="p-4"><Skeleton className="h-20 w-full" /></div>
+            ) : analytics.topBranches.length === 0 ? (
+              <EmptyState compact title="No branch sales in this range" />
+            ) : (
+              <ul className="divide-y divide-[var(--adm-border)]">
+                {analytics.topBranches.slice(0, 6).map((b) => (
+                  <li key={`${b.tenantId}-${b.warehouseId ?? 'none'}`} className="flex items-center justify-between gap-3 px-4 py-2.5 sm:px-5">
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13.5px] font-medium text-adm-fg">{b.warehouseName}</span>
+                      <span className="block truncate text-[12px] text-adm-subtle">{b.tenantName} · {fmtNumber(b.receipts)} receipts</span>
+                    </span>
+                    <span className="adm-num shrink-0 text-[13.5px] text-adm-fg">{fmtLKR(b.netSales)}</span>
+                  </li>
                 ))}
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-[10px] text-[#879391] uppercase font-semibold">PAYMENT:</span>
-              <select
-                value={selectedPayment}
-                onChange={(e) => setSelectedPayment(e.target.value)}
-                className="bg-[#060e20] border border-[#2d3449] text-white text-xs rounded-lg px-2.5 py-1 outline-none font-mono"
-              >
-                <option value="all">All methods</option>
-                <option value="cash">Cash</option>
-                <option value="card">Card</option>
-                <option value="bank_transfer">Bank Transfer</option>
-                <option value="credit">Credit</option>
-                <option value="gift_card">Gift Card</option>
-              </select>
-            </div>
-          </div>
+              </ul>
+            )}
+          </AdminCard>
 
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[10px] text-[#879391] uppercase font-semibold">MIN AMOUNT:</span>
-            {[
-              { label: 'All', value: 0 },
-              { label: '> 5K', value: 5000 },
-              { label: '> 25K', value: 25000 },
-              { label: '> 50K (VIP)', value: 50000 },
-            ].map((th) => (
-              <button
-                key={th.value}
-                type="button"
-                onClick={() => setMinAmount(th.value)}
-                className={`px-2 py-0.5 rounded font-mono text-[11px] font-semibold transition-colors ${
-                  minAmount === th.value ? 'bg-[#6bd8cb] text-[#003732]' : 'bg-[#171f33] text-[#bcc9c6] hover:bg-[#222a3d]'
-                }`}
-              >
-                {th.label}
-              </button>
-            ))}
-          </div>
+          <AdminCard
+            title="Open POS shifts"
+            icon={<Clock size={17} />}
+            actions={analytics ? <Badge tone={analytics.openShifts.count > 0 ? 'success' : 'neutral'}>{analytics.openShifts.count} open</Badge> : undefined}
+            flush
+          >
+            {!analytics ? (
+              <div className="p-4"><Skeleton className="h-16 w-full" /></div>
+            ) : analytics.openShifts.byVendor.length === 0 ? (
+              <EmptyState compact title="No tills open right now" />
+            ) : (
+              <ul className="divide-y divide-[var(--adm-border)]">
+                {analytics.openShifts.byVendor.slice(0, 8).map((v) => (
+                  <li key={v.tenantId}>
+                    <Link href={`/sys-control/vendors/${v.tenantId}`} className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-adm-surface-2 sm:px-5">
+                      <span className="truncate text-[13.5px] text-adm-fg">{v.name}</span>
+                      <span className="adm-num shrink-0 text-[13px] text-adm-muted">{v.count} {v.count === 1 ? 'till' : 'tills'}</span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </AdminCard>
         </div>
       </div>
-
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-        {/* Left: Live Transactions Feed */}
-        <div className="xl:col-span-8 bg-[#131b2e] border border-[#2d3449] rounded-xl shadow-md overflow-hidden flex flex-col">
-          <div className="p-4 border-b border-[#2d3449] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Radio className={`w-4 h-4 text-[#4fdbc8] ${isFrozen ? '' : 'animate-pulse'}`} />
-              <h3 className="font-bold text-base text-white">Live Receipt Stream (last 60 min)</h3>
-              <span className="font-mono text-[11px] bg-[#060e20] text-[#6bd8cb] px-2 py-0.5 rounded font-bold">
-                {filtered.length} rows
-              </span>
-            </div>
-            <div className="font-mono text-xs text-[#879391]">Updates every 5s</div>
-          </div>
-
-          <div className="overflow-x-auto max-h-[720px] overflow-y-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-[#060e20] text-[#879391] font-mono text-[10px] uppercase border-b border-[#2d3449] sticky top-0">
-                <tr>
-                  <th className="px-4 py-3">Time</th>
-                  <th className="px-4 py-3">Invoice</th>
-                  <th className="px-4 py-3">Vendor / Outlet</th>
-                  <th className="px-3 py-3">Cashier</th>
-                  <th className="px-3 py-3">Payment</th>
-                  <th className="px-3 py-3">Type</th>
-                  <th className="px-4 py-3 text-right">Amount (LKR)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#2d3449]/40 font-mono text-xs">
-                {filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-[#879391]">
-                      No receipts in the last 60 minutes matching the current filters.
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-[#171f33] transition-colors group">
-                      <td className="px-4 py-3 text-[#bcc9c6] whitespace-nowrap">
-                        {new Date(tx.createdAt).toLocaleTimeString('en-LK', { hour12: false })}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <span className="text-[#4fdbc8] font-bold">{tx.invoiceNo}</span>
-                        {tx.isReturn && (
-                          <span className="ml-1.5 px-1.5 py-0.5 rounded bg-[#ff5451]/20 text-[#ffb4ab] text-[9px] font-bold">
-                            RETURN
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <Link
-                          href={`/sys-control/vendors/${tx.tenantId}`}
-                          className="font-sans font-semibold text-white truncate max-w-[200px] block hover:text-[#6bd8cb] hover:underline"
-                        >
-                          {tx.tenantName}
-                        </Link>
-                        <div className="text-[10px] text-[#879391]">
-                          {tx.tenantSlug}
-                          {tx.warehouseName ? ` • ${tx.warehouseName}` : ''}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-[#bcc9c6] whitespace-nowrap">{tx.cashierName || '—'}</td>
-                      <td className="px-3 py-3 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold ${
-                            tx.paymentMethod === 'card'
-                              ? 'bg-[#04b4a2]/20 text-[#4fdbc8] border border-[#04b4a2]/40'
-                              : tx.paymentMethod === 'bank_transfer'
-                                ? 'bg-[#29a195]/20 text-[#6bd8cb] border border-[#29a195]/40'
-                                : tx.paymentMethod === 'credit'
-                                  ? 'bg-[#ff5451]/20 text-[#ffb4ab] border border-[#ff5451]/40'
-                                  : 'bg-[#222a3d] text-[#bcc9c6]'
-                          }`}
-                        >
-                          {tx.paymentMethod ? PAYMENT_LABEL[tx.paymentMethod] || tx.paymentMethod : '—'}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3 whitespace-nowrap text-[10px] text-[#bcc9c6]">
-                        {TYPE_LABEL[tx.businessType] || tx.businessType}
-                      </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap font-bold">
-                        <span
-                          className={
-                            tx.total < 0 ? 'text-[#ffb4ab]' : tx.total > 25000 ? 'text-[#6bd8cb] text-sm' : 'text-white'
-                          }
-                        >
-                          {fmtMoney(tx.total)}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Right: Sector mix & Leaderboard */}
-        <div className="xl:col-span-4 space-y-6">
-          <div className="bg-[#131b2e] border border-[#2d3449] p-5 rounded-xl shadow-md space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-[#2d3449]/50">
-              <h4 className="font-bold text-sm text-white flex items-center gap-2">
-                <Building className="w-4 h-4 text-[#6bd8cb]" />
-                Sales by Business Type
-              </h4>
-              <span className="font-mono text-[10px] text-[#4fdbc8] font-bold uppercase">{rangeLabel}</span>
-            </div>
-
-            <div className="space-y-3 font-mono text-xs">
-              {(analytics?.byBusinessType || []).length === 0 && (
-                <div className="text-[#879391] text-center py-4">No sales in this range</div>
-              )}
-              {(analytics?.byBusinessType || []).map((t, i) => {
-                const pct = typeTotal > 0 ? Math.round((t.netSales / typeTotal) * 100) : 0
-                return (
-                  <div key={t.businessType}>
-                    <div className="flex justify-between text-[#bcc9c6] mb-1">
-                      <span>
-                        {TYPE_LABEL[t.businessType] || t.businessType} • {t.receipts} receipts
-                      </span>
-                      <span className="text-white font-bold">{pct}%</span>
-                    </div>
-                    <div className="w-full bg-[#060e20] h-2 rounded-full overflow-hidden">
-                      <div className="h-full" style={{ width: `${pct}%`, backgroundColor: BAR_COLORS[i % BAR_COLORS.length] }}></div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-
-          <div className="bg-[#131b2e] border border-[#2d3449] p-5 rounded-xl shadow-md space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-[#2d3449]/50">
-              <h4 className="font-bold text-sm text-white flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-[#4fdbc8]" />
-                Top Branches {rangeLabel}
-              </h4>
-              <span className="font-mono text-[10px] text-[#bcc9c6]">NET SALES</span>
-            </div>
-
-            <div className="space-y-3">
-              {(analytics?.topBranches || []).length === 0 && (
-                <div className="text-[#879391] text-center py-4 font-mono text-xs">No sales in this range</div>
-              )}
-              {(analytics?.topBranches || []).slice(0, 6).map((b, idx) => (
-                <Link
-                  key={`${b.tenantId}-${b.warehouseId ?? idx}`}
-                  href={`/sys-control/vendors/${b.tenantId}`}
-                  className="p-3 bg-[#060e20] border border-[#2d3449]/50 rounded-lg flex items-center justify-between hover:border-[#6bd8cb]/40 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <div className="text-xs font-semibold text-white truncate">{b.tenantName}</div>
-                    <div className="font-mono text-[10px] text-[#879391] truncate">
-                      {b.warehouseName} • {b.receipts} receipts
-                    </div>
-                  </div>
-                  <div className="font-mono text-xs text-[#6bd8cb] font-bold shrink-0">LKR {fmtCompact(b.netSales)}</div>
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-[#131b2e] border border-[#2d3449] p-5 rounded-xl shadow-md space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-[#2d3449]/50">
-              <h4 className="font-bold text-sm text-white flex items-center gap-2">
-                <Cpu className="w-4 h-4 text-[#6bd8cb]" />
-                Open Shifts by Vendor
-              </h4>
-              <span className="font-mono text-[10px] text-[#4fdbc8] font-bold">{analytics?.openShifts.count ?? 0} OPEN</span>
-            </div>
-            <div className="space-y-1.5 font-mono text-[11px]">
-              {(analytics?.openShifts.byVendor || []).length === 0 && (
-                <div className="text-[#879391] text-center py-3">No open shifts</div>
-              )}
-              {(analytics?.openShifts.byVendor || []).slice(0, 8).map((v) => (
-                <div key={v.tenantId} className="flex justify-between text-[#bcc9c6]">
-                  <span className="truncate">{v.name}</span>
-                  <span className="text-white font-bold">{v.count}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    </AdminPage>
   )
 }

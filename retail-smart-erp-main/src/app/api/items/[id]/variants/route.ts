@@ -4,6 +4,7 @@ import { withTenant } from '@/lib/db'
 import { items, warehouseStock } from '@/lib/db/schema'
 import { eq, and, inArray, sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { requireModule } from '@/lib/auth/roles'
 
 export async function GET(
   request: NextRequest,
@@ -14,6 +15,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, ['stock', 'selling'])
+    if (moduleError) return moduleError
 
     const { id: parentId } = await params
     const { searchParams } = new URL(request.url)

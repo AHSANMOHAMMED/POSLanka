@@ -1,58 +1,149 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
-import {
-  Mail, Lock, Loader2, CheckCircle, Eye, EyeOff,
-  ShieldCheck, BarChart3, Zap, Users, Sparkles,
-} from 'lucide-react'
-import { Logo } from '@/components/ui/logo'
+import { ArrowRight, Building2, Lock, Mail, X } from 'lucide-react'
 import { broadcastAuthEvent } from '@/lib/auth/events'
-import { MockPOS } from '@/components/landing/mockups/MockPOS'
-import { MockBrowserFrame } from '@/components/landing/mockups/MockBrowserFrame'
+import {
+  Alert,
+  AuthHeading,
+  AuthShell,
+  Button,
+  Field,
+  Input,
+  PasswordInput,
+  SegmentedControl,
+} from '@/components/admin/kit'
+
+type Mode = 'staff' | 'owner'
+
+interface RecentCompany {
+  slug: string
+  name: string
+  logoUrl: string | null
+}
+
+const RECENT_KEY = 'poslanka:last-company'
+
+function parseRecent(raw: string | null): RecentCompany | null {
+  if (!raw) return null
+  try {
+    const v = JSON.parse(raw)
+    return v && typeof v.slug === 'string' && typeof v.name === 'string' ? v : null
+  } catch {
+    return null
+  }
+}
+
+function readRecentRaw(): string | null {
+  try {
+    return localStorage.getItem(RECENT_KEY)
+  } catch {
+    return null
+  }
+}
+
+const noopSubscribe = () => () => {}
+
+function CompanyAvatar({ name, logoUrl }: { name: string; logoUrl: string | null }) {
+  const [broken, setBroken] = useState(false)
+  if (logoUrl && !broken) {
+    return (
+      <Image src={logoUrl} alt="" width={36} height={36} unoptimized onError={() => setBroken(true)} className="h-9 w-9 rounded-lg border border-adm-border bg-white object-contain" />
+    )
+  }
+  const initials = name.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase()
+  return <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-adm-primary-soft text-[13px] font-semibold text-adm-primary-soft-fg">{initials || '•'}</span>
+}
 
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const registered = searchParams.get('registered') === 'true'
+  const [mode, setMode] = useState<Mode>(registered || searchParams.get('tab') === 'account' ? 'owner' : 'staff')
+  // Remembered company (per browser); null during SSR so the markup stays stable
+  const recentRaw = useSyncExternalStore(noopSubscribe, readRecentRaw, () => null)
+  const [recentDismissed, setRecentDismissed] = useState(false)
+  const storedRecent = useMemo(() => parseRecent(recentRaw), [recentRaw])
+  const recent = recentDismissed ? null : storedRecent
+
+  // Business ID step
+  const [identifier, setIdentifier] = useState(searchParams.get('company') ?? '')
+  const [lookingUp, setLookingUp] = useState(false)
+  const [lookupError, setLookupError] = useState('')
+
+  // Owner account step
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
-  const [checkingSession, setCheckingSession] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
+    // Already signed in to the owner portal → go straight there
+    let cancelled = false
     fetch('/api/account-auth/session')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (data?.user?.id) {
-          router.push('/account')
-        } else {
-          setCheckingSession(false)
-        }
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.user?.id) router.replace('/account')
       })
-      .catch(() => setCheckingSession(false))
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [router])
 
-  const registered = searchParams.get('registered') === 'true'
+  const goToCompany = (c: RecentCompany) => {
+    try {
+      localStorage.setItem(RECENT_KEY, JSON.stringify(c))
+    } catch {
+      // storage unavailable — not important
+    }
+    router.push(`/c/${encodeURIComponent(c.slug)}/login`)
+  }
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+  async function handleLookup(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const value = identifier.trim()
+    if (value.length < 2) {
+      setLookupError('Enter your Business ID — ask your business owner or manager if you don’t have it.')
+      return
+    }
+    setLookupError('')
+    setLookingUp(true)
+    try {
+      const res = await fetch('/api/lookup-tenant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: value }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.status === 429) {
+        setLookupError(data.error || 'Too many attempts. Please wait a minute and try again.')
+      } else if (!res.ok) {
+        setLookupError(data.error || 'Something went wrong. Please try again.')
+      } else if (!data.tenant) {
+        setLookupError('We couldn’t find an active business with that ID. Check the ID and try again.')
+      } else {
+        goToCompany(data.tenant)
+        return
+      }
+    } catch {
+      setLookupError('Can’t reach POSLanka. Check your connection and try again.')
+    }
+    setLookingUp(false)
+  }
+
+  async function handleOwnerSignIn(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setLoading(true)
     setError('')
-
     try {
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-      })
-
+      const result = await signIn('credentials', { email: email.trim(), password, redirect: false })
       if (result?.error) {
-        setError('Invalid email or password')
+        setError('That email and password don’t match an owner account.')
         setLoading(false)
       } else {
         broadcastAuthEvent('login', 'account')
@@ -60,239 +151,146 @@ function LoginForm() {
         router.refresh()
       }
     } catch {
-      setError('An error occurred. Please try again.')
+      setError('Something went wrong. Please try again.')
       setLoading(false)
     }
   }
 
-  if (checkingSession) {
-    return <LoginFallback />
-  }
-
   return (
-    <div className="min-h-screen flex">
-      {/* Left side — Image + gradient hero panel */}
-      <div className="hidden lg:flex lg:w-[55%] relative overflow-hidden">
-        {/* Background image */}
-        <Image
-          src="https://images.unsplash.com/photo-1556742031-c6961e8560b0?w=1200"
-          alt=""
-          fill
-          className="object-cover"
-          priority
-          quality={85}
-        />
-        {/* Gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-br from-emerald-900/90 via-emerald-800/80 to-stone-900/70" />
+    <AuthShell
+      footer={
+        <>
+          New to POSLanka?{' '}
+          <Link href="/register" className="font-medium text-adm-primary hover:underline">Create an account</Link>
+        </>
+      }
+    >
+      <AuthHeading
+        title="Sign in"
+        description={mode === 'staff' ? 'Enter your Business ID to open your company’s sign-in page.' : 'Business owners: manage your companies, billing and staff.'}
+      />
 
-        {/* Floating decorative shapes */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
-          <div className="absolute top-[10%] right-[15%] w-20 h-20 rounded-2xl bg-white/10 backdrop-blur-sm rotate-12 sparkle-1" />
-          <div className="absolute bottom-[20%] left-[10%] w-16 h-16 rounded-full bg-white/10 backdrop-blur-sm sparkle-2" />
-          <div className="absolute top-[45%] right-[8%] w-12 h-12 rounded-md bg-white/10 backdrop-blur-sm -rotate-12 sparkle-3" />
-          <div className="absolute top-[70%] left-[25%] w-14 h-14 rounded-2xl bg-white/10 backdrop-blur-sm rotate-45 sparkle-1" />
-        </div>
+      <SegmentedControl
+        ariaLabel="Sign-in type"
+        className="mb-6 flex w-full [&>button]:flex-1"
+        value={mode}
+        onChange={(m) => {
+          setMode(m)
+          setError('')
+          setLookupError('')
+        }}
+        options={[
+          { value: 'staff', label: 'Staff sign-in' },
+          { value: 'owner', label: 'Owner account' },
+        ]}
+      />
 
-        {/* Content */}
-        <div className="relative z-10 flex flex-col justify-between p-12 w-full">
-          <div>
-            <Logo variant="full" size={44} subtitle="Point of Sale System" />
-          </div>
-
-          <div>
-            <h2 className="text-4xl xl:text-5xl font-extrabold leading-tight text-white mb-4 tracking-tight">
-              Welcome back to<br />
-              your <span className="bg-gradient-to-r from-amber-300 to-emerald-300 bg-clip-text text-transparent">dashboard.</span>
-            </h2>
-            <p className="text-lg text-emerald-200 mb-10 max-w-md">
-              AI-powered POS & ERP for retail, restaurants, supermarkets, and auto service centers.
-            </p>
-
-            {/* App mockup preview */}
-            <div className="my-6 rounded-md overflow-hidden shadow-2xl shadow-black/30 border border-white/20">
-              <MockBrowserFrame url="app.retailsmarterp.com/pos">
-                <div className="max-h-[250px] overflow-hidden">
-                  <MockPOS />
-                </div>
-              </MockBrowserFrame>
-            </div>
-
-            {/* Feature highlights */}
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                { icon: Sparkles, label: 'AI Analytics', desc: 'Smart predictions & insights', color: 'text-amber-300' },
-                { icon: Zap, label: 'Real-Time Sync', desc: 'Live updates everywhere', color: 'text-emerald-300' },
-                { icon: Users, label: 'Unlimited Users', desc: 'No per-user fees ever', color: 'text-violet-300' },
-                { icon: BarChart3, label: 'All Features', desc: 'Included on every plan', color: 'text-sky-300' },
-              ].map((f) => (
-                <div key={f.label} className="flex items-center gap-3 p-3 rounded-md bg-white/10 backdrop-blur-sm border border-white/10">
-                  <f.icon size={20} className={`${f.color} flex-shrink-0`} />
-                  <div>
-                    <p className="font-semibold text-sm text-white">{f.label}</p>
-                    <p className="text-emerald-200 text-xs">{f.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Stats bar */}
-          <div className="flex items-center gap-8 text-sm">
-            {[
-              { value: '4', label: 'Business Types' },
-              { value: '100%', label: 'Data Isolation' },
-              { value: '99.9%', label: 'Uptime SLA' },
-            ].map((stat, i) => (
-              <div key={stat.label} className="flex items-center gap-3">
-                {i > 0 && <div className="w-px h-8 bg-white/20" />}
-                <div className={i > 0 ? 'pl-3' : ''}>
-                  <p className="font-extrabold text-xl text-white">{stat.value}</p>
-                  <p className="text-emerald-200 text-xs">{stat.label}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Right side — Form panel */}
-      <div className="flex-1 flex items-center justify-center p-6 sm:p-8 relative overflow-hidden bg-[#09090b]">
-        {/* Subtle orbs */}
-        <div className="absolute -top-24 -right-24 w-72 h-72 bg-emerald-500/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-32 -left-32 w-80 h-80 bg-amber-500/10 rounded-full blur-3xl" />
-
-        <div className="w-full max-w-md relative z-10">
-          {/* Mobile logo */}
-          <div className="lg:hidden flex items-center justify-center mb-8">
-            <Logo variant="full" size={44} subtitle="Point of Sale System" />
-          </div>
-
-          {/* Form card */}
-          <div className="glass-card-v2 rounded-2xl p-8">
-            <div className="text-center mb-8">
-              <h2 className="text-2xl font-extrabold text-white">Welcome back</h2>
-              <p className="text-zinc-500 mt-1">Sign in to your account</p>
-            </div>
-
-            {registered && (
-              <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-md flex items-center gap-3">
-                <CheckCircle className="text-emerald-400 flex-shrink-0" size={20} />
-                <div>
-                  <p className="text-emerald-300 font-semibold">Account created!</p>
-                  <p className="text-emerald-400 text-sm">Sign in to add your first business.</p>
-                </div>
-              </div>
-            )}
-
-            {error && (
-              <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-md">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
-            )}
-
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div>
-                <label htmlFor="email" className="block text-sm font-medium text-zinc-300 mb-2">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={18} />
-                  <input
-                    id="email"
-                    name="email"
-                    type="email"
-                    placeholder="you@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="w-full pl-10 pr-4 py-3 bg-white/5 border border-white/10 rounded-md text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="password" className="block text-sm font-medium text-zinc-300 mb-2">
-                  Password
-                </label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" size={18} />
-                  <input
-                    id="password"
-                    name="password"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Enter your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    className="w-full pl-10 pr-11 py-3 bg-white/5 border border-white/10 rounded-md text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/40 focus:border-emerald-500 transition-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                  >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Link href="/forgot-password" className="text-sm text-emerald-400 hover:underline">
-                  Forgot password?
-                </Link>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full py-3 px-4 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 text-white font-semibold rounded-md transition-all shadow-lg shadow-emerald-600/25 hover:shadow-emerald-600/40 flex items-center justify-center gap-2 disabled:opacity-60"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 size={20} className="animate-spin" />
-                    Signing in...
-                  </>
-                ) : (
-                  'Sign In'
-                )}
+      {mode === 'staff' ? (
+        <div className="space-y-5">
+          {recent && (
+            <div className="flex items-center gap-3 rounded-xl border border-adm-border bg-adm-surface p-3">
+              <CompanyAvatar name={recent.name} logoUrl={recent.logoUrl} />
+              <button type="button" onClick={() => goToCompany(recent)} className="adm-focus min-w-0 flex-1 rounded-md text-left">
+                <span className="block text-[12px] text-adm-subtle">Continue to</span>
+                <span className="block truncate text-[14px] font-medium text-adm-fg">{recent.name}</span>
               </button>
-            </form>
-
-            <div className="mt-6 text-center">
-              <p className="text-zinc-400">
-                Don&apos;t have an account?{' '}
-                <Link href="/register" className="text-emerald-400 hover:underline font-semibold">
-                  Create account
-                </Link>
-              </p>
+              <Button variant="primary" size="sm" iconRight={ArrowRight} onClick={() => goToCompany(recent)}>
+                Open
+              </Button>
+              <button
+                type="button"
+                aria-label={`Forget ${recent.name} on this device`}
+                onClick={() => {
+                  try { localStorage.removeItem(RECENT_KEY) } catch { /* ignore */ }
+                  setRecentDismissed(true)
+                }}
+                className="adm-focus flex h-7 w-7 items-center justify-center rounded-md text-adm-subtle hover:bg-adm-surface-2 hover:text-adm-fg"
+              >
+                <X size={15} aria-hidden />
+              </button>
             </div>
-          </div>
+          )}
 
-          {/* Security badge */}
-          <div className="mt-6 flex items-center justify-center gap-2 text-zinc-500">
-            <ShieldCheck size={14} />
-            <span className="text-xs">Secure &amp; encrypted &middot; Enterprise security</span>
-          </div>
+          {lookupError && <Alert tone="danger">{lookupError}</Alert>}
+
+          <form onSubmit={handleLookup} className="space-y-4" noValidate>
+            <Field
+              label="Business ID"
+              htmlFor="business-id"
+              hint="Looks like PL-123456. Your business owner or manager can tell you yours."
+            >
+              <Input
+                id="business-id"
+                leftIcon={Building2}
+                size="lg"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="PL-123456"
+                autoComplete="organization"
+                autoCapitalize="characters"
+                spellCheck={false}
+                autoFocus={!recent}
+                invalid={!!lookupError}
+              />
+            </Field>
+            <Button type="submit" variant="primary" size="lg" fullWidth loading={lookingUp} iconRight={lookingUp ? undefined : ArrowRight}>
+              Continue
+            </Button>
+          </form>
+          <p className="text-center text-[13px] text-adm-muted">
+            You can also use your company code (the part after /c/ in your sign-in link).
+          </p>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function LoginFallback() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-[#09090b]">
-      <div className="flex items-center gap-3">
-        <Loader2 size={24} className="animate-spin text-emerald-500" />
-        <span className="text-zinc-400">Loading...</span>
-      </div>
-    </div>
+      ) : (
+        <div className="space-y-5">
+          {registered && (
+            <Alert tone="success" title="Account created">Sign in to add your first business.</Alert>
+          )}
+          {error && <Alert tone="danger">{error}</Alert>}
+          <form onSubmit={handleOwnerSignIn} className="space-y-4">
+            <Field label="Email" htmlFor="owner-email">
+              <Input
+                id="owner-email"
+                type="email"
+                leftIcon={Mail}
+                size="lg"
+                autoComplete="email"
+                placeholder="you@business.lk"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoFocus
+              />
+            </Field>
+            <Field
+              label="Password"
+              htmlFor="owner-password"
+              labelAside={<Link href="/forgot-password" className="font-medium text-adm-primary hover:underline">Forgot password?</Link>}
+            >
+              <PasswordInput
+                id="owner-password"
+                leftIcon={Lock}
+                size="lg"
+                autoComplete="current-password"
+                placeholder="Your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </Field>
+            <Button type="submit" variant="primary" size="lg" fullWidth loading={loading}>
+              {loading ? 'Signing in…' : 'Sign in'}
+            </Button>
+          </form>
+        </div>
+      )}
+    </AuthShell>
   )
 }
 
 export default function LoginClient() {
   return (
-    <Suspense fallback={<LoginFallback />}>
+    <Suspense fallback={<div className="adm-root min-h-[100dvh]" />}>
       <LoginForm />
     </Suspense>
   )

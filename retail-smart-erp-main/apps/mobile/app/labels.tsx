@@ -4,10 +4,14 @@ import { router, useLocalSearchParams } from 'expo-router'
 import { apiGet, asList, getUser, qs } from '../src/lib/api'
 import { THEME } from '../src/lib/theme'
 import { BarcodeScannerModal } from '../src/components/BarcodeScannerModal'
-import { InlineNotice } from '../src/components/StateViews'
+import { InlineNotice, EmptyView, LoadingView } from '../src/components/StateViews'
+import { hasAnyPermission, displayRole } from '../src/lib/roles'
+import type { AuthUser } from '../src/lib/api'
 import { getPrinterForRole, printerErrorMessage, printLabels, type PrinterConfig } from '../src/lib/printer'
 import { labelCurrencySymbol, type LabelItemData, type LabelTemplate } from '../src/lib/label'
 import { loadBusinessInfo } from '../src/lib/receipt'
+import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
+import { goBack } from '../src/lib/nav'
 
 /** Shape accepted in the `items` route param (JSON array). */
 interface PreselectedItem {
@@ -70,6 +74,8 @@ function parseParamItems(param: string | string[] | undefined): Row[] {
 }
 
 export default function LabelsScreen() {
+  const bottomPad = useBottomPad()
+  const headerPad = useHeaderPad()
   const params = useLocalSearchParams<{ items?: string }>()
   const [rows, setRows] = useState<Row[]>(() => parseParamItems(params.items))
   const [templates, setTemplates] = useState<LabelTemplate[] | null>(null)
@@ -86,6 +92,12 @@ export default function LabelsScreen() {
   const [scanner, setScanner] = useState(false)
   const [printing, setPrinting] = useState(false)
   const searchSeq = useRef(0)
+  // undefined = loading; label printing needs an item-handling or selling permission
+  const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
+  useEffect(() => {
+    getUser().then((u) => setUser(u)).catch(() => setUser(null))
+  }, [])
+  const canUseLabels = hasAnyPermission(user, ['manageItems', 'manageInventory', 'submitStockIntake', 'createSales'])
 
   // Templates, printer, code word, tenant name
   useEffect(() => {
@@ -232,10 +244,30 @@ export default function LabelsScreen() {
   const sizeMismatch =
     template && printer?.label && (Math.abs(Number(template.widthMm) - printer.label.widthMm) > 0.5 || Math.abs(Number(template.heightMm) - printer.label.heightMm) > 0.5)
 
+  if (user === undefined || !canUseLabels) {
+    return (
+      <View style={styles.screen}>
+        <View style={[styles.header, headerPad]}>
+          <Pressable style={styles.backBtn} onPress={() => goBack()}>
+            <Text style={styles.backBtnText}>←</Text>
+          </Pressable>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Print Labels</Text>
+          </View>
+        </View>
+        {user === undefined ? (
+          <LoadingView />
+        ) : (
+          <EmptyView icon="🔒" title="Not available for your role" subtitle={`${displayRole(user)} accounts cannot print item labels.`} />
+        )}
+      </View>
+    )
+  }
+
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => (router.canGoBack() ? router.back() : router.replace('/pos'))}>
+      <View style={[styles.header, headerPad]}>
+        <Pressable style={styles.backBtn} onPress={() => goBack()}>
           <Text style={styles.backBtnText}>←</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
@@ -349,7 +381,7 @@ export default function LabelsScreen() {
         )}
       />
 
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: Math.max(16, bottomPad + 12) }]}>
         <Pressable style={[styles.primaryBtn, (printing || total <= 0) && { opacity: 0.6 }]} disabled={printing || total <= 0} onPress={onPrint}>
           {printing ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>🏷️ Print {total} label{total === 1 ? '' : 's'}</Text>}
         </Pressable>

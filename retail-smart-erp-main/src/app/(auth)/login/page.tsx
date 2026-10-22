@@ -2,11 +2,11 @@ import type { Metadata } from 'next'
 import LoginClient from './LoginClient'
 
 export const metadata: Metadata = {
-  title: 'Sign In - RetailSmart ERP',
-  description: 'Sign in to your RetailSmart ERP account. AI-powered POS & business management for retail, restaurants, supermarkets, and auto service centers.',
+  title: 'Sign in',
+  description: 'Sign in to POSLanka with your Business ID, or to your owner account to manage your companies.',
   openGraph: {
-    title: 'Sign In | RetailSmart ERP',
-    description: 'Access your AI-powered business management dashboard. Unlimited users, all features included.',
+    title: 'Sign in | POSLanka',
+    description: 'Sign in to your POSLanka point of sale and back office.',
     images: [{ url: '/og/home', width: 1200, height: 630 }],
   },
 }

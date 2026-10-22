@@ -3,6 +3,7 @@ import { Modal, View, Text, StyleSheet, Pressable, FlatList, Alert } from 'react
 import { apiDelete, apiGet, asList } from '../lib/api'
 import { THEME, formatLKR } from '../lib/theme'
 import { LoadingView, EmptyView, ErrorView } from './StateViews'
+import { useHeaderPad } from '../lib/safeArea'
 
 export interface HeldSaleItem {
   itemId: string
@@ -33,6 +34,7 @@ interface Props {
 }
 
 export function HeldSalesModal({ visible, onClose, onResume }: Props) {
+  const headerPad = useHeaderPad()
   const [items, setItems] = useState<HeldSale[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -90,7 +92,7 @@ export function HeldSalesModal({ visible, onClose, onResume }: Props) {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, headerPad]}>
           <Pressable style={styles.backBtn} onPress={onClose}>
             <Text style={styles.backBtnText}>←</Text>
           </Pressable>

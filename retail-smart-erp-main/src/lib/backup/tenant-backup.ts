@@ -59,6 +59,8 @@ export async function* tenantBackupZip(
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
     await client.query(`SELECT set_config('app.tenant_id', $1, true)`, [tenantId])
     await client.query(`SELECT set_config('idle_in_transaction_session_timeout', '1800000', true)`)
+    // A full export can run longer than the pool's default statement_timeout (DB_STATEMENT_TIMEOUT_MS)
+    await client.query(`SELECT set_config('statement_timeout', '0', true)`)
 
     const tenantRow = await client.query(`SELECT row_to_json(t)::text AS j FROM tenants t WHERE t.id = $1`, [tenantId])
     if (tenantRow.rows.length === 0) throw new Error('Tenant not found')

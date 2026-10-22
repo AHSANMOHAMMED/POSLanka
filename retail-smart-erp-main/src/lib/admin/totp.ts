@@ -131,4 +131,4 @@ export async function checkAdminTotp(
   return 'invalid'
 }
 
-const TOTP_RATE_LIMIT = { maxAttempts: 5, windowMs: 15 * 60 * 1000, category: 'admin_totp' }
+const TOTP_RATE_LIMIT = { maxAttempts: 5, windowMs: 15 * 60 * 1000, category: 'admin_totp', failClosed: true }

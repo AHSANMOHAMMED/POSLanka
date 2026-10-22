@@ -1,12 +1,38 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Check, X, Eye, Loader2, Clock, CheckCircle, XCircle, FileText, Zap, Building2 } from 'lucide-react'
-import { formatCurrencyWithSymbol } from '@/lib/utils/currency'
+import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
+import { Check, CreditCard, ExternalLink, Landmark, RefreshCw, X } from 'lucide-react'
+import {
+  AdminCard,
+  AdminModal,
+  AdminPage,
+  AdminTable,
+  AdminToolbar,
+  Alert,
+  Badge,
+  Button,
+  ConfirmDialog,
+  EmptyState,
+  Field,
+  KeyValueList,
+  SearchInput,
+  SegmentedControl,
+  StatCard,
+  StatGrid,
+  Textarea,
+  fmtDateTime,
+  fmtLKR,
+  fmtNumber,
+  statusTone,
+  type AdminColumn,
+} from '@/components/admin/kit'
+import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import { Pager, adminFetch, fmtDate } from '@/components/admin/console-helpers'
+import { formatBusinessId } from '@/lib/tenant/business-id-format'
 
-interface Payment {
+interface Deposit {
   id: string
-  accountId: string
   amount: string
   currency: string
   bankReference: string | null
@@ -14,614 +40,635 @@ interface Payment {
   receiptUrl: string | null
   notes: string | null
   status: 'pending' | 'approved' | 'rejected'
-  periodMonths: number
+  reviewedAt: string | null
   reviewNotes: string | null
+  periodMonths: number
+  isWalletDeposit: boolean
+  couponCode: string | null
+  listAmount: string | null
+  discountAmount: string
+  pendingCompanyId: string | null
   createdAt: string
-  account: {
-    id: string
-    email: string
-    fullName: string
-  } | null
-  subscription: {
-    id: string
-    tenantId: string
-    status: string
-    tier?: {
-      priceMonthly: string
-      displayName: string
-    }
-    tenant?: {
-      name: string
-      slug: string
-    }
-  } | null
+  account: { id: string; email: string; fullName: string; phone: string }
+  tenant: { id: string; name: string; slug: string; businessId: string } | null
+  subscriptionStatus: string | null
+  currentPeriodEnd: string | null
+  pendingCompany: { name: string; status: string; tierName: string | null } | null
 }
 
-interface PayhereTransaction {
+interface DepositList {
+  payments: Deposit[]
+  pagination: { page: number; pageSize: number; total: number }
+  statusCounts: Record<string, number>
+}
+
+interface PayhereTx {
   id: string
   orderId: string
   payherePaymentId: string | null
   amount: string
   currency: string
-  status: 'pending' | 'success' | 'failed' | 'cancelled' | 'refunded' | 'charged_back'
+  status: string
   paymentMethod: string | null
   description: string | null
-  periodMonths: number | null
+  periodMonths: number
   billingCycle: string | null
   statusMessage: string | null
+  cardNo: string | null
   paidAt: string | null
   createdAt: string
-  account: {
-    id: string
-    email: string
-    fullName: string
-  } | null
-  subscription: {
-    id: string
-    tenant: { name: string; slug: string } | null
-    tier: { displayName: string } | null
-  } | null
+  account: { email: string; fullName: string }
+  tenant: { id: string; name: string; businessId: string } | null
+  newTierName: string | null
+  walletCreditApplied: string | null
+  subscriptionId: string | null
+  couponCode: string | null
+  listAmount: string | null
+  discountAmount: string
+  refundStatus: 'processing' | 'refunded' | 'failed' | null
+  refundedAmount: string | null
+  refundReference: string | null
+  refundReason: string | null
+  refundError: string | null
+  refundedAt: string | null
+  subscriptionStatus: string | null
+  currentPeriodEnd: string | null
 }
 
+interface PayhereList {
+  transactions: PayhereTx[]
+  pagination: { page: number; pageSize: number; total: number }
+  statusTotals: Record<string, { count: number; amount: number }>
+  refundsConfigured: boolean
+}
 
-type Tab = 'bank_deposits' | 'payhere'
+interface RefundOutcome {
+  amount: number
+  reference: string | null
+  message: string
+  subscription: { id: string; tenantName: string | null; status: string; currentPeriodEnd: string | null; periodMonths: number; wasUpgrade: boolean } | null
+}
+
+type Source = 'bank' | 'payhere'
+const PAGE_SIZE = 25
+
+function purpose(d: Deposit): { title: string; detail: string } {
+  if (d.isWalletDeposit) return { title: 'Wallet top-up', detail: d.account.email }
+  if (d.pendingCompany) return { title: `New business: ${d.pendingCompany.name}`, detail: d.pendingCompany.tierName ? `${d.pendingCompany.tierName} plan` : 'Awaiting activation' }
+  if (d.tenant) return { title: d.tenant.name, detail: `${formatBusinessId(d.tenant.businessId)} · ${d.periodMonths} month${d.periodMonths === 1 ? '' : 's'}` }
+  return { title: 'Subscription payment', detail: d.account.email }
+}
 
 export default function PaymentsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('bank_deposits')
-  const [payments, setPayments] = useState<Payment[]>([])
-  const [payhereTransactions, setPayhereTransactions] = useState<PayhereTransaction[]>([])
+  const [source, setSource] = useState<Source>('bank')
+  return (
+    <AdminPage
+      title="Payments"
+      description="Review bank-transfer slips and see card payments received through PayHere."
+    >
+      <SegmentedControl
+        ariaLabel="Payment source"
+        value={source}
+        onChange={setSource}
+        options={[
+          { value: 'bank', label: <span className="inline-flex items-center gap-1.5"><Landmark size={14} aria-hidden /> Bank transfers</span> },
+          { value: 'payhere', label: <span className="inline-flex items-center gap-1.5"><CreditCard size={14} aria-hidden /> Card payments</span> },
+        ]}
+      />
+      {source === 'bank' ? <BankTransfers /> : <CardPayments />}
+    </AdminPage>
+  )
+}
+
+/* ------------------------------------------------------------------ bank transfers */
+
+function BankTransfers() {
+  const [status, setStatus] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending')
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [data, setData] = useState<DepositList | null>(null)
   const [loading, setLoading] = useState(true)
-  const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending')
-  const [phFilter, setPhFilter] = useState<'all' | 'pending' | 'success' | 'failed' | 'cancelled'>('all')
-  const [processing, setProcessing] = useState<string | null>(null)
-  const [viewingPayment, setViewingPayment] = useState<Payment | null>(null)
-  const [reviewNotes, setReviewNotes] = useState('')
-
-  const fetchPayments = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/sys-control/payments?status=${filter}`)
-      if (res.ok) {
-        const data = await res.json()
-        setPayments(data)
-      }
-    } catch (error) {
-      console.error('Failed to fetch payments:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [filter])
-
-  const fetchPayhereTransactions = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/sys-control/payhere-transactions?status=${phFilter}`)
-      if (res.ok) {
-        const data = await res.json()
-        setPayhereTransactions(data)
-      }
-    } catch (error) {
-      console.error('Failed to fetch PayHere transactions:', error)
-    } finally {
-      setLoading(false)
-    }
-  }, [phFilter])
+  const [error, setError] = useState<string | null>(null)
+  const [reviewing, setReviewing] = useState<Deposit | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
 
   useEffect(() => {
-    if (activeTab === 'bank_deposits') {
-      fetchPayments()
-    } else {
-      fetchPayhereTransactions()
-    }
-  }, [activeTab, fetchPayments, fetchPayhereTransactions])
+    const t = window.setTimeout(() => setDebouncedQ(q.trim()), 300)
+    return () => window.clearTimeout(t)
+  }, [q])
+  useEffect(() => { setPage(1) }, [status, debouncedQ])
 
-  const handleAction = async (paymentId: string, action: 'approve' | 'reject') => {
-    setProcessing(paymentId)
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
-      const res = await fetch(`/api/sys-control/payments/${paymentId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          status: action === 'approve' ? 'approved' : 'rejected',
-          reviewNotes,
-        }),
-      })
-
-      if (res.ok) {
-        fetchPayments()
-        setReviewNotes('')
-        setViewingPayment(null)
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to update payment')
-      }
-    } catch (error) {
-      console.error('Failed to update payment:', error)
-      alert('Failed to update payment')
+      const p = new URLSearchParams({ status, page: String(page), pageSize: String(PAGE_SIZE) })
+      if (debouncedQ) p.set('q', debouncedQ)
+      setData(await adminFetch<DepositList>(`/api/sys-control/payments?${p.toString()}`))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load payments')
     } finally {
-      setProcessing(null)
+      setLoading(false)
+    }
+  }, [status, page, debouncedQ])
+
+  useEffect(() => { load() }, [load])
+
+  const c = data?.statusCounts ?? {}
+  const columns: AdminColumn<Deposit>[] = [
+    {
+      key: 'for',
+      header: 'Paid for',
+      primary: true,
+      cell: (d) => {
+        const p = purpose(d)
+        return (
+          <div className="min-w-0">
+            <p className="font-medium text-adm-fg">{p.title}</p>
+            <p className="truncate text-[12.5px] text-adm-subtle">{p.detail}</p>
+          </div>
+        )
+      },
+    },
+    {
+      key: 'payer',
+      header: 'Payer',
+      hideBelow: 'lg',
+      cell: (d) => (
+        <div className="min-w-0">
+          <p className="truncate text-adm-fg">{d.account.fullName}</p>
+          <p className="truncate text-[12.5px] text-adm-subtle">{d.account.email}</p>
+        </div>
+      ),
+    },
+    { key: 'ref', header: 'Bank reference', hideBelow: 'md', cell: (d) => <span className="adm-num text-adm-muted">{d.bankReference || '—'}</span> },
+    { key: 'date', header: 'Deposited', cell: (d) => fmtDate(d.depositDate) },
+    { key: 'amount', header: 'Amount', align: 'right', cell: (d) => <span className="adm-num font-medium">{fmtLKR(Number(d.amount), 2)}</span> },
+    { key: 'status', header: 'Status', cell: (d) => <Badge tone={statusTone(d.status)}>{d.status}</Badge> },
+  ]
+
+  return (
+    <>
+      {flash && <Alert tone="success" action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash}</Alert>}
+      <AdminCard flush>
+        <div className="space-y-3 border-b border-adm-border p-4 sm:p-5">
+          <AdminToolbar end={<Button variant="ghost" size="sm" icon={RefreshCw} onClick={load} loading={loading && !!data}>Refresh</Button>}>
+            <SegmentedControl
+              ariaLabel="Slip status"
+              size="sm"
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: 'pending', label: `To review ${c.pending ?? 0}` },
+                { value: 'approved', label: `Approved ${c.approved ?? 0}` },
+                { value: 'rejected', label: `Rejected ${c.rejected ?? 0}` },
+                { value: 'all', label: 'All' },
+              ]}
+            />
+            <SearchInput size="sm" wrapperClassName="w-full sm:w-72" placeholder="Vendor, PL-123456, payer or reference" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search slips" />
+          </AdminToolbar>
+        </div>
+        {error ? (
+          <div className="p-4 sm:p-5"><Alert tone="danger" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Alert></div>
+        ) : (
+          <AdminTable
+            columns={columns}
+            rows={data?.payments ?? []}
+            rowKey={(d) => d.id}
+            onRowClick={setReviewing}
+            loading={loading}
+            minWidth={720}
+            empty={<EmptyState icon={Landmark} title={status === 'pending' ? 'No slips waiting for review' : 'No bank transfers here'} description={status === 'pending' ? 'New bank-transfer slips appear here when vendors upload them.' : undefined} />}
+          />
+        )}
+        {data && data.pagination.total > 0 && (
+          <div className="border-t border-adm-border px-4 py-3 sm:px-5">
+            <Pager page={page} pageSize={PAGE_SIZE} total={data.pagination.total} onPage={setPage} />
+          </div>
+        )}
+      </AdminCard>
+      {reviewing && (
+        <ReviewDialog
+          deposit={reviewing}
+          onClose={() => setReviewing(null)}
+          onDone={(msg) => { setReviewing(null); setFlash(msg); load() }}
+        />
+      )}
+    </>
+  )
+}
+
+function ReviewDialog({ deposit: d, onClose, onDone }: { deposit: Deposit; onClose: () => void; onDone: (msg: string) => void }) {
+  const [notes, setNotes] = useState('')
+  const [busy, setBusy] = useState<'approved' | 'rejected' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const canBill = useAdminCan('billing')
+  const pending = d.status === 'pending' && canBill
+  const p = purpose(d)
+
+  const effect = d.isWalletDeposit
+    ? `Adds ${fmtLKR(Number(d.amount), 2)} to the payer’s wallet.`
+    : d.pendingCompany
+      ? `Creates the business “${d.pendingCompany.name}” and its owner, and starts its plan.`
+      : d.tenant
+        ? (() => {
+            const now = new Date()
+            const end = d.currentPeriodEnd ? new Date(d.currentPeriodEnd) : null
+            const base = d.subscriptionStatus !== 'trial' && end && end > now ? end : now
+            const next = new Date(base)
+            next.setMonth(next.getMonth() + d.periodMonths)
+            return `Extends ${d.tenant.name}’s subscription by ${d.periodMonths} month${d.periodMonths === 1 ? '' : 's'}, to ${fmtDate(next)}. If the vendor was locked for non-payment it is unlocked.`
+          })()
+        : 'Marks the slip as approved.'
+
+  async function decide(status: 'approved' | 'rejected') {
+    setBusy(status)
+    setError(null)
+    try {
+      await adminFetch(`/api/sys-control/payments/${d.id}`, { method: 'PUT', json: { status, reviewNotes: notes.trim() || undefined } })
+      onDone(status === 'approved' ? `Approved ${fmtLKR(Number(d.amount), 2)} — ${p.title}.` : `Rejected the slip from ${d.account.fullName}.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not update the slip')
+    } finally {
+      setBusy(null)
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-yellow-100 text-yellow-700 rounded-full">
-            <Clock className="w-3 h-3" />
-            Pending
-          </span>
+  // Only http(s) or same-origin links are rendered (never javascript:/data: URLs)
+  const receiptUrl = d.receiptUrl && /^(https?:\/\/|\/(?!\/))/i.test(d.receiptUrl) ? d.receiptUrl : null
+  const isImage = !!receiptUrl && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(receiptUrl)
+
+  return (
+    <AdminModal
+      open
+      onClose={onClose}
+      size="lg"
+      title={`${fmtLKR(Number(d.amount), 2)} bank transfer`}
+      description={p.title}
+      footer={
+        pending ? (
+          <>
+            <Button onClick={onClose} disabled={!!busy}>Close</Button>
+            <Button variant="danger-soft" icon={X} loading={busy === 'rejected'} disabled={!!busy || notes.trim().length < 3} onClick={() => decide('rejected')}>Reject</Button>
+            <Button variant="primary" icon={Check} loading={busy === 'approved'} disabled={!!busy} onClick={() => decide('approved')}>Approve</Button>
+          </>
+        ) : (
+          <Button onClick={onClose}>Close</Button>
         )
-      case 'approved':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-full">
-            <CheckCircle className="w-3 h-3" />
-            Approved
-          </span>
-        )
-      case 'rejected':
-        return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-full">
-            <XCircle className="w-3 h-3" />
-            Rejected
-          </span>
-        )
-      default:
-        return null
+      }
+    >
+      <div className="space-y-4">
+        {error && <Alert tone="danger">{error}</Alert>}
+        <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
+          <KeyValueList
+            items={[
+              { label: 'Payer', value: d.account.fullName },
+              { label: 'Email', value: <span className="break-all">{d.account.email}</span> },
+              { label: 'Phone', value: d.account.phone?.startsWith('unset-') ? '—' : d.account.phone },
+              { label: 'Business', value: d.tenant ? <Link className="text-adm-primary hover:underline" href={`/sys-control/vendors/${d.tenant.id}`}>{d.tenant.name}</Link> : d.pendingCompany?.name ?? '—' },
+            ]}
+          />
+          <KeyValueList
+            items={[
+              { label: 'Deposit date', value: fmtDate(d.depositDate) },
+              { label: 'Bank reference', value: d.bankReference || '—' },
+              { label: 'Covers', value: d.isWalletDeposit ? 'Wallet credit' : `${d.periodMonths} month${d.periodMonths === 1 ? '' : 's'}` },
+              ...(d.couponCode ? [{
+                label: 'Promo code',
+                value: `${d.couponCode} · −${fmtLKR(Number(d.discountAmount), 2)}${d.listAmount ? ` (expected ${fmtLKR(Number(d.listAmount) - Number(d.discountAmount), 2)} of ${fmtLKR(Number(d.listAmount), 2)})` : ''}`,
+              }] : []),
+              { label: 'Submitted', value: fmtDateTime(d.createdAt) },
+            ]}
+          />
+        </div>
+        {d.notes && <Alert tone="neutral" title="Note from the payer">{d.notes}</Alert>}
+        {receiptUrl ? (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-[13px] font-medium text-adm-fg">Slip</p>
+              <a href={receiptUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[13px] text-adm-primary hover:underline">
+                Open <ExternalLink size={13} aria-hidden />
+              </a>
+            </div>
+            {isImage && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={receiptUrl} alt="Bank slip" className="max-h-[420px] w-full rounded-lg border border-adm-border object-contain" />
+            )}
+          </div>
+        ) : (
+          <Alert tone="warning">No slip image was uploaded. Check the reference against the bank statement.</Alert>
+        )}
+        {pending ? (
+          <>
+            <Alert tone="info" title="On approval">{effect}</Alert>
+            <Field label="Review note" htmlFor="rv-notes" hint="Required to reject — the payer sees it. Optional when approving.">
+              <Textarea id="rv-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </Field>
+          </>
+        ) : (
+          <Alert tone={d.status === 'approved' ? 'success' : 'danger'} title={`${d.status === 'approved' ? 'Approved' : 'Rejected'} ${d.reviewedAt ? fmtDateTime(d.reviewedAt) : ''}`}>
+            {d.reviewNotes || 'No note.'}
+          </Alert>
+        )}
+      </div>
+    </AdminModal>
+  )
+}
+
+/* ------------------------------------------------------------------ card payments */
+
+function CardPayments() {
+  const [status, setStatus] = useState('all')
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [data, setData] = useState<PayhereList | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [viewing, setViewing] = useState<PayhereTx | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQ(q.trim()), 300)
+    return () => window.clearTimeout(t)
+  }, [q])
+  useEffect(() => { setPage(1) }, [status, debouncedQ])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const p = new URLSearchParams({ status, page: String(page), pageSize: String(PAGE_SIZE) })
+      if (debouncedQ) p.set('q', debouncedQ)
+      setData(await adminFetch<PayhereList>(`/api/sys-control/payhere-transactions?${p.toString()}`))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load card payments')
+    } finally {
+      setLoading(false)
+    }
+  }, [status, page, debouncedQ])
+
+  useEffect(() => { load() }, [load])
+
+  const t = data?.statusTotals ?? {}
+  const columns: AdminColumn<PayhereTx>[] = [
+    {
+      key: 'for',
+      header: 'Paid for',
+      primary: true,
+      cell: (x) => (
+        <div className="min-w-0">
+          <p className="font-medium text-adm-fg">{x.tenant?.name ?? x.description ?? 'Payment'}</p>
+          <p className="truncate text-[12.5px] text-adm-subtle">
+            {x.tenant ? `${formatBusinessId(x.tenant.businessId)} · ` : ''}
+            {x.newTierName ? `Upgrade to ${x.newTierName}` : `${x.periodMonths} month${x.periodMonths === 1 ? '' : 's'}`}
+          </p>
+        </div>
+      ),
+    },
+    { key: 'payer', header: 'Payer', hideBelow: 'lg', cell: (x) => <span className="text-adm-muted">{x.account.email}</span> },
+    { key: 'order', header: 'Order', hideBelow: 'xl', cell: (x) => <span className="adm-num text-[12.5px] text-adm-muted">{x.orderId}</span> },
+    { key: 'method', header: 'Method', hideBelow: 'md', cell: (x) => <span className="text-adm-muted">{[x.paymentMethod, x.cardNo].filter(Boolean).join(' ') || '—'}</span> },
+    { key: 'date', header: 'Date', cell: (x) => fmtDate(x.paidAt ?? x.createdAt) },
+    {
+      key: 'amount',
+      header: 'Amount',
+      align: 'right',
+      cell: (x) => (
+        <div>
+          <span className="adm-num font-medium">{fmtLKR(Number(x.amount), 2)}</span>
+          {x.couponCode && <p className="text-[12px] text-adm-subtle">{x.couponCode} −{fmtLKR(Number(x.discountAmount), 2)}</p>}
+        </div>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      cell: (x) => (
+        <div className="flex flex-wrap gap-1">
+          <Badge tone={statusTone(x.status)}>{x.status.replace(/_/g, ' ')}</Badge>
+          {x.refundStatus === 'processing' && <Badge tone="warning">refund in progress</Badge>}
+          {x.refundStatus === 'failed' && <Badge tone="danger">refund failed</Badge>}
+        </div>
+      ),
+    },
+  ]
+
+  return (
+    <>
+      {flash && <Alert tone="success" action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash}</Alert>}
+      {viewing && (
+        <CardPaymentDialog
+          tx={viewing}
+          refundsConfigured={data?.refundsConfigured ?? false}
+          onClose={() => setViewing(null)}
+          onChanged={(msg) => { setFlash(msg); load() }}
+        />
+      )}
+      <StatGrid cols={3}>
+        <StatCard label="Received" icon={CreditCard} tone="success" loading={!data} value={fmtLKR(t.success?.amount ?? 0)} hint={`${fmtNumber(t.success?.count ?? 0)} successful payments`} />
+        <StatCard label="Pending" icon={CreditCard} tone="warning" loading={!data} value={fmtNumber(t.pending?.count ?? 0)} hint="Started, not confirmed by PayHere" />
+        <StatCard label="Failed or cancelled" icon={CreditCard} tone="danger" loading={!data} value={fmtNumber((t.failed?.count ?? 0) + (t.cancelled?.count ?? 0))} hint={`${fmtNumber((t.refunded?.count ?? 0) + (t.charged_back?.count ?? 0))} refunded or charged back`} />
+      </StatGrid>
+      <AdminCard flush>
+        <div className="space-y-3 border-b border-adm-border p-4 sm:p-5">
+          <AdminToolbar end={<Button variant="ghost" size="sm" icon={RefreshCw} onClick={load} loading={loading && !!data}>Refresh</Button>}>
+            <SegmentedControl
+              ariaLabel="Payment status"
+              size="sm"
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: 'all', label: 'All' },
+                { value: 'success', label: 'Successful' },
+                { value: 'pending', label: 'Pending' },
+                { value: 'failed', label: 'Failed' },
+                { value: 'refunded', label: 'Refunded' },
+              ]}
+            />
+            <SearchInput size="sm" wrapperClassName="w-full sm:w-72" placeholder="Order no., vendor, PL-123456 or email" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search card payments" />
+          </AdminToolbar>
+          <p className="text-[12.5px] text-adm-subtle">
+            Card payments are confirmed by PayHere automatically. Select a payment to see its details{data?.refundsConfigured === false ? '; refunds from here need PAYHERE_APP_ID and PAYHERE_APP_SECRET on the server' : ' or refund it'}.
+          </p>
+        </div>
+        {error ? (
+          <div className="p-4 sm:p-5"><Alert tone="danger" action={<Button size="sm" onClick={load}>Retry</Button>}>{error}</Alert></div>
+        ) : (
+          <AdminTable columns={columns} rows={data?.transactions ?? []} rowKey={(x) => x.id} onRowClick={setViewing} loading={loading} minWidth={760} empty={<EmptyState icon={CreditCard} title="No card payments here" />} />
+        )}
+        {data && data.pagination.total > 0 && (
+          <div className="border-t border-adm-border px-4 py-3 sm:px-5">
+            <Pager page={page} pageSize={PAGE_SIZE} total={data.pagination.total} onPage={setPage} />
+          </div>
+        )}
+      </AdminCard>
+    </>
+  )
+}
+
+/* ------------------------------------------------------------------ card payment detail + refund */
+
+function CardPaymentDialog({ tx: x, refundsConfigured, onClose, onChanged }: {
+  tx: PayhereTx
+  refundsConfigured: boolean
+  onClose: () => void
+  onChanged: (msg: string) => void
+}) {
+  const canBill = useAdminCan('billing')
+  const [confirming, setConfirming] = useState(false)
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [outcome, setOutcome] = useState<RefundOutcome | null>(null)
+  const [subBusy, setSubBusy] = useState<'remove' | 'end' | null>(null)
+  const [subDone, setSubDone] = useState<string | null>(null)
+
+  const refundable = x.status === 'success' && !!x.payherePaymentId && x.refundStatus !== 'refunded' && x.refundStatus !== 'processing'
+
+  async function refund() {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await adminFetch<RefundOutcome>(`/api/sys-control/payhere-transactions/${x.id}/refund`, { method: 'POST', json: { reason: reason.trim() } })
+      setConfirming(false)
+      setOutcome(res)
+      onChanged(`Refunded ${fmtLKR(res.amount, 2)} for order ${x.orderId}.`)
+    } catch (e) {
+      setConfirming(false)
+      setError(e instanceof Error ? e.message : 'The refund failed')
+    } finally {
+      setBusy(false)
     }
   }
 
-  // Quick stats
-  const pendingCount = payments.filter(p => p.status === 'pending').length
-  const pendingTotal = payments
-    .filter(p => p.status === 'pending')
-    .reduce((sum, p) => sum + Number(p.amount), 0)
-
-  const getPhStatusBadge = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-yellow-100 text-yellow-700 rounded-full"><Clock className="w-3 h-3" />Pending</span>
-      case 'success':
-        return <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-full"><CheckCircle className="w-3 h-3" />Success</span>
-      case 'failed':
-        return <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-full"><XCircle className="w-3 h-3" />Failed</span>
-      case 'cancelled':
-        return <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full"><X className="w-3 h-3" />Cancelled</span>
-      case 'refunded':
-        return <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-blue-100 text-blue-700 rounded-full">Refunded</span>
-      case 'charged_back':
-        return <span className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-full">Charged Back</span>
-      default:
-        return null
+  async function adjustSubscription(kind: 'remove' | 'end') {
+    const sub = outcome?.subscription
+    if (!sub) return
+    setSubBusy(kind)
+    setError(null)
+    try {
+      const json = kind === 'remove'
+        ? { adjustMonths: -Math.max(1, sub.periodMonths), reason: `Refunded PayHere payment ${x.orderId}` }
+        : { setEndDate: new Date(Date.now() + 60_000).toISOString(), reason: `Refunded PayHere payment ${x.orderId}` }
+      await adminFetch(`/api/sys-control/subscriptions/${sub.id}`, { method: 'PUT', json })
+      setSubDone(kind === 'remove' ? `Removed ${sub.periodMonths} paid month${sub.periodMonths === 1 ? '' : 's'} from the subscription.` : 'The paid period now ends today.')
+      onChanged(`Subscription of ${sub.tenantName ?? 'the vendor'} updated after the refund.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change the subscription')
+    } finally {
+      setSubBusy(null)
     }
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Payments</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">Review PayHere transactions and bank deposit payments</p>
+    <>
+      <AdminModal
+        open={!confirming}
+        onClose={onClose}
+        size="lg"
+        title={`${fmtLKR(Number(x.amount), 2)} card payment`}
+        description={`Order ${x.orderId}`}
+        footer={
+          <>
+            <Button onClick={onClose}>Close</Button>
+            {canBill && !outcome && x.status === 'success' && (
+              <Button variant="danger" disabled={!refundable || !refundsConfigured}
+                title={!refundsConfigured ? 'PAYHERE_APP_ID / PAYHERE_APP_SECRET are not set on the server' : undefined}
+                onClick={() => { setReason(''); setConfirming(true) }}>
+                Refund…
+              </Button>
+            )}
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {error && <Alert tone="danger">{error}</Alert>}
+          <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
+            <KeyValueList
+              items={[
+                { label: 'Payer', value: `${x.account.fullName} · ${x.account.email}` },
+                { label: 'Business', value: x.tenant ? <Link className="text-adm-primary hover:underline" href={`/sys-control/vendors/${x.tenant.id}`}>{x.tenant.name}</Link> : '—' },
+                { label: 'Paid for', value: x.newTierName ? `Upgrade to ${x.newTierName}` : `${x.periodMonths} month${x.periodMonths === 1 ? '' : 's'}` },
+                { label: 'Status', value: <Badge tone={statusTone(x.status)}>{x.status.replace(/_/g, ' ')}</Badge> },
+              ]}
+            />
+            <KeyValueList
+              items={[
+                { label: 'PayHere payment id', value: x.payherePaymentId || '—' },
+                { label: 'Method', value: [x.paymentMethod, x.cardNo].filter(Boolean).join(' ') || '—' },
+                { label: 'Paid', value: x.paidAt ? fmtDateTime(x.paidAt) : '—' },
+                ...(Number(x.walletCreditApplied || 0) > 0 ? [{ label: 'Wallet part', value: fmtLKR(Number(x.walletCreditApplied), 2) }] : []),
+                ...(x.couponCode ? [{ label: 'Promo code', value: `${x.couponCode} · −${fmtLKR(Number(x.discountAmount), 2)}${x.listAmount ? ` of ${fmtLKR(Number(x.listAmount), 2)}` : ''}` }] : []),
+              ]}
+            />
+          </div>
+          {x.refundStatus === 'refunded' && (
+            <Alert tone="info" title={`Refunded ${x.refundedAmount ? fmtLKR(Number(x.refundedAmount), 2) : ''} ${x.refundedAt ? fmtDateTime(x.refundedAt) : ''}`}>
+              {x.refundReason || 'No reason recorded.'}{x.refundReference ? ` · PayHere reference ${x.refundReference}` : ''}
+            </Alert>
+          )}
+          {x.refundStatus === 'failed' && !outcome && <Alert tone="danger" title="Last refund attempt failed">{x.refundError || 'Unknown error'}</Alert>}
+          {x.refundStatus === 'processing' && <Alert tone="warning">A refund request is in progress. Refresh in a moment.</Alert>}
+          {!refundsConfigured && canBill && x.status === 'success' && (
+            <Alert tone="warning">Refunds from the console need PAYHERE_APP_ID and PAYHERE_APP_SECRET (a PayHere Business App with refund permission) on the server. Until then refund in the PayHere merchant portal.</Alert>
+          )}
+
+          {outcome && (
+            <div className="space-y-3">
+              <Alert tone="success" title={`Refund of ${fmtLKR(outcome.amount, 2)} submitted to PayHere`}>
+                {outcome.message}{outcome.reference ? ` · Reference ${outcome.reference}` : ''}
+              </Alert>
+              {outcome.subscription ? (
+                <AdminCard title="What about the subscription?" description="The refund did not change the subscription. Decide what the vendor keeps.">
+                  <KeyValueList
+                    items={[
+                      { label: 'Vendor', value: outcome.subscription.tenantName ?? '—' },
+                      { label: 'Status', value: outcome.subscription.status },
+                      { label: 'Paid until', value: outcome.subscription.currentPeriodEnd ? fmtDate(outcome.subscription.currentPeriodEnd) : '—' },
+                      { label: 'This payment bought', value: outcome.subscription.wasUpgrade ? 'A plan upgrade (the plan stays until you change it on the vendor page)' : `${outcome.subscription.periodMonths} month${outcome.subscription.periodMonths === 1 ? '' : 's'}` },
+                    ]}
+                  />
+                  {subDone ? (
+                    <Alert tone="success" className="mt-3">{subDone}</Alert>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button size="sm" onClick={onClose}>Leave it as it is</Button>
+                      {!outcome.subscription.wasUpgrade && (
+                        <Button size="sm" loading={subBusy === 'remove'} disabled={!!subBusy} onClick={() => adjustSubscription('remove')}>
+                          Remove the {outcome.subscription.periodMonths} paid month{outcome.subscription.periodMonths === 1 ? '' : 's'}
+                        </Button>
+                      )}
+                      <Button size="sm" variant="danger-soft" loading={subBusy === 'end'} disabled={!!subBusy} onClick={() => adjustSubscription('end')}>End the paid period today</Button>
+                    </div>
+                  )}
+                </AdminCard>
+              ) : (
+                <Alert tone="info">This payment created a new business. Its subscription was not changed — review it on the vendor page if needed.</Alert>
+              )}
+            </div>
+          )}
         </div>
-      </div>
+      </AdminModal>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-gray-100 dark:bg-gray-700 rounded p-1 w-fit">
-        <button
-          onClick={() => setActiveTab('bank_deposits')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'bank_deposits'
-              ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm'
-              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
-          }`}
+      {confirming && (
+        <ConfirmDialog
+          open
+          onCancel={() => setConfirming(false)}
+          onConfirm={refund}
+          loading={busy}
+          title={`Refund ${fmtLKR(Number(x.amount), 2)}?`}
+          description={`PayHere returns the full amount of order ${x.orderId} to ${x.account.fullName}'s card. This cannot be undone. The subscription is not changed automatically — you choose next.`}
+          confirmLabel="Refund payment"
+          confirmVariant="danger"
         >
-          <Building2 className="w-4 h-4" />
-          Bank Deposits
-        </button>
-        <button
-          onClick={() => setActiveTab('payhere')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-            activeTab === 'payhere'
-              ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm'
-              : 'text-gray-600 dark:text-gray-400 hover:text-gray-900'
-          }`}
-        >
-          <Zap className="w-4 h-4" />
-          PayHere Transactions
-        </button>
-      </div>
-
-      {activeTab === 'bank_deposits' && (
-        <>
-          {/* Quick Stats */}
-          {filter === 'pending' && pendingCount > 0 && (
-            <div className="bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-md px-6 py-4 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <Clock className="w-5 h-5 text-orange-600" />
-                <span className="font-medium text-orange-900 dark:text-orange-300">
-                  {pendingCount} pending payment{pendingCount !== 1 ? 's' : ''} totaling{' '}
-                  <strong>{formatCurrencyWithSymbol(pendingTotal, 'USD')}</strong>
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Filters */}
-          <div className="flex gap-2">
-            {(['pending', 'approved', 'rejected', 'all'] as const).map((status) => (
-              <button
-                key={status}
-                onClick={() => setFilter(status)}
-                className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                  filter === status
-                    ? 'bg-gray-900 text-white'
-                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700'
-                }`}
-              >
-                {status.charAt(0).toUpperCase() + status.slice(1)}
-              </button>
-            ))}
-          </div>
-
-          {/* Bank Deposits Table */}
-          <div className="bg-white dark:bg-gray-800 rounded-md shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-              </div>
-            ) : payments.length === 0 ? (
-              <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-                No {filter !== 'all' ? filter : ''} payments found
-              </div>
-            ) : (
-              <table className="w-full">
-                <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
-                  <tr>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">User</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Company</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Amount</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Expected</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Period</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Reference</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Status</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {payments.map((payment) => {
-                    const expectedAmount = payment.subscription?.tier?.priceMonthly
-                      ? Number(payment.subscription.tier.priceMonthly) * payment.periodMonths
-                      : null
-                    const amountMatches = expectedAmount !== null && Math.abs(Number(payment.amount) - expectedAmount) < 1
-
-                    return (
-                      <tr key={payment.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="font-medium text-gray-900 dark:text-white">{payment.account?.fullName}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">{payment.account?.email}</p>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="text-gray-900 dark:text-white">{payment.subscription?.tenant?.name || '-'}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">{payment.subscription?.tier?.displayName || ''}</p>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="font-semibold text-gray-900 dark:text-white">{formatCurrencyWithSymbol(Number(payment.amount), payment.currency)}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          {expectedAmount !== null ? (
-                            <div>
-                              <p className={`text-sm font-medium ${amountMatches ? 'text-green-600' : 'text-red-600'}`}>
-                                {formatCurrencyWithSymbol(expectedAmount, payment.currency)}
-                              </p>
-                              {!amountMatches && <p className="text-xs text-red-500">Mismatch</p>}
-                            </div>
-                          ) : (
-                            <span className="text-gray-400 text-sm">N/A</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="text-gray-600 dark:text-gray-400">{payment.periodMonths} month(s)</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="text-gray-600 dark:text-gray-400 font-mono text-sm">{payment.bankReference || '-'}</p>
-                        </td>
-                        <td className="px-6 py-4">{getStatusBadge(payment.status)}</td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => setViewingPayment(payment)}
-                              className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-                              title="View Details"
-                            >
-                              <FileText className="w-4 h-4" />
-                            </button>
-                            {payment.receiptUrl && (
-                              <button
-                                onClick={() => window.open(payment.receiptUrl!, '_blank')}
-                                className="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
-                                title="View Receipt"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                            )}
-                            {payment.status === 'pending' && (
-                              <>
-                                <button
-                                  onClick={() => handleAction(payment.id, 'approve')}
-                                  disabled={processing === payment.id}
-                                  className="p-2 text-green-600 hover:text-green-700 hover:bg-green-50 rounded disabled:opacity-50"
-                                  title="Approve"
-                                >
-                                  {processing === payment.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                                </button>
-                                <button
-                                  onClick={() => handleAction(payment.id, 'reject')}
-                                  disabled={processing === payment.id}
-                                  className="p-2 text-red-600 hover:text-red-700 hover:bg-red-50 rounded disabled:opacity-50"
-                                  title="Reject"
-                                >
-                                  <X className="w-4 h-4" />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {/* Payment Detail Modal */}
-          {viewingPayment && (
-            <div
-              className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50"
-              onClick={() => setViewingPayment(null)}
-            >
-              <div
-                className="bg-white dark:bg-gray-800 rounded-md p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-auto"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="font-semibold text-gray-900 dark:text-white text-lg">Payment Details</h3>
-                  <button onClick={() => setViewingPayment(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Customer</p>
-                      <p className="font-medium text-gray-900 dark:text-white">{viewingPayment.account?.fullName}</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">{viewingPayment.account?.email}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Company</p>
-                      <p className="font-medium text-gray-900 dark:text-white">{viewingPayment.subscription?.tenant?.name || '-'}</p>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">{viewingPayment.subscription?.tier?.displayName || ''}</p>
-                    </div>
-                  </div>
-
-                  <hr className="dark:border-gray-700" />
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Amount Paid</p>
-                      <p className="text-xl font-bold text-gray-900 dark:text-white">{formatCurrencyWithSymbol(Number(viewingPayment.amount), viewingPayment.currency)}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Expected Amount</p>
-                      <p className="text-xl font-bold text-gray-900 dark:text-white">
-                        {viewingPayment.subscription?.tier?.priceMonthly
-                          ? formatCurrencyWithSymbol(Number(viewingPayment.subscription.tier.priceMonthly) * viewingPayment.periodMonths, viewingPayment.currency)
-                          : 'N/A'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Period</p>
-                      <p className="font-medium text-gray-900 dark:text-white">{viewingPayment.periodMonths} month(s)</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Bank Reference</p>
-                      <p className="font-medium text-gray-900 dark:text-white font-mono">{viewingPayment.bankReference || '-'}</p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Deposit Date</p>
-                      <p className="font-medium text-gray-900 dark:text-white">{new Date(viewingPayment.depositDate).toLocaleDateString()}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Submitted</p>
-                      <p className="font-medium text-gray-900 dark:text-white">{new Date(viewingPayment.createdAt).toLocaleDateString()}</p>
-                    </div>
-                  </div>
-
-                  {viewingPayment.notes && (
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Customer Notes</p>
-                      <p className="text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/50 rounded p-3 text-sm">{viewingPayment.notes}</p>
-                    </div>
-                  )}
-
-                  {viewingPayment.receiptUrl && (
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Receipt</p>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={viewingPayment.receiptUrl} alt="Payment Receipt" className="max-w-full rounded border" />
-                    </div>
-                  )}
-
-                  {viewingPayment.reviewNotes && (
-                    <div>
-                      <p className="text-sm text-gray-500 dark:text-gray-400">Review Notes</p>
-                      <p className="text-gray-900 dark:text-white bg-gray-50 dark:bg-gray-700/50 rounded p-3 text-sm">{viewingPayment.reviewNotes}</p>
-                    </div>
-                  )}
-
-                  {viewingPayment.status === 'pending' && (
-                    <>
-                      <hr className="dark:border-gray-700" />
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Review Notes (optional)</label>
-                        <textarea
-                          value={reviewNotes}
-                          onChange={(e) => setReviewNotes(e.target.value)}
-                          placeholder="Add notes about this payment..."
-                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-700 dark:text-white"
-                          rows={3}
-                        />
-                      </div>
-                      <div className="flex gap-3">
-                        <button
-                          onClick={() => handleAction(viewingPayment.id, 'approve')}
-                          disabled={processing === viewingPayment.id}
-                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 font-medium"
-                        >
-                          {processing === viewingPayment.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleAction(viewingPayment.id, 'reject')}
-                          disabled={processing === viewingPayment.id}
-                          className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 font-medium"
-                        >
-                          <X className="w-4 h-4" />
-                          Reject
-                        </button>
-                      </div>
-                    </>
-                  )}
-
-                  {viewingPayment.status !== 'pending' && (
-                    <div className="flex justify-center pt-2">{getStatusBadge(viewingPayment.status)}</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </>
+          <Field label="Reason" htmlFor="rf-reason" required hint="Recorded on the payment and in the audit log.">
+            <Textarea id="rf-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </Field>
+          {reason.trim().length > 0 && reason.trim().length < 3 && <p className="text-[12.5px] text-adm-danger">Give a short reason (3+ characters).</p>}
+        </ConfirmDialog>
       )}
-
-      {/* PayHere Transactions Tab */}
-      {activeTab === 'payhere' && (
-        <>
-          {/* Filters */}
-          <div className="flex gap-2">
-            {(['all', 'pending', 'success', 'failed', 'cancelled'] as const).map((status) => (
-              <button
-                key={status}
-                onClick={() => setPhFilter(status)}
-                className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-                  phFilter === status
-                    ? 'bg-gray-900 text-white'
-                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700'
-                }`}
-              >
-                {status.charAt(0).toUpperCase() + status.slice(1)}
-              </button>
-            ))}
-          </div>
-
-          {/* PayHere Transactions Table */}
-          <div className="bg-white dark:bg-gray-800 rounded-md shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
-            {loading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-              </div>
-            ) : payhereTransactions.length === 0 ? (
-              <div className="text-center py-12 text-gray-500 dark:text-gray-400">
-                No {phFilter !== 'all' ? phFilter : ''} PayHere transactions found
-              </div>
-            ) : (
-              <table className="w-full">
-                <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700">
-                  <tr>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Order ID</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">User</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Company</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Amount</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Method</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Status</th>
-                    <th className="text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider px-6 py-3">Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {payhereTransactions.map((tx) => {
-                    const sub = Array.isArray(tx.subscription) ? tx.subscription[0] : tx.subscription
-                    const account = Array.isArray(tx.account) ? tx.account[0] : tx.account
-                    const tenant = sub?.tenant ? (Array.isArray(sub.tenant) ? sub.tenant[0] : sub.tenant) : null
-                    const tier = sub?.tier ? (Array.isArray(sub.tier) ? sub.tier[0] : sub.tier) : null
-
-                    return (
-                      <tr key={tx.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                        <td className="px-6 py-4">
-                          <p className="font-mono text-sm text-gray-900 dark:text-white">{tx.orderId}</p>
-                          {tx.payherePaymentId && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">PH: {tx.payherePaymentId}</p>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="font-medium text-gray-900 dark:text-white">{account?.fullName || '-'}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">{account?.email || ''}</p>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="text-gray-900 dark:text-white">{tenant?.name || '-'}</p>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">{tier?.displayName || ''}</p>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="font-semibold text-gray-900 dark:text-white">{formatCurrencyWithSymbol(Number(tx.amount), tx.currency)}</p>
-                          {tx.billingCycle && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400">{tx.billingCycle}</p>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="text-gray-600 dark:text-gray-400 text-sm">{tx.paymentMethod || '-'}</p>
-                        </td>
-                        <td className="px-6 py-4">
-                          {getPhStatusBadge(tx.status)}
-                          {tx.statusMessage && (
-                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{tx.statusMessage}</p>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          <p className="text-gray-600 dark:text-gray-400 text-sm">
-                            {tx.paidAt
-                              ? new Date(tx.paidAt).toLocaleDateString()
-                              : new Date(tx.createdAt).toLocaleDateString()
-                            }
-                          </p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">
-                            {tx.paidAt
-                              ? new Date(tx.paidAt).toLocaleTimeString()
-                              : new Date(tx.createdAt).toLocaleTimeString()
-                            }
-                          </p>
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </>
-      )}
-    </div>
+    </>
   )
 }

@@ -1,0 +1,295 @@
+/* ==========================================================================
+   POSLanka console kit — design tokens + a few unlayered component rules.
+   Used by the super-admin console (/sys-control) and every staff/vendor
+   sign-in page. Components live in src/components/admin/kit.
+
+   Tokens are plain CSS variables (--adm-*) that flip under `.dark`, and are
+   exposed to Tailwind as colours, e.g. `bg-adm-surface text-adm-fg
+   border-adm-border text-adm-muted bg-adm-primary text-adm-primary-fg`.
+   The kit never uses Tailwind's gray/white palette, so the legacy global
+   `.dark .bg-white { … }` overrides in globals.css cannot repaint it.
+   ========================================================================== */
+
+:root {
+  --adm-bg: #f5f6f8;
+  --adm-surface: #ffffff;
+  --adm-surface-2: #f2f4f7;
+  --adm-surface-3: #e9edf2;
+  --adm-border: #e2e6ec;
+  --adm-border-strong: #cdd3dc;
+  --adm-fg: #0f172a;
+  --adm-muted: #556070;
+  --adm-subtle: #8a94a3;
+  --adm-primary: #0f766e;
+  --adm-primary-hover: #115e59;
+  --adm-primary-fg: #ffffff;
+  --adm-primary-soft: #e3f3f1;
+  --adm-primary-soft-fg: #0b5e57;
+  --adm-success: #15803d;
+  --adm-success-soft: #e6f6ec;
+  --adm-warning: #b45309;
+  --adm-warning-soft: #fdf3e2;
+  --adm-danger: #dc2626;
+  --adm-danger-soft: #fdecec;
+  --adm-info: #2563eb;
+  --adm-info-soft: #e8effd;
+  --adm-ring: rgba(15, 118, 110, 0.28);
+  --adm-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.04);
+  --adm-shadow-lg: 0 12px 32px -12px rgba(15, 23, 42, 0.22), 0 2px 6px rgba(15, 23, 42, 0.06);
+  --adm-sidebar: #0f1a2a;
+  --adm-sidebar-fg: #c8d1de;
+  --adm-sidebar-muted: #7d8aa0;
+  --adm-sidebar-active: rgba(45, 212, 191, 0.14);
+  --adm-sidebar-active-fg: #5eead4;
+  --adm-sidebar-border: #1c2a3e;
+  --adm-brand-from: #0f766e;
+  --adm-brand-to: #134e4a;
+}
+
+.dark {
+  --adm-bg: #0b1018;
+  --adm-surface: #121a26;
+  --adm-surface-2: #172131;
+  --adm-surface-3: #1e2a3d;
+  --adm-border: #243246;
+  --adm-border-strong: #33445d;
+  --adm-fg: #e7ecf3;
+  --adm-muted: #a1acbd;
+  --adm-subtle: #6f7c90;
+  --adm-primary: #2dd4bf;
+  --adm-primary-hover: #5eead4;
+  --adm-primary-fg: #042f2b;
+  --adm-primary-soft: rgba(45, 212, 191, 0.12);
+  --adm-primary-soft-fg: #5eead4;
+  --adm-success: #4ade80;
+  --adm-success-soft: rgba(74, 222, 128, 0.12);
+  --adm-warning: #fbbf24;
+  --adm-warning-soft: rgba(251, 191, 36, 0.12);
+  --adm-danger: #f87171;
+  --adm-danger-soft: rgba(248, 113, 113, 0.12);
+  --adm-info: #60a5fa;
+  --adm-info-soft: rgba(96, 165, 250, 0.12);
+  --adm-ring: rgba(45, 212, 191, 0.3);
+  --adm-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --adm-shadow-lg: 0 16px 40px -16px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --adm-sidebar: #0a111c;
+  --adm-sidebar-border: #1a2537;
+}
+
+@theme inline {
+  --color-adm-bg: var(--adm-bg);
+  --color-adm-surface: var(--adm-surface);
+  --color-adm-surface-2: var(--adm-surface-2);
+  --color-adm-surface-3: var(--adm-surface-3);
+  --color-adm-border: var(--adm-border);
+  --color-adm-border-strong: var(--adm-border-strong);
+  --color-adm-fg: var(--adm-fg);
+  --color-adm-muted: var(--adm-muted);
+  --color-adm-subtle: var(--adm-subtle);
+  --color-adm-primary: var(--adm-primary);
+  --color-adm-primary-hover: var(--adm-primary-hover);
+  --color-adm-primary-fg: var(--adm-primary-fg);
+  --color-adm-primary-soft: var(--adm-primary-soft);
+  --color-adm-primary-soft-fg: var(--adm-primary-soft-fg);
+  --color-adm-success: var(--adm-success);
+  --color-adm-success-soft: var(--adm-success-soft);
+  --color-adm-warning: var(--adm-warning);
+  --color-adm-warning-soft: var(--adm-warning-soft);
+  --color-adm-danger: var(--adm-danger);
+  --color-adm-danger-soft: var(--adm-danger-soft);
+  --color-adm-info: var(--adm-info);
+  --color-adm-info-soft: var(--adm-info-soft);
+  --color-adm-sidebar: var(--adm-sidebar);
+  --color-adm-sidebar-fg: var(--adm-sidebar-fg);
+  --color-adm-sidebar-muted: var(--adm-sidebar-muted);
+  --color-adm-sidebar-active: var(--adm-sidebar-active);
+  --color-adm-sidebar-active-fg: var(--adm-sidebar-active-fg);
+  --color-adm-sidebar-border: var(--adm-sidebar-border);
+}
+
+/* Root wrapper for every kit page: sets type + background, isolates color-scheme. */
+.adm-root {
+  background-color: var(--adm-bg);
+  color: var(--adm-fg);
+  font-family: var(--font-inter, 'Inter', system-ui, -apple-system, sans-serif);
+  font-size: 14px;
+  line-height: 1.5;
+  color-scheme: light;
+}
+.dark .adm-root,
+.dark.adm-root {
+  color-scheme: dark;
+}
+.adm-root .adm-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Form controls ----------
+   globals.css has unlayered `input { padding }` and `.dark input:not(...)`
+   rules that beat Tailwind utilities, which is why icons used to overlap the
+   placeholder. These selectors are deliberately more specific. */
+html body .adm-input:not([type='checkbox']):not([type='radio']),
+html body select.adm-input,
+html body textarea.adm-input {
+  min-height: 38px;
+  padding: 0.5rem 0.75rem;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--adm-fg);
+  background-color: var(--adm-surface);
+  border: 1px solid var(--adm-border-strong);
+  border-radius: 0.5rem;
+  box-shadow: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+html body textarea.adm-input {
+  min-height: 5rem;
+  resize: vertical;
+}
+html body select.adm-input:not([type='checkbox']):not([type='radio']) {
+  padding-right: 2.25rem;
+  background-position: right 0.6rem center;
+}
+html body .adm-input.adm-input--lg:not([type='checkbox']):not([type='radio']) {
+  min-height: 44px;
+  font-size: 15px;
+}
+html body .adm-input.adm-input--sm:not([type='checkbox']):not([type='radio']) {
+  min-height: 32px;
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+  font-size: 13px;
+}
+html body .adm-input.adm-input--icon-left:not([type='checkbox']):not([type='radio']) {
+  padding-left: 2.5rem;
+}
+html body .adm-input.adm-input--icon-right:not([type='checkbox']):not([type='radio']) {
+  padding-right: 2.75rem;
+}
+html body .adm-input::placeholder {
+  color: var(--adm-subtle);
+  opacity: 1;
+}
+html body .adm-input:hover:not(:disabled):not(:focus) {
+  border-color: var(--adm-subtle);
+}
+html body .adm-input:focus,
+html body .adm-input:focus-visible {
+  outline: none;
+  border-color: var(--adm-primary);
+  box-shadow: 0 0 0 3px var(--adm-ring);
+}
+html body .adm-input[aria-invalid='true'] {
+  border-color: var(--adm-danger);
+}
+html body .adm-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+html body .adm-input.adm-input--code:not([type='checkbox']):not([type='radio']) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.35em;
+  text-align: center;
+  font-size: 1.125rem;
+}
+html body .adm-checkbox {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--adm-primary);
+}
+
+/* ---------- Table ---------- */
+html body .adm-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+html body .adm-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.625rem 1rem;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--adm-muted);
+  background-color: var(--adm-surface-2);
+  border-bottom: 1px solid var(--adm-border);
+  white-space: nowrap;
+}
+html body .adm-table td {
+  padding: 0.75rem 1rem;
+  color: var(--adm-fg);
+  border-bottom: 1px solid var(--adm-border);
+  vertical-align: middle;
+}
+html body .adm-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+html body .adm-table tbody tr:hover {
+  background-color: var(--adm-surface-2);
+}
+html body .adm-table tbody tr:hover td {
+  background-color: transparent;
+}
+
+/* Focus ring for kit buttons/links */
+.adm-focus:focus-visible {
+  outline: 2px solid var(--adm-primary);
+  outline-offset: 2px;
+}
+
+/* Thin, theme-aware scrollbars inside kit scroll containers */
+.adm-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--adm-border-strong) transparent;
+}
+.adm-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.adm-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.adm-scroll::-webkit-scrollbar-thumb {
+  background: var(--adm-border-strong);
+  border-radius: 4px;
+}
+
+@keyframes adm-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.adm-fade-in {
+  animation: adm-fade-in 0.2s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .adm-fade-in { animation: none; }
+}
+
+/* globals.css sets unlayered `button { font-size }` and `h1…h4 { font-size … }`,
+   which would silently beat Tailwind utilities on kit pages. Hand those
+   properties back to the layered cascade (preflight + utilities). */
+/* Same for the phone-only `button { min-height: 44px; padding }` rule: kit buttons size themselves. */
+.adm-root button {
+  min-height: revert-layer;
+  padding: revert-layer;
+}
+.adm-root button,
+.adm-root :is(h1, h2, h3, h4) {
+  font-size: revert-layer;
+  font-weight: revert-layer;
+  letter-spacing: revert-layer;
+  line-height: revert-layer;
+}
+.adm-root table {
+  font-size: revert-layer;
+}
+
+/* Phones: 16px text in fields prevents iOS zoom-on-focus. */
+@media (max-width: 767px) {
+  html body .adm-input:not([type='checkbox']):not([type='radio']),
+  html body .adm-input.adm-input--sm:not([type='checkbox']):not([type='radio']) {
+    font-size: 16px;
+  }
+}

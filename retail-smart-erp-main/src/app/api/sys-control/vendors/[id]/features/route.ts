@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { validateAdminSession, adminAudit } from '@/lib/admin'
+import { adminAuthError, validateAdminSession, adminAudit } from '@/lib/admin'
 import { validateBody } from '@/lib/validation'
 import { logError } from '@/lib/ai/error-logger'
 import { getTenantFeatureFlags, setTenantFeatureFlags } from '@/lib/features/check'
@@ -15,9 +15,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('read')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
     const { id } = await params
     const flags = await getTenantFeatureFlags(id)
@@ -33,9 +33,9 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('vendors.manage')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
     const { id } = await params
     const parsed = await validateBody(request, updateFlagsSchema)

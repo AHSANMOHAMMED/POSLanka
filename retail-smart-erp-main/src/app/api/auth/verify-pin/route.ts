@@ -12,7 +12,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { logActivity } from '@/lib/utils/activity-log'
 import { APPROVAL_SCOPES, signApprovalToken } from '@/lib/auth/approval-token'
 
-const PIN_RATE_LIMIT = { maxAttempts: 5, windowMs: 10 * 60 * 1000, category: 'pos_pin' }
+const PIN_RATE_LIMIT = { maxAttempts: 5, windowMs: 10 * 60 * 1000, category: 'pos_pin', failClosed: true }
 
 const permissionKeys = Object.keys(ROLE_PERMISSIONS) as [Permission, ...Permission[]]
 

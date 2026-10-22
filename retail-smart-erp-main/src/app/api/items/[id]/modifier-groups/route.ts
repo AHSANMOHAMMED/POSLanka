@@ -5,6 +5,7 @@ import { modifierGroupItems, modifierGroups, modifiers } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { requireModule } from '@/lib/auth/roles'
 
 // GET /api/items/[id]/modifier-groups
 // Returns modifier groups linked to this item, with their modifiers
@@ -17,6 +18,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    // Module Access: refused when the owner switched this module off for the caller's role
+    const moduleError = requireModule(session, ['stock', 'selling'])
+    if (moduleError) return moduleError
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response

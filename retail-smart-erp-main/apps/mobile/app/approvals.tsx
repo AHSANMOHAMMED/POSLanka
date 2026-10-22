@@ -14,9 +14,11 @@ import {
 } from 'react-native'
 import { router } from 'expo-router'
 import { apiGet, apiPost, asList, getUser, qs, type AuthUser } from '../src/lib/api'
-import { hasPermission, roleLabel } from '../src/lib/roles'
+import { hasPermission, roleLabel, displayRole } from '../src/lib/roles'
 import { THEME, formatLKR } from '../src/lib/theme'
 import { LoadingView, EmptyView, ErrorView, InlineNotice } from '../src/components/StateViews'
+import { useHeaderPad } from '../src/lib/safeArea'
+import { goBack } from '../src/lib/nav'
 
 type ApprovalKind = 'PR' | 'ADVANCE'
 
@@ -64,6 +66,7 @@ function fmtDate(iso: string | null | undefined) {
 }
 
 export default function ApprovalsScreen() {
+  const headerPad = useHeaderPad()
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
   const [filter, setFilter] = useState<'ALL' | ApprovalKind>('ALL')
   const [items, setItems] = useState<ApprovalItem[]>([])
@@ -215,8 +218,8 @@ export default function ApprovalsScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => (router.canGoBack() ? router.back() : router.replace('/pos'))} style={styles.backButton}>
+      <View style={[styles.header, headerPad]}>
+        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
           <Text style={styles.backButtonText}>←</Text>
         </TouchableOpacity>
         <View style={styles.headerCenter}>
@@ -231,7 +234,7 @@ export default function ApprovalsScreen() {
       {user === undefined ? (
         <LoadingView />
       ) : !canPR && !canAdv ? (
-        <EmptyView icon="🔒" title="Not available for your role" subtitle={`${roleLabel(user?.role)} accounts cannot approve requisitions or advances.`} />
+        <EmptyView icon="🔒" title="Not available for your role" subtitle={`${displayRole(user)} accounts cannot approve requisitions or advances.`} />
       ) : loading ? (
         <LoadingView text="Loading pending approvals…" />
       ) : error ? (
@@ -259,7 +262,7 @@ export default function ApprovalsScreen() {
               </View>
             </View>
             <Text style={styles.managerText}>
-              {user?.name} • {roleLabel(user?.role)}
+              {user?.name} • {displayRole(user)}
             </Text>
           </View>
 

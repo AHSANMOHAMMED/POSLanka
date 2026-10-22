@@ -6,7 +6,7 @@ import { files, collectionFiles } from '@/lib/db/schema'
 import { eq, and, sql, ilike, isNull, like, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { validateFile, storeFile, computeFileHash, generateThumbnail } from '@/lib/files'
+import { validateFile, validateFileContent, storeFile, computeFileHash, generateThumbnail } from '@/lib/files'
 import { logFileAudit, getRequestMeta } from '@/lib/files'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota, invalidateStorageCache } from '@/lib/db/storage-quota'
@@ -160,6 +160,8 @@ export async function POST(request: NextRequest) {
 
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
+    const content = validateFileContent(buffer, file.name)
+    if (!content.valid) return NextResponse.json({ error: content.error }, { status: 400 })
     const contentHash = computeFileHash(buffer)
 
     return await withTenant(session.user.tenantId, async (db) => {

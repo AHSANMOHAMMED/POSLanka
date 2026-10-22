@@ -2,6 +2,7 @@
 
 import { useSession } from 'next-auth/react'
 import { hasPermission, type Permission } from '@/lib/auth/roles'
+import { useEffectivePermissions } from '@/hooks/useEffectivePermissions'
 import { ShieldX } from 'lucide-react'
 
 interface PermissionGuardProps {
@@ -23,16 +24,20 @@ const defaultFallback = (
 /**
  * Wraps children with a permission check.
  * Shows "Access Denied" fallback when user lacks the required permission.
+ * Uses the server-effective permissions (custom roles, tenant overrides, module access) once
+ * loaded, and the role defaults until then. The API enforces the same rules regardless.
  */
 export function PermissionGuard({ permission, children, fallback }: PermissionGuardProps) {
   const { data: session, status } = useSession()
+  const { permissions: effective } = useEffectivePermissions()
 
   if (status === 'loading') {
     return null
   }
 
   const role = session?.user?.role
-  if (!role || !hasPermission(role, permission)) {
+  const allowed = effective ? effective[permission] === true : !!role && hasPermission(role, permission)
+  if (!role || !allowed) {
     return <>{fallback || defaultFallback}</>
   }
 

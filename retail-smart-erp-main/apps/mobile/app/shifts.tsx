@@ -11,7 +11,7 @@ import {
   RefreshControl,
 } from 'react-native'
 import { router } from 'expo-router'
-import { apiGet, apiPost, getUser, logout, type AuthUser } from '../src/lib/api'
+import { apiGet, apiPost, getUser, logout, formatBusinessId, type AuthUser } from '../src/lib/api'
 import {
   fetchCurrentShift,
   fetchMyProfiles,
@@ -23,15 +23,17 @@ import {
   type PosProfile,
   type Shift,
 } from '../src/lib/shift'
-import { roleLabel } from '../src/lib/roles'
+import { displayRole, hasPermission } from '../src/lib/roles'
 import { THEME, formatLKR } from '../src/lib/theme'
-import { ErrorView } from '../src/components/StateViews'
+import { ErrorView, EmptyView } from '../src/components/StateViews'
 import { getPrinterSettings, isPrintingEnabled, printerErrorMessage, printZReport } from '../src/lib/printer'
 import { loadBusinessInfo, resolveReceiptSettings, zReportFromClose } from '../src/lib/receipt'
 import { getQueuedSales, isOnline, syncNow } from '../src/lib/offlineQueue'
 import { unsyncedSalesForShift } from '../src/lib/shiftGuard'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from '../src/components/SupervisorPinModal'
 import type { ZReportDetails } from '../src/lib/escpos'
+import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
+import { goBack } from '../src/lib/nav'
 
 /** H1: structured variance reasons (mirror of SHIFT_VARIANCE_REASONS on the server) */
 const VARIANCE_REASONS: Array<{ value: string; label: string }> = [
@@ -98,6 +100,8 @@ function num(v: string | number | undefined | null): number {
 }
 
 export default function ShiftsScreen() {
+  const headerPad = useHeaderPad()
+  const bottomPad = useBottomPad()
   const [user, setUser] = useState<AuthUser | null>(null)
   const [shift, setShift] = useState<Shift | null>(null)
   const [profiles, setProfiles] = useState<PosProfile[]>([])
@@ -322,14 +326,14 @@ export default function ShiftsScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Pressable style={styles.backBtn} onPress={() => (router.canGoBack() ? router.back() : router.replace('/pos'))}>
+      <View style={[styles.header, headerPad]}>
+        <Pressable style={styles.backBtn} onPress={() => goBack()}>
           <Text style={styles.backBtnText}>←</Text>
         </Pressable>
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle}>Cashier Shift & Float</Text>
           <Text style={styles.headerSub} numberOfLines={1}>
-            {user ? `${user.name} • ${roleLabel(user.role)} • ${user.tenantName}` : 'Drawer status & reconciliation'}
+            {user ? `${user.name} • ${displayRole(user)} • ${user.tenantName}${user.businessId ? ` (${formatBusinessId(user.businessId)})` : ''}` : 'Drawer status & reconciliation'}
           </Text>
         </View>
         <Pressable
@@ -345,9 +349,12 @@ export default function ShiftsScreen() {
         </Pressable>
       </View>
 
+      {user && !hasPermission(user, 'createSales') ? (
+        <EmptyView icon="🔒" title="Not available for your role" subtitle="Shifts are for staff who make sales. Your role cannot open a register shift." />
+      ) : (
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 40 + bottomPad }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -560,6 +567,7 @@ export default function ShiftsScreen() {
           </View>
         )}
       </ScrollView>
+      )}
     </View>
   )
 }

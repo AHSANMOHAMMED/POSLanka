@@ -8,9 +8,11 @@ import {
   DEFAULT_ALERT_PREFERENCES, DEFAULT_ALERT_SETTINGS, isAlertType,
   type AlertPreferences, type AlertType, type TenantAlertSettings,
 } from './alert-types'
+import { invalidate, registerCache } from '@/lib/cache/invalidation'
 
 const CACHE_TTL_MS = 60_000
 const cache = new Map<string, { at: number; value: TenantAlertSettings; timezone: string }>()
+registerCache('alert-settings', (key) => { if (key) cache.delete(key); else cache.clear() })
 
 function num(v: unknown): number | null {
   const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN
@@ -67,13 +69,12 @@ export async function saveAlertSettings(tenantId: string, value: TenantAlertSett
   await db.update(tenants)
     .set({ settings: sql`jsonb_set(COALESCE(${tenants.settings}, '{}'::jsonb), '{alerts}', ${JSON.stringify(normalized)}::jsonb, true)` })
     .where(eq(tenants.id, tenantId))
-  cache.delete(tenantId)
+  invalidate('alert-settings', tenantId)
   return normalized
 }
 
 export function clearAlertSettingsCache(tenantId?: string) {
-  if (tenantId) cache.delete(tenantId)
-  else cache.clear()
+  invalidate('alert-settings', tenantId ?? null)
 }
 
 // ---------------------------------------------------------------------------

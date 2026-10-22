@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, MODULE_KEYS, ROLE_HIERARCHY } from '@/lib/auth/roles'
+import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { withTenant } from '@/lib/db'
 import { moduleAccess } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
@@ -41,7 +42,16 @@ export async function PUT(request: NextRequest) {
 
     const parsed = await validateBody(request, updateModuleAccessSchema)
     if (!parsed.success) return parsed.response
-    const { entries } = parsed.data
+    const { entries: requested } = parsed.data
+
+    // Unknown modules / roles would only create dead rows (or a DB enum error); reject them.
+    const bad = requested.find((e) => !(MODULE_KEYS as readonly string[]).includes(e.moduleKey) || !(e.role in ROLE_HIERARCHY))
+    if (bad) {
+      return NextResponse.json({ error: `Unknown module or role: ${bad.moduleKey} / ${bad.role}` }, { status: 400 })
+    }
+    // The owner can never be locked out of a module — owner rows are ignored (and enforcement
+    // skips owners anyway), so the editor may send the full grid unchanged.
+    const entries = requested.filter((e) => e.role !== 'owner')
 
     return await withTenant(session.user.tenantId, async (db) => {
       for (const entry of entries) {
@@ -72,7 +82,11 @@ export async function PUT(request: NextRequest) {
         }
       }
 
+      // Server-side enforcement reads module access from the permission cache
+      invalidatePermissionCache(session.user.tenantId)
       logAndBroadcast(session.user.tenantId, 'module-access', 'updated', 'bulk')
+      // Effective permissions change too — clients listening for 'settings' refetch them
+      logAndBroadcast(session.user.tenantId, 'settings', 'updated', 'role-permissions', { userId: session.user.id })
 
       const result = await db.query.moduleAccess.findMany({
         orderBy: (m, { asc }) => [asc(m.moduleKey), asc(m.role)],

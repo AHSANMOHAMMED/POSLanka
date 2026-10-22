@@ -41,8 +41,20 @@ function linkFor(base: string, item: InboxItem): string | null {
     default: break
   }
   if (item.type === 'import_finished') return `${base}/settings/import-export`
+  // Platform broadcasts carry the admin's link: a same-site path or an https:// address
+  if (typeof d.link === 'string') return safeBroadcastLink(d.link)
   return null
 }
+
+/** Only same-site paths ("/…", not "//…") and https URLs are followed. */
+function safeBroadcastLink(link: string): string | null {
+  const v = link.trim()
+  if (/^\/(?!\/)/.test(v)) return v
+  if (/^https:\/\/[^\s]+$/i.test(v)) return v
+  return null
+}
+
+const isExternal = (href: string) => /^https:\/\//i.test(href)
 
 /** In-app alert inbox (low stock, refunds, approvals, reminders …) for the signed-in user. */
 export function InboxBell() {
@@ -148,7 +160,12 @@ export function InboxBell() {
                   )
                   return (
                     <li key={item.id} className={`px-3 py-2.5 ${!item.readAt ? 'bg-blue-50/60 dark:bg-blue-900/10' : ''}`}>
-                      {href ? (
+                      {href && isExternal(href) ? (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="block" onClick={() => { setOpen(false); if (!item.readAt) void markRead({ ids: [item.id] }) }}>
+                          {content}
+                          <span className="text-xs text-blue-600 dark:text-blue-400">Open link ↗</span>
+                        </a>
+                      ) : href ? (
                         <Link href={href} className="block" onClick={() => { setOpen(false); if (!item.readAt) void markRead({ ids: [item.id] }) }}>
                           {content}
                         </Link>

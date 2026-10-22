@@ -1,112 +1,87 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Clock, AlertTriangle } from 'lucide-react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Clock } from 'lucide-react'
+import { AdminModal, Button } from './kit'
+import { cn } from '@/lib/utils'
 
-const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // 15 minutes
-const WARNING_THRESHOLD_MS = 2 * 60 * 1000 // Warn at 2 minutes remaining
+const SESSION_TIMEOUT_MS = 15 * 60 * 1000 // sign out after 15 minutes without input
+const WARNING_THRESHOLD_MS = 2 * 60 * 1000
 
-export function AdminSessionTimer() {
-  const router = useRouter()
+export async function signOutAdmin(reason?: 'expired') {
+  try {
+    await fetch('/api/sys-control/auth/logout', { method: 'POST', redirect: 'manual' })
+  } catch {
+    // ignore — we navigate away regardless
+  }
+  window.location.href = reason ? `/sys-control/login?session=${reason}` : '/sys-control/login'
+}
+
+function formatTime(ms: number) {
+  const minutes = Math.floor(ms / 60000)
+  const seconds = Math.floor((ms % 60000) / 1000)
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
+
+/** Inactivity timer: shows the remaining idle time, warns at 2 minutes, signs out at 0. */
+export function AdminSessionTimer({ className }: { className?: string }) {
+  const lastActivity = useRef(0)
   const [timeRemaining, setTimeRemaining] = useState(SESSION_TIMEOUT_MS)
-  const [lastActivity, setLastActivity] = useState(() => Date.now())
-  const [showWarning, setShowWarning] = useState(false)
+  const [warningOpen, setWarningOpen] = useState(false)
+  const expired = useRef(false)
 
-  // Reset timer on user activity
   const resetTimer = useCallback(() => {
-    setLastActivity(Date.now())
-    setShowWarning(false)
+    lastActivity.current = Date.now()
   }, [])
 
-  // Track user activity
   useEffect(() => {
-    const events = ['mousedown', 'keydown', 'scroll', 'touchstart']
-
-    events.forEach(event => {
-      window.addEventListener(event, resetTimer, { passive: true })
-    })
-
+    lastActivity.current = Date.now()
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart'] as const
+    events.forEach((e) => window.addEventListener(e, resetTimer, { passive: true }))
+    const interval = window.setInterval(() => {
+      const remaining = Math.max(0, SESSION_TIMEOUT_MS - (Date.now() - lastActivity.current))
+      setTimeRemaining(remaining)
+      setWarningOpen(remaining > 0 && remaining <= WARNING_THRESHOLD_MS)
+      if (remaining <= 0 && !expired.current) {
+        expired.current = true
+        signOutAdmin('expired')
+      }
+    }, 1000)
     return () => {
-      events.forEach(event => {
-        window.removeEventListener(event, resetTimer)
-      })
+      events.forEach((e) => window.removeEventListener(e, resetTimer))
+      window.clearInterval(interval)
     }
   }, [resetTimer])
 
-  // Update countdown
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const elapsed = Date.now() - lastActivity
-      const remaining = Math.max(0, SESSION_TIMEOUT_MS - elapsed)
-      setTimeRemaining(remaining)
-
-      // Show warning when 2 minutes remaining
-      if (remaining <= WARNING_THRESHOLD_MS && remaining > 0) {
-        setShowWarning(true)
-      }
-
-      // Auto-logout when session expires
-      if (remaining <= 0) {
-        router.push('/sys-control/login?session=expired')
-      }
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [lastActivity, router])
-
-  const formatTime = (ms: number) => {
-    const minutes = Math.floor(ms / 60000)
-    const seconds = Math.floor((ms % 60000) / 1000)
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`
-  }
-
-  const isWarning = timeRemaining <= WARNING_THRESHOLD_MS
+  const warning = timeRemaining <= WARNING_THRESHOLD_MS
 
   return (
-    <div className="flex items-center gap-2">
-      <div
-        className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium ${
-          isWarning
-            ? 'bg-red-500/20 text-red-300'
-            : 'bg-gray-700 text-gray-400'
-        }`}
-      >
-        {isWarning ? (
-          <AlertTriangle className="w-3 h-3" />
-        ) : (
-          <Clock className="w-3 h-3" />
+    <>
+      <span
+        title="Signs out automatically after 15 minutes without activity"
+        className={cn(
+          'adm-num inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] font-medium',
+          warning ? 'bg-adm-danger-soft text-adm-danger' : 'text-adm-muted',
+          className
         )}
-        <span>{formatTime(timeRemaining)}</span>
-      </div>
-
-      {/* Warning Modal */}
-      {showWarning && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-md p-6 max-w-sm mx-4 shadow-xl">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-                <AlertTriangle className="w-5 h-5 text-red-600" />
-              </div>
-              <div>
-                <h3 className="font-semibold text-gray-900">Session Expiring</h3>
-                <p className="text-sm text-gray-500">
-                  {formatTime(timeRemaining)} remaining
-                </p>
-              </div>
-            </div>
-            <p className="text-sm text-gray-600 mb-4">
-              Your admin session will expire due to inactivity. Click anywhere or press any key to stay logged in.
-            </p>
-            <button
-              onClick={resetTimer}
-              className="w-full px-4 py-2 bg-gray-900 text-white rounded hover:bg-gray-800 transition-colors"
-            >
-              Stay Logged In
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+      >
+        <Clock size={14} aria-hidden />
+        <span className="sr-only">Idle sign-out in </span>
+        {formatTime(timeRemaining)}
+      </span>
+      <AdminModal
+        open={warningOpen}
+        onClose={resetTimer}
+        size="sm"
+        title="Still there?"
+        description={`You'll be signed out in ${formatTime(timeRemaining)} because of inactivity.`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => signOutAdmin()}>Sign out now</Button>
+            <Button variant="primary" onClick={() => { resetTimer(); setWarningOpen(false) }}>Stay signed in</Button>
+          </>
+        }
+      />
+    </>
   )
 }

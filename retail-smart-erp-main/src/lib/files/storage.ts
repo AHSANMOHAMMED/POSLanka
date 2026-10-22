@@ -10,7 +10,60 @@ const ALLOWED_EXTENSIONS = new Set([
   'zip', 'rar', '7z',
 ])
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024 // 100MB default
+// Uploads are buffered in memory, so keep the default modest. UPLOAD_MAX_MB raises it.
+const MAX_FILE_SIZE = (() => {
+  const mb = parseInt(process.env.UPLOAD_MAX_MB || '', 10)
+  return (Number.isFinite(mb) && mb > 0 ? mb : 20) * 1024 * 1024
+})()
+
+const startsWith = (buf: Buffer, bytes: number[], offset = 0) =>
+  buf.length >= offset + bytes.length && bytes.every((b, i) => buf[offset + i] === b)
+const ascii = (buf: Buffer, text: string, offset = 0) => startsWith(buf, [...Buffer.from(text, 'latin1')], offset)
+
+const ZIP = (b: Buffer) => startsWith(b, [0x50, 0x4b, 0x03, 0x04]) || startsWith(b, [0x50, 0x4b, 0x05, 0x06])
+const OLE = (b: Buffer) => startsWith(b, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])
+const ISO_BMFF = (b: Buffer) => ['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip'].some((t) => ascii(b, t, 4))
+const TEXT = (b: Buffer) => {
+  const head = b.subarray(0, 8192)
+  if (head.includes(0)) {
+    // UTF-16 text (Excel "Unicode text" CSV export) starts with a BOM and contains NULs
+    return startsWith(b, [0xff, 0xfe]) || startsWith(b, [0xfe, 0xff])
+  }
+  // Executables renamed to .txt/.csv
+  return !(ascii(b, 'MZ') || startsWith(b, [0x7f, 0x45, 0x4c, 0x46]))
+}
+
+/** File signature ("magic bytes") per allowed extension. */
+const MAGIC: Record<string, (b: Buffer) => boolean> = {
+  jpg: (b) => startsWith(b, [0xff, 0xd8, 0xff]),
+  jpeg: (b) => startsWith(b, [0xff, 0xd8, 0xff]),
+  png: (b) => startsWith(b, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  gif: (b) => ascii(b, 'GIF87a') || ascii(b, 'GIF89a'),
+  webp: (b) => ascii(b, 'RIFF') && ascii(b, 'WEBP', 8),
+  pdf: (b) => b.subarray(0, 1024).includes(Buffer.from('%PDF-')),
+  doc: OLE, xls: OLE, ppt: OLE,
+  docx: ZIP, xlsx: ZIP, pptx: ZIP, zip: ZIP,
+  rar: (b) => ascii(b, 'Rar!\x1a\x07'),
+  '7z': (b) => startsWith(b, [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]),
+  mp4: ISO_BMFF, mov: ISO_BMFF,
+  avi: (b) => ascii(b, 'RIFF') && ascii(b, 'AVI ', 8),
+  webm: (b) => startsWith(b, [0x1a, 0x45, 0xdf, 0xa3]),
+  ogg: (b) => ascii(b, 'OggS'),
+  csv: TEXT, txt: TEXT,
+}
+
+/**
+ * Check the uploaded bytes against the file's extension (the browser-supplied MIME type and
+ * name are attacker-controlled). Call after reading the buffer, before storing it.
+ */
+export function validateFileContent(buffer: Buffer, fileName: string): { valid: boolean; error?: string } {
+  const ext = fileName.split('.').pop()?.toLowerCase() || ''
+  const check = MAGIC[ext]
+  if (!check) return { valid: false, error: `File type .${ext || 'unknown'} is not allowed` }
+  if (buffer.length === 0) return { valid: false, error: 'File is empty' }
+  if (!check(buffer)) return { valid: false, error: `File content does not match the .${ext} extension` }
+  return { valid: true }
+}
 
 interface ValidateOptions {
   allowedTypes?: string[]

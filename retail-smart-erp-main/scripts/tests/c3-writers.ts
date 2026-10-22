@@ -347,7 +347,8 @@ export async function runC3WriterTests(check: Check): Promise<void> {
     const offenders: string[] = []
     for (const file of [...walk(join(ROOT, 'src')), ...walk(join(ROOT, 'scripts'))]) {
       const rel = relative(ROOT, file)
-      if (rel === 'src/lib/inventory/apply-stock-change.ts' || rel.startsWith('scripts/tests/')) continue
+      // scripts/test-*.ts are standalone test harnesses (like scripts/tests/), not data writers
+      if (rel === 'src/lib/inventory/apply-stock-change.ts' || rel.startsWith('scripts/tests/') || rel.startsWith('scripts/test-')) continue
       const src = readFileSync(file, 'utf8')
       if (/insert\(\s*stockMovements\s*\)/.test(src)) offenders.push(`${rel}: insert(stockMovements)`)
       if (/INSERT\s+INTO\s+stock_movements/i.test(src)) offenders.push(`${rel}: INSERT INTO stock_movements`)

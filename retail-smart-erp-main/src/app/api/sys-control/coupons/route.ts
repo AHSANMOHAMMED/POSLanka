@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { couponCodes } from '@/lib/db/schema'
 import { eq, desc } from 'drizzle-orm'
-import { adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
+import { adminAuthError, adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
 import { sysCreateCouponSchema } from '@/lib/validation/schemas/sys-control'
@@ -10,9 +10,9 @@ import { sysCreateCouponSchema } from '@/lib/validation/schemas/sys-control'
 // GET /api/sys-control/coupons - List all coupon codes
 export async function GET() {
   try {
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('read')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const coupons = await db.query.couponCodes.findMany({
@@ -32,9 +32,9 @@ export async function POST(request: NextRequest) {
     const rateLimited = await withRateLimit('/api/sys-control/coupons', STRICT_LIMIT)
     if (rateLimited) return rateLimited
 
-    const session = await validateAdminSession()
+    const session = await validateAdminSession('billing')
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return adminAuthError()
     }
 
     const parsed = await validateBody(request, sysCreateCouponSchema)

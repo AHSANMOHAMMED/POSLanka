@@ -13,7 +13,7 @@ import {
 } from 'react-native'
 import { router, useFocusEffect } from 'expo-router'
 import * as Crypto from 'expo-crypto'
-import { apiGet, apiPost, asList, getUser, qs, type AuthUser } from '../src/lib/api'
+import { apiGet, apiPost, asList, getUser, qs, refreshPermissions, type AuthUser } from '../src/lib/api'
 import { hasPermission } from '../src/lib/roles'
 import { loadShiftOfflineAware, shiftCounterName, shiftWarehouseName, type Shift } from '../src/lib/shift'
 import { calculateCartTax, EMPTY_TAX_CONFIG, loadTaxConfig, taxConfigFromBundle, type TaxConfig } from '../src/lib/tax'
@@ -47,6 +47,7 @@ import { useKitchenTickets } from '../src/lib/kitchenPrint'
 import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCartItems, lineTotal, scanToLine } from '../src/lib/cartMath'
 import { getLocalItem } from '../src/lib/localdb'
 import { applyCartQuote, offlineCartQuote, quoteKey, quoteRequestLines, taxableLineTotals, type CartQuote } from '../src/lib/cartPricing'
+import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
 
 interface Item {
   id: string
@@ -110,6 +111,8 @@ function stockOf(item: Item): number | null {
 }
 
 export default function PosScreen() {
+  const headerPad = useHeaderPad()
+  const bottomPad = useBottomPad()
   const [user, setUser] = useState<AuthUser | null>(null)
 
   // Shift gate
@@ -190,6 +193,8 @@ export default function PosScreen() {
 
   useEffect(() => {
     getUser().then(setUser)
+    // Owner may have changed this role's permissions since sign-in.
+    refreshPermissions().then((u) => { if (u) setUser(u) }).catch(() => undefined)
     getBundle().then(applyBundle)
     reloadBundle()
     loadBusinessInfo().then(setBusiness)
@@ -436,6 +441,11 @@ export default function PosScreen() {
     if (INVOICE_RE.test(trimmed)) {
       setQuery('')
       setDebouncedQuery('')
+      // Returns need processReturns on the server; tell the cashier instead of a 403 later.
+      if (!hasPermission(user, 'processReturns')) {
+        Alert.alert('Return not allowed', 'Your role cannot process returns. Ask a manager to do this return.')
+        return
+      }
       setReturnQuery(trimmed)
       return
     }
@@ -627,10 +637,26 @@ export default function PosScreen() {
   }
 
   // ------------------------------------------------------------------ render
+  // Roles without createSales (stock, purchasing, reports, HR, custom roles without it) never
+  // see the register; the server refuses shifts/sales for them anyway.
+  if (user && !hasPermission(user, 'createSales')) {
+    return (
+      <View style={styles.container}>
+        <View style={[styles.header, headerPad]}>
+          <Text style={styles.appTitle}>Mobile POS</Text>
+        </View>
+        <EmptyView icon="🔒" title="Not available for your role" subtitle="Your role cannot make sales. Use the menu for the tasks you can do." />
+        <Pressable style={[styles.gateBtn, { alignSelf: 'center', marginBottom: 24 + bottomPad }]} onPress={() => router.replace('/home')}>
+          <Text style={styles.gateBtnText}>Open menu →</Text>
+        </Pressable>
+      </View>
+    )
+  }
+
   return (
     <View style={styles.container}>
       {/* Header: tenant ▸ branch ▸ counter, online state, offline queue */}
-      <View style={styles.header}>
+      <View style={[styles.header, headerPad]}>
         <View style={styles.headerLeft}>
           <View style={styles.breadcrumbRow}>
             <Text style={styles.breadcrumbText} numberOfLines={1}>
@@ -687,6 +713,9 @@ export default function PosScreen() {
       <View style={styles.quickNavContainer}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickNavContent}>
           <AlertsBell />
+          <Pressable style={styles.quickNavPill} onPress={() => router.push('/home')}>
+            <Text style={styles.quickNavPillText}>☰ Menu</Text>
+          </Pressable>
           <Pressable style={styles.quickNavPill} onPress={() => setHeldVisible(true)}>
             <Text style={styles.quickNavPillText}>⏸ Held</Text>
           </Pressable>
@@ -716,7 +745,7 @@ export default function PosScreen() {
           <Pressable style={styles.quickNavPill} onPress={() => router.push('/printer')}>
             <Text style={styles.quickNavPillText}>🖨️ Printer</Text>
           </Pressable>
-          {shift ? (
+          {shift && hasPermission(user, 'processReturns') ? (
             <Pressable
               style={styles.quickNavPill}
               onPress={() => {
@@ -906,14 +935,14 @@ export default function PosScreen() {
       )}
 
       {toastMessage && (
-        <View style={styles.toast}>
+        <View style={[styles.toast, { top: (Number(headerPad.paddingTop) || 0) + 70 }]}>
           <Text style={styles.toastText}>✓ {toastMessage}</Text>
         </View>
       )}
 
       {/* Cart bar */}
       {cart.length > 0 && shift && (
-        <View style={styles.cartBar}>
+        <View style={[styles.cartBar, { paddingBottom: Math.max(24, bottomPad + 12) }]}>
           <Pressable style={styles.cartPeek} onPress={() => setCartDrawerVisible(true)}>
             <View style={styles.cartHandle} />
             <View style={styles.cartPeekRow}>
