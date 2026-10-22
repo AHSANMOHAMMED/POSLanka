@@ -164,17 +164,25 @@ export async function createSeedData(
   // 2. Create warehouses (multiple or single for backward compat)
   const defaultWarehouse = await seedWarehouses(tx, tenantId, data)
 
-  // 3. Create categories (deduplicated)
+  // 3. Create categories (deduplicated against existing tenant categories)
   const cats = data.selectedCategories || []
-  const uniqueCats = [...new Set(cats.filter(c => c.trim()))]
+  const uniqueCats = [...new Set(cats.map(c => c.trim()).filter(Boolean))]
   if (uniqueCats.length > 0) {
-    await tx.insert(categories).values(
-      uniqueCats.map((name: string) => ({
-        tenantId,
-        name: name.trim(),
-        isActive: true,
-      }))
-    )
+    const existingCats = await tx.select({ name: categories.name })
+      .from(categories)
+      .where(eq(categories.tenantId, tenantId))
+    const existingSet = new Set(existingCats.map((c: { name: string }) => c.name.toLowerCase().trim()))
+    const toInsert = uniqueCats.filter((name: string) => !existingSet.has(name.toLowerCase().trim()))
+
+    if (toInsert.length > 0) {
+      await tx.insert(categories).values(
+        toInsert.map((name: string) => ({
+          tenantId,
+          name: name.trim(),
+          isActive: true,
+        }))
+      )
+    }
   }
 
   // 4. Create POS profile linked to default warehouse

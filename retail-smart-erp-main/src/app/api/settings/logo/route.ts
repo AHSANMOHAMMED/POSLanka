@@ -83,8 +83,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result)
   } catch (error) {
+    console.error('[api/settings/logo] Logo upload error:', error)
     logError('api/settings/logo', error)
-    return NextResponse.json({ error: 'Failed to upload logo' }, { status: 500 })
+    return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to upload logo' }, { status: 500 })
   }
 }
 
