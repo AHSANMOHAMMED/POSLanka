@@ -48,6 +48,10 @@ const getCookieDomain = () => {
   return undefined // Local development: no domain restriction
 }
 
+// In-memory cache for fast session verification across user clicks (20s TTL)
+const sessionValidationCache = new Map<string, { validatedAt: number; logoUrl?: string; aiEnabled?: boolean }>()
+const SESSION_VALIDATION_TTL_MS = 20_000
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
   providers: [
@@ -448,6 +452,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
     },
   },
+  // In-memory cache for fast session verification across user clicks (20s TTL)
   callbacks: {
     async jwt({ token, user, trigger, session }) {
       if (user) {
@@ -490,8 +495,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
       }
 
-      // Validate user and tenant on every request (users-first)
+      // Validate user and tenant (cached for 20s to prevent roundtrip stalls on clicks)
       if (!user && token.tenantId && token.id) {
+        const cacheKey = `${token.tenantId}:${token.id}:${token.iat || 0}`
+        const cached = sessionValidationCache.get(cacheKey)
+        const now = Date.now()
+
+        if (cached && (now - cached.validatedAt) < SESSION_VALIDATION_TTL_MS) {
+          token.logoUrl = cached.logoUrl
+          token.aiEnabled = cached.aiEnabled
+          token.invalid = false
+          return token
+        }
+
         try {
           // 1. Validate tenant is still active
           const tenant = await db.query.tenants.findFirst({
@@ -503,6 +519,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           })
 
           if (!tenant) {
+            sessionValidationCache.delete(cacheKey)
             token.invalid = true
             return token
           }
@@ -516,6 +533,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             typeof token.iat === 'number' ? token.iat : undefined,
           )
           if (!live.ok) {
+            sessionValidationCache.delete(cacheKey)
             token.invalid = true
             return token
           }
@@ -527,10 +545,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
           token.logoUrl = tenant.logoUrl || undefined
           token.aiEnabled = tenant.aiEnabled
+          token.invalid = false
 
-          if (token.invalid) {
-            token.invalid = false
-          }
+          sessionValidationCache.set(cacheKey, {
+            validatedAt: now,
+            logoUrl: token.logoUrl,
+            aiEnabled: token.aiEnabled,
+          })
         } catch (error) {
           console.error('[JWT] Session validation DB error (keeping session):', error)
         }

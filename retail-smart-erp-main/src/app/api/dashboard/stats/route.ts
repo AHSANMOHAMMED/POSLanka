@@ -20,49 +20,53 @@ export async function GET() {
     // Local business day (Asia/Colombo by default), not the UTC date
     const today = await tenantToday(session.user.tenantId)
 
-    // Execute with RLS tenant context
+    // Execute with RLS tenant context - run all 5 count queries in parallel
     return await withTenant(session.user.tenantId, async (db) => {
-      // Today's appointments count (RLS scopes to tenant)
-      const [todayAppointmentsResult] = await db
-        .select({ count: sql<number>`COUNT(*)` })
-        .from(appointments)
-        .where(and(
-          eq(appointments.scheduledDate, today),
-          or(
-            eq(appointments.status, 'scheduled'),
-            eq(appointments.status, 'confirmed'),
-            eq(appointments.status, 'arrived')
-          )
-        ))
+      const [
+        todayAppointmentsResult,
+        draftWorkOrdersResult,
+        pendingWorkOrdersResult,
+        pendingEstimatesResult,
+        lowStockResult,
+      ] = await Promise.all([
+        db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(appointments)
+          .where(and(
+            eq(appointments.scheduledDate, today),
+            or(
+              eq(appointments.status, 'scheduled'),
+              eq(appointments.status, 'confirmed'),
+              eq(appointments.status, 'arrived')
+            )
+          ))
+          .then(([r]) => r),
 
-      // Draft work orders count (RLS scopes to tenant)
-      const [draftWorkOrdersResult] = await db
-        .select({ count: sql<number>`COUNT(*)` })
-        .from(workOrders)
-        .where(eq(workOrders.status, 'draft'))
+        db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(workOrders)
+          .where(eq(workOrders.status, 'draft'))
+          .then(([r]) => r),
 
-      // Pending work orders count - in_progress or confirmed (RLS scopes to tenant)
-      const [pendingWorkOrdersResult] = await db
-        .select({ count: sql<number>`COUNT(*)` })
-        .from(workOrders)
-        .where(or(
-          eq(workOrders.status, 'in_progress'),
-          eq(workOrders.status, 'confirmed')
-        ))
+        db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(workOrders)
+          .where(or(
+            eq(workOrders.status, 'in_progress'),
+            eq(workOrders.status, 'confirmed')
+          ))
+          .then(([r]) => r),
 
-      // Pending estimates count - submitted or under_review (RLS scopes to tenant)
-      const [pendingEstimatesResult] = await db
-        .select({ count: sql<number>`COUNT(*)` })
-        .from(insuranceEstimates)
-        .where(or(
-          eq(insuranceEstimates.status, 'submitted'),
-          eq(insuranceEstimates.status, 'under_review')
-        ))
+        db
+          .select({ count: sql<number>`COUNT(*)` })
+          .from(insuranceEstimates)
+          .where(or(
+            eq(insuranceEstimates.status, 'submitted'),
+            eq(insuranceEstimates.status, 'under_review')
+          ))
+          .then(([r]) => r),
 
-      // Low stock items count (RLS scopes to tenant)
-      let lowStockCount = 0
-      try {
-        const [result] = await db
+        db
           .select({ count: sql<number>`COUNT(DISTINCT ${warehouseStock.itemId})` })
           .from(warehouseStock)
           .innerJoin(items, eq(items.id, warehouseStock.itemId))
@@ -71,10 +75,9 @@ export async function GET() {
             eq(items.trackStock, true),
             sql`CAST(${warehouseStock.currentStock} AS DECIMAL) <= CAST(${warehouseStock.minStock} AS DECIMAL)`
           ))
-        if (result) lowStockCount = Number(result.count)
-      } catch {
-        // warehouse_stock table may not exist yet
-      }
+          .then(([r]) => r)
+          .catch(() => null),
+      ])
 
       return NextResponse.json({
         stats: {
@@ -82,7 +85,7 @@ export async function GET() {
           draftWorkOrders: Number(draftWorkOrdersResult?.count || 0),
           pendingWorkOrders: Number(pendingWorkOrdersResult?.count || 0),
           pendingEstimates: Number(pendingEstimatesResult?.count || 0),
-          lowStockItems: lowStockCount,
+          lowStockItems: Number(lowStockResult?.count || 0),
         },
         businessType,
       })
