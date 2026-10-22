@@ -119,8 +119,14 @@ export function LogoUpload({
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.error || 'Upload failed')
+        let errorMsg = 'Upload failed'
+        try {
+          const error = await response.json()
+          errorMsg = error.error || error.message || errorMsg
+        } catch {
+          errorMsg = `Upload failed (HTTP ${response.status})`
+        }
+        throw new Error(errorMsg)
       }
 
       const data = await response.json()
