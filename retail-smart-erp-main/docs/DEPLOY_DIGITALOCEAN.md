@@ -105,7 +105,7 @@ curl https://app.poslanka.lk/api/health/ready
 | `DATABASE_SSL` | optional override: `verify` / `no-verify` / `disable`. Without a CA, `ondigitalocean.com` hosts use encrypted SSL without verification. |
 | `DATABASE_POOL_MAX` | pooled connections per instance (default 15; each instance also holds 2 LISTEN connections) |
 | `METRICS_TOKEN` | enables `GET /api/metrics` (Bearer); unset = 404 |
-| `DB_STATEMENT_TIMEOUT_MS` / `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | per-connection limits (defaults 30000 / 60000, `0` = off) |
+| `DB_STATEMENT_TIMEOUT_MS` / `DB_IDLE_IN_TRANSACTION_TIMEOUT_MS` | per-connection limits (defaults 15000 / 60000, `0` = off) |
 | `DATABASE_APP_ROLE` | `app_user` (created by the migrations) |
 | `STORAGE_*` | Spaces endpoint, region `us-east-1`, bucket, CDN URL, `public-read` ACL and access keys |
 

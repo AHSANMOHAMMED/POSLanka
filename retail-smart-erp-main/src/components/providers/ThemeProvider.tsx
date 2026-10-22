@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react'
 
 export type Theme = 'light' | 'dark' | 'system'
-export type ThemePalette = 'default' | 'midnight' | 'emerald' | 'charcoal' | 'amber'
+export type ThemePalette = 'default' | 'midnight' | 'emerald' | 'charcoal' | 'amber' | 'violet' | 'crimson'
 
 interface ThemeContextType {
   theme: Theme
@@ -32,7 +32,7 @@ function getInitialPalette(defaultPalette: ThemePalette): ThemePalette {
   if (typeof window === 'undefined') return defaultPalette
   try {
     const stored = localStorage.getItem(PALETTE_KEY) as ThemePalette | null
-    return stored && ['default', 'midnight', 'emerald', 'charcoal', 'amber'].includes(stored) ? stored : defaultPalette
+    return stored && ['default', 'midnight', 'emerald', 'charcoal', 'amber', 'violet', 'crimson'].includes(stored) ? stored : defaultPalette
   } catch {
     return defaultPalette
   }

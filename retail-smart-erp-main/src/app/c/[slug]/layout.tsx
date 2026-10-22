@@ -1,8 +1,9 @@
 import { auth } from '@/lib/auth'
+import { onTenantInvalidated } from '@/lib/auth/session-validation-cache'
 import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
 import { db, withTenant } from '@/lib/db'
-import { tenants, accounts, users } from '@/lib/db/schema'
+import { tenants, users } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { ConditionalSidebar } from '@/components/layout/ConditionalSidebar'
 import { Navbar } from '@/components/layout/Navbar'
@@ -22,6 +23,50 @@ import { SubdomainUrlCleaner } from '@/components/layout/SubdomainUrlCleaner'
 interface CompanyLayoutProps {
   children: React.ReactNode
   params: Promise<{ slug: string }>
+}
+
+type TenantRecord = typeof tenants.$inferSelect
+type UserRecord = typeof users.$inferSelect
+
+interface CachedLayoutData {
+  cachedAt: number
+  tenant: TenantRecord
+  userRecord: UserRecord
+}
+
+// In-memory cache for fast layout verification during page transitions (15s TTL). Cleared for a
+// tenant whenever its staff, roles or status change (same signal as the session-check cache), so
+// a deactivated/demoted user or a suspended company doesn't keep getting pages from it.
+const layoutContextCache = new Map<string, CachedLayoutData>()
+const LAYOUT_CACHE_TTL_MS = 15_000
+const LAYOUT_CACHE_MAX = 10_000
+onTenantInvalidated((tenantId) => {
+  for (const [key, entry] of layoutContextCache) {
+    if (tenantId === '*' || entry.tenant.id === tenantId) layoutContextCache.delete(key)
+  }
+})
+
+function getCachedLayoutData(cacheKey: string): { tenant: TenantRecord; userRecord: UserRecord } | null {
+  const cached = layoutContextCache.get(cacheKey)
+  if (cached && (Date.now() - cached.cachedAt) < LAYOUT_CACHE_TTL_MS) {
+    return { tenant: cached.tenant, userRecord: cached.userRecord }
+  }
+  return null
+}
+
+function setCachedLayoutData(cacheKey: string, tenant: TenantRecord, userRecord: UserRecord): void {
+  if (layoutContextCache.size >= LAYOUT_CACHE_MAX) {
+    const now = Date.now()
+    for (const [key, entry] of layoutContextCache) {
+      if (now - entry.cachedAt >= LAYOUT_CACHE_TTL_MS) layoutContextCache.delete(key)
+    }
+    if (layoutContextCache.size >= LAYOUT_CACHE_MAX) layoutContextCache.clear()
+  }
+  layoutContextCache.set(cacheKey, {
+    cachedAt: Date.now(),
+    tenant,
+    userRecord,
+  })
 }
 
 export default async function CompanyLayout({
@@ -63,20 +108,39 @@ export default async function CompanyLayout({
   }
 
   // Super admins cannot access company pages - redirect to admin panel
-  if (session.user.accountId) {
-    const account = await db.query.accounts.findFirst({
-      where: eq(accounts.id, session.user.accountId),
-      columns: { isSuperAdmin: true },
-    })
-    if (account?.isSuperAdmin) {
-      redirect('/sys-control')
-    }
+  if (session.user.isSuperAdmin) {
+    redirect('/sys-control')
   }
 
-  // ── TENANT LOOKUP ──
-  const tenant = await db.query.tenants.findFirst({
-    where: eq(tenants.slug, slug),
-  })
+  // ── TENANT & USER LOOKUP (Parallelized with 15s in-memory layout cache) ──
+  const layoutCacheKey = `${slug}:${session.user.id}`
+  const cached = getCachedLayoutData(layoutCacheKey)
+
+  let tenant: TenantRecord | undefined = cached?.tenant
+  let userRecord: UserRecord | undefined = cached?.userRecord
+
+  if (!tenant || !userRecord) {
+    const [fetchedTenant, fetchedUser] = await Promise.all([
+      db.query.tenants.findFirst({
+        where: eq(tenants.slug, slug),
+      }),
+      withTenant(session.user.tenantId, async (tdb) => {
+        return tdb.query.users.findFirst({
+          where: and(
+            eq(users.id, session.user.id),
+            eq(users.isActive, true)
+          ),
+        })
+      }),
+    ])
+
+    tenant = fetchedTenant
+    userRecord = fetchedUser
+
+    if (tenant && userRecord) {
+      setCachedLayoutData(layoutCacheKey, tenant, userRecord)
+    }
+  }
 
   if (!tenant) {
     // Company not found - redirect to account page
@@ -106,16 +170,6 @@ export default async function CompanyLayout({
     // Company suspended/cancelled - redirect to account page
     redirect('/account?error=suspended')
   }
-
-  // Verify user has access to this company
-  const userRecord = await withTenant(tenant.id, async (tdb) => {
-    return tdb.query.users.findFirst({
-      where: and(
-        eq(users.id, session.user.id),
-        eq(users.isActive, true)
-      ),
-    })
-  })
 
   if (!userRecord) {
     // No access to this company

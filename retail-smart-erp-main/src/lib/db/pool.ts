@@ -59,9 +59,12 @@ export function getSharedPool(): Pool {
     const pool = new Pool({
       ...pgConnectionConfig(process.env.DATABASE_URL),
       max: poolMax(),
-      min: 0,
-      idleTimeoutMillis: 15000,
-      connectionTimeoutMillis: 5000,
+      min: 1,
+      idleTimeoutMillis: 60000,
+      connectionTimeoutMillis: 10000,
+      // Query ceiling = the session statement_timeout applied on 'connect' below (default 15 s,
+      // DB_STATEMENT_TIMEOUT_MS). No client-side query_timeout: it would abort backup streams and
+      // retention batches that raise the server limit for their own transaction.
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,
     })

@@ -66,7 +66,7 @@ interface Sale {
   } | null
   user: {
     fullName: string
-  }
+  } | null
   items: SaleItem[]
   isReturn?: boolean
   returnAgainst?: string
@@ -362,7 +362,7 @@ export default function SalesPage() {
                         )}
                       </div>
                       <div className="text-sm text-gray-500 dark:text-gray-400">
-                        {sale.customer?.name || 'Walk-in Customer'} | {sale.user.fullName}
+                        {sale.customer?.name || 'Walk-in Customer'}{sale.user?.fullName ? ` | ${sale.user.fullName}` : ''}
                       </div>
                       <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                         {fDateTime(sale.createdAt)}

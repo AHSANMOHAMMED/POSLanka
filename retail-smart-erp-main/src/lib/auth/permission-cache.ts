@@ -4,6 +4,7 @@ import { rolePermissionOverrides, customRoles, moduleAccess } from '@/lib/db/sch
 import { pgConnectionConfig } from '@/lib/db/pg-connection'
 import { eq, sql } from 'drizzle-orm'
 import { registerModuleAccessLookup } from './roles'
+import { clearSessionValidation } from './session-validation-cache'
 
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
@@ -164,6 +165,8 @@ function startInvalidationListener(): void {
     if (msg.channel !== CHANNEL) return
     if (msg.payload === '*') cache.clear()
     else if (msg.payload) cache.delete(msg.payload)
+    // Same signal: staff/roles changed → cached session checks of that tenant are stale too
+    if (msg.payload) clearSessionValidation(msg.payload)
   })
   client.on('error', retry)
   client.connect()
@@ -174,6 +177,7 @@ function startInvalidationListener(): void {
       state.retryMs = 1000
       // Anything published while we were not listening is unknown: start clean
       cache.clear()
+      clearSessionValidation('*')
       // Never keep a process (tests, scripts) alive just for this socket
       ;(client as unknown as { connection?: { stream?: { unref?: () => void } } }).connection?.stream?.unref?.()
     })
@@ -185,10 +189,13 @@ function startInvalidationListener(): void {
 
 /**
  * Invalidate cache for a tenant. Called after permission mutations (roles, custom roles,
- * module access). Drops it in this process right away and tells the other processes.
+ * module access) and staff changes (deactivation, role/password change, tenant status), which
+ * also drops the tenant's cached session checks. Applies in this process right away and tells
+ * the other processes.
  */
 export function invalidatePermissionCache(tenantId: string): void {
   cache.delete(tenantId)
+  clearSessionValidation(tenantId)
   if (!UUID_RE.test(tenantId)) return
   db.execute(sql`SELECT pg_notify(${CHANNEL}, ${tenantId})`).catch(() => undefined)
 }

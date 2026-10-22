@@ -198,6 +198,71 @@
   --background: 25 33% 6%;
 }
 
+/* Electric Violet / Amethyst Luxury */
+[data-theme="violet"] {
+  --primary: #8b5cf6;
+  --primary-hover: #7c3aed;
+  --page-bg: #faf5ff;
+  --content-bg: #ffffff;
+}
+[data-theme="violet"].dark,
+.dark[data-theme="violet"] {
+  --page-bg: #0b0717;
+  --content-bg: #140d27;
+  --sidebar-bg: #080413;
+  --sidebar-border: #28194b;
+  --sidebar-hover-bg: #1e133a;
+  --navbar-bg: #070311;
+  --primary: #a855f7;
+  --primary-hover: #c084fc;
+  --border-color: #28194b;
+  --border: 270 50% 18%;
+  --card: 270 50% 10%;
+  --background: 270 50% 6%;
+}
+
+/* Ruby Crimson / High-Performance Red */
+[data-theme="crimson"] {
+  --primary: #e11d48;
+  --primary-hover: #be123c;
+  --page-bg: #fff1f2;
+  --content-bg: #ffffff;
+}
+[data-theme="crimson"].dark,
+.dark[data-theme="crimson"] {
+  --page-bg: #14050a;
+  --content-bg: #220912;
+  --sidebar-bg: #0d0306;
+  --sidebar-border: #3d1020;
+  --sidebar-hover-bg: #2d0b17;
+  --navbar-bg: #090204;
+  --primary: #f43f5e;
+  --primary-hover: #fb7185;
+  --border-color: #3d1020;
+  --border: 345 50% 18%;
+  --card: 345 50% 10%;
+  --background: 345 50% 6%;
+}
+
+/* Smooth theme transitions */
+html, body, [data-theme] {
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Glassmorphism utilities */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(229, 231, 235, 0.8);
+}
+.dark .glass-panel {
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
 /* Base body styles */
 body {
   font-family: var(--font-inter, 'Inter', system-ui, -apple-system, sans-serif);

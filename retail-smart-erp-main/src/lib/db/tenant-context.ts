@@ -46,6 +46,7 @@ export async function withTenant<T>(
   callback: (db: TenantDb) => Promise<T>
 ): Promise<T> {
   const client = await getPool().connect()
+  let clientError: Error | undefined
 
   try {
     // SET LOCAL is transaction-scoped, so we need a transaction
@@ -79,10 +80,15 @@ export async function withTenant<T>(
     await client.query('COMMIT')
     return result
   } catch (error) {
-    await client.query('ROLLBACK')
+    clientError = error as Error
+    try {
+      await client.query('ROLLBACK')
+    } catch (rbError) {
+      clientError = (rbError as Error) || clientError
+    }
     throw error
   } finally {
-    client.release()
+    client.release(clientError)
   }
 }
 
@@ -106,6 +112,7 @@ export async function withTenantTransaction<T>(
   callback: (db: TenantDb, client: PoolClient) => Promise<T>
 ): Promise<T> {
   const client = await getPool().connect()
+  let clientError: Error | undefined
 
   try {
     await client.query('BEGIN')
@@ -132,10 +139,15 @@ export async function withTenantTransaction<T>(
     await client.query('COMMIT')
     return result
   } catch (error) {
-    await client.query('ROLLBACK')
+    clientError = error as Error
+    try {
+      await client.query('ROLLBACK')
+    } catch (rbError) {
+      clientError = (rbError as Error) || clientError
+    }
     throw error
   } finally {
-    client.release()
+    client.release(clientError)
   }
 }
 
@@ -171,6 +183,7 @@ export async function withoutTenant<T>(
   callback: (db: TenantDb) => Promise<T>
 ): Promise<T> {
   const client = await getPool().connect()
+  let clientError: Error | undefined
 
   try {
     await client.query('BEGIN')
@@ -186,10 +199,15 @@ export async function withoutTenant<T>(
     await client.query('COMMIT')
     return result
   } catch (error) {
-    await client.query('ROLLBACK')
+    clientError = error as Error
+    try {
+      await client.query('ROLLBACK')
+    } catch (rbError) {
+      clientError = (rbError as Error) || clientError
+    }
     throw error
   } finally {
-    client.release()
+    client.release(clientError)
   }
 }
 

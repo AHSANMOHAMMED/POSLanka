@@ -24,8 +24,10 @@ export async function GET(request: NextRequest) {
       // Module Access: refused when the owner switched this module off for the caller's role
       const moduleError = requireModule(session, 'selling')
       if (moduleError) return { moduleError }
-      // Build where conditions - RLS handles tenant filtering
-      const conditions: ReturnType<typeof eq>[] = []
+      // Build where conditions - explicitly include tenantId for optimal index usage
+      const conditions: ReturnType<typeof eq>[] = [
+        eq(salesOrders.tenantId, session.user.tenantId)
+      ]
 
       if (search) {
         const escaped = escapeLikePattern(search)
@@ -104,6 +106,9 @@ export async function GET(request: NextRequest) {
         .where(whereClause)
 
       const total = Number(count)
+      if (total === 0) {
+        return { data: [], pagination: { page, pageSize, total: 0, totalPages: 0 } }
+      }
       const totalPages = Math.ceil(total / pageSize)
       const offset = (page - 1) * pageSize
 

@@ -8,6 +8,7 @@ import { users, tenants, accounts, accountTenants } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
 import { getLiveCompanyUser, isAccountActive } from '@/lib/auth/live-user'
+import { sessionValidationKey, getSessionValidation, setSessionValidation, deleteSessionValidation } from './session-validation-cache'
 import { consumeImpersonationToken } from '@/lib/auth/impersonation-token'
 
 // ---------------------------------------------------------------------------
@@ -48,6 +49,7 @@ const getCookieDomain = () => {
   }
   return undefined // Local development: no domain restriction
 }
+
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   trustHost: true,
@@ -489,8 +491,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
       }
 
-      // Validate user and tenant on every request (users-first)
-      if (!user && token.tenantId && token.id) {
+      // Validate user and tenant. A successful check is reused for 20 s so clicks don't wait on
+      // the database; staff/role/status changes clear the tenant's entries (session-validation-cache).
+      const cacheKey = !user && token.tenantId && token.id
+        ? sessionValidationKey(token.tenantId as string, token.id as string,
+          typeof token.authAt === 'number' ? token.authAt : (token.iat as number | undefined))
+        : null
+      const cached = cacheKey ? getSessionValidation(cacheKey) : undefined
+      if (cached) {
+        token.logoUrl = cached.logoUrl
+        token.aiEnabled = cached.aiEnabled
+        token.invalid = false
+      } else if (cacheKey && !user && token.tenantId && token.id) {
+        const now = Date.now()
         try {
           // 1. Validate tenant is still active
           const tenant = await db.query.tenants.findFirst({
@@ -502,6 +515,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           })
 
           if (!tenant) {
+            deleteSessionValidation(cacheKey)
             token.invalid = true
             return token
           }
@@ -516,6 +530,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             typeof token.authAt === 'number' ? token.authAt : undefined,
           )
           if (!live.ok) {
+            deleteSessionValidation(cacheKey)
             token.invalid = true
             return token
           }
@@ -527,10 +542,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
           token.logoUrl = tenant.logoUrl || undefined
           token.aiEnabled = tenant.aiEnabled
+          token.invalid = false
 
-          if (token.invalid) {
-            token.invalid = false
-          }
+          setSessionValidation(cacheKey, {
+            validatedAt: now,
+            logoUrl: tenant.logoUrl || undefined,
+            aiEnabled: tenant.aiEnabled,
+          })
         } catch (error) {
           console.error('[JWT] Session validation DB error (keeping session):', error)
         }

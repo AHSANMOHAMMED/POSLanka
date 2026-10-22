@@ -16,6 +16,7 @@ import { isUniqueViolation } from '@/lib/db/errors'
 import { requireUserSeat } from '@/lib/billing/user-limit'
 import { loadAssignableCustomRole, StaffError } from '@/lib/users/create-staff'
 import { getCustomRoleName } from '@/lib/auth/permission-cache'
+import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 
 // GET single user by ID
 export async function GET(
@@ -87,7 +88,7 @@ export async function PUT(
     const { fullName, email, role, isActive, password, pin, customRoleId, expectedUpdatedAt } = parsed.data
 
     // Execute with RLS tenant context
-    return await withTenant(session.user.tenantId, async (db) => {
+    const response = await withTenant(session.user.tenantId, async (db) => {
       // Use transaction with FOR UPDATE lock for optimistic locking
       const result = await db.transaction(async (tx) => {
         // Get current user with lock (RLS scopes the query)
@@ -251,6 +252,9 @@ export async function PUT(
 
       return NextResponse.json(result)
     })
+    // Committed: status/role/password changes must not ride on a cached session check
+    if (response.ok) invalidatePermissionCache(session.user.tenantId)
+    return response
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
     logError('api/users/[id]', error)

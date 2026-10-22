@@ -21,6 +21,7 @@ import {
 import { revokeAllSessions } from '@/lib/auth/session-manager'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import { createOwnerResetLink, sendOwnerResetEmail, sendOwnerWelcomeEmail, type OwnerMailTarget } from '@/lib/admin/vendor-emails'
+import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 
 /**
  * POST /api/sys-control/vendors/[id]/actions — vendor lifecycle actions for the super admin.
@@ -127,6 +128,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           .set({ status: 'suspended', lockedAt: now, lockedReason: 'admin_suspended', deletionScheduledAt: null, updatedAt: now })
           .where(eq(tenants.id, tenantId))
         await audit('update', { reason: input.reason, before: { status: tenant.status }, after: { status: 'suspended' } })
+        invalidatePermissionCache(tenantId) // staff sessions re-check (and fail) on their next request
         return NextResponse.json({ success: true, status: 'suspended', message: `${tenant.name} is suspended. Its staff cannot sign in.` })
       }
 
@@ -384,6 +386,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         await db.update(tenants)
           .set({ status: 'cancelled', lockedAt: now, lockedReason: 'admin_archived', deletionScheduledAt: null, updatedAt: now })
           .where(eq(tenants.id, tenantId))
+        invalidatePermissionCache(tenantId)
         await audit('delete', { reason: input.reason, soft: true, before: { status: tenant.status }, after: { status: 'cancelled' } })
         return NextResponse.json({ success: true, status: 'cancelled', message: `${tenant.name} is archived. Nothing was deleted; reactivate it at any time.` })
       }

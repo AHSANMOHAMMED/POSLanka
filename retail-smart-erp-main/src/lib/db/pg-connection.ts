@@ -47,7 +47,7 @@ function envMs(name: string, fallback: number): number {
 /**
  * Server-side safety limits for every pooled connection:
  *
- *   DB_STATEMENT_TIMEOUT_MS            default 30000 (0 = off). Long jobs (backups) raise it
+ *   DB_STATEMENT_TIMEOUT_MS            default 15000 (0 = off). Long jobs (backups) raise it
  *                                      per transaction with set_config('statement_timeout', …, true).
  *   DB_IDLE_IN_TRANSACTION_TIMEOUT_MS  default 60000 (0 = off). Kills sessions that hold locks
  *                                      while the app forgot to COMMIT/ROLLBACK.
@@ -57,7 +57,7 @@ function envMs(name: string, fallback: number): number {
  */
 export function sessionTimeouts(): { statementTimeoutMs: number; idleInTransactionMs: number } {
   return {
-    statementTimeoutMs: envMs('DB_STATEMENT_TIMEOUT_MS', 30000),
+    statementTimeoutMs: envMs('DB_STATEMENT_TIMEOUT_MS', 15000),
     idleInTransactionMs: envMs('DB_IDLE_IN_TRANSACTION_TIMEOUT_MS', 60000),
   }
 }

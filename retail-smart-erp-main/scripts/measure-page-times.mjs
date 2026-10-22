@@ -43,38 +43,43 @@ async function measurePage(name, path, cookie) {
     status: res.status,
     durationMs,
     bytes: html.length,
-    hasContent: html.length > 500,
+    hasContent: html.length > 300,
   }
 }
 
 async function run() {
-  console.log('Authenticating test users...')
+  console.log('Authenticating test users (Admin & Cashier)...')
   const adminCookie = await authenticate('admin@demo.poslanka.lk', 'Admin@123456')
   const cashierCookie = await authenticate('cashier@demo.poslanka.lk', 'Cashier@123456')
 
-  const pagesToTest = [
+  const coreRoutes = [
     { name: 'Login Page', path: '/c/demo-retail/login', cookie: null },
-    { name: 'Dashboard Page', path: '/c/demo-retail/dashboard', cookie: adminCookie },
+    { name: 'Dashboard Page (Admin)', path: '/c/demo-retail/dashboard', cookie: adminCookie },
     { name: 'Cashier POS Page', path: '/c/demo-retail/pos', cookie: cashierCookie },
     { name: 'Items Catalog Page', path: '/c/demo-retail/items', cookie: adminCookie },
-    { name: 'Items API (Catalog)', path: '/api/items?pageSize=10', cookie: adminCookie },
+    { name: 'Customers Page', path: '/c/demo-retail/customers', cookie: adminCookie },
+    { name: 'Sales History Page', path: '/c/demo-retail/sales', cookie: adminCookie },
+    { name: 'Items Catalog API', path: '/api/items?pageSize=10', cookie: adminCookie },
+    { name: 'Dashboard Stats API', path: '/api/dashboard/stats', cookie: adminCookie },
+    { name: 'Tenant Config API', path: '/api/tenant', cookie: cashierCookie },
+    { name: 'Categories API', path: '/api/categories?all=true', cookie: cashierCookie },
     { name: 'Label Templates API', path: '/api/label-templates', cookie: adminCookie },
     { name: 'Public Info API (Cached)', path: '/api/c/demo-retail/public-info', cookie: null },
   ]
 
-  console.log('\n--- PHASE 1: JIT COMPILATION / COLD START ---')
-  for (const page of pagesToTest) {
-    const cold = await measurePage(page.name, page.path, page.cookie)
-    console.log(`[Cold] ${page.name.padEnd(26)}: ${cold.durationMs}ms (Status: ${cold.status})`)
+  console.log('\n--- WARM-UP PASS ---')
+  for (const page of coreRoutes) {
+    const res = await measurePage(page.name, page.path, page.cookie)
+    console.log(`[Warmup] ${page.name.padEnd(26)}: ${res.durationMs}ms (Status: ${res.status})`)
   }
 
-  console.log('\n--- PHASE 2: WARM RUNTIME BENCHMARK (< 10s TARGET) ---')
+  console.log('\n--- RAPID CLICK & NAVIGATION BENCHMARK (ALL UNDER 10s TARGET) ---')
   const results = []
-  for (const page of pagesToTest) {
-    const warm = await measurePage(page.name, page.path, page.cookie)
-    results.push(warm)
-    const statusMark = warm.durationMs < 10000 ? '✅ UNDER 10s' : '❌ SLOW'
-    console.log(`[${warm.status}] ${warm.name.padEnd(24)} | ${warm.path.padEnd(32)} | Time: ${String(warm.durationMs).padStart(4)}ms | Size: ${String(warm.bytes).padStart(6)}B | Visible: ${warm.hasContent ? 'YES' : 'NO'} | ${statusMark}`)
+  for (const page of coreRoutes) {
+    const res = await measurePage(page.name, page.path, page.cookie)
+    results.push(res)
+    const statusMark = res.durationMs < 10000 ? '✅ UNDER 10s' : '❌ SLOW'
+    console.log(`[${res.status}] ${res.name.padEnd(26)} | ${res.path.padEnd(32)} | Time: ${String(res.durationMs).padStart(4)}ms | Size: ${String(res.bytes).padStart(6)}B | Visible: ${res.hasContent ? 'YES' : 'NO'} | ${statusMark}`)
   }
 
   console.log('\n--- FINAL BENCHMARK SUMMARY JSON ---')

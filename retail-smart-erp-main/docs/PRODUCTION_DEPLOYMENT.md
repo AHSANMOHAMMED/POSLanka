@@ -155,7 +155,7 @@ EXPO_ACCESS_TOKEN=
 # METRICS_TOKEN=GENERATE_WITH_OPENSSL_RAND_HEX_32   # enables GET /api/metrics (Bearer)
 # LOG_FORMAT=json            # json (default in production) | pretty
 # LOG_LEVEL=info
-# DB_STATEMENT_TIMEOUT_MS=30000
+# DB_STATEMENT_TIMEOUT_MS=15000
 # DB_IDLE_IN_TRANSACTION_TIMEOUT_MS=60000
 # SLOW_QUERY_MS=500
 # SLOW_REQUEST_MS=2000
@@ -337,7 +337,7 @@ after connect, so PgBouncer's startup-parameter filter is not a problem.
 
 ### Database safety limits
 
-Every pooled connection gets `statement_timeout = 30 s` (`DB_STATEMENT_TIMEOUT_MS`) and
+Every pooled connection gets `statement_timeout = 15 s` (`DB_STATEMENT_TIMEOUT_MS`) and
 `idle_in_transaction_session_timeout = 60 s` (`DB_IDLE_IN_TRANSACTION_TIMEOUT_MS`); `0` disables
 either. The company backup export lifts the statement timeout for its own transaction; the
 retention job uses 5 min. Queries slower than `SLOW_QUERY_MS` (default 500) are logged as

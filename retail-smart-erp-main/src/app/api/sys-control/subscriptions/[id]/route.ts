@@ -8,6 +8,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { sysUpdateSubscriptionSchema } from '@/lib/validation/schemas/sys-control'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { resumedSubscriptionStatus, syncTenantPlanExpiry } from '@/lib/billing/subscription-state'
+import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 
 export async function PUT(
   request: NextRequest,
@@ -254,6 +255,8 @@ export async function PUT(
       await adminAudit.update(session.superAdminId, 'subscription', id, auditDetails)
     }
 
+    // Lock/unlock changes whether staff may sign in: drop cached session checks (after commit)
+    invalidatePermissionCache(subscription.tenantId)
     return NextResponse.json({ success: true })
   } catch (error) {
     logError('api/sys-control/subscriptions/[id]', error)

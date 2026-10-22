@@ -10,6 +10,10 @@ defaults:
   run:
     working-directory: retail-smart-erp-main
 
+# tsc / eslint / next build on this codebase need more than Node's default heap
+env:
+  NODE_OPTIONS: --max-old-space-size=6144
+
 jobs:
   lint-and-validate:
     name: Lint & migration validate
@@ -157,6 +161,19 @@ jobs:
           done
       - name: Platform (offline sync, backup, API keys, dashboard, read permissions)
         run: npx tsx --tsconfig scripts/tests/h4-harness/tsconfig.json scripts/tests/h4-platform.ts
+      - name: Vendor roles & module access, non-functional (timeouts, fan-out, CSRF, retention)
+        run: |
+          npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/i2-roles.ts
+          npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/i5-nonfunctional.ts
+      - name: Super-admin console (vendors, platform, roles, coupons, refunds, push)
+        env:
+          NEXTAUTH_SECRET: i3-test-secret
+          PAYHERE_MERCHANT_ID: '1211111'
+          PAYHERE_MERCHANT_SECRET: testsecret
+        run: |
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i3-admin-vendors.ts
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i4-admin-platform.ts
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i6-finish.ts
 
   build:
     name: Production build

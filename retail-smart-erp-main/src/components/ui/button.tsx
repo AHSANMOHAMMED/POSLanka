@@ -4,19 +4,19 @@ import { cn } from '@/lib/utils'
 import { Loader2 } from 'lucide-react'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center whitespace-nowrap rounded text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60',
+  'inline-flex items-center justify-center whitespace-nowrap rounded-lg text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 cursor-pointer select-none active:scale-[0.98]',
   {
     variants: {
       variant: {
-        default: 'bg-[#0d6efd] text-white shadow-sm hover:bg-[#0b5ed7] active:bg-[#0a58ca]',
-        destructive: 'bg-[#dc3545] text-white shadow-sm hover:bg-[#bb2d3b] active:bg-[#b02a37]',
-        outline: 'border border-[#dee2e6] bg-white text-[#212529] shadow-sm hover:bg-[#f8f9fa] active:bg-[#e9ecef] dark:bg-transparent dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-700',
-        secondary: 'bg-[#6c757d] text-white shadow-sm hover:bg-[#5c636a] active:bg-[#565e64]',
-        ghost: 'hover:bg-[#f8f9fa] hover:text-[#212529] dark:hover:bg-gray-700 dark:hover:text-gray-200',
-        link: 'text-[#0d6efd] underline-offset-4 hover:underline dark:text-[#6ea8fe]',
-        success: 'bg-[#198754] text-white shadow-sm hover:bg-[#157347] active:bg-[#146c43]',
-        warning: 'bg-[#ffc107] text-[#212529] shadow-sm hover:bg-[#ffca2c] active:bg-[#ffcd39]',
-        brand: 'bg-[#875A7B] text-white shadow-sm hover:bg-[#6e4a65] active:bg-[#5d3e56]',
+        default: 'bg-[var(--primary)] text-white shadow-xs hover:shadow-md hover:brightness-105 border border-white/10 active:brightness-95',
+        destructive: 'bg-gradient-to-r from-red-600 to-rose-600 text-white shadow-xs hover:shadow-md hover:from-red-700 hover:to-rose-700 border border-white/10',
+        outline: 'border border-gray-300 dark:border-white/15 bg-white/90 dark:bg-white/[0.04] text-gray-800 dark:text-gray-100 shadow-2xs hover:bg-gray-100 dark:hover:bg-white/[0.08] hover:border-gray-400 dark:hover:border-white/25 backdrop-blur-xs',
+        secondary: 'bg-gray-100 dark:bg-white/[0.08] text-gray-800 dark:text-gray-200 shadow-2xs hover:bg-gray-200 dark:hover:bg-white/[0.12] border border-transparent dark:border-white/[0.06]',
+        ghost: 'text-gray-700 dark:text-gray-300 hover:bg-gray-100/80 dark:hover:bg-white/[0.08] hover:text-gray-950 dark:hover:text-white',
+        link: 'text-[var(--primary)] underline-offset-4 hover:underline active:opacity-80',
+        success: 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-xs hover:shadow-md hover:from-emerald-700 hover:to-teal-700 border border-white/10',
+        warning: 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white shadow-xs hover:shadow-md hover:from-amber-600 hover:to-yellow-600 border border-white/10',
+        brand: 'bg-gradient-to-r from-[#875A7B] to-[#6e4a65] text-white shadow-xs hover:shadow-md hover:brightness-105 border border-white/10',
       },
       size: {
         xs: 'h-6 px-2 text-xs gap-1',

@@ -12,7 +12,7 @@ import { readdirSync, existsSync } from 'fs'
 import { request } from 'http'
 import { join } from 'path'
 
-const PRIORITY = ['dashboard', 'pos', 'items', 'sales', 'customers', 'stock', 'purchases', 'accounting', 'reports', 'settings']
+const PRIORITY = ['dashboard', 'pos', 'items', 'sales', 'sales-orders', 'quotations', 'customers', 'stock', 'purchases', 'accounting', 'reports', 'settings']
 
 // Fetched by the layout / sidebar / navbar on every page
 const SHELL_APIS = [

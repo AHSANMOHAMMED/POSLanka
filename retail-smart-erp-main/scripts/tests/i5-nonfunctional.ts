@@ -88,7 +88,7 @@ async function main() {
     await step('pool session timeouts', async () => {
       const pool = getSharedPool()
       const st = await pool.query<{ statement_timeout: string }>('SHOW statement_timeout')
-      check('statement_timeout applied on pooled connections (30s, SET on connect: PgBouncer-safe)', st.rows[0]?.statement_timeout === '30s', st.rows)
+      check('statement_timeout applied on pooled connections (15s, SET on connect: PgBouncer-safe)', st.rows[0]?.statement_timeout === '15s', st.rows)
       const it = await pool.query<{ idle_in_transaction_session_timeout: string }>('SHOW idle_in_transaction_session_timeout')
       check('idle_in_transaction_session_timeout applied (1min)', it.rows[0]?.idle_in_transaction_session_timeout === '1min', it.rows)
       const client = await pool.connect()
@@ -98,7 +98,7 @@ async function main() {
         const local = await client.query<{ statement_timeout: string }>('SHOW statement_timeout')
         await client.query('COMMIT')
         const after = await client.query<{ statement_timeout: string }>('SHOW statement_timeout')
-        check('long jobs can lift it per transaction (backup path), default restored after', local.rows[0].statement_timeout === '0' && after.rows[0].statement_timeout === '30s', { local: local.rows, after: after.rows })
+        check('long jobs can lift it per transaction (backup path), default restored after', local.rows[0].statement_timeout === '0' && after.rows[0].statement_timeout === '15s', { local: local.rows, after: after.rows })
       } finally { client.release() }
       const { metricsState } = await import('@/lib/observability/metrics')
       check('pooled queries are counted for /api/metrics', metricsState().dbQueries >= 3, metricsState().dbQueries)
@@ -395,7 +395,7 @@ async function main() {
       const conns = await Promise.all(Array.from({ length: 3 }, () => pool().connect()))
       try {
         const vals = await Promise.all(conns.map(async (c) => (await c.query<{ statement_timeout: string }>('SHOW statement_timeout')).rows[0].statement_timeout))
-        check('pooled connections are back to the 30s limit after the retention run', vals.every((v) => v === '30s'), vals)
+        check('pooled connections are back to the 15s limit after the retention run', vals.every((v) => v === '15s'), vals)
       } finally { conns.forEach((c) => c.release()) }
       const left = async (table: string, ids: string[]) => (await admin.query(`SELECT id::text FROM ${table} WHERE id = ANY($1::uuid[])`, [ids])).rows.map((r) => r.id)
       const act = await left('activity_logs', [oldAct, newAct])
