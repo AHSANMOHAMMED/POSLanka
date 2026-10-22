@@ -14,11 +14,11 @@ export function getSharedPool(): Pool {
     pool = new Pool({
       ...pgConnectionConfig(process.env.DATABASE_URL),
       max: poolMax(),
-      min: 0,
-      idleTimeoutMillis: 15000,
-      connectionTimeoutMillis: 5000,
-      statement_timeout: 9500, // Hard ceiling: abort queries exceeding 9.5s
-      query_timeout: 9500,
+      min: 1,
+      idleTimeoutMillis: 60000,
+      connectionTimeoutMillis: 10000,
+      statement_timeout: 15000,
+      query_timeout: 15000,
       keepAlive: true,
       keepAliveInitialDelayMillis: 10000,
     })

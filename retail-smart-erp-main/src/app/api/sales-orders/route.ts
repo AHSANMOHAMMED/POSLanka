@@ -21,8 +21,10 @@ export async function GET(request: NextRequest) {
     const { all, page, pageSize, search, status, customerId: filterCustomerId, warehouseId: filterWarehouseId, sortBy, sortOrder: sortOrderParam } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
-      // Build where conditions - RLS handles tenant filtering
-      const conditions: ReturnType<typeof eq>[] = []
+      // Build where conditions - explicitly include tenantId for optimal index usage
+      const conditions: ReturnType<typeof eq>[] = [
+        eq(salesOrders.tenantId, session.user.tenantId)
+      ]
 
       if (search) {
         const escaped = escapeLikePattern(search)
@@ -101,6 +103,9 @@ export async function GET(request: NextRequest) {
         .where(whereClause)
 
       const total = Number(count)
+      if (total === 0) {
+        return { data: [], pagination: { page, pageSize, total: 0, totalPages: 0 } }
+      }
       const totalPages = Math.ceil(total / pageSize)
       const offset = (page - 1) * pageSize
 
