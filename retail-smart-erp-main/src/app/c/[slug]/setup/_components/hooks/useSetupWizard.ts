@@ -116,6 +116,7 @@ export function useSetupWizard(companySlug: string) {
       const companyRes = await fetch(`/api/c/${companySlug}/info`)
       if (!companyRes.ok) throw new Error('Failed to load company info')
       const companyData = await companyRes.json()
+      const isDone = !!companyData.setupCompletedAt
       setCompanyInfo({
         id: companyData.id,
         name: companyData.name,
@@ -123,9 +124,14 @@ export function useSetupWizard(companySlug: string) {
         currency: companyData.currency || 'LKR',
         country: companyData.country || '',
         countryName: companyData.countryName || '',
-        setupCompleted: !!companyData.setupCompletedAt,
+        setupCompleted: isDone,
         aiEnabled: !!companyData.aiEnabled
       })
+
+      if (isDone) {
+        setIsCompleted(true)
+        return 6
+      }
 
       // Fetch saved setup progress
       const progressRes = await fetch(`/api/c/${companySlug}/setup/progress`)
@@ -211,6 +217,10 @@ export function useSetupWizard(companySlug: string) {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
+        if (errorData.error === 'Setup already completed') {
+          setIsCompleted(true)
+          return { success: true, alreadyCompleted: true }
+        }
         throw new Error(errorData.error || 'Setup failed')
       }
 

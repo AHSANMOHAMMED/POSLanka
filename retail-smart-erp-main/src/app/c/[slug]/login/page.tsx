@@ -44,7 +44,9 @@ function CompanyLogo({
   size?: number
   variant?: 'dark' | 'light'
 }) {
-  if (logoUrl) {
+  const [imgError, setImgError] = useState(false)
+
+  if (logoUrl && !imgError) {
     return (
       <Image
         src={logoUrl}
@@ -52,6 +54,8 @@ function CompanyLogo({
         width={size}
         height={size}
         className="rounded-2xl object-contain"
+        unoptimized
+        onError={() => setImgError(true)}
       />
     )
   }
