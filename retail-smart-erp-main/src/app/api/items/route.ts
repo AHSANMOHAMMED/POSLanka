@@ -112,47 +112,38 @@ export async function GET(request: NextRequest) {
       }
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
-      // Get total count for pagination
-      const [{ count: totalCount }] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(items)
-        .where(whereClause)
-
       // Calculate pagination
       const limit = all ? 1000 : Math.min(pageSize, 200) // Max 200 per page (POS uses 200)
       const offset = all ? undefined : (page - 1) * pageSize
 
-      // Get items with pagination
-      const result = await db.query.items.findMany({
-        where: whereClause,
-        with: {
-          category: true,
-          supplier: true,
-        },
-        orderBy: (items, { asc }) => [asc(items.name)],
-        limit,
-        offset,
-      })
+      // Stage 1: Get total count and items concurrently
+      const [countResult, result] = await Promise.all([
+        db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(items)
+          .where(whereClause),
+        db.query.items.findMany({
+          where: whereClause,
+          with: {
+            category: true,
+            supplier: true,
+          },
+          orderBy: (items, { asc }) => [asc(items.name)],
+          limit,
+          offset,
+        }),
+      ])
 
-      // Get reserved quantities from draft work orders (warehouse-aware if warehouseId provided)
-      const workOrderReservedWhere = warehouseId
-        ? and(
-            eq(workOrders.status, 'draft'),
-            eq(workOrders.warehouseId, warehouseId)
-          )
-        : eq(workOrders.status, 'draft')
+      const totalCount = countResult[0]?.count ?? 0
+      const itemIds = result.map(item => item.id)
 
-      const reservedFromWorkOrders = await db
-        .select({
-          itemId: workOrderParts.itemId,
-          reservedQty: sql<string>`COALESCE(SUM(CAST(${workOrderParts.quantity} AS DECIMAL)), 0)`,
-        })
-        .from(workOrderParts)
-        .innerJoin(workOrders, eq(workOrderParts.workOrderId, workOrders.id))
-        .where(workOrderReservedWhere)
-        .groupBy(workOrderParts.itemId)
+      // Stage 2: Run all auxiliary stock, reservations, and audit lookups in parallel
+      const workOrderReservedWhere = and(
+        inArray(workOrderParts.itemId, itemIds.length > 0 ? itemIds : ['00000000-0000-0000-0000-000000000000']),
+        eq(workOrders.status, 'draft'),
+        warehouseId ? eq(workOrders.warehouseId, warehouseId) : undefined
+      )
 
-      // Get reserved quantities from non-expired held sales (cart items stored as JSONB) - warehouse-aware
       const heldSalesWhere = warehouseId
         ? and(
             eq(heldSales.warehouseId, warehouseId),
@@ -160,43 +151,102 @@ export async function GET(request: NextRequest) {
           )
         : sql`${heldSales.expiresAt} > NOW()`
 
-      const heldSalesData = await db.query.heldSales.findMany({
-        where: heldSalesWhere,
-      })
+      const estimatesReservedWhere = and(
+        inArray(insuranceEstimateItems.itemId, itemIds.length > 0 ? itemIds : ['00000000-0000-0000-0000-000000000000']),
+        eq(insuranceEstimates.holdStock, true),
+        warehouseId ? eq(insuranceEstimates.warehouseId, warehouseId) : undefined,
+        sql`${insuranceEstimates.status} NOT IN ('cancelled', 'work_order_created')`,
+        sql`${insuranceEstimateItems.itemId} IS NOT NULL`
+      )
 
-      // Get reserved quantities from estimates with holdStock enabled - warehouse-aware
-      const estimatesReservedWhere = warehouseId
-        ? and(
-            eq(insuranceEstimates.holdStock, true),
-            eq(insuranceEstimates.warehouseId, warehouseId),
-            sql`${insuranceEstimates.status} NOT IN ('cancelled', 'work_order_created')`,
-            sql`${insuranceEstimateItems.itemId} IS NOT NULL`
-          )
-        : and(
-            eq(insuranceEstimates.holdStock, true),
-            sql`${insuranceEstimates.status} NOT IN ('cancelled', 'work_order_created')`,
-            sql`${insuranceEstimateItems.itemId} IS NOT NULL`
-          )
+      const auditUserIds = [...new Set(result.flatMap(i => [i.createdBy, i.updatedBy]).filter((v): v is string => !!v))]
 
-      const reservedFromEstimates = await db
-        .select({
-          itemId: insuranceEstimateItems.itemId,
-          reservedQty: sql<string>`COALESCE(SUM(CAST(${insuranceEstimateItems.quantity} AS DECIMAL)), 0)`,
-        })
-        .from(insuranceEstimateItems)
-        .innerJoin(insuranceEstimates, eq(insuranceEstimateItems.estimateId, insuranceEstimates.id))
-        .where(estimatesReservedWhere)
-        .groupBy(insuranceEstimateItems.itemId)
+      const [
+        reservedFromWorkOrders,
+        heldSalesData,
+        reservedFromEstimates,
+        stockDataRows,
+        stockHistoryData,
+        parentRows,
+        auditUsers,
+      ] = itemIds.length === 0
+        ? [[], [], [], [], [], [], []]
+        : await Promise.all([
+            db
+              .select({
+                itemId: workOrderParts.itemId,
+                reservedQty: sql<string>`COALESCE(SUM(CAST(${workOrderParts.quantity} AS DECIMAL)), 0)`,
+              })
+              .from(workOrderParts)
+              .innerJoin(workOrders, eq(workOrderParts.workOrderId, workOrders.id))
+              .where(workOrderReservedWhere)
+              .groupBy(workOrderParts.itemId),
+
+            db.query.heldSales.findMany({
+              where: heldSalesWhere,
+            }),
+
+            db
+              .select({
+                itemId: insuranceEstimateItems.itemId,
+                reservedQty: sql<string>`COALESCE(SUM(CAST(${insuranceEstimateItems.quantity} AS DECIMAL)), 0)`,
+              })
+              .from(insuranceEstimateItems)
+              .innerJoin(insuranceEstimates, eq(insuranceEstimateItems.estimateId, insuranceEstimates.id))
+              .where(estimatesReservedWhere)
+              .groupBy(insuranceEstimateItems.itemId),
+
+            warehouseId
+              ? db
+                  .select({
+                    itemId: warehouseStock.itemId,
+                    currentStock: warehouseStock.currentStock,
+                    reservedStock: warehouseStock.reservedStock,
+                    minStock: warehouseStock.minStock,
+                    binLocation: warehouseStock.binLocation,
+                  })
+                  .from(warehouseStock)
+                  .where(
+                    and(
+                      eq(warehouseStock.warehouseId, warehouseId),
+                      inArray(warehouseStock.itemId, itemIds)
+                    )
+                  )
+              : db
+                  .select({
+                    itemId: warehouseStock.itemId,
+                    totalStock: sql<string>`COALESCE(SUM(CAST(${warehouseStock.currentStock} AS DECIMAL)), 0)`,
+                    totalReserved: sql<string>`COALESCE(SUM(CAST(${warehouseStock.reservedStock} AS DECIMAL)), 0)`,
+                    maxMinStock: sql<string>`COALESCE(MAX(CAST(${warehouseStock.minStock} AS DECIMAL)), 0)`,
+                  })
+                  .from(warehouseStock)
+                  .where(inArray(warehouseStock.itemId, itemIds))
+                  .groupBy(warehouseStock.itemId),
+
+            db
+              .select({ itemId: stockMovements.itemId })
+              .from(stockMovements)
+              .where(inArray(stockMovements.itemId, itemIds))
+              .groupBy(stockMovements.itemId),
+
+            db
+              .select({ parentItemId: items.parentItemId })
+              .from(items)
+              .where(and(isNotNull(items.parentItemId), inArray(items.parentItemId, itemIds), eq(items.isActive, true)))
+              .groupBy(items.parentItemId),
+
+            auditUserIds.length > 0
+              ? db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, auditUserIds))
+              : Promise.resolve([]),
+          ])
 
       // Create a map of itemId -> reservedQty combining all sources
       const reservedMap = new Map<string, number>()
 
-      // Add work order reservations
       for (const r of reservedFromWorkOrders) {
         reservedMap.set(r.itemId, (reservedMap.get(r.itemId) || 0) + parseFloat(r.reservedQty))
       }
 
-      // Add held sales reservations (parse JSONB cart items)
       for (const held of heldSalesData) {
         const cartItems = held.cartItems as Array<{ itemId: string; quantity: number }>
         if (Array.isArray(cartItems)) {
@@ -208,100 +258,35 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      // Add estimate reservations (with holdStock enabled)
       for (const r of reservedFromEstimates) {
         if (r.itemId) {
           reservedMap.set(r.itemId, (reservedMap.get(r.itemId) || 0) + parseFloat(r.reservedQty))
         }
       }
 
-      // Get stock data from warehouseStock table
+      // Populate warehouseStockMap
       const warehouseStockMap = new Map<string, { currentStock: number; transferReserved: number; minStock: number; binLocation: string | null }>()
-      const itemIds = result.map(item => item.id)
-
-      if (itemIds.length > 0) {
-        if (warehouseId) {
-          // Get stock for specific warehouse
-          const warehouseStockData = await db
-            .select({
-              itemId: warehouseStock.itemId,
-              currentStock: warehouseStock.currentStock,
-              reservedStock: warehouseStock.reservedStock,
-              minStock: warehouseStock.minStock,
-              binLocation: warehouseStock.binLocation,
-            })
-            .from(warehouseStock)
-            .where(
-              and(
-                eq(warehouseStock.warehouseId, warehouseId),
-                inArray(warehouseStock.itemId, itemIds)
-              )
-            )
-
-          for (const ws of warehouseStockData) {
-            warehouseStockMap.set(ws.itemId, {
-              currentStock: parseFloat(ws.currentStock),
-              transferReserved: parseFloat(ws.reservedStock || '0'),
-              minStock: parseFloat(ws.minStock || '0'),
-              binLocation: ws.binLocation,
-            })
-          }
-        } else {
-          // Aggregate stock across ALL warehouses
-          const aggregatedStockData = await db
-            .select({
-              itemId: warehouseStock.itemId,
-              totalStock: sql<string>`COALESCE(SUM(CAST(${warehouseStock.currentStock} AS DECIMAL)), 0)`,
-              totalReserved: sql<string>`COALESCE(SUM(CAST(${warehouseStock.reservedStock} AS DECIMAL)), 0)`,
-              maxMinStock: sql<string>`COALESCE(MAX(CAST(${warehouseStock.minStock} AS DECIMAL)), 0)`,
-            })
-            .from(warehouseStock)
-            .where(inArray(warehouseStock.itemId, itemIds))
-            .groupBy(warehouseStock.itemId)
-
-          for (const ws of aggregatedStockData) {
-            warehouseStockMap.set(ws.itemId, {
-              currentStock: parseFloat(ws.totalStock),
-              transferReserved: parseFloat(ws.totalReserved || '0'),
-              minStock: parseFloat(ws.maxMinStock || '0'),
-              binLocation: null, // No single bin location when aggregating
-            })
-          }
-        }
+      for (const ws of stockDataRows as Array<{ itemId: string; currentStock?: string; reservedStock?: string; minStock?: string; totalStock?: string; totalReserved?: string; maxMinStock?: string; binLocation?: string | null }>) {
+        warehouseStockMap.set(ws.itemId, {
+          currentStock: parseFloat(ws.currentStock || ws.totalStock || '0'),
+          transferReserved: parseFloat(ws.reservedStock || ws.totalReserved || '0'),
+          minStock: parseFloat(ws.minStock || ws.maxMinStock || '0'),
+          binLocation: ws.binLocation || null,
+        })
       }
 
-      // Check which items have stock movement history (for low-stock filter)
+      // Populate stock history and variants
       const stockHistorySet = new Set<string>()
-      if (itemIds.length > 0) {
-        const stockHistoryData = await db
-          .select({ itemId: stockMovements.itemId })
-          .from(stockMovements)
-          .where(inArray(stockMovements.itemId, itemIds))
-          .groupBy(stockMovements.itemId)
-        for (const row of stockHistoryData) {
-          stockHistorySet.add(row.itemId)
-        }
+      for (const row of stockHistoryData) {
+        stockHistorySet.add(row.itemId)
       }
 
-      // Check which items have variants (are parent of child items)
       const parentIdSet = new Set<string>()
-      if (itemIds.length > 0) {
-        const parentRows = await db
-          .select({ parentItemId: items.parentItemId })
-          .from(items)
-          .where(and(isNotNull(items.parentItemId), inArray(items.parentItemId, itemIds), eq(items.isActive, true)))
-          .groupBy(items.parentItemId)
-        for (const row of parentRows) {
-          if (row.parentItemId) parentIdSet.add(row.parentItemId)
-        }
+      for (const row of parentRows) {
+        if (row.parentItemId) parentIdSet.add(row.parentItemId)
       }
 
-      // Resolve audit users (createdBy / updatedBy → { id, name })
-      const auditUserIds = [...new Set(result.flatMap(i => [i.createdBy, i.updatedBy]).filter((v): v is string => !!v))]
-      const auditUsers = auditUserIds.length > 0
-        ? await db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, auditUserIds))
-        : []
-      const auditUserMap = new Map(auditUsers.map(u => [u.id, u]))
+      const auditUserMap = new Map((auditUsers as Array<{ id: string; name: string | null }>).map(u => [u.id, u]))
       const userRef = (uid: string | null) => (uid ? (auditUserMap.get(uid) ?? { id: uid, name: null }) : null)
 
       // Add reserved and available stock to each item

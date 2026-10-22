@@ -14,8 +14,11 @@ export function getSharedPool(): Pool {
     pool = new Pool({
       ...pgConnectionConfig(process.env.DATABASE_URL),
       max: poolMax(),
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      min: 0,
+      idleTimeoutMillis: 15000,
+      connectionTimeoutMillis: 5000,
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 10000,
     })
     pool.on('error', (err) => {
       console.warn('[Postgres Pool] Idle client error:', err.message)

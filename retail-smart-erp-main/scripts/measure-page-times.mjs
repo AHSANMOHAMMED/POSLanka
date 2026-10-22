@@ -1,0 +1,84 @@
+import { performance } from 'perf_hooks'
+
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000'
+
+async function authenticate(email, password) {
+  const csrfRes = await fetch(`${BASE_URL}/api/auth/csrf`)
+  const csrfData = await csrfRes.json()
+  const csrfCookie = csrfRes.headers.get('set-cookie') || ''
+  const csrfToken = csrfData.csrfToken
+
+  const signInRes = await fetch(`${BASE_URL}/api/auth/callback/credentials`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Cookie: csrfCookie,
+    },
+    body: new URLSearchParams({
+      email,
+      password,
+      tenantSlug: 'demo-retail',
+      csrfToken,
+    }).toString(),
+    redirect: 'manual',
+  })
+
+  const setCookies = signInRes.headers.getSetCookie ? signInRes.headers.getSetCookie() : [signInRes.headers.get('set-cookie') || '']
+  const sessionCookies = setCookies.map(c => c.split(';')[0]).join('; ')
+  return `${csrfCookie.split(';')[0]}; ${sessionCookies}`
+}
+
+async function measurePage(name, path, cookie) {
+  const start = performance.now()
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: cookie ? { Cookie: cookie } : {},
+    redirect: 'follow',
+  })
+  const durationMs = Math.round(performance.now() - start)
+  const html = await res.text()
+
+  return {
+    name,
+    path,
+    status: res.status,
+    durationMs,
+    bytes: html.length,
+    hasContent: html.length > 500,
+  }
+}
+
+async function run() {
+  console.log('Authenticating test users...')
+  const adminCookie = await authenticate('admin@demo.poslanka.lk', 'Admin@123456')
+  const cashierCookie = await authenticate('cashier@demo.poslanka.lk', 'Cashier@123456')
+
+  const pagesToTest = [
+    { name: 'Login Page', path: '/c/demo-retail/login', cookie: null },
+    { name: 'Dashboard Page', path: '/c/demo-retail/dashboard', cookie: adminCookie },
+    { name: 'Cashier POS Page', path: '/c/demo-retail/pos', cookie: cashierCookie },
+    { name: 'Items Catalog Page', path: '/c/demo-retail/items', cookie: adminCookie },
+    { name: 'Items API (Catalog)', path: '/api/items?pageSize=10', cookie: adminCookie },
+    { name: 'Label Templates API', path: '/api/label-templates', cookie: adminCookie },
+    { name: 'Public Info API (Cached)', path: '/api/c/demo-retail/public-info', cookie: null },
+  ]
+
+  console.log('\n--- PHASE 1: JIT COMPILATION / COLD START ---')
+  for (const page of pagesToTest) {
+    const cold = await measurePage(page.name, page.path, page.cookie)
+    console.log(`[Cold] ${page.name.padEnd(26)}: ${cold.durationMs}ms (Status: ${cold.status})`)
+  }
+
+  console.log('\n--- PHASE 2: WARM RUNTIME BENCHMARK (< 10s TARGET) ---')
+  const results = []
+  for (const page of pagesToTest) {
+    const warm = await measurePage(page.name, page.path, page.cookie)
+    results.push(warm)
+    const statusMark = warm.durationMs < 10000 ? '✅ UNDER 10s' : '❌ SLOW'
+    console.log(`[${warm.status}] ${warm.name.padEnd(24)} | ${warm.path.padEnd(32)} | Time: ${String(warm.durationMs).padStart(4)}ms | Size: ${String(warm.bytes).padStart(6)}B | Visible: ${warm.hasContent ? 'YES' : 'NO'} | ${statusMark}`)
+  }
+
+  console.log('\n--- FINAL BENCHMARK SUMMARY JSON ---')
+  console.log(JSON.stringify(results, null, 2))
+}
+
+run().catch(console.error)

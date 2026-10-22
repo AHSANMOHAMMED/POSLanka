@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant } from '@/lib/db'
-import { labelTemplates, tenants } from '@/lib/db/schema'
+import { labelTemplates } from '@/lib/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -25,11 +25,8 @@ export async function GET(request: NextRequest) {
 
       if (list.length === 0) {
         // Auto-seed default label presets (Zebra 50x30, 40x25, scale labels, hang tags, etc.)
-        const tenant = await db.query.tenants.findFirst({
-          where: eq(tenants.id, session.user.tenantId),
-          columns: { businessType: true },
-        })
-        const presets = getPresetsForBusinessType(tenant?.businessType || 'retail')
+        const businessType = (session.user as { businessType?: string }).businessType || 'retail'
+        const presets = getPresetsForBusinessType(businessType)
         const toInsert = presets.map((p, idx) => ({
           tenantId: session.user.tenantId,
           name: p.name,
