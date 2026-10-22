@@ -236,6 +236,9 @@ interface PlannedLine {
   trackStock: boolean
   trackSerials: boolean
   serialIds: string[]
+  /** H5: unit of the original line; stock / batches / COGS move qty × uomFactor base units */
+  uom: string | null
+  uomFactor: number
 }
 
 /**
@@ -354,6 +357,8 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
         trackStock: !!item?.trackStock,
         trackSerials: !!item?.trackSerialNumbers,
         serialIds,
+        uom: line.uom ?? null,
+        uomFactor: num(line.uomFactor) || 1,
       })
     }
   } else {
@@ -389,6 +394,8 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
         trackStock: !!b.item.trackStock,
         trackSerials: !!b.item.trackSerialNumbers,
         serialIds: b.serialIds,
+        uom: null,
+        uomFactor: 1,
       })
     })
   }
@@ -571,6 +578,8 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
       total: String(-roundCurrency(p.net)),
       serialNumberIds: p.serialIds.length ? p.serialIds : null,
       originalSaleItemId: p.original?.id || null,
+      uom: p.uom,
+      uomFactor: String(p.uomFactor),
     }).returning({ id: saleItems.id })
     if (p.original) {
       await tx.update(saleItems)
@@ -601,7 +610,7 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
       warehouseId: stockWarehouseId,
       itemId: p.itemId,
       mode: 'delta',
-      qty: p.qty,
+      qty: round3(p.qty * p.uomFactor),
       type: 'in',
       referenceType: quarantine ? 'return_quarantine' : 'return',
       referenceId: returnSale.id,
@@ -621,7 +630,7 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
     const r = await restoreSaleLineBatches(tx, {
       tenantId,
       saleItemId: p.original.id,
-      qty: p.qty,
+      qty: round3(p.qty * p.uomFactor),
       toWarehouseId: stockWarehouseId,
       quarantine,
       returnSaleItemId: createdLines[i].id,
@@ -730,7 +739,7 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
   }
 
   // 11. GL (no-op when auto-posting is off)
-  const cogs = roundCurrency(planned.reduce((s, p) => s + roundCurrency(p.costPrice * p.qty), 0))
+  const cogs = roundCurrency(planned.reduce((s, p) => s + roundCurrency(p.costPrice * p.qty * p.uomFactor), 0))
   await postSaleToGL(tx, tenantId, {
     saleId: returnSale.id,
     invoiceNumber: invoiceNo,

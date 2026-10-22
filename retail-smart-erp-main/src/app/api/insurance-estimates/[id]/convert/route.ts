@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { insuranceEstimates, insuranceEstimateItems, workOrders, workOrderServices, workOrderParts, items, warehouseStock } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { insuranceEstimates, insuranceEstimateItems, workOrders, workOrderServices, workOrderParts, items } from '@/lib/db/schema'
+import { eq, and, inArray, isNotNull } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { roundCurrency } from '@/lib/utils/currency'
@@ -13,6 +13,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { convertEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getAvailableStock } from '@/lib/dealership/work-orders'
 
 // POST convert approved estimate to work order (supports partial conversion)
 export async function POST(
@@ -156,30 +157,10 @@ export async function POST(
             const requiredQty = parseFloat(part.quantity || '1')
             const trackStock = item.trackStock
 
-            // Get stock from specific warehouse (or aggregated if no warehouse)
-            let currentStock = 0
-            if (estimate.warehouseId) {
-              const [stockData] = await db
-                .select({
-                  totalStock: sql<string>`COALESCE(${warehouseStock.currentStock}, '0')`,
-                })
-                .from(warehouseStock)
-                .where(
-                  and(
-                    eq(warehouseStock.warehouseId, estimate.warehouseId),
-                    eq(warehouseStock.itemId, part.itemId)
-                  )
-                )
-              currentStock = parseFloat(stockData?.totalStock || '0')
-            } else {
-              const [stockData] = await db
-                .select({
-                  totalStock: sql<string>`COALESCE(SUM(CAST(${warehouseStock.currentStock} AS DECIMAL)), 0)`,
-                })
-                .from(warehouseStock)
-                .where(eq(warehouseStock.itemId, part.itemId))
-              currentStock = parseFloat(stockData?.totalStock || '0')
-            }
+            // Available = stock minus every other reservation (other work orders, held sales,
+            // other hold-stock estimates, outbound transfers). This estimate's own hold is the
+            // reservation being handed over to the new work order, so it is excluded.
+            const currentStock = await getAvailableStock(db, part.itemId, estimate.warehouseId, { excludeEstimateId: estimateId })
 
             stockInfo.push({
               itemId: part.id,
@@ -352,6 +333,25 @@ export async function POST(
           throw new Error('INVALID_STATUS')
         }
 
+        // The item list was read before taking the lock. A concurrent conversion (double
+        // click, two users) may have converted some of these lines in the meantime; converting
+        // them again would create a second work order for the same repair.
+        const lineIds = [...approvedServices.map(i => i.id), ...partsToConvert.map(i => i.id)]
+        if (lineIds.length > 0) {
+          const [already] = await tx
+            .select({ id: insuranceEstimateItems.id })
+            .from(insuranceEstimateItems)
+            .where(and(
+              eq(insuranceEstimateItems.estimateId, estimateId),
+              inArray(insuranceEstimateItems.id, lineIds),
+              isNotNull(insuranceEstimateItems.convertedToWorkOrderId),
+            ))
+            .limit(1)
+          if (already) {
+            throw new Error('ALREADY_CONVERTED')
+          }
+        }
+
         // Work order number from the per-tenant sequence
         const orderNo = await nextDocNo(tx, session.user.tenantId, 'work_order')
 
@@ -440,22 +440,10 @@ export async function POST(
                   ? p.adjustedQuantity
                   : parseFloat(p.quantity || '1')
 
-                // Get stock from specific warehouse
-                const [stockData] = await tx
-                  .select({
-                    totalStock: sql<string>`COALESCE(${warehouseStock.currentStock}, '0')`,
-                  })
-                  .from(warehouseStock)
-                  .where(
-                    and(
-                      eq(warehouseStock.warehouseId, estimate.warehouseId),
-                      eq(warehouseStock.itemId, p.itemId)
-                    )
-                  )
-                const currentStock = parseFloat(stockData?.totalStock || '0')
-
+                // Re-check under lock against the same availability figure
+                const currentStock = await getAvailableStock(tx, p.itemId, estimate.warehouseId, { excludeEstimateId: estimateId, lock: true })
                 if (currentStock < requiredQty) {
-                  throw new Error(`Insufficient stock for ${p.partName || lockedItem.name}. Available: ${currentStock}, Required: ${requiredQty}`)
+                  throw new Error(`INSUFFICIENT_STOCK:Insufficient stock for ${p.partName || lockedItem.name}. Available: ${currentStock}, Required: ${requiredQty}`)
                 }
               }
             }
@@ -668,6 +656,12 @@ export async function POST(
     }
     if (message === 'INVALID_STATUS') {
       return NextResponse.json({ error: 'Estimate can no longer be converted' }, { status: 400 })
+    }
+    if (message === 'ALREADY_CONVERTED') {
+      return NextResponse.json({ error: 'Some of these items were just converted to a work order. Refresh and try again.', code: 'CONFLICT' }, { status: 409 })
+    }
+    if (message.startsWith('INSUFFICIENT_STOCK:')) {
+      return NextResponse.json({ error: message.replace('INSUFFICIENT_STOCK:', ''), code: 'INSUFFICIENT_STOCK' }, { status: 400 })
     }
     return NextResponse.json({ error: 'Failed to convert estimate' }, { status: 500 })
   }

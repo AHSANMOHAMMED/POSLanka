@@ -7,6 +7,7 @@ import { paymentEntries, paymentEntryReferences, paymentSchedules, sales, purcha
 import { eq, and, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { reverseGLEntries } from '@/lib/accounting/gl'
+import { adjustSupplierBalance } from '@/lib/purchasing/supplier-balance'
 import { validateBody } from '@/lib/validation'
 import { cancelPaymentEntrySchema } from '@/lib/validation/schemas/accounting'
 import { validateParams } from '@/lib/validation/helpers'
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         await tx.update(sales).set({
           paidAmount: sql`CAST(GREATEST(0, CAST(${sales.paidAmount} AS numeric) - ${Number(ref.allocatedAmount)}) AS numeric(12,2))`,
           status: sql`CASE
+            WHEN ${sales.status} = 'void' THEN ${sales.status}
             WHEN CAST(GREATEST(0, CAST(${sales.paidAmount} AS numeric) - ${Number(ref.allocatedAmount)}) AS numeric(12,2)) <= 0 THEN 'pending'
             WHEN CAST(GREATEST(0, CAST(${sales.paidAmount} AS numeric) - ${Number(ref.allocatedAmount)}) AS numeric(12,2)) < CAST(${sales.total} AS numeric) THEN 'partial'
             ELSE ${sales.status}
@@ -61,6 +63,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         await tx.update(purchases).set({
           paidAmount: sql`CAST(GREATEST(0, CAST(${purchases.paidAmount} AS numeric) - ${Number(ref.allocatedAmount)}) AS numeric(12,2))`,
           status: sql`CASE
+            WHEN ${purchases.status} IN ('cancelled', 'draft') THEN ${purchases.status}
             WHEN CAST(GREATEST(0, CAST(${purchases.paidAmount} AS numeric) - ${Number(ref.allocatedAmount)}) AS numeric(12,2)) <= 0 THEN 'pending'
             WHEN CAST(GREATEST(0, CAST(${purchases.paidAmount} AS numeric) - ${Number(ref.allocatedAmount)}) AS numeric(12,2)) < CAST(${purchases.total} AS numeric) THEN 'partial'
             ELSE ${purchases.status}
@@ -79,6 +82,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           END`,
         }).where(eq(paymentSchedules.id, ref.paymentScheduleId))
       }
+    }
+
+    // 2b. Undo the supplier running-balance change made on submit
+    if (entry.partyType === 'supplier' && entry.partyId && entry.paymentType !== 'internal_transfer') {
+      const amount = entry.paymentType === 'pay' ? Number(entry.paidAmount) : -Number(entry.receivedAmount)
+      await adjustSupplierBalance(tx, {
+        tenantId,
+        supplierId: entry.partyId,
+        delta: amount,
+        type: 'cancel',
+        referenceType: 'payment_entry',
+        referenceId: entry.id,
+        notes: `Payment entry ${entry.entryNumber} cancelled`,
+        userId: session.user.id,
+      })
     }
 
     // 3. Delete payment ledger entries for this PE

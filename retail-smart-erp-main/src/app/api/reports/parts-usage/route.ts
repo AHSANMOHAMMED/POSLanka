@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { workOrders, workOrderParts, items } from '@/lib/db/schema'
 import { eq, and, sql, gte, lte } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { tenantDayRange } from '@/lib/reports/date-range'
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,6 +29,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'fromDate and toDate are required' }, { status: 400 })
     }
 
+    // Inclusive local business days (tenant timezone, Asia/Colombo by default)
+    const range = await tenantDayRange(session.user.tenantId, fromDate, toDate)
+
     return await withTenant(session.user.tenantId, async (db) => {
       const data = await db.select({
         itemId: workOrderParts.itemId,
@@ -42,8 +46,8 @@ export async function GET(request: NextRequest) {
         .leftJoin(items, eq(workOrderParts.itemId, items.id))
         .where(and(
           eq(workOrderParts.tenantId, session.user.tenantId),
-          gte(workOrders.createdAt, new Date(fromDate)),
-          lte(workOrders.createdAt, new Date(toDate + 'T23:59:59')),
+          gte(workOrders.createdAt, range.from),
+          lte(workOrders.createdAt, range.to),
           sql`${workOrders.status} NOT IN ('draft', 'cancelled')`,
         ))
         .groupBy(workOrderParts.itemId, items.name, items.sku)

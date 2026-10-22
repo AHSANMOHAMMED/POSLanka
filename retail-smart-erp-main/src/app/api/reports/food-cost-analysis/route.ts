@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { sales, saleItems, items, categories } from '@/lib/db/schema'
 import { eq, and, sql, gte, lte } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { tenantDayRange } from '@/lib/reports/date-range'
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,6 +29,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'fromDate and toDate are required' }, { status: 400 })
     }
 
+    // Inclusive local business days (tenant timezone, Asia/Colombo by default)
+    const range = await tenantDayRange(session.user.tenantId, fromDate, toDate)
+
     return await withTenant(session.user.tenantId, async (db) => {
       // Sale items joined with items to get cost price, grouped by item
       const data = await db.select({
@@ -44,8 +48,8 @@ export async function GET(request: NextRequest) {
         .leftJoin(categories, eq(items.categoryId, categories.id))
         .where(and(
           eq(saleItems.tenantId, session.user.tenantId),
-          gte(sales.createdAt, new Date(fromDate)),
-          lte(sales.createdAt, new Date(toDate + 'T23:59:59')),
+          gte(sales.createdAt, range.from),
+          lte(sales.createdAt, range.to),
           sql`${sales.status} != 'void'`,
           eq(sales.isReturn, false),
         ))

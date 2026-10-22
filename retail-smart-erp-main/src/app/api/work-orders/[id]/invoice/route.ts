@@ -10,7 +10,7 @@ import { roundCurrency } from '@/lib/utils/currency'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
 import { logError } from '@/lib/ai/error-logger'
-import { postSaleToGL, postWorkOrderInvoiceWipToGL } from '@/lib/accounting/auto-post'
+import { postSaleToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -259,32 +259,57 @@ export async function POST(
           throw new Error('ALREADY_INVOICED')
         }
 
-        if (lockedWO && !['draft', 'confirmed', 'in_progress', 'completed'].includes(lockedWO.status)) {
+        if (!lockedWO || !['draft', 'confirmed', 'in_progress', 'completed'].includes(lockedWO.status)) {
           throw new Error('INVALID_STATUS')
         }
+
+        // Re-read the lines under the lock: parts/services may have changed between the
+        // pre-checks above and taking the lock, and the invoice must bill exactly what is on
+        // the work order now (totals are kept in step by the parts/services endpoints).
+        const wo = await tx.query.workOrders.findFirst({
+          where: eq(workOrders.id, workOrderId),
+          with: {
+            services: { with: { serviceType: true } },
+            parts: { with: { item: true } },
+          },
+        })
+        if (!wo) throw new Error('INVALID_STATUS')
+        if (wo.services.length === 0 && wo.parts.length === 0) throw new Error('EMPTY_WORK_ORDER')
 
         // Invoice number from the per-tenant sequence (shared with POS sales)
         const invoiceNo = await nextDocumentNumber(tx, session.user.tenantId, 'invoice')
 
-        // Calculate payment amounts
-        const totalAmount = parseFloat(workOrder.total)
-        const cashCardAmount = roundCurrency(paidAmount || 0)
+        // Calculate payment amounts (same rules as a POS sale)
+        const totalAmount = parseFloat(wo.total)
+        // 'credit' as the payment method means "on account": no money is received now
+        const cashCardAmount = paymentMethod === 'credit' ? 0 : roundCurrency(paidAmount || 0)
         const creditUsed = roundCurrency(creditAmount || 0)
+        // Store credit and on-account invoices need a customer to charge
+        if ((creditUsed > 0 || paymentMethod === 'credit') && !wo.customerId) {
+          throw new Error('CUSTOMER_REQUIRED')
+        }
         const totalPaid = roundCurrency(cashCardAmount + creditUsed)
+        const actualPaidAmount = roundCurrency(Math.min(totalPaid, totalAmount))
+        const keepOverpayment = !!addOverpaymentToCredit && !!wo.customerId
+        // Change handed back is not revenue: record only what stays in the drawer, unless the
+        // overpayment is deliberately kept as customer credit.
+        const cashCardRecorded = keepOverpayment
+          ? cashCardAmount
+          : roundCurrency(Math.max(0, Math.min(cashCardAmount, actualPaidAmount - creditUsed)))
         const saleStatus = totalPaid >= totalAmount ? 'completed' : totalPaid > 0 ? 'partial' : 'pending'
 
         const saleResult = await tx.insert(sales).values({
           tenantId: session.user.tenantId,
           invoiceNo,
           workOrderId,
-          customerId: workOrder.customerId,
-          warehouseId: workOrder.warehouseId,
-          costCenterId: workOrder.costCenterId || null,
-          subtotal: workOrder.subtotal,
+          customerId: wo.customerId,
+          warehouseId: wo.warehouseId,
+          costCenterId: wo.costCenterId || null,
+          subtotal: wo.subtotal,
           discountAmount: '0',
-          taxAmount: workOrder.taxAmount,
-          total: workOrder.total,
-          paidAmount: String(totalPaid),
+          taxAmount: wo.taxAmount,
+          total: wo.total,
+          paidAmount: String(actualPaidAmount),
           paymentMethod: (paymentMethod || 'cash') as typeof sales.$inferInsert['paymentMethod'],
           status: saleStatus,
           createdBy: userId,
@@ -292,7 +317,7 @@ export async function POST(
         const newSale = (saleResult as typeof sales.$inferSelect[])[0]
 
         // Create sale items from services (labor)
-        for (const service of workOrder.services) {
+        for (const service of wo.services) {
           const serviceName = service.serviceType?.name || service.description || 'Labor'
           await tx.insert(saleItems).values({
             tenantId: session.user.tenantId,
@@ -310,19 +335,19 @@ export async function POST(
         // Create sale items from parts and update stock
         // Use row-level locking to prevent race conditions in multi-user scenarios
         let batchSettings: Awaited<ReturnType<typeof getTenantSalesSettings>>['batches'] | null = null
-        for (const part of workOrder.parts) {
+        for (const part of wo.parts) {
           const item = part.item
           if (!item) continue
 
           // Auto-pick serial numbers for serial-tracked items
           let pickedSerialIds: string[] | null = null
-          if (item.trackSerialNumbers && workOrder.warehouseId) {
+          if (item.trackSerialNumbers && wo.warehouseId) {
             const requiredQty = Math.ceil(parseFloat(part.quantity))
             const availableSerials = await tx.select()
               .from(itemSerialNumbers)
               .where(and(
                 eq(itemSerialNumbers.itemId, part.itemId),
-                eq(itemSerialNumbers.warehouseId, workOrder.warehouseId),
+                eq(itemSerialNumbers.warehouseId, wo.warehouseId),
                 eq(itemSerialNumbers.status, 'available'),
               ))
               .limit(requiredQty)
@@ -355,24 +380,24 @@ export async function POST(
           }).returning({ id: saleItems.id })
 
           // Update warehouse stock (safe now because row is locked)
-          if (item.trackStock && workOrder.warehouseId) {
+          if (item.trackStock && wo.warehouseId) {
             const requiredQty = parseFloat(part.quantity)
             if (requiredQty > 0) {
               // Single stock writer: locks the row, refuses negative stock
               // (INSUFFICIENT_STOCK) and writes the signed ledger row.
               const input: StockChangeInput = {
                 tenantId: session.user.tenantId,
-                warehouseId: workOrder.warehouseId,
+                warehouseId: wo.warehouseId,
                 itemId: part.itemId,
                 mode: 'delta',
                 qty: -requiredQty,
                 type: 'out',
                 referenceType: 'work_order',
                 referenceId: workOrderId,
-                notes: `Work Order ${workOrder.orderNo}`,
+                notes: `Work Order ${wo.orderNo}`,
                 userId,
                 source: 'work_order',
-                costCenterId: workOrder.costCenterId || null,
+                costCenterId: wo.costCenterId || null,
                 idempotencyKey: `wo-invoice:${workOrderId}:${part.id}`,
               }
               const change = await applyStockChange(tx, input)
@@ -385,7 +410,7 @@ export async function POST(
                 batchSettings ??= (await getTenantSalesSettings(tx, session.user.tenantId)).batches
                 await allocateSaleLineBatches(tx, {
                   tenantId: session.user.tenantId,
-                  warehouseId: workOrder.warehouseId,
+                  warehouseId: wo.warehouseId,
                   itemId: part.itemId,
                   qty: requiredQty,
                   saleItemId: partLine.id,
@@ -398,11 +423,11 @@ export async function POST(
         }
 
         // Record payment if amount > 0
-        if (cashCardAmount > 0) {
+        if (cashCardRecorded > 0) {
           await tx.insert(payments).values({
             tenantId: session.user.tenantId,
             saleId: newSale.id,
-            amount: String(cashCardAmount),
+            amount: String(cashCardRecorded),
             method: (paymentMethod || 'cash') as typeof payments.$inferInsert['method'],
             reference: reference || null,
             receivedBy: userId,
@@ -410,11 +435,11 @@ export async function POST(
         }
 
         // Handle customer credit payment
-        if (creditUsed > 0 && workOrder.customerId) {
+        if (creditUsed > 0 && wo.customerId) {
           const [customer] = await tx
             .select()
             .from(customers)
-            .where(eq(customers.id, workOrder.customerId))
+            .where(eq(customers.id, wo.customerId))
             .for('update')
 
           if (!customer) {
@@ -429,11 +454,11 @@ export async function POST(
           const newBalance = roundCurrency(currentBalance - creditUsed)
           await tx.update(customers)
             .set({ balance: String(newBalance), updatedAt: new Date() })
-            .where(eq(customers.id, workOrder.customerId))
+            .where(eq(customers.id, wo.customerId))
 
           await tx.insert(customerCreditTransactions).values({
             tenantId: session.user.tenantId,
-            customerId: workOrder.customerId,
+            customerId: wo.customerId,
             amount: String(-creditUsed),
             balanceAfter: String(newBalance),
             type: 'use',
@@ -454,13 +479,13 @@ export async function POST(
         }
 
         // Handle overpayment to credit
-        if (addOverpaymentToCredit && cashCardAmount > 0 && workOrder.customerId) {
+        if (keepOverpayment && cashCardAmount > 0 && wo.customerId) {
           const overpayment = roundCurrency(totalPaid - totalAmount)
           if (overpayment > 0) {
             const [customer] = await tx
               .select()
               .from(customers)
-              .where(eq(customers.id, workOrder.customerId))
+              .where(eq(customers.id, wo.customerId))
               .for('update')
 
             if (customer) {
@@ -468,11 +493,11 @@ export async function POST(
               const newBalance = roundCurrency(currentBalance + overpayment)
               await tx.update(customers)
                 .set({ balance: String(newBalance), updatedAt: new Date() })
-                .where(eq(customers.id, workOrder.customerId))
+                .where(eq(customers.id, wo.customerId))
 
               await tx.insert(customerCreditTransactions).values({
                 tenantId: session.user.tenantId,
-                customerId: workOrder.customerId,
+                customerId: wo.customerId,
                 amount: String(overpayment),
                 balanceAfter: String(newBalance),
                 type: 'overpayment',
@@ -507,7 +532,7 @@ export async function POST(
         {
           // Calculate COGS from parts with cost prices
           let totalCOGS = 0
-          for (const part of workOrder.parts) {
+          for (const part of wo.parts) {
             if (part.item?.costPrice) {
               totalCOGS += roundCurrency(parseFloat(part.quantity) * parseFloat(part.item.costPrice))
             }
@@ -517,27 +542,24 @@ export async function POST(
             saleId: newSale.id,
             invoiceNumber: newSale.invoiceNo,
             saleDate: new Date().toISOString().split('T')[0],
-            subtotal: parseFloat(workOrder.subtotal || '0'),
-            tax: parseFloat(workOrder.taxAmount || '0'),
+            subtotal: parseFloat(wo.subtotal || '0'),
+            tax: parseFloat(wo.taxAmount || '0'),
             discount: 0,
             total: totalAmount,
-            amountPaid: cashCardAmount,
+            amountPaid: cashCardRecorded,
             creditAmount: creditUsed,
             costOfGoodsSold: roundCurrency(totalCOGS),
             paymentMethod: paymentMethod || 'cash',
-            customerId: workOrder.customerId || null,
-            costCenterId: workOrder.costCenterId || null,
-            taxBreakdown: (workOrder.taxBreakdown as TaxBreakdownItem[]) || undefined,
+            customerId: wo.customerId || null,
+            costCenterId: wo.costCenterId || null,
+            taxBreakdown: (wo.taxBreakdown as TaxBreakdownItem[]) || undefined,
           })
 
-          // Transfer WIP to COGS (if WIP tracking was used)
-          await postWorkOrderInvoiceWipToGL(tx, session.user.tenantId, {
-            workOrderId,
-            workOrderNo: workOrder.orderNo,
-            totalPartsCost: roundCurrency(totalCOGS),
-            totalLaborCost: 0, // Labor doesn't have WIP tracking currently
-            costCenterId: workOrder.costCenterId || null,
-          })
+          // No WIP transfer: parts are never capitalised to WIP while the work order is open
+          // (they stay in stock as reservations), and postSaleToGL above already books
+          // Dr COGS / Cr Stock for them. Also transferring WIP → COGS here booked the parts'
+          // cost to COGS a second time and drove WIP negative (or failed the invoice when no WIP
+          // account was configured).
         }
 
         return newSale
@@ -586,6 +608,14 @@ export async function POST(
 
     if (message === 'INVALID_STATUS') {
       return NextResponse.json({ error: 'Work order cannot be invoiced in its current status' }, { status: 400 })
+    }
+
+    if (message === 'EMPTY_WORK_ORDER') {
+      return NextResponse.json({ error: 'Work order must have at least one service or part' }, { status: 400 })
+    }
+
+    if (message === 'CUSTOMER_REQUIRED') {
+      return NextResponse.json({ error: 'A customer is required for credit or on-account payment' }, { status: 400 })
     }
 
     return NextResponse.json({ error: 'Failed to create invoice' }, { status: 500 })

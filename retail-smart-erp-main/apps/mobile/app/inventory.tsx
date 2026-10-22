@@ -23,6 +23,10 @@ interface StockMovement {
   id: string
   type: MovementType
   quantity: string | number
+  /** signed change (negative = stock decreased) */
+  qtyChange?: string | number | null
+  stockBefore?: string | number | null
+  stockAfter?: string | number | null
   referenceType?: string | null
   referenceId?: string | null
   notes?: string | null
@@ -145,7 +149,11 @@ export default function InventoryScreen() {
 
   const renderItem = ({ item }: { item: StockMovement }) => {
     const qtyNum = Number(item.quantity) || 0
-    const signed = item.type === 'out' ? -Math.abs(qtyNum) : item.type === 'in' ? Math.abs(qtyNum) : qtyNum
+    // `quantity` is always unsigned; adjustments carry their direction in qtyChange
+    // (or stockAfter − stockBefore), so a stock-take shortfall shows as a decrease.
+    const change = item.qtyChange != null && item.qtyChange !== '' ? Number(item.qtyChange) : NaN
+    const delta = item.stockAfter != null && item.stockBefore != null ? Number(item.stockAfter) - Number(item.stockBefore) : NaN
+    const signed = item.type === 'out' ? -Math.abs(qtyNum) : item.type === 'in' ? Math.abs(qtyNum) : Number.isFinite(change) ? change : Number.isFinite(delta) ? delta : qtyNum
     const ref = referenceLabel(item)
     return (
       <View style={styles.movementCard}>

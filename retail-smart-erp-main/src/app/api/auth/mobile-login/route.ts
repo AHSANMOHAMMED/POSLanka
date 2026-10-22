@@ -6,6 +6,7 @@ import { tenants, users } from '@/lib/db/schema'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { validateBody } from '@/lib/validation/helpers'
+import { isAccountActive } from '@/lib/auth/live-user'
 import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
 
 const schema = z.object({
@@ -40,6 +41,11 @@ export async function POST(request: NextRequest) {
     where: eq(tenants.slug, parsed.data.tenantSlug),
   })
   if (!tenant || tenant.status !== 'active') {
+    await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  }
+  // Same rule as the web login: an expired plan cannot sign in from the app either.
+  if (tenant.planExpiresAt && new Date(tenant.planExpiresAt) < new Date()) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
@@ -54,7 +60,7 @@ export async function POST(request: NextRequest) {
   }
 
   const valid = await bcrypt.compare(parsed.data.password, user.passwordHash)
-  if (!valid) {
+  if (!valid || (user.accountId && !(await isAccountActive(user.accountId)))) {
     await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }

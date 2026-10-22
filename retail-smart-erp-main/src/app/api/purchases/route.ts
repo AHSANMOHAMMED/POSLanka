@@ -5,6 +5,7 @@ import { purchases, purchaseItems, suppliers, warehouses, users, purchaseOrders 
 import { eq, and, ilike, sql, desc, asc, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { auditPurchaseIntegrity } from '@/lib/audit/realtime-hooks'
@@ -14,6 +15,7 @@ import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchasesListSchema, createPurchaseSchema } from '@/lib/validation/schemas/purchases'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { findDuplicateSupplierInvoice, duplicateSupplierInvoiceResponse } from '@/lib/purchasing/supplier-invoice'
 
 // GET all purchases for the tenant (with pagination support)
 export async function GET(request: NextRequest) {
@@ -23,6 +25,9 @@ export async function GET(request: NextRequest) {
     const { page, pageSize, search, all, status, supplierId: filterSupplierId, warehouseId: filterWarehouseId, sortBy, sortOrder: sortOrderParam } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
+      const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+      if (permError) return { error: permError }
+
       // Build where conditions - RLS handles tenant filtering
       const conditions: ReturnType<typeof eq>[] = []
 
@@ -156,6 +161,7 @@ export async function GET(request: NextRequest) {
     if (!result) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    if ('error' in result) return result.error
 
     // Return array directly for 'all' mode, or paginated response
     if ('isAll' in result && result.isAll) {
@@ -227,6 +233,29 @@ export async function POST(request: NextRequest) {
         return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
       }
 
+      // A linked purchase order must exist in this tenant, belong to the same supplier and be live
+      if (purchaseOrderId) {
+        const [po] = await tx
+          .select({ id: purchaseOrders.id, supplierId: purchaseOrders.supplierId, status: purchaseOrders.status })
+          .from(purchaseOrders)
+          .where(eq(purchaseOrders.id, purchaseOrderId))
+        if (!po) {
+          return { error: NextResponse.json({ error: 'Purchase order not found' }, { status: 404 }) }
+        }
+        if (po.supplierId !== supplierId) {
+          return { error: NextResponse.json({ error: 'Purchase order belongs to a different supplier' }, { status: 400 }) }
+        }
+        if (po.status === 'draft' || po.status === 'cancelled') {
+          return { error: NextResponse.json({ error: `Cannot invoice a ${po.status} purchase order` }, { status: 400 }) }
+        }
+      }
+
+      // The same supplier bill must not be entered twice
+      const duplicate = await findDuplicateSupplierInvoice(tx, {
+        tenantId: session.user.tenantId, supplierId, supplierInvoiceNo,
+      })
+      if (duplicate) return { error: duplicateSupplierInvoiceResponse(supplierInvoiceNo!, duplicate) }
+
       // Generate purchase number with lock
       const purchaseNo = await nextDocNo(tx, session.user.tenantId, 'purchase_invoice')
 
@@ -268,6 +297,10 @@ export async function POST(request: NextRequest) {
             unitPrice: item.unitPrice.toString(),
             tax: itemTax.toString(),
             total: (Math.round((itemTotal + itemTax) * 100) / 100).toString(),
+            // Linked to a PO: the receipt (GRN) already recorded the received quantities, so this
+            // invoice adds nothing to purchase_order_items.received_quantity (and its cancel
+            // takes nothing back — see reversePurchaseOrderReceipt).
+            ...(purchaseOrderId ? { poReceivedQty: '0' } : {}),
           }
         })
 

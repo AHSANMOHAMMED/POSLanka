@@ -739,8 +739,10 @@ describe('computeSalarySlip', () => {
 
       // Only EPF should count toward employer contributions
       expect(result.totalEmployerContributions).toBe(1200)
-      // Both deductions should count toward total deductions (since both affect employee)
-      expect(result.totalDeductions).toBe(2000) // 1200 + 800
+      // Only the employee-borne deduction counts; the employer-paid EPF neither reduces net pay
+      // nor counts as an employee deduction (gross = net + totalDeductions)
+      expect(result.totalDeductions).toBe(800)
+      expect(result.netPay).toBe(result.grossPay - 800)
     })
   })
 })

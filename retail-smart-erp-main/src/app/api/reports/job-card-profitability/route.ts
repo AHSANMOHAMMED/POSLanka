@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { workOrders, workOrderParts, workOrderServices, customers, vehicles } from '@/lib/db/schema'
 import { eq, and, sql, gte, lte } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { tenantDayRange } from '@/lib/reports/date-range'
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,6 +29,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'fromDate and toDate are required' }, { status: 400 })
     }
 
+    // Inclusive local business days (tenant timezone, Asia/Colombo by default)
+    const range = await tenantDayRange(session.user.tenantId, fromDate, toDate)
+
     return await withTenant(session.user.tenantId, async (db) => {
       // Get work orders with aggregated parts cost and services revenue
       const woData = await db.select({
@@ -45,8 +49,8 @@ export async function GET(request: NextRequest) {
         .leftJoin(vehicles, eq(workOrders.vehicleId, vehicles.id))
         .where(and(
           eq(workOrders.tenantId, session.user.tenantId),
-          gte(workOrders.createdAt, new Date(fromDate)),
-          lte(workOrders.createdAt, new Date(toDate + 'T23:59:59')),
+          gte(workOrders.createdAt, range.from),
+          lte(workOrders.createdAt, range.to),
           sql`${workOrders.status} NOT IN ('draft', 'cancelled')`,
         ))
         .orderBy(sql`${workOrders.createdAt} DESC`)
@@ -60,8 +64,8 @@ export async function GET(request: NextRequest) {
         .innerJoin(workOrders, eq(workOrderParts.workOrderId, workOrders.id))
         .where(and(
           eq(workOrderParts.tenantId, session.user.tenantId),
-          gte(workOrders.createdAt, new Date(fromDate)),
-          lte(workOrders.createdAt, new Date(toDate + 'T23:59:59')),
+          gte(workOrders.createdAt, range.from),
+          lte(workOrders.createdAt, range.to),
           sql`${workOrders.status} NOT IN ('draft', 'cancelled')`,
         ))
         .groupBy(workOrderParts.workOrderId)
@@ -75,8 +79,8 @@ export async function GET(request: NextRequest) {
         .innerJoin(workOrders, eq(workOrderServices.workOrderId, workOrders.id))
         .where(and(
           eq(workOrderServices.tenantId, session.user.tenantId),
-          gte(workOrders.createdAt, new Date(fromDate)),
-          lte(workOrders.createdAt, new Date(toDate + 'T23:59:59')),
+          gte(workOrders.createdAt, range.from),
+          lte(workOrders.createdAt, range.to),
           sql`${workOrders.status} NOT IN ('draft', 'cancelled')`,
         ))
         .groupBy(workOrderServices.workOrderId)

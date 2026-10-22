@@ -59,6 +59,8 @@ function getBaseAccounts(): AccountTemplate[] {
         leaf('2110', 'Accounts Payable', 'liability', 'payable', true),
         leaf('2120', 'Tax Payable', 'liability', 'tax', true),
         leaf('2150', 'Customer Advances', 'liability', 'current_liability'),
+        // H3: GRN credit until the supplier invoice arrives
+        leaf('2190', 'Stock Received But Not Billed', 'liability', 'current_liability', true),
       ]),
       group('2200', 'Payroll Liabilities', 'liability', 'current_liability', [
         leaf('2210', 'Salary Payable', 'liability', 'payable', true),
@@ -87,6 +89,7 @@ function getBaseAccounts(): AccountTemplate[] {
         leaf('5420', 'Employer Contributions', 'expense', 'expense_account', true),
       ]),
       leaf('5500', 'Stock Adjustment', 'expense', 'expense_account', true),
+      leaf('5510', 'Purchase Price Variance', 'expense', 'expense_account'),
       leaf('5600', 'Cash Over/Short', 'expense', 'expense_account', true),
       leaf('5800', 'Write Off', 'expense', 'expense_account', true),
       leaf('5900', 'Round Off', 'expense', 'round_off', true),
@@ -264,4 +267,5 @@ export const SYSTEM_ACCOUNT_DEFAULTS = {
   defaultWipAccountId: '1170',
   defaultGiftCardLiabilityAccountId: '2130',
   defaultCashOverShortAccountId: '5600',
+  defaultSrbnbAccountId: '2190', // H3
 } as const

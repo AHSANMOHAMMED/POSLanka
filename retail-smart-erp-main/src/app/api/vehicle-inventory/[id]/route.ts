@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { vehicleInventory, vehicleMakes, vehicleModels } from '@/lib/db/schema'
+import { vehicleInventory, vehicleMakes, vehicleModels, sales } from '@/lib/db/schema'
 import { eq, and, ne } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -112,6 +112,19 @@ export async function PUT(
           }
         }
 
+        // A vehicle sold on an invoice can only go back on sale by cancelling that sale
+        // (vehicle-sales PUT status=cancelled), otherwise it could be sold a second time while
+        // the first invoice still stands.
+        if (current.saleId) {
+          const releasing = (vehicleStatus !== undefined && vehicleStatus !== 'sold') || (saleId !== undefined && saleId !== current.saleId)
+          if (releasing) {
+            const linkedSale = await tx.query.sales.findFirst({ where: eq(sales.id, current.saleId), columns: { status: true } })
+            if (linkedSale && linkedSale.status !== 'void') {
+              throw new Error('SOLD_ON_INVOICE')
+            }
+          }
+        }
+
         // Check for duplicate stock number (excluding current vehicle) - RLS scopes
         if (stockNo) {
           const existingStockNo = await tx.query.vehicleInventory.findFirst({
@@ -202,6 +215,9 @@ export async function PUT(
     }
     if (message === 'DUPLICATE_STOCK_NO') {
       return NextResponse.json({ error: 'A vehicle with this stock number already exists' }, { status: 400 })
+    }
+    if (message === 'SOLD_ON_INVOICE') {
+      return NextResponse.json({ error: 'This vehicle is sold on an invoice. Cancel the vehicle sale to put it back in stock.' }, { status: 400 })
     }
     if (message === 'DUPLICATE_VIN') {
       return NextResponse.json({ error: 'A vehicle with this VIN already exists' }, { status: 400 })

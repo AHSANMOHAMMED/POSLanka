@@ -1,83 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuthTenantTransaction, TenantDb } from '@/lib/db'
-import { workOrderServices, workOrders, workOrderParts, serviceTypes } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { withAuthTenantTransaction } from '@/lib/db'
+import { workOrderServices, workOrders, serviceTypes } from '@/lib/db/schema'
+import { eq, and } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { roundCurrency } from '@/lib/utils/currency'
-import { calculateItemTax, aggregateTaxBreakdown } from '@/lib/utils/tax-template'
-import { resolveTaxTemplatesForItems, getDefaultTaxTemplate, getEffectiveTaxTemplate } from '@/lib/utils/tax-template-resolver'
+import { recalculateWorkOrderTotals } from '@/lib/dealership/work-orders'
 import { checkWorkOrderAnomalies } from '@/lib/ai/anomaly-detector'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addWorkOrderServiceSchema, updateWorkOrderServiceSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
-
-// Helper function to recalculate work order totals with per-item tax templates
-async function recalculateWorkOrderTotals(db: TenantDb, workOrderId: string, tenantId: string) {
-  // Get line-level data for per-item tax calculation
-  const parts = await db.query.workOrderParts.findMany({
-    where: eq(workOrderParts.workOrderId, workOrderId),
-    columns: { itemId: true, total: true },
-  })
-
-  const [servicesResult] = await db
-    .select({
-      servicesTotal: sql<string>`COALESCE(SUM(CAST(amount AS DECIMAL)), 0)`,
-    })
-    .from(sql`work_order_services`)
-    .where(sql`work_order_id = ${workOrderId} AND tenant_id = ${tenantId}`)
-
-  const servicesTotal = parseFloat(servicesResult?.servicesTotal || '0')
-  const partsTotal = roundCurrency(parts.reduce((s, p) => s + parseFloat(p.total), 0))
-  const subtotal = roundCurrency(servicesTotal + partsTotal)
-
-  // Per-item tax calculation using tax templates
-  const defaultTemplate = await getDefaultTaxTemplate(db, tenantId)
-  const partItemIds = parts.map(p => p.itemId).filter(Boolean)
-  const itemTemplateMap = partItemIds.length > 0
-    ? await resolveTaxTemplatesForItems(db, partItemIds)
-    : new Map()
-
-  const allBreakdowns = []
-  let totalTax = 0
-
-  // Tax on parts (per-item template)
-  for (const part of parts) {
-    const lineTotal = parseFloat(part.total)
-    if (lineTotal <= 0) continue
-    const template = getEffectiveTaxTemplate(itemTemplateMap, part.itemId, defaultTemplate)
-    const taxResult = calculateItemTax(lineTotal, template)
-    totalTax += taxResult.totalTax
-    if (taxResult.breakdown.length > 0) allBreakdowns.push(taxResult.breakdown)
-  }
-
-  // Tax on services (default template only — services have no itemId)
-  if (servicesTotal > 0) {
-    const taxResult = calculateItemTax(servicesTotal, defaultTemplate)
-    totalTax += taxResult.totalTax
-    if (taxResult.breakdown.length > 0) allBreakdowns.push(taxResult.breakdown)
-  }
-
-  totalTax = roundCurrency(totalTax)
-  const taxBreakdown = allBreakdowns.length > 0 ? aggregateTaxBreakdown(allBreakdowns) : null
-
-  // Determine total: inclusive tax is already in subtotal, only add exclusive
-  const exclusiveTax = roundCurrency(
-    (taxBreakdown || []).filter(b => !b.includedInPrice).reduce((s, b) => s + b.amount, 0)
-  )
-  const total = roundCurrency(subtotal + exclusiveTax)
-
-  await db.update(workOrders)
-    .set({
-      subtotal: String(subtotal),
-      taxAmount: String(totalTax),
-      taxBreakdown: taxBreakdown,
-      total: String(total),
-      updatedAt: new Date(),
-    })
-    .where(eq(workOrders.id, workOrderId))
-}
 
 // POST add service to work order
 export async function POST(

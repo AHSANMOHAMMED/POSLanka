@@ -4,7 +4,7 @@
  * settings live preview. The invoice barcode / QR are inline SVGs generated
  * with bwip-js (loaded lazily).
  */
-import type { ReceiptModel } from './receipt-model'
+import { formatRate, type ReceiptModel } from './receipt-model'
 import { formatMoney } from './escpos/encoder'
 
 export interface ReceiptHtmlAssets {
@@ -108,6 +108,7 @@ export function renderReceiptHtmlSync(model: ReceiptModel, paperWidth: 58 | 80, 
     if (model.showItemSku && l.sku) parts.push(`<div style="font-size:${base - 1}px">${e(l.sku)}</div>`)
     parts.push(row(`&nbsp;&nbsp;${e(l.qtyText)}${l.unit ? ` ${e(l.unit)}` : ''} x ${m(l.unitPrice)}`, m(l.total)))
     if (l.discount > 0) parts.push(row('&nbsp;&nbsp;Discount', `-${m(l.discount)}`))
+    if (model.taxInvoice && l.vatAmount) parts.push(row(`&nbsp;&nbsp;VAT ${formatRate(l.vatRate)}%`, m(l.vatAmount)))
     for (const n of l.notes) parts.push(`<div style="font-size:${base - 1}px">&nbsp;&nbsp;${e(n)}</div>`)
     parts.push('</div>')
   }
@@ -121,6 +122,12 @@ export function renderReceiptHtmlSync(model: ReceiptModel, paperWidth: 58 | 80, 
       `;font-weight:bold;font-size:${base + 3}px;margin-top:4px`
     )
   )
+  if (model.taxInvoice) {
+    parts.push('<div style="border-top:1px dotted #000;margin:4px 0"></div>')
+    parts.push(row('Total excl. VAT', m(model.taxInvoice.totalExclVat)))
+    parts.push(row('VAT', m(model.taxInvoice.totalVat)))
+    parts.push(row('Total incl. VAT', m(model.taxInvoice.totalInclVat)))
+  }
   parts.push(hr)
   for (const p of model.payments) parts.push(row(e(p.label), m(p.amount)))
   if (model.change) parts.push(row('Change', m(model.change)))

@@ -2,14 +2,20 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
 import { purchaseReceipts, purchaseReceiptItems, purchaseOrderItems, purchaseOrders, users } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { notifyStockDecreased } from '@/lib/inventory/apply-stock-change'
 import { reverseMovements, stockErrorResponse, type RecordedMovement, type StockChangeRecord } from '@/lib/purchasing/stock-cost'
 import { logError } from '@/lib/ai/error-logger'
+import { reversePurchaseCost } from '@/lib/purchasing/purchase-reversal'
+import { unbilledGrnStock } from '@/lib/purchasing/grn-coverage'
+import { reverseDocBatches } from '@/lib/purchasing/batch-receipt'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { deletePurchaseReceiptSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { reverseGLEntries, tenantToday } from '@/lib/accounting/gl'
+import { activeLandedCostFor } from '@/lib/purchasing/landed-cost'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 
 // GET - Single purchase receipt detail
 export async function GET(
@@ -21,6 +27,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+    if (permError) return { permError }
+
     const [receipt] = await db
       .select({
         id: purchaseReceipts.id,
@@ -37,6 +46,7 @@ export async function GET(
         receivedByName: users.fullName,
         cancellationReason: purchaseReceipts.cancellationReason,
         cancelledAt: purchaseReceipts.cancelledAt,
+        glPosted: purchaseReceipts.glPosted,
         createdAt: purchaseReceipts.createdAt,
         updatedAt: purchaseReceipts.updatedAt,
       })
@@ -57,6 +67,7 @@ export async function GET(
         quantityRejected: purchaseReceiptItems.quantityRejected,
         rejectionReason: purchaseReceiptItems.rejectionReason,
         notes: purchaseReceiptItems.notes,
+        unitCost: purchaseReceiptItems.unitCost,
       })
       .from(purchaseReceiptItems)
       .where(eq(purchaseReceiptItems.receiptId, id))
@@ -65,6 +76,7 @@ export async function GET(
   })
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if ('permError' in result) return result.permError
   if ('notFound' in result) return NextResponse.json({ error: 'Receipt not found' }, { status: 404 })
 
   return NextResponse.json(result.data)
@@ -104,11 +116,55 @@ export async function DELETE(
         return { error: NextResponse.json({ error: 'Receipt is already cancelled' }, { status: 400 }) }
       }
 
+      // Lock the PO (receipts / invoices of the same PO serialise on it)
+      let poStatus: string | null = null
+      if (receipt.purchaseOrderId) {
+        const [po] = await tx.select({ status: purchaseOrders.status }).from(purchaseOrders)
+          .where(eq(purchaseOrders.id, receipt.purchaseOrderId)).for('update')
+        poStatus = po?.status ?? null
+      }
+
       // Get receipt items
       const receiptItems = await tx
         .select()
         .from(purchaseReceiptItems)
         .where(eq(purchaseReceiptItems.receiptId, id))
+
+      // Stock movements this receipt created. Receipts made with updateStock=false created
+      // none, so stock is left untouched.
+      //  - current receipts: movements keyed 'po-receive:<receiptId>:<poLineId>'
+      //  - legacy receipts (no key): PO-receive movements written in the same
+      //    transaction as the receipt (identical created_at = transaction now()).
+      const recorded = await findReceiptMovements(tx, session.user.tenantId, receipt)
+
+      // Goods already billed: a submitted supplier invoice of this PO took this receipt's
+      // stock as its own (it did not receive it again). Taking the stock out now would leave
+      // a billed invoice without goods — the invoice must be cancelled / returned first.
+      const receiptQtyByItem = new Map<string, number>()
+      for (const m of recorded) {
+        if (m.qtyChange > 0) receiptQtyByItem.set(m.itemId, (receiptQtyByItem.get(m.itemId) || 0) + m.qtyChange)
+      }
+      if (receipt.purchaseOrderId && receiptQtyByItem.size > 0) {
+        const unbilled = await unbilledGrnStock(tx, session.user.tenantId, receipt.purchaseOrderId)
+        for (const [itemId, q] of receiptQtyByItem) {
+          if ((unbilled.get(itemId) || 0) - q < -0.0005) {
+            const name = receiptItems.find(ri => ri.itemId === itemId)?.itemName || itemId
+            return { error: NextResponse.json({
+              error: `Cannot cancel receipt ${receipt.receiptNo}: ${name} from this receipt is already billed on a supplier invoice. Cancel or return the invoice first.`,
+              code: 'RECEIPT_ALREADY_INVOICED',
+            }, { status: 400 }) }
+          }
+        }
+      }
+
+      // H3: a submitted landed cost voucher spread charges onto this receipt's goods: cancel it first
+      const landed = await activeLandedCostFor(tx, 'grn', id)
+      if (landed) {
+        return { error: NextResponse.json({
+          error: `Cannot cancel receipt ${receipt.receiptNo}: landed cost voucher ${landed.voucherNo} is allocated to it. Cancel the voucher first.`,
+          code: 'HAS_LANDED_COST',
+        }, { status: 400 }) }
+      }
 
       // Reverse receivedQuantity on PO items
       for (const item of receiptItems) {
@@ -121,12 +177,36 @@ export async function DELETE(
         }
       }
 
-      // Reverse exactly the stock movements this receipt created. Receipts made with
-      // updateStock=false created none, so stock is left untouched.
-      //  - current receipts: movements keyed 'po-receive:<receiptId>:<poLineId>'
-      //  - legacy receipts (no key): PO-receive movements written in the same
-      //    transaction as the receipt (identical created_at = transaction now()).
-      const recorded = await findReceiptMovements(tx, session.user.tenantId, receipt)
+      // Take the receipt out of the weighted-average cost (before the stock goes), using the
+      // PO line prices it was costed at.
+      if (receiptQtyByItem.size > 0) {
+        const poLineIds = receiptItems.map(ri => ri.purchaseOrderItemId).filter((x): x is string => !!x)
+        const poLines = poLineIds.length > 0
+          ? await tx.select({ id: purchaseOrderItems.id, unitPrice: purchaseOrderItems.unitPrice })
+            .from(purchaseOrderItems).where(inArray(purchaseOrderItems.id, poLineIds))
+          : []
+        const priceOf = new Map(poLines.map(l => [l.id, parseFloat(l.unitPrice || '0')]))
+        const lines: { itemId: string; qty: number; unitPrice: number }[] = []
+        const remaining = new Map(receiptQtyByItem)
+        for (const ri of receiptItems) {
+          if (!ri.itemId || !remaining.has(ri.itemId)) continue
+          const q = Math.min(parseFloat(ri.quantityReceived), remaining.get(ri.itemId)!)
+          if (!(q > 0)) continue
+          remaining.set(ri.itemId, remaining.get(ri.itemId)! - q)
+          lines.push({ itemId: ri.itemId, qty: q, unitPrice: ri.purchaseOrderItemId ? (priceOf.get(ri.purchaseOrderItemId) || 0) : 0 })
+        }
+        await reversePurchaseCost(tx, {
+          tenantId: session.user.tenantId,
+          purchaseId: receipt.id,
+          purchaseNo: receipt.receiptNo,
+          supplierId: receipt.supplierId,
+          userId: session.user.id,
+          action: 'cancel',
+          lines,
+          label: 'Goods receipt',
+        })
+      }
+
       const stockChanges: StockChangeRecord[] = await reverseMovements(tx, recorded, {
         tenantId: session.user.tenantId,
         referenceType: 'purchase_receipt_cancel',
@@ -136,6 +216,13 @@ export async function DELETE(
         userId: session.user.id,
         source: 'purchase',
       })
+      // batch-tracked items: take the quantity back out of the batches this receipt filled
+      await reverseDocBatches(tx, session.user.tenantId, 'grn', id)
+
+      // H3: GRN posted Dr Stock / Cr SRBNB → reverse it (nothing billed: checked above)
+      if (receipt.glPosted) {
+        await reverseGLEntries(tx, session.user.tenantId, 'purchase_receipt', id, await tenantToday(session.user.tenantId))
+      }
 
       // Update receipt status
       await tx.update(purchaseReceipts)
@@ -166,7 +253,10 @@ export async function DELETE(
 
         type POStatus = 'draft' | 'confirmed' | 'submitted' | 'partially_received' | 'fully_received' | 'invoice_created' | 'cancelled'
         let newStatus: POStatus
-        if (totalReceived === 0) {
+        if (poStatus === 'cancelled' || poStatus === 'invoice_created') {
+          // A cancelled PO stays cancelled; an invoiced PO keeps its invoice
+          newStatus = poStatus
+        } else if (totalReceived === 0) {
           newStatus = 'confirmed'
         } else if (totalReceived >= totalOrdered) {
           newStatus = 'fully_received'

@@ -20,6 +20,8 @@ import {
   setUser,
   type AuthUser,
 } from '../src/lib/api'
+import { syncNow } from '../src/lib/offlineQueue'
+import { uploadAllPending } from '../src/lib/intakeStore'
 import { fetchCurrentShift } from '../src/lib/shift'
 import { THEME } from '../src/lib/theme'
 import { adminLogin, setAdminSession } from '../src/lib/adminApi'
@@ -136,6 +138,10 @@ export default function LoginScreen() {
 
       // Push registration (permission prompt + POST /api/account/devices); never blocks login.
       registerPushToken().catch(() => undefined)
+      // Work saved while the previous session expired (offline sales stopped on 401, intake scans)
+      // is replayed right away instead of waiting for the next connectivity change.
+      syncNow().catch(() => undefined)
+      uploadAllPending().catch(() => undefined)
 
       // Route by shift state: open shift -> POS, otherwise -> open a shift first.
       const shiftRes = await fetchCurrentShift()

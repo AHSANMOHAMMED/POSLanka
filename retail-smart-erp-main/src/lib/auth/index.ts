@@ -7,6 +7,7 @@ import { db, withTenant } from '@/lib/db'
 import { users, tenants, accounts, accountTenants } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
+import { getLiveCompanyUser, isAccountActive } from '@/lib/auth/live-user'
 
 // ---------------------------------------------------------------------------
 // Brute-force rate limiter (database-backed)
@@ -126,6 +127,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             throw new Error('Invalid credentials')
           }
 
+          // Linked global account suspended by the platform admin
+          if (user.accountId && !(await isAccountActive(user.accountId))) {
+            throw new Error('Invalid credentials')
+          }
+
           // 3. Validate password against users.passwordHash
           const isValidPassword = await bcrypt.compare(password, user.passwordHash)
           if (!isValidPassword) {
@@ -223,7 +229,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           const account = await db.query.accounts.findFirst({
             where: eq(accounts.id, accountId),
           })
-          if (!account) {
+          if (!account || account.isActive === false) {
             throw new Error('Account not found')
           }
 
@@ -273,6 +279,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             user = newUser
           }
 
+          // The company's users row is authoritative for access: an owner deactivating or
+          // re-roling a staff member updates users, so the portal transfer must honour it.
+          if (!user.isActive) {
+            throw new Error('User is deactivated in this company')
+          }
+
           // Update last login on account and user records
           const now = new Date()
           await db.update(accounts)
@@ -300,7 +312,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             accountId: account.id,
             email: account.email,
             name: account.fullName,
-            role: membership.role,
+            role: user.role,
             customRoleId: user.customRoleId || membership.customRoleId || null,
             tenantId: tenant.id,
             tenantSlug: tenant.slug,
@@ -495,30 +507,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             return token
           }
 
-          // 2. Validate user is still active in users table
-          const userRecord = await withTenant(token.tenantId as string, async (tdb) => {
-            return tdb.query.users.findFirst({
-              where: and(
-                eq(users.id, token.id as string),
-                eq(users.isActive, true)
-              ),
-              columns: { id: true, passwordChangedAt: true },
-            })
-          })
-
-          if (!userRecord) {
+          // 2. Validate user is still active, password unchanged since the token was issued,
+          //    linked account not suspended — and pick up the CURRENT role so a demotion
+          //    (e.g. manager → cashier) takes effect on the next request, not the next login.
+          const live = await getLiveCompanyUser(
+            token.tenantId as string,
+            token.id as string,
+            typeof token.iat === 'number' ? token.iat : undefined,
+          )
+          if (!live.ok) {
             token.invalid = true
             return token
           }
-
-          // 3. Invalidate session if password was changed after token was issued
-          if (userRecord.passwordChangedAt && token.iat) {
-            const pwChangedSec = Math.floor(userRecord.passwordChangedAt.getTime() / 1000)
-            if (pwChangedSec >= token.iat) {
-              token.invalid = true
-              return token
-            }
+          if (live.role !== token.role) {
+            token.role = live.role
+            token.isOwner = live.role === 'owner'
           }
+          token.customRoleId = live.customRoleId
 
           token.logoUrl = tenant.logoUrl || undefined
           token.aiEnabled = tenant.aiEnabled
@@ -696,6 +701,12 @@ export interface CompanySession {
  * Also accepts Authorization: Bearer <mobile JWT> from the Expo app.
  */
 export async function authWithCompany(): Promise<CompanySession | null> {
+  // H4: /api/v1 runs existing handlers under an API-key principal (see ./api-key-context).
+  // Only set by withApiKey() for the duration of a v1 request; absent for every other request.
+  const { getApiKeyPrincipal } = await import('./api-key-context')
+  const apiPrincipal = getApiKeyPrincipal()
+  if (apiPrincipal) return apiPrincipal.session
+
   const session = await auth()
   if (session?.user?.tenantId) {
     // Warm permission cache for tenant-specific overrides (non-blocking on error).
@@ -739,6 +750,13 @@ export async function authWithCompany(): Promise<CompanySession | null> {
         name?: string
       }
       if (payload.type !== 'mobile' || !payload.tenantId) return null
+
+      // Mobile tokens live 12h: re-check the user on every request so deactivation, a
+      // password change or a demotion takes effect immediately (role comes from the DB).
+      const live = await getLiveCompanyUser(payload.tenantId, payload.sub, (payload as { iat?: number }).iat)
+      if (!live.ok) return null
+      payload.role = live.role
+      payload.customRoleId = live.customRoleId
 
       // Prefer live tenant fields when available
       let businessType = payload.businessType || 'retail'

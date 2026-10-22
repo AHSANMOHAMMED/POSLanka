@@ -23,6 +23,7 @@ import { formatItemLabel, buildItemSearchOption } from '@/lib/utils/item-display
 import { DocumentCommentsAndActivity } from '@/components/ui/document-comments'
 import { PrintPreview, PurchaseInvoiceTemplate } from '@/components/print'
 import { DEFAULT_PRINT_SETTINGS } from '@/lib/print/types'
+import { ThreeWayMatchPanel } from '@/components/purchases/ThreeWayMatchPanel'
 
 interface PurchaseItem {
   id: string
@@ -1498,6 +1499,11 @@ export default function PurchaseDetailPage() {
               </div>
             )}
           </div>
+
+          {/* 3-way match (invoice vs PO vs GRN) */}
+          {purchase.purchaseOrderId && !purchase.isReturn && (
+            <ThreeWayMatchPanel purchaseId={purchase.id} refreshKey={`${purchase.status}:${purchase.updatedAt}`} />
+          )}
 
           {/* Items */}
           <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 mb-4">

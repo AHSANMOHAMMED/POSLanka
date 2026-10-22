@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, TenantDb } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { purchases, purchaseItems, items as itemsTable } from '@/lib/db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -73,6 +74,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+    if (permError) return { error: permError }
+
     // Verify purchase exists (RLS filters by tenant)
     const [purchase] = await db
       .select({ id: purchases.id })
@@ -199,6 +203,8 @@ export async function POST(
         unitPrice: unitPrice.toString(),
         tax: itemTax.toString(),
         total: itemTotal.toString(),
+        // PO-linked invoice: received quantities live on the PO's receipts, not on this line
+        ...(purchase.purchaseOrderId ? { poReceivedQty: '0' } : {}),
       })
     }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, TenantDb } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { purchaseOrders, purchaseOrderItems, items as itemsTable } from '@/lib/db/schema'
 import { eq, and, isNull } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -75,6 +76,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+    if (permError) return { error: permError }
+
     const [order] = await db
       .select({ id: purchaseOrders.id })
       .from(purchaseOrders)

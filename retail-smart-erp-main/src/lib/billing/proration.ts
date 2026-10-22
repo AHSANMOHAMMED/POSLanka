@@ -9,6 +9,13 @@ export function calculateProration(options: {
   currentPeriodStart: Date
   currentPeriodEnd: Date
   changeDate?: Date           // Defaults to now
+  /**
+   * Length (days) of the NEW plan's billing cycle when it differs from the current one.
+   * `newPlanPrice` is the price for that cycle, so its daily rate must be spread over the
+   * new cycle — not the current period (a yearly→monthly switch would otherwise charge the
+   * monthly price for ~a year and refund most of the yearly fee). Defaults to the current period.
+   */
+  newPlanCycleDays?: number
 }): {
   daysRemaining: number
   totalDaysInPeriod: number
@@ -29,7 +36,10 @@ export function calculateProration(options: {
   ))
 
   const dailyRateCurrent = options.currentPlanPrice / totalDaysInPeriod
-  const dailyRateNew = options.newPlanPrice / totalDaysInPeriod
+  const newCycleDays = options.newPlanCycleDays && options.newPlanCycleDays > 0
+    ? options.newPlanCycleDays
+    : totalDaysInPeriod
+  const dailyRateNew = options.newPlanPrice / newCycleDays
 
   const creditAmount = Math.round(dailyRateCurrent * daysRemaining * 100) / 100
   const newPlanCost = Math.round(dailyRateNew * daysRemaining * 100) / 100
@@ -54,6 +64,26 @@ export function getPriceForCycle(
   billingCycle: 'monthly' | 'yearly'
 ): number {
   return billingCycle === 'yearly' ? priceYearly : priceMonthly
+}
+
+/** Number of days in one billing cycle starting at `from` (calendar-aware: 28-31 / 365-366). */
+export function cycleLengthDays(from: Date, billingCycle: 'monthly' | 'yearly'): number {
+  const { periodStart, periodEnd } = getNextPeriodDates(from, billingCycle)
+  return Math.round((periodEnd.getTime() - periodStart.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+/**
+ * Start date for a renewal paid at `now`. Paying early (before the current period ends)
+ * must not forfeit the days already paid for, so the new period starts where the current
+ * one ends; a lapsed / trial / never-started period starts now.
+ */
+export function renewalStartDate(
+  now: Date,
+  sub: { status?: string | null; currentPeriodEnd?: Date | null },
+): Date {
+  const end = sub.currentPeriodEnd ? new Date(sub.currentPeriodEnd) : null
+  if (sub.status !== 'trial' && end && end.getTime() > now.getTime()) return end
+  return now
 }
 
 /**

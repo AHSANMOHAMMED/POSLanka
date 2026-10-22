@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { authWithCompany } from '@/lib/auth'
+import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { vehicleSaleDetails, vehicleInventory, vehicleMakes, vehicleModels, sales, customers, financingOptions } from '@/lib/db/schema'
@@ -11,6 +11,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { vehicleSalesListSchema, createVehicleSaleSchema } from '@/lib/validation/schemas/vehicles'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { roundCurrency } from '@/lib/utils/currency'
 
 // GET all vehicle sale details for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -140,6 +141,9 @@ export async function POST(request: NextRequest) {
     const quotaError = await requireQuota(session.user.tenantId, 'essential')
     if (quotaError) return quotaError
 
+    // session.user.id may be an account id for stale JWTs (FK to users)
+    const userId = await resolveUserIdRequired(session)
+
     const parsed = await validateBody(request, createVehicleSaleSchema)
     if (!parsed.success) return parsed.response
     const {
@@ -166,7 +170,9 @@ export async function POST(request: NextRequest) {
           .leftJoin(vehicleMakes, eq(vehicleInventory.makeId, vehicleMakes.id))
           .leftJoin(vehicleModels, eq(vehicleInventory.modelId, vehicleModels.id))
           .where(eq(vehicleInventory.id, vehicleInventoryId))
-          .for('update')
+          // lock only the vehicle row: FOR UPDATE on the nullable side of the make/model outer
+          // joins is rejected by PostgreSQL (every vehicle sale failed with a 500)
+          .for('update', { of: vehicleInventory })
 
         if (!vehicleResult.length) {
           throw new Error('VEHICLE_NOT_FOUND')
@@ -176,8 +182,11 @@ export async function POST(request: NextRequest) {
         const makeName = vehicleResult[0].makeName
         const modelName = vehicleResult[0].modelName
 
-        if (vehicle.status === 'sold') {
+        if (vehicle.status === 'sold' || vehicle.saleId) {
           throw new Error('VEHICLE_ALREADY_SOLD')
+        }
+        if (!vehicle.isActive) {
+          throw new Error('VEHICLE_INACTIVE')
         }
 
         // Validate customer if provided
@@ -203,8 +212,16 @@ export async function POST(request: NextRequest) {
         // Vehicle sale invoice number VS-###### from the per-tenant sequence
         const invoiceNo = await nextDocNo(tx, session.user.tenantId, 'vehicle_sale')
 
-        // Calculate total (Zod already provides numbers)
-        const calculatedTotal = askingPrice - tradeInAllowance + taxAmount
+        // Calculate total (Zod already provides numbers). A trade-in worth more than the
+        // vehicle would make the invoice negative, and the customer cannot pay down more than
+        // the invoice total.
+        if (tradeInAllowance > askingPrice) {
+          throw new Error('TRADE_IN_EXCEEDS_PRICE')
+        }
+        const calculatedTotal = roundCurrency(askingPrice - tradeInAllowance + taxAmount)
+        if (downPayment > calculatedTotal) {
+          throw new Error('DOWN_PAYMENT_EXCEEDS_TOTAL')
+        }
 
         // Create the sale record
         const [newSale] = await tx.insert(sales).values({
@@ -223,7 +240,7 @@ export async function POST(request: NextRequest) {
           paymentMethod: financingOptionId ? 'bank_transfer' : 'cash',
           status: 'completed',
           notes: notes || null,
-          createdBy: session.user.id,
+          createdBy: userId,
         }).returning()
 
         // Create vehicle sale details
@@ -238,7 +255,7 @@ export async function POST(request: NextRequest) {
           monthlyPayment: monthlyPayment != null ? String(monthlyPayment) : null,
           loanTermMonths: loanTermMonths ?? null,
           interestRate: interestRate != null ? String(interestRate) : null,
-          salespersonId: salespersonId || session.user.id,
+          salespersonId: salespersonId || userId,
           commissionAmount: commissionAmount != null ? String(commissionAmount) : null,
           warrantyType: warrantyType || null,
           warrantyMonths: warrantyMonths ?? null,
@@ -281,6 +298,18 @@ export async function POST(request: NextRequest) {
     }
     if (message === 'VEHICLE_ALREADY_SOLD') {
       return NextResponse.json({ error: 'Vehicle has already been sold' }, { status: 400 })
+    }
+    if (message === 'VEHICLE_INACTIVE') {
+      return NextResponse.json({ error: 'Vehicle is inactive' }, { status: 400 })
+    }
+    if (message === 'TRADE_IN_EXCEEDS_PRICE') {
+      return NextResponse.json({ error: 'Trade-in allowance cannot exceed the vehicle price' }, { status: 400 })
+    }
+    if (message === 'DOWN_PAYMENT_EXCEEDS_TOTAL') {
+      return NextResponse.json({ error: 'Down payment cannot exceed the invoice total' }, { status: 400 })
+    }
+    if (message === 'USER_NOT_FOUND') {
+      return NextResponse.json({ error: 'User not found for this tenant. Please log out and log in again.' }, { status: 400 })
     }
     if (message === 'CUSTOMER_NOT_FOUND') {
       return NextResponse.json({ error: 'Customer not found' }, { status: 400 })

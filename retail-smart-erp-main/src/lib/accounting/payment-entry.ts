@@ -210,6 +210,67 @@ export async function postPaymentEntryToGL(
   })
 }
 
+export class PaymentAllocationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PaymentAllocationError'
+  }
+}
+
+/**
+ * Re-checks allocations against the invoices as they are NOW (row-locked), right before they are
+ * applied. A draft payment entry can sit for days while the invoice is paid at the POS, voided
+ * or returned; applying it blindly over-paid the invoice or flipped a VOID sale back to
+ * 'completed'.
+ */
+export async function validateInvoiceAllocations(
+  tx: DbOrTx,
+  party: { partyType?: string | null; partyId?: string | null },
+  references: Array<{ referenceType: string; referenceId: string; referenceNumber?: string | null; allocatedAmount: number | string }>
+): Promise<void> {
+  const perDoc = new Map<string, { type: string; id: string; label: string; cents: number }>()
+  for (const ref of references) {
+    const amt = Math.round((Number(ref.allocatedAmount) || 0) * 100)
+    if (amt < 0) throw new PaymentAllocationError(`Allocated amount for ${ref.referenceNumber || ref.referenceId} cannot be negative`)
+    if (ref.referenceType !== 'sale' && ref.referenceType !== 'purchase') continue
+    const key = `${ref.referenceType}:${ref.referenceId}`
+    const cur = perDoc.get(key)
+    if (cur) cur.cents += amt
+    else perDoc.set(key, { type: ref.referenceType, id: ref.referenceId, label: ref.referenceNumber || ref.referenceId, cents: amt })
+  }
+
+  for (const doc of perDoc.values()) {
+    if (doc.cents === 0) continue
+    if (doc.type === 'sale') {
+      const [sale] = await tx.select().from(sales).where(eq(sales.id, doc.id)).for('update')
+      if (!sale) throw new PaymentAllocationError(`Invoice ${doc.label} not found`)
+      if (sale.status === 'void') throw new PaymentAllocationError(`Invoice ${sale.invoiceNo} is void; payments cannot be allocated to it`)
+      if (sale.isReturn) throw new PaymentAllocationError(`${sale.invoiceNo} is a return; payments cannot be allocated to it`)
+      if (party.partyType === 'customer' && party.partyId && sale.customerId && sale.customerId !== party.partyId) {
+        throw new PaymentAllocationError(`Invoice ${sale.invoiceNo} belongs to a different customer`)
+      }
+      const outstanding = Math.round(Number(sale.total) * 100) - Math.round(Number(sale.paidAmount) * 100)
+      if (doc.cents > outstanding) {
+        throw new PaymentAllocationError(`Allocation of ${(doc.cents / 100).toFixed(2)} exceeds the outstanding ${(Math.max(0, outstanding) / 100).toFixed(2)} on invoice ${sale.invoiceNo}`)
+      }
+    } else {
+      const [purchase] = await tx.select().from(purchases).where(eq(purchases.id, doc.id)).for('update')
+      if (!purchase) throw new PaymentAllocationError(`Purchase ${doc.label} not found`)
+      if (purchase.status === 'cancelled' || purchase.status === 'draft') {
+        throw new PaymentAllocationError(`Purchase ${purchase.purchaseNo} is ${purchase.status}; payments cannot be allocated to it`)
+      }
+      if (purchase.isReturn) throw new PaymentAllocationError(`${purchase.purchaseNo} is a return; payments cannot be allocated to it`)
+      if (party.partyType === 'supplier' && party.partyId && purchase.supplierId && purchase.supplierId !== party.partyId) {
+        throw new PaymentAllocationError(`Purchase ${purchase.purchaseNo} belongs to a different supplier`)
+      }
+      const outstanding = Math.round(Number(purchase.total) * 100) - Math.round(Number(purchase.paidAmount) * 100)
+      if (doc.cents > outstanding) {
+        throw new PaymentAllocationError(`Allocation of ${(doc.cents / 100).toFixed(2)} exceeds the outstanding ${(Math.max(0, outstanding) / 100).toFixed(2)} on purchase ${purchase.purchaseNo}`)
+      }
+    }
+  }
+}
+
 /**
  * Updates invoice outstanding amounts after payment allocation.
  * Updates paidAmount on sales/purchases and payment schedule statuses.
@@ -224,6 +285,7 @@ export async function updateInvoiceOutstanding(
       await tx.update(sales).set({
         paidAmount: sql`CAST(CAST(${sales.paidAmount} AS numeric) + ${ref.allocatedAmount} AS numeric(12,2))`,
         status: sql`CASE
+          WHEN ${sales.status} = 'void' THEN ${sales.status}
           WHEN CAST(CAST(${sales.paidAmount} AS numeric) + ${ref.allocatedAmount} AS numeric(12,2)) >= CAST(${sales.total} AS numeric) THEN 'completed'
           WHEN CAST(CAST(${sales.paidAmount} AS numeric) + ${ref.allocatedAmount} AS numeric(12,2)) > 0 THEN 'partial'
           ELSE ${sales.status}
@@ -234,6 +296,7 @@ export async function updateInvoiceOutstanding(
       await tx.update(purchases).set({
         paidAmount: sql`CAST(CAST(${purchases.paidAmount} AS numeric) + ${ref.allocatedAmount} AS numeric(12,2))`,
         status: sql`CASE
+          WHEN ${purchases.status} IN ('cancelled', 'draft') THEN ${purchases.status}
           WHEN CAST(CAST(${purchases.paidAmount} AS numeric) + ${ref.allocatedAmount} AS numeric(12,2)) >= CAST(${purchases.total} AS numeric) THEN 'paid'
           WHEN CAST(CAST(${purchases.paidAmount} AS numeric) + ${ref.allocatedAmount} AS numeric(12,2)) > 0 THEN 'partial'
           ELSE ${purchases.status}

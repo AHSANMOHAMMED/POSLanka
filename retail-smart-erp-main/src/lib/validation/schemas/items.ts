@@ -85,6 +85,9 @@ export const createItemSchema = z.object({
   // Gift card flag
   isGiftCard: z.boolean().optional(),
 
+  // H5: stockable (tracks stock) | consumable | service — trackStock follows it when given
+  productType: z.enum(['stockable', 'consumable', 'service']).optional(),
+
   // Tax template
   taxTemplateId: optionalUuid,
 })

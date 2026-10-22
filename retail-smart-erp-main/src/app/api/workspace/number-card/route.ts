@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { getMetricKeys, fetchMetrics } from '@/lib/workspace/metrics'
+import { getMetricKeys, fetchMetrics, canViewBlock } from '@/lib/workspace/metrics'
 import { logError } from '@/lib/ai/error-logger'
 
 // GET number card metric values
@@ -19,11 +19,14 @@ export async function GET(request: NextRequest) {
 
     const requestedKeys = keysParam.split(',').map((k) => k.trim()).filter(Boolean)
     const allowedKeys = getMetricKeys()
-    const validKeys = requestedKeys.filter((k) => allowedKeys.includes(k))
+    const knownKeys = requestedKeys.filter((k) => allowedKeys.includes(k))
 
-    if (validKeys.length === 0) {
+    if (knownKeys.length === 0) {
       return NextResponse.json({ error: 'No valid metric keys provided' }, { status: 400 })
     }
+    // H4: financial metrics are omitted for roles without report / sales-management access
+    const validKeys = knownKeys.filter((k) => canViewBlock(session, k))
+    if (validKeys.length === 0) return NextResponse.json({})
 
     return await withTenant(session.user.tenantId, async (db) => {
       const results = await fetchMetrics(db, validKeys)

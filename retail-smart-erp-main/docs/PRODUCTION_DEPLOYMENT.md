@@ -145,6 +145,8 @@ VAPID_SUBJECT=mailto:admin@poslanka.lk
 # Shared secret for every /api/cron/* route (Authorization: Bearer <CRON_SECRET>).
 # Routes fail closed (401) when it is unset. Generate with: openssl rand -hex 32
 CRON_SECRET=GENERATE_WITH_OPENSSL_RAND_HEX_32
+# E-invoice transmitter for /api/cron/einvoice-sync (default: disabled = documents are only queued)
+# EINVOICE_TRANSMITTER=disabled
 
 # Mobile push (Expo). Optional access token for the Expo push API.
 EXPO_ACCESS_TOKEN=
@@ -368,6 +370,8 @@ cron-job.org) works the same way:
 | `calculate-storage` | daily | tenant storage usage |
 | `cleanup-held-sales` | daily | delete expired held sales |
 | `refresh-exchange-rates` | daily | currency rates |
+| `auto-reorder` | daily 02:30 LKT (21:00 UTC) | automatic reorder run (`POST /api/cron/auto-reorder`) |
+| `einvoice-sync` | every 10 min | e-invoicing (IRD RAMIS readiness): queues an `einvoice_outbox` row for each new sale / return / credit note / debit note of companies with e-invoicing enabled (**Accounting → Settings → E-invoicing**) and transmits due rows with exponential backoff (1 min doubling, max 12 h, 10 attempts). Transmitter chosen by `EINVOICE_TRANSMITTER` (default `disabled` = queue only, nothing sent) |
 
 Run a single job manually from the Actions tab (**Scheduled jobs → Run workflow → job**).
 

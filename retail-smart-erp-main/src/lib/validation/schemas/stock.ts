@@ -5,6 +5,10 @@ import {
   nonNegativeNumberSchema, shortTextSchema, longTextSchema,
   optimisticLockSchema,
 } from './common'
+import { ADJUSTMENT_REASON_CODES } from '@/lib/inventory/adjustment-reasons'
+
+/** H3: structured adjustment reason (the free-text reason / notes are kept as well) */
+export const adjustmentReasonCodeSchema = z.enum(ADJUSTMENT_REASON_CODES)
 
 // ==================== STOCK ADJUSTMENTS ====================
 
@@ -13,10 +17,13 @@ const bulkAdjustmentItemSchema = z.object({
   itemId: uuidSchema,
   newQuantity: nonNegativeNumberSchema,
   reason: z.string().max(500).optional(),
+  reasonCode: adjustmentReasonCodeSchema.optional(),
 })
 
 export const bulkStockAdjustmentSchema = z.object({
   warehouseId: uuidSchema,
+  /** default reason code for lines without their own */
+  reasonCode: adjustmentReasonCodeSchema.optional(),
   adjustments: z.array(bulkAdjustmentItemSchema)
     .min(1, 'At least one adjustment is required')
     .max(500, 'Maximum 500 items per batch'),
@@ -111,7 +118,10 @@ export const adjustWarehouseStockSchema = z.object({
   binLocation: z.string().max(100).optional(),
   minStock: z.coerce.number().min(0).optional(),
   reorderQty: z.coerce.number().min(0).optional(),
+  /** H3: order-up-to level for reorder suggestions (null clears it) */
+  maxStock: z.coerce.number().min(0).nullable().optional(),
   costCenterId: optionalUuid,
+  reasonCode: adjustmentReasonCodeSchema.optional(),
 })
 
 // ==================== DETAIL / ACTION SCHEMAS ====================
@@ -128,6 +138,8 @@ const countUpdateItemSchema = z.object({
   itemId: uuidSchema,
   countedQuantity: z.coerce.number().min(0, 'Counted quantity cannot be negative'),
   notes: z.string().max(500).optional(),
+  /** H3: reason for the variance (default count_correction) */
+  reasonCode: adjustmentReasonCodeSchema.optional(),
 })
 export const updateStockTakeItemsSchema = z.object({
   items: z.array(countUpdateItemSchema).min(1, 'At least one item is required').max(500),

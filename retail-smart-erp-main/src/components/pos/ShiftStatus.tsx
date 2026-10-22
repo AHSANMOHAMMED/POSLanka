@@ -1,6 +1,6 @@
 'use client'
 
-import { Clock, Play, X, ChevronDown, ChevronUp, Store } from 'lucide-react'
+import { Clock, Play, X, ChevronDown, ChevronUp, Store, ArrowDownUp } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/currency'
 import { useState } from 'react'
 
@@ -34,10 +34,12 @@ interface ShiftStatusProps {
   hasOpenShift: boolean
   onOpenShift: () => void
   onCloseShift: () => void
+  /** H1: cash paid in / paid out of the drawer */
+  onCashMovement?: () => void
   compact?: boolean
 }
 
-export function ShiftStatus({ shift, hasOpenShift, onOpenShift, onCloseShift, compact = false }: ShiftStatusProps) {
+export function ShiftStatus({ shift, hasOpenShift, onOpenShift, onCloseShift, onCashMovement, compact = false }: ShiftStatusProps) {
   const [expanded, setExpanded] = useState(false)
 
   // No shift required view
@@ -61,6 +63,15 @@ export function ShiftStatus({ shift, hasOpenShift, onOpenShift, onCloseShift, co
           <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
           <span className="text-sm font-medium">{shift?.entryNumber}</span>
         </div>
+        {onCashMovement && (
+          <button
+            onClick={onCashMovement}
+            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors"
+            title="Cash In / Out"
+          >
+            <ArrowDownUp size={16} />
+          </button>
+        )}
         <button
           onClick={onCloseShift}
           className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
@@ -175,6 +186,14 @@ export function ShiftStatus({ shift, hasOpenShift, onOpenShift, onCloseShift, co
             </div>
           )}
 
+          {onCashMovement && (
+            <button
+              onClick={onCashMovement}
+              className="w-full py-2 mb-2 border border-blue-600 text-blue-600 rounded hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors text-sm font-medium"
+            >
+              Cash In / Out
+            </button>
+          )}
           <button
             onClick={onCloseShift}
             className="w-full py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors text-sm font-medium"

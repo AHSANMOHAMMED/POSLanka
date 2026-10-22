@@ -52,8 +52,16 @@ export async function validateSerialAvailability(
 ) {
   if (serialNumberIds.length === 0) return []
 
+  if (new Set(serialNumberIds).size !== serialNumberIds.length) {
+    throw new Error('Serial numbers listed more than once')
+  }
+
+  // Row-locked: two concurrent sales of the same serial serialise here and the second one
+  // sees status 'sold' (READ COMMITTED re-reads the locked row) instead of selling it twice.
   const serials = await db.select().from(itemSerialNumbers)
     .where(inArray(itemSerialNumbers.id, serialNumberIds))
+    .orderBy(itemSerialNumbers.id)
+    .for('update')
 
   // Check all were found
   if (serials.length !== serialNumberIds.length) {

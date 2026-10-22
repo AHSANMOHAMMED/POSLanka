@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { uuidSchema, optionalUuid, paginatedSearchSchema, paymentMethodSchema } from './common'
+import { uuidSchema, optionalUuid, paginatedSearchSchema } from './common'
 
 // GET /api/layaways
 export const layawaysListSchema = paginatedSearchSchema.extend({
@@ -34,9 +34,13 @@ export const updateLayawaySchema = z.object({
 })
 
 // POST /api/layaways/[id]/payments
+// Only money that is actually received can pay a layaway: 'credit' / 'gift_card' would be
+// posted as cash in the GL without drawing down the customer's credit or the card balance.
 export const layawayPaymentSchema = z.object({
-  amount: z.coerce.number().positive('Payment amount must be greater than zero'),
-  paymentMethod: paymentMethodSchema.default('cash'),
+  amount: z.coerce.number().positive('Payment amount must be greater than zero').max(100_000_000),
+  paymentMethod: z.enum(['cash', 'card', 'bank_transfer'], {
+    message: 'Layaway payments can be made by cash, card or bank transfer',
+  }).default('cash'),
   reference: z.string().max(500).optional(),
 })
 

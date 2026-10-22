@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { reversePromotionRedemptions } from '@/lib/pricing/sale-pricing'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { sales, saleItems, payments, customers, customerCreditTransactions, warehouseStock, loyaltyTransactions, salesOrders, salesOrderItems } from '@/lib/db/schema'
+import { posCashMovements, posOpeningEntries, sales, saleItems, payments, customers, customerCreditTransactions, warehouseStock, loyaltyTransactions, salesOrders, salesOrderItems, giftCards, giftCardTransactions } from '@/lib/db/schema'
 import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { eq, and, sql } from 'drizzle-orm'
-import { requirePermission } from '@/lib/auth/roles'
+import { hasPermission, requirePermission } from '@/lib/auth/roles'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { notifySaleVoided } from '@/lib/notifications/sales-alerts'
@@ -75,7 +76,18 @@ export async function GET(
   }
 }
 
-// Issue 19: PUT to void a sale directly
+/**
+ * Issue 19: PUT to void a sale directly.
+ *
+ * H1 — voids after the shift closed. A closed shift's totals and Z report are final, so:
+ *  - only users with manageSales may void a sale whose POS shift is no longer open
+ *    (403 SHIFT_CLOSED_VOID_FORBIDDEN otherwise);
+ *  - the closed shift's closing entry / Z snapshot is never touched;
+ *  - when the sale took cash, that cash is handed back from the voiding user's own OPEN shift:
+ *    it is recorded there as a 'void_refund' paid-out (no separate GL — the void's reversal
+ *    already credits Cash), so that drawer's expected cash and tie-out stay right. Without an
+ *    open shift the void is refused (400 OPEN_SHIFT_REQUIRED). Card / credit sales need none.
+ */
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -123,6 +135,29 @@ export async function PUT(
         // Can't void return sales - they need to be handled differently
         if (sale.isReturn) {
           throw new Error('CANNOT_VOID_RETURN')
+        }
+
+        // H1: sale of a shift that is already closed (see the rule above)
+        let refundShift: typeof posOpeningEntries.$inferSelect | null = null
+        let cashToRefund = 0
+        if (sale.posOpeningEntryId) {
+          const [saleShift] = await tx.select().from(posOpeningEntries).where(eq(posOpeningEntries.id, sale.posOpeningEntryId))
+          if (saleShift && saleShift.status !== 'open') {
+            if (!hasPermission(session.user.role, 'manageSales', session.user.tenantId, session.user.customRoleId)) {
+              throw new Error('SHIFT_CLOSED_VOID_FORBIDDEN')
+            }
+            const [cashRow] = await tx.select({ cash: sql<string>`COALESCE(SUM(${payments.amount}), 0)` })
+              .from(payments)
+              .where(and(eq(payments.saleId, id), eq(payments.method, 'cash'), sql`${payments.voidedAt} IS NULL`))
+            cashToRefund = roundCurrency(parseCurrency(cashRow?.cash))
+            if (cashToRefund > 0) {
+              const [open] = await tx.select().from(posOpeningEntries)
+                .where(and(eq(posOpeningEntries.userId, userId), eq(posOpeningEntries.status, 'open')))
+                .for('update')
+              if (!open) throw new Error('OPEN_SHIFT_REQUIRED')
+              refundShift = open
+            }
+          }
         }
 
         // Get sale items to restore stock (RLS scopes the query)
@@ -176,8 +211,10 @@ export async function PUT(
               alreadyReturned = Math.min(pool, originalQty)
               legacyRemaining.set(saleItem.itemId, pool - alreadyReturned)
             }
-            // Only restore the quantity that hasn't already been returned
-            const qty = Math.round(Math.max(0, originalQty - alreadyReturned) * 1000) / 1000
+            // Only restore the quantity that hasn't already been returned — in base units (H5:
+            // a line sold in boxes moves quantity × uom_factor pieces)
+            const uomFactor = parseFloat(saleItem.uomFactor || '1') || 1
+            const qty = Math.round(Math.max(0, originalQty - alreadyReturned) * uomFactor * 1000) / 1000
 
             if (qty > 0) {
               const input = {
@@ -204,7 +241,7 @@ export async function PUT(
             await restoreSaleLineBatches(tx, {
               tenantId: session.user.tenantId,
               saleItemId: saleItem.id,
-              qty: parseFloat(saleItem.quantity),
+              qty: Math.round(parseFloat(saleItem.quantity) * (parseFloat(saleItem.uomFactor || '1') || 1) * 1000) / 1000,
               toWarehouseId: sale.warehouseId,
             })
           }
@@ -224,6 +261,9 @@ export async function PUT(
             })
           }
         }
+
+        // H5: the sale's promotion redemptions stop counting (usage limits free up again)
+        await reversePromotionRedemptions(tx, id)
 
         // Reverse customer credit transactions if any
         if (sale.customerId) {
@@ -341,12 +381,65 @@ export async function PUT(
           }
         }
 
+        // Gift cards. (1) Cards ISSUED by this sale: the GL liability is reversed below, so the
+        // card must stop working — unless the customer already spent from it (then the money is
+        // gone and the sale cannot simply be voided). (2) Cards REDEEMED on this sale get the
+        // amount back (the GL reversal restores the liability).
+        const issuedCards = await tx.select().from(giftCards)
+          .where(eq(giftCards.purchaseSaleId, id))
+          .for('update')
+        for (const card of issuedCards) {
+          if (card.status === 'blocked') continue
+          if (parseCurrency(card.currentBalance) + 0.001 < parseCurrency(card.initialBalance)) {
+            throw new Error(`GIFT_CARD_USED:${card.cardNumber}`)
+          }
+        }
+        for (const card of issuedCards) {
+          if (card.status === 'blocked') continue
+          await tx.update(giftCards)
+            .set({ currentBalance: '0', status: 'blocked' })
+            .where(eq(giftCards.id, card.id))
+          await tx.insert(giftCardTransactions).values({
+            tenantId: session.user.tenantId,
+            giftCardId: card.id,
+            type: 'void',
+            amount: String(-parseCurrency(card.currentBalance)),
+            balanceAfter: '0',
+            saleId: id,
+            createdBy: userId,
+          })
+        }
+        const redemptions = await tx.select().from(giftCardTransactions)
+          .where(and(eq(giftCardTransactions.saleId, id), eq(giftCardTransactions.type, 'redemption')))
+        const redeemedByCard = new Map<string, number>()
+        for (const r of redemptions) {
+          redeemedByCard.set(r.giftCardId, roundCurrency((redeemedByCard.get(r.giftCardId) || 0) + parseCurrency(r.amount)))
+        }
+        for (const [giftCardId, amount] of redeemedByCard) {
+          if (!(amount > 0)) continue
+          const [card] = await tx.select().from(giftCards).where(eq(giftCards.id, giftCardId)).for('update')
+          if (!card) continue
+          const newBalance = roundCurrency(parseCurrency(card.currentBalance) + amount)
+          await tx.update(giftCards)
+            .set({ currentBalance: String(newBalance), status: card.status === 'used' ? 'active' : card.status })
+            .where(eq(giftCards.id, giftCardId))
+          await tx.insert(giftCardTransactions).values({
+            tenantId: session.user.tenantId,
+            giftCardId,
+            type: 'void_refund',
+            amount: String(amount),
+            balanceAfter: String(newBalance),
+            saleId: id,
+            createdBy: userId,
+          })
+        }
+
         // RC-12: Void all associated payments with full audit trail
         await tx.update(payments)
           .set({
             voidedAt: new Date(),
             voidedBy: userId,
-            voidReason: voidReason || 'Parent sale voided',
+            voidReason: voidReason,
           })
           .where(eq(payments.saleId, id))
 
@@ -457,15 +550,36 @@ export async function PUT(
         const [voidedSale] = await tx.update(sales)
           .set({
             status: 'void',
-            voidReason: voidReason || 'Sale voided',
+            voidReason,
             voidedAt: new Date(),
+            voidedBy: userId,
           })
           .where(eq(sales.id, id))
           .returning()
 
+        // H1: cash of a closed shift's sale leaves the voiding user's current drawer
+        let refundMovementNo: string | null = null
+        if (refundShift && cashToRefund > 0) {
+          const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(posCashMovements)
+            .where(eq(posCashMovements.openingEntryId, refundShift.id))
+          refundMovementNo = `${refundShift.entryNumber}-CM${String(n + 1).padStart(2, '0')}`
+          await tx.insert(posCashMovements).values({
+            tenantId: session.user.tenantId,
+            movementNo: refundMovementNo,
+            openingEntryId: refundShift.id,
+            posProfileId: refundShift.posProfileId,
+            type: 'paid_out',
+            category: 'void_refund',
+            amount: String(cashToRefund),
+            note: `Cash refund of voided ${sale.invoiceNo} (closed shift): ${voidReason}`.slice(0, 1000),
+            createdBy: userId,
+            approvedBy: userId,
+          })
+        }
+
         // WS-2/WS-3: Return affected itemIds and warehouseId for specific broadcasts
         const affectedItemIds = [...new Set(saleItemsList.map(i => i.itemId).filter(Boolean))] as string[]
-        return { voidedSale, affectedItemIds, warehouseId: sale.warehouseId, restoredSalesOrderId }
+        return { voidedSale, affectedItemIds, warehouseId: sale.warehouseId, restoredSalesOrderId, before: sale, refundShift, refundMovementNo, cashToRefund }
       })
 
       // Broadcast the change to connected clients
@@ -473,8 +587,19 @@ export async function PUT(
         userId,
         activityAction: 'cancel',
         entityName: result.voidedSale.invoiceNo,
-        description: `Voided sale ${result.voidedSale.invoiceNo}${voidReason ? `: ${voidReason}` : ''}`,
+        description: `Voided sale ${result.voidedSale.invoiceNo}: ${voidReason}`,
+        metadata: {
+          posOpeningEntryId: result.before.posOpeningEntryId,
+          reason: voidReason,
+          refundShiftId: result.refundShift?.id || null,
+          refundMovementNo: result.refundMovementNo,
+          cashRefunded: result.cashToRefund || 0,
+          voidedBy: userId,
+          before: { status: result.before.status, total: result.before.total, paidAmount: result.before.paidAmount },
+          after: { status: 'void' },
+        },
       })
+      if (result.refundShift) logAndBroadcast(session.user.tenantId, 'pos-shift', 'updated', result.refundShift.id)
       notifySaleVoided(session.user.tenantId, {
         saleId: id, invoiceNo: result.voidedSale.invoiceNo, total: Math.abs(Number(result.voidedSale.total) || 0),
         reason: voidReason, actorUserId: userId, actorName: session.user.name,
@@ -506,6 +631,18 @@ export async function PUT(
     }
     if (message === 'ALREADY_VOIDED') {
       return NextResponse.json({ error: 'This sale has already been voided' }, { status: 400 })
+    }
+    if (message.startsWith('GIFT_CARD_USED:')) {
+      return NextResponse.json({
+        error: `Gift card ${message.slice('GIFT_CARD_USED:'.length)} sold on this invoice has already been used; the sale cannot be voided`,
+        code: 'GIFT_CARD_USED',
+      }, { status: 400 })
+    }
+    if (message === 'SHIFT_CLOSED_VOID_FORBIDDEN') {
+      return NextResponse.json({ error: 'This sale belongs to a closed shift. Only a supervisor can void it.', code: 'SHIFT_CLOSED_VOID_FORBIDDEN' }, { status: 403 })
+    }
+    if (message === 'OPEN_SHIFT_REQUIRED') {
+      return NextResponse.json({ error: 'The sale was paid in cash on a closed shift. Open your own shift so the refund is taken from your drawer.', code: 'OPEN_SHIFT_REQUIRED' }, { status: 400 })
     }
     if (message === 'CANNOT_VOID_RETURN') {
       return NextResponse.json({ error: 'Return transactions cannot be voided directly' }, { status: 400 })

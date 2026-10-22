@@ -2,6 +2,7 @@
 
 import { eq, and, sql, gte, lte } from 'drizzle-orm'
 import { workOrders, workOrderServices, workOrderParts, restaurantOrders, restaurantOrderItems, restaurantTables, sales, saleItems, items, categories } from '@/lib/db/schema'
+import { tenantDayRange } from './date-range'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DbInstance = any
@@ -13,6 +14,7 @@ export async function getServiceRevenue(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   // Revenue by service (from work order services)
   const serviceData = await db.select({
     description: workOrderServices.description,
@@ -24,8 +26,8 @@ export async function getServiceRevenue(
     .innerJoin(workOrders, eq(workOrderServices.workOrderId, workOrders.id))
     .where(and(
       eq(workOrderServices.tenantId, tenantId),
-      gte(workOrders.createdAt, new Date(filters.fromDate)),
-      lte(workOrders.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(workOrders.createdAt, range.from),
+      lte(workOrders.createdAt, range.to),
       sql`${workOrders.status} NOT IN ('draft', 'cancelled')`,
     ))
     .groupBy(workOrderServices.description)
@@ -39,8 +41,8 @@ export async function getServiceRevenue(
     .innerJoin(workOrders, eq(workOrderParts.workOrderId, workOrders.id))
     .where(and(
       eq(workOrderParts.tenantId, tenantId),
-      gte(workOrders.createdAt, new Date(filters.fromDate)),
-      lte(workOrders.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(workOrders.createdAt, range.from),
+      lte(workOrders.createdAt, range.to),
       sql`${workOrders.status} NOT IN ('draft', 'cancelled')`,
     ))
 
@@ -66,6 +68,7 @@ export async function getTechnicianPerformance(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const data = await db.select({
     technicianId: workOrders.assignedTo,
     technicianName: sql<string>`COALESCE(${workOrders.assignedToName}, 'Unassigned')`,
@@ -77,8 +80,8 @@ export async function getTechnicianPerformance(
     .from(workOrders)
     .where(and(
       eq(workOrders.tenantId, tenantId),
-      gte(workOrders.createdAt, new Date(filters.fromDate)),
-      lte(workOrders.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(workOrders.createdAt, range.from),
+      lte(workOrders.createdAt, range.to),
       sql`${workOrders.status} NOT IN ('draft', 'cancelled')`,
     ))
     .groupBy(workOrders.assignedTo, workOrders.assignedToName)
@@ -103,6 +106,7 @@ export async function getTableTurnover(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const data = await db.select({
     tableId: restaurantOrders.tableId,
     tableName: restaurantTables.name,
@@ -116,8 +120,8 @@ export async function getTableTurnover(
     .leftJoin(restaurantTables, eq(restaurantOrders.tableId, restaurantTables.id))
     .where(and(
       eq(restaurantOrders.tenantId, tenantId),
-      gte(restaurantOrders.createdAt, new Date(filters.fromDate)),
-      lte(restaurantOrders.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(restaurantOrders.createdAt, range.from),
+      lte(restaurantOrders.createdAt, range.to),
       sql`${restaurantOrders.status} != 'cancelled'`,
       eq(restaurantOrders.orderType, 'dine_in'),
     ))
@@ -144,6 +148,7 @@ export async function getMenuPerformance(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const data = await db.select({
     itemId: restaurantOrderItems.itemId,
     itemName: restaurantOrderItems.itemName,
@@ -158,8 +163,8 @@ export async function getMenuPerformance(
     .leftJoin(categories, eq(items.categoryId, categories.id))
     .where(and(
       eq(restaurantOrderItems.tenantId, tenantId),
-      gte(restaurantOrders.createdAt, new Date(filters.fromDate)),
-      lte(restaurantOrders.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(restaurantOrders.createdAt, range.from),
+      lte(restaurantOrders.createdAt, range.to),
       sql`${restaurantOrders.status} != 'cancelled'`,
     ))
     .groupBy(restaurantOrderItems.itemId, restaurantOrderItems.itemName, categories.name)
@@ -183,6 +188,7 @@ export async function getCategorySales(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const data = await db.select({
     categoryId: categories.id,
     categoryName: sql<string>`COALESCE(${categories.name}, 'Uncategorized')`,
@@ -196,8 +202,8 @@ export async function getCategorySales(
     .leftJoin(categories, eq(items.categoryId, categories.id))
     .where(and(
       eq(saleItems.tenantId, tenantId),
-      gte(sales.createdAt, new Date(filters.fromDate)),
-      lte(sales.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(sales.createdAt, range.from),
+      lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
       eq(sales.isReturn, false),
     ))
@@ -223,6 +229,7 @@ export async function getItemVelocity(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   // Get all items with their sales in the period
   const data = await db.select({
     itemId: items.id,
@@ -238,8 +245,8 @@ export async function getItemVelocity(
     .leftJoin(saleItems, and(eq(saleItems.itemId, items.id), eq(saleItems.tenantId, tenantId)))
     .leftJoin(sales, and(
       eq(saleItems.saleId, sales.id),
-      gte(sales.createdAt, new Date(filters.fromDate)),
-      lte(sales.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(sales.createdAt, range.from),
+      lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
       eq(sales.isReturn, false),
     ))

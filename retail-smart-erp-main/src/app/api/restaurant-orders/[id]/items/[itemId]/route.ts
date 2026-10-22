@@ -5,78 +5,12 @@ import { withTenant } from '@/lib/db'
 import { restaurantOrders, restaurantOrderItems, kitchenOrders, kitchenOrderItems } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { roundCurrency } from '@/lib/utils/currency'
 import { logError } from '@/lib/ai/error-logger'
-import { calculateItemTax, aggregateTaxBreakdown } from '@/lib/utils/tax-template'
-import { resolveTaxTemplatesForItems, getDefaultTaxTemplate, getEffectiveTaxTemplate } from '@/lib/utils/tax-template-resolver'
+import { recalculateOrderTotals } from '@/lib/restaurant/order-totals'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateRestaurantOrderItemSchema } from '@/lib/validation/schemas/restaurant'
 import { z } from 'zod'
 
-// Helper function to recalculate order totals with per-item tax templates
-async function recalculateOrderTotals(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  db: any,
-  orderId: string,
-  tenantId: string
-) {
-  // Get all items for this order
-  const orderItems = await db.query.restaurantOrderItems.findMany({
-    where: eq(restaurantOrderItems.orderId, orderId),
-  })
-
-  // Calculate subtotal
-  const subtotal = roundCurrency(orderItems.reduce((sum: number, item: { unitPrice: string; quantity: number }) => {
-    return sum + roundCurrency(parseFloat(item.unitPrice) * item.quantity)
-  }, 0))
-
-  // Per-item tax calculation using tax templates
-  const defaultTemplate = await getDefaultTaxTemplate(db, tenantId)
-  const itemIds = orderItems
-    .map((oi: { itemId: string | null }) => oi.itemId)
-    .filter(Boolean) as string[]
-  const itemTemplateMap = itemIds.length > 0
-    ? await resolveTaxTemplatesForItems(db, itemIds)
-    : new Map()
-
-  const allBreakdowns: Array<Array<{ taxName: string; rate: number; amount: number; accountId: string | null; includedInPrice: boolean }>> = []
-  let totalTax = 0
-
-  for (const oi of orderItems as Array<{ itemId: string | null; unitPrice: string; quantity: number }>) {
-    const lineTotal = roundCurrency(parseFloat(oi.unitPrice) * oi.quantity)
-    if (lineTotal <= 0) continue
-    const template = getEffectiveTaxTemplate(itemTemplateMap, oi.itemId, defaultTemplate)
-    const taxResult = calculateItemTax(lineTotal, template)
-    totalTax += taxResult.totalTax
-    if (taxResult.breakdown.length > 0) allBreakdowns.push(taxResult.breakdown)
-  }
-
-  totalTax = roundCurrency(totalTax)
-  const taxBreakdown = allBreakdowns.length > 0 ? aggregateTaxBreakdown(allBreakdowns) : null
-
-  // Get current order for tip amount
-  const currentOrder = await db.query.restaurantOrders.findFirst({
-    where: eq(restaurantOrders.id, orderId),
-  })
-  const tipAmount = currentOrder ? roundCurrency(parseFloat(currentOrder.tipAmount || '0')) : 0
-
-  // Only add exclusive tax to total (inclusive is already in subtotal)
-  const exclusiveTax = roundCurrency(
-    (taxBreakdown || []).filter(b => !b.includedInPrice).reduce((s, b) => s + b.amount, 0)
-  )
-  const total = roundCurrency(subtotal + exclusiveTax + tipAmount)
-
-  // Update order totals
-  await db.update(restaurantOrders)
-    .set({
-      subtotal: String(subtotal),
-      taxAmount: String(totalTax),
-      taxBreakdown: taxBreakdown,
-      total: String(total),
-      updatedAt: new Date(),
-    })
-    .where(eq(restaurantOrders.id, orderId))
-}
 
 // Helper function to check and update kitchen order status
 async function updateKitchenOrderStatus(
@@ -92,19 +26,27 @@ async function updateKitchenOrderStatus(
   if (kitchenItems.length === 0) {
     return
   }
+  // Cancelled lines do not hold the ticket back; a ticket whose lines are all cancelled is cancelled
+  const live = kitchenItems.filter((item: { status: string }) => item.status !== 'cancelled')
+  if (live.length === 0) {
+    await db.update(kitchenOrders)
+      .set({ status: 'cancelled', updatedAt: new Date() })
+      .where(eq(kitchenOrders.id, kitchenOrderId))
+    return
+  }
 
   // Check if all items are ready
-  const allReady = kitchenItems.every(
+  const allReady = live.every(
     (item: { status: string }) => item.status === 'ready' || item.status === 'served'
   )
 
   // Check if all items are served
-  const allServed = kitchenItems.every(
+  const allServed = live.every(
     (item: { status: string }) => item.status === 'served'
   )
 
   // Check if any item is being prepared
-  const anyPreparing = kitchenItems.some(
+  const anyPreparing = live.some(
     (item: { status: string }) => item.status === 'preparing'
   )
 
@@ -196,8 +138,15 @@ export async function PUT(
           updateData.notes = notes || null
         }
 
-        // Handle status update
+        // Handle status update. A completed / cancelled order is settled: its lines can no
+        // longer change (cancelling a line would silently change a bill that was already paid).
         if (status !== undefined) {
+          if (order.status === 'completed' || order.status === 'cancelled') {
+            throw new Error('ORDER_SETTLED')
+          }
+          if (currentItem.status === 'cancelled' && status !== 'cancelled') {
+            throw new Error('ITEM_CANCELLED')
+          }
           updateData.status = status
         }
 
@@ -230,8 +179,8 @@ export async function PUT(
           }
         }
 
-        // Recalculate order totals if quantity changed
-        if (quantity !== undefined) {
+        // Recalculate order totals if quantity changed or a line was cancelled / restored
+        if (quantity !== undefined || (status !== undefined && (status === 'cancelled') !== (currentItem.status === 'cancelled'))) {
           await recalculateOrderTotals(tx, orderId, session.user.tenantId)
         }
 
@@ -262,6 +211,12 @@ export async function PUT(
     }
     if (message === 'INVALID_STATUS') {
       return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
+    }
+    if (message === 'ORDER_SETTLED') {
+      return NextResponse.json({ error: 'Cannot change items of a completed or cancelled order' }, { status: 400 })
+    }
+    if (message === 'ITEM_CANCELLED') {
+      return NextResponse.json({ error: 'This item was cancelled. Add it again instead.' }, { status: 400 })
     }
 
     return NextResponse.json({ error: 'Failed to update order item' }, { status: 500 })

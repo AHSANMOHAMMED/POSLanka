@@ -9,6 +9,8 @@ import { users } from '@/lib/db/schema'
 import { validateBody } from '@/lib/validation/helpers'
 import { checkRateLimit, recordRateLimitAttempt, clearRateLimit } from '@/lib/auth/rate-limit'
 import { logError } from '@/lib/ai/error-logger'
+import { logActivity } from '@/lib/utils/activity-log'
+import { APPROVAL_SCOPES, signApprovalToken } from '@/lib/auth/approval-token'
 
 const PIN_RATE_LIMIT = { maxAttempts: 5, windowMs: 10 * 60 * 1000, category: 'pos_pin' }
 
@@ -20,6 +22,18 @@ const verifyPinSchema = z.object({
   scope: z.enum(['self', 'supervisor']).default('self'),
   permission: z.enum(permissionKeys).optional(),
   reason: z.string().max(500).optional(),
+  /**
+   * H1: actions the supervisor approves. With scope 'supervisor' the response carries a signed,
+   * short-lived, single-use `approvalToken` for these scopes that the server-side action requires.
+   */
+  approvalScopes: z.array(z.enum(APPROVAL_SCOPES)).max(APPROVAL_SCOPES.length).optional(),
+  /** Audit context shown in the activity log (what was approved) */
+  context: z.object({
+    posOpeningEntryId: z.string().uuid().optional(),
+    posProfileId: z.string().uuid().optional(),
+    amount: z.coerce.number().optional(),
+    detail: z.string().max(500).optional(),
+  }).optional(),
 })
 
 /**
@@ -29,6 +43,9 @@ const verifyPinSchema = z.object({
  * - scope 'supervisor': any active user in the tenant whose role grants `permission`
  *   (default 'manageSales') approves an override. The approver is returned so the
  *   client can record who authorised the action. Never elevates the caller's session.
+ *   H1: the response also carries `approvalToken` (HMAC-signed: tenant, approver, requesting
+ *   user, scopes, expiry, nonce) that POST /api/sales and /api/pos-cash-movements verify; the
+ *   approval is written to the activity log.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -39,7 +56,7 @@ export async function POST(request: NextRequest) {
 
     const parsed = await validateBody(request, verifyPinSchema)
     if (!parsed.success) return parsed.response
-    const { pin, scope, permission = 'manageSales' } = parsed.data
+    const { pin, scope, permission = 'manageSales', reason, approvalScopes, context } = parsed.data
 
     const tenantId = session.user.tenantId
     const rateKey = `pin:${tenantId}:${session.user.id}:${scope}`
@@ -88,9 +105,36 @@ export async function POST(request: NextRequest) {
     }
 
     await clearRateLimit(rateKey, PIN_RATE_LIMIT.category).catch(() => undefined)
+
+    // Approval tokens are only minted for manageSales approvers (what the server-side checks accept)
+    let approval: ReturnType<typeof signApprovalToken> | null = null
+    if (scope === 'supervisor' && approvalScopes && approvalScopes.length > 0
+      && hasPermission(approver.user.role, 'manageSales', tenantId, approver.user.customRoleId)) {
+      const scopes = approvalScopes
+      approval = signApprovalToken({ tenantId, approverId: approver.user.id, requesterId: session.user.id, scopes })
+      await logActivity({
+        tenantId,
+        userId: approver.user.id,
+        action: 'approve',
+        entityType: 'pos_approval',
+        entityName: scopes.join(', '),
+        description: `${approver.user.fullName} approved ${scopes.join(', ')} for ${session.user.name || 'cashier'}${reason ? `: ${reason}` : ''}`,
+        metadata: {
+          requestedBy: session.user.id,
+          approverId: approver.user.id,
+          scopes,
+          nonce: approval.nonce,
+          expiresAt: new Date(approval.expiresAt * 1000).toISOString(),
+          reason: reason || null,
+          ...(context || {}),
+        },
+      })
+    }
+
     return NextResponse.json({
       ok: true,
       user: { id: approver.user.id, name: approver.user.fullName, role: approver.user.role },
+      ...(approval ? { approvalToken: approval.token, approvalExpiresAt: new Date(approval.expiresAt * 1000).toISOString() } : {}),
     })
   } catch (error) {
     logError('api/auth/verify-pin', error)

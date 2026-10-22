@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { vehicleWarranties, vehicleInventory, vehicleMakes, vehicleModels } from '@/lib/db/schema'
+import { vehicleWarranties, vehicleInventory, vehicleMakes, vehicleModels, sales } from '@/lib/db/schema'
 import { eq, and, desc, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -122,6 +122,19 @@ export async function POST(request: NextRequest) {
       })
       if (!vehicle) {
         return NextResponse.json({ error: 'Vehicle not found' }, { status: 400 })
+      }
+
+      // The warranty must belong to the sale of this vehicle
+      const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId), columns: { id: true, status: true } })
+      if (!sale) {
+        return NextResponse.json({ error: 'Sale not found' }, { status: 400 })
+      }
+      if (sale.status === 'void' || (vehicle.saleId && vehicle.saleId !== saleId)) {
+        return NextResponse.json({ error: 'This sale is not the current sale of this vehicle' }, { status: 400 })
+      }
+
+      if (startDate && endDate && endDate < startDate) {
+        return NextResponse.json({ error: 'Warranty end date cannot be before the start date' }, { status: 400 })
       }
 
       // Determine status based on dates

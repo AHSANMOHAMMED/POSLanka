@@ -5,6 +5,7 @@ import { workspaceConfigs } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { getDefaultWorkspace } from '@/lib/workspace/defaults'
+import { filterBlocksForSession } from '@/lib/workspace/metrics'
 import type { WorkspaceBlock, WorkspaceConfig } from '@/lib/workspace/types'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
@@ -76,7 +77,7 @@ export async function GET(
     }
 
     if (existing) {
-      const blocks = resolveBlockHrefs(existing.blocks as WorkspaceBlock[], basePath)
+      const blocks = filterBlocksForSession(resolveBlockHrefs(existing.blocks as WorkspaceBlock[], basePath), session)
       const defaultConfig = getDefaultWorkspace(key, session.user.businessType)
       const config: WorkspaceConfig = {
         key,
@@ -97,7 +98,7 @@ export async function GET(
 
     const config: WorkspaceConfig = {
       ...defaultConfig,
-      blocks: resolveBlockHrefs(defaultConfig.blocks, basePath),
+      blocks: filterBlocksForSession(resolveBlockHrefs(defaultConfig.blocks, basePath), session),
     }
     return NextResponse.json({ config })
   } catch (error) {

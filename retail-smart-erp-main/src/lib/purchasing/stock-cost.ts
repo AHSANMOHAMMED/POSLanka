@@ -207,6 +207,17 @@ export function stockErrorResponse(err: unknown, context?: string): NextResponse
   if (batchError) {
     return NextResponse.json({ error: context ? `${context}: ${batchError.message}` : batchError.message, code: batchError.code }, { status: 400 })
   }
+  // H3: purchasing documents now post to the GL inside the same transaction (GRN, landed cost):
+  // configuration problems are user errors, not 500s
+  if (message.startsWith('GL_ACCOUNTS_MISSING:')) {
+    return NextResponse.json({ error: message.slice('GL_ACCOUNTS_MISSING:'.length).trim(), code: 'GL_ACCOUNTS_MISSING' }, { status: 400 })
+  }
+  if ((err instanceof Error && err.name === 'GLValidationError') || message.startsWith('No active fiscal year')) {
+    return NextResponse.json({ error: context ? `${context}: ${message}` : message, code: 'GL_POSTING_FAILED' }, { status: 400 })
+  }
+  if (message.startsWith('MATCH_BLOCKED:')) {
+    return NextResponse.json({ error: message.slice('MATCH_BLOCKED:'.length).trim(), code: 'THREE_WAY_MATCH_BLOCKED' }, { status: 400 })
+  }
   if (message === 'ITEM_NOT_FOUND' || message === 'INVALID_QUANTITY') {
     return NextResponse.json({ error: message === 'ITEM_NOT_FOUND' ? 'Item not found' : 'Invalid quantity', code: message }, { status: 400 })
   }

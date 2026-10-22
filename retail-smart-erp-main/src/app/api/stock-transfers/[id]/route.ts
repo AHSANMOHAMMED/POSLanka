@@ -7,6 +7,7 @@ import { applyStockChange, notifyStockDecreased, type StockChangeInput, type Sto
 import { toApiError } from '@/lib/db/errors'
 import { eq, and, sql } from 'drizzle-orm'
 import { transferSerials } from '@/lib/inventory/serial-numbers'
+import { allocateBatchesFEFO, putIntoBatch, type BatchAllocation } from '@/lib/inventory/batches'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logStatusChange } from '@/lib/utils/activity-log'
 import { logError } from '@/lib/ai/error-logger'
@@ -41,7 +42,7 @@ export async function GET(
           toWarehouse: true,
           requestedByUser: SAFE_USER,
           approvedByUser: SAFE_USER,
-          shippedByUser: true,
+          shippedByUser: SAFE_USER,
           receivedByUser: SAFE_USER,
           items: {
             with: {
@@ -158,6 +159,18 @@ export async function PUT(
 
           // Update items if provided (atomic delete+insert in transaction)
           if (updatedItems) {
+            if (updatedItems.length === 0) {
+              return NextResponse.json({ error: 'At least one item is required' }, { status: 400 })
+            }
+            for (const item of updatedItems) {
+              const exists = await db.query.items.findFirst({
+                where: eq(itemsTable.id, item.itemId),
+                columns: { id: true },
+              })
+              if (!exists) {
+                return NextResponse.json({ error: `Item ${item.itemId} not found` }, { status: 404 })
+              }
+            }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await db.transaction(async (tx: any) => {
               // Delete existing items
@@ -382,18 +395,38 @@ async function handleApprove(db: any, session: any, transfer: any, userId: strin
       .where(eq(stockTransfers.id, transfer.id))
       .returning()
 
-    // 8G: Increment reservedStock on source warehouse for each transfer item
+    // 8G: Increment reservedStock on source warehouse for each transfer item.
+    // Stock may have been sold since the transfer was submitted, so availability
+    // (current - already reserved) is re-checked under the row lock; lines of the
+    // same item are summed.
+    const reserveByItem = new Map<string, { qty: number; name: string }>()
     for (const item of transfer.items) {
-      const transferQty = parseFloat(item.quantity)
-      await tx.update(warehouseStock)
-        .set({
-          reservedStock: sql`${warehouseStock.reservedStock} + ${transferQty}`,
-          updatedAt: new Date(),
-        })
+      const prev = reserveByItem.get(item.itemId)
+      reserveByItem.set(item.itemId, {
+        qty: Math.round(((prev?.qty || 0) + parseFloat(item.quantity)) * 1000) / 1000,
+        name: item.item?.name || 'item',
+      })
+    }
+    for (const itemId of [...reserveByItem.keys()].sort()) {
+      const { qty, name } = reserveByItem.get(itemId)!
+      const [lockedStock] = await tx
+        .select()
+        .from(warehouseStock)
         .where(and(
           eq(warehouseStock.warehouseId, transfer.fromWarehouseId),
-          eq(warehouseStock.itemId, item.itemId)
+          eq(warehouseStock.itemId, itemId)
         ))
+        .for('update')
+      const available = Math.round((parseFloat(lockedStock?.currentStock || '0') - parseFloat(lockedStock?.reservedStock || '0')) * 1000) / 1000
+      if (!lockedStock || available < qty) {
+        throw new Error(`VALIDATION:Insufficient stock for ${name}. Available: ${Math.max(0, available)}, Requested: ${qty}`)
+      }
+      await tx.update(warehouseStock)
+        .set({
+          reservedStock: sql`${warehouseStock.reservedStock} + ${qty}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(warehouseStock.id, lockedStock.id))
     }
 
     return approved
@@ -526,8 +559,25 @@ async function handleShip(db: any, session: any, transfer: any, userId: string) 
       // Serial number tracking: transfer serials from source to destination warehouse
       const itemRecord = await tx.query.items.findFirst({
         where: eq(itemsTable.id, item.itemId),
-        columns: { trackSerialNumbers: true }
+        columns: { trackSerialNumbers: true, trackBatches: true }
       })
+
+      // Batch tracking: take the shipped quantity out of the source batches (FEFO) and keep the
+      // picks on the line; receive puts them into the destination warehouse, cancel puts them back.
+      if (itemRecord?.trackBatches) {
+        const picked = await allocateBatchesFEFO(tx, {
+          tenantId: session.user.tenantId,
+          warehouseId: transfer.fromWarehouseId,
+          itemId: item.itemId,
+          qty: transferQty,
+          allowExpired: true,
+          allowShortfall: true,
+          itemName: item.item?.name,
+        })
+        await tx.update(stockTransferItems)
+          .set({ batchAllocations: picked.allocations })
+          .where(eq(stockTransferItems.id, item.id))
+      }
 
       if (itemRecord?.trackSerialNumbers) {
         // Find available serials for this item in source warehouse
@@ -538,7 +588,9 @@ async function handleShip(db: any, session: any, transfer: any, userId: string) 
             eq(itemSerialNumbers.warehouseId, transfer.fromWarehouseId),
             eq(itemSerialNumbers.status, 'available'),
           ))
+          .orderBy(itemSerialNumbers.id)
           .limit(Math.ceil(transferQty))
+          .for('update')
 
         if (availableSerials.length > 0) {
           const serialIds = availableSerials.map((s: { id: string }) => s.id)
@@ -601,6 +653,11 @@ async function handleReceive(db: any, session: any, transfer: any, receivedItems
     }, { status: 400 })
   }
 
+  // Pre-validate accounting config BEFORE moving any stock (a failure after the commit
+  // would report an error for a transfer that was in fact received)
+  const acctError = await requireAccountingConfig(db, session.user.tenantId, 'stock_transfer')
+  if (acctError) return acctError
+
   // Issue #64: Wrap receive in transaction with FOR UPDATE locks
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const result = await db.transaction(async (tx: any) => {
@@ -633,9 +690,12 @@ async function handleReceive(db: any, session: any, transfer: any, receivedItems
     for (const transferItem of [...transfer.items].sort(byItemThenLine)) {
       // STW-5: Match by transferItem.id (line-item ID) not itemId (product ID)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const receivedItem = receivedItems?.find((r: any) =>
-        r.transferItemId === transferItem.id || r.itemId === transferItem.itemId
-      )
+      const receivedItem = receivedItems?.find((r: any) => r.transferItemId === transferItem.id)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ?? (transfer.items.filter((ti: any) => ti.itemId === transferItem.itemId).length === 1
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ? receivedItems?.find((r: any) => !r.transferItemId && r.itemId === transferItem.itemId)
+          : undefined)
       const receivedQty = receivedItem
         ? parseFloat(receivedItem.receivedQuantity)
         : parseFloat(transferItem.quantity)
@@ -668,7 +728,40 @@ async function handleReceive(db: any, session: any, transfer: any, receivedItems
           costCenterId: transfer.costCenterId || null,
           idempotencyKey: `transfer-in:${transfer.id}:${transferItem.id}`,
         })
+
+        // Batches picked at ship time arrive in the destination warehouse (earliest pick first;
+        // a short receipt leaves the rest out, like the stock itself)
+        let left = receivedQty
+        for (const a of (transferItem.batchAllocations || []) as BatchAllocation[]) {
+          if (left <= 0) break
+          const q = Math.round(Math.min(left, Number(a.quantity)) * 1000) / 1000
+          if (!(q > 0)) continue
+          await putIntoBatch(tx, {
+            tenantId: session.user.tenantId,
+            srcBatchId: a.batchId,
+            toWarehouseId: transfer.toWarehouseId,
+            qty: q,
+            notes: `Transfer ${transfer.transferNo || ''}`.trim(),
+          })
+          left = Math.round((left - q) * 1000) / 1000
+        }
       }
+    }
+
+    // Post stock transfer to GL in the same transaction (all-or-nothing with the receipt)
+    const glItems = transfer.items.map((ti: { item?: { name?: string; costPrice?: string }; quantity: string }) => ({
+      itemName: ti.item?.name || 'Item',
+      quantity: parseFloat(ti.quantity),
+      costPrice: parseFloat(ti.item?.costPrice || '0'),
+    })).filter((i: { costPrice: number }) => i.costPrice > 0)
+
+    if (glItems.length > 0) {
+      await postStockTransferToGL(tx, session.user.tenantId, {
+        transferId: transfer.id,
+        transferNo: transfer.transferNo,
+        items: glItems,
+        costCenterId: transfer.costCenterId || null,
+      })
     }
 
     const [updated] = await tx.update(stockTransfers)
@@ -687,26 +780,6 @@ async function handleReceive(db: any, session: any, transfer: any, receivedItems
   // STW-6: Log status change
   await logStatusChange(db, session.user.tenantId, userId, 'stock_transfer', transfer.id,
     'in_transit', 'completed')
-
-  // Pre-validate accounting config before GL posting
-  const acctError = await requireAccountingConfig(db, session.user.tenantId, 'stock_transfer')
-  if (acctError) return acctError
-
-  // Post stock transfer to GL
-  const glItems = transfer.items.map((ti: { item?: { name?: string; costPrice?: string }; quantity: string }) => ({
-    itemName: ti.item?.name || 'Item',
-    quantity: parseFloat(ti.quantity),
-    costPrice: parseFloat(ti.item?.costPrice || '0'),
-  })).filter((i: { costPrice: number }) => i.costPrice > 0)
-
-  if (glItems.length > 0) {
-    await postStockTransferToGL(db, session.user.tenantId, {
-      transferId: transfer.id,
-      transferNo: transfer.transferNo,
-      items: glItems,
-      costCenterId: transfer.costCenterId || null,
-    })
-  }
 
   logAndBroadcast(session.user.tenantId, 'stock-transfer', 'updated', transfer.id)
   logAndBroadcast(session.user.tenantId, 'warehouse-stock', 'updated', transfer.toWarehouseId)
@@ -813,6 +886,17 @@ async function handleCancel(db: any, session: any, transfer: any, reason: string
           costCenterId: transfer.costCenterId || null,
           idempotencyKey: `transfer-cancel-out:${transfer.id}:${item.id}`,
         })
+
+        // Batches picked at ship time go back into their source batches
+        for (const a of (item.batchAllocations || []) as BatchAllocation[]) {
+          if (!(Number(a.quantity) > 0)) continue
+          await putIntoBatch(tx, {
+            tenantId: session.user.tenantId,
+            srcBatchId: a.batchId,
+            toWarehouseId: transfer.fromWarehouseId,
+            qty: Number(a.quantity),
+          })
+        }
 
         // Serial number tracking: transfer serials back to source warehouse using stored IDs
         const storedSerialIds = item.serialNumberIds as string[] | null

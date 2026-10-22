@@ -9,6 +9,7 @@ import { useRealtimeData } from '@/hooks'
 import { toast } from '@/components/ui/toast'
 import { formatDate } from '@/lib/utils/date-format'
 import { formatCurrency } from '@/lib/utils/currency'
+import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
 import { PageLoading } from '@/components/ui/loading-spinner'
 import { DetailPageActions, type ActionConfig } from '@/components/ui/detail-page-actions'
 import { CancellationReasonModal } from '@/components/modals'
@@ -28,6 +29,7 @@ interface StockTakeItem {
   countedBy: string | null
   countedAt: string | null
   notes: string | null
+  reasonCode?: string | null
 }
 
 interface StockTakeDetail {
@@ -72,6 +74,8 @@ export default function StockTakeDetailPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [counts, setCounts] = useState<Record<string, string>>({})
+  // H3: optional reason for a line's variance (default count_correction on completion)
+  const [reasons, setReasons] = useState<Record<string, AdjustmentReasonCode>>({})
   const [hasChanges, setHasChanges] = useState(false)
   const [showCancelModal, setShowCancelModal] = useState(false)
 
@@ -114,6 +118,7 @@ export default function StockTakeDetailPage() {
       .map(([itemId, val]) => ({
         itemId,
         countedQuantity: parseFloat(val),
+        ...(reasons[itemId] ? { reasonCode: reasons[itemId] } : {}),
       }))
 
     if (updates.length === 0) {
@@ -273,6 +278,7 @@ export default function StockTakeDetailPage() {
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Expected</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-32">Counted</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Variance</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Reason</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Cost Price</th>
                 <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Value</th>
               </tr>
@@ -314,6 +320,27 @@ export default function StockTakeDetailPage() {
                         </span>
                       ) : (
                         <span className="text-gray-400">--</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2">
+                      {isEditable && variance !== null && variance !== 0 ? (
+                        <select
+                          value={reasons[item.id] || item.reasonCode || ''}
+                          onChange={(e) => {
+                            const v = e.target.value as AdjustmentReasonCode
+                            setReasons(prev => ({ ...prev, [item.id]: v }))
+                            if (countVal !== '') setCounts(prev => ({ ...prev, [item.id]: String(countVal) }))
+                            setHasChanges(true)
+                          }}
+                          className="border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                        >
+                          <option value="">Count correction</option>
+                          {ADJUSTMENT_REASON_CODES.filter(c => c !== 'count_correction').map(c => <option key={c} value={c}>{ADJUSTMENT_REASON_LABELS[c]}</option>)}
+                        </select>
+                      ) : (
+                        <span className="text-gray-500 text-xs">
+                          {item.reasonCode ? (ADJUSTMENT_REASON_LABELS as Record<string, string>)[item.reasonCode] || item.reasonCode : variance ? 'Count correction' : '-'}
+                        </span>
                       )}
                     </td>
                     <td className="px-4 py-2 text-right text-gray-600 dark:text-gray-400">

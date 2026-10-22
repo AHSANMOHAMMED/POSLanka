@@ -12,7 +12,7 @@ const testCountries = [
   { code: 'US', name: 'United States', expectedRate: 7.25 },
   { code: 'GB', name: 'United Kingdom', expectedRate: 20.00 },
   { code: 'AU', name: 'Australia', expectedRate: 10.00 },
-  { code: 'LK', name: 'Sri Lanka', expectedRate: 15.00 },
+  { code: 'LK', name: 'Sri Lanka', expectedRate: 18.00 },
   { code: 'IN', name: 'India', expectedRate: 18.00 },
   { code: 'SG', name: 'Singapore', expectedRate: 9.00 },
   { code: 'JP', name: 'Japan', expectedRate: 10.00 },

@@ -3,7 +3,7 @@ import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { dealerPayments } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requirePermission } from '@/lib/auth/roles'
@@ -57,8 +57,13 @@ export async function POST(
           confirmedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(dealerPayments.id, id))
+        // Only a still-pending payment can be confirmed (a concurrent cancel wins)
+        .where(and(eq(dealerPayments.id, id), eq(dealerPayments.status, 'pending')))
         .returning()
+
+      if (!confirmed) {
+        return NextResponse.json({ error: 'Payment is no longer pending' }, { status: 409 })
+      }
 
       const dealerName = existing.dealer?.name || 'Dealer'
 

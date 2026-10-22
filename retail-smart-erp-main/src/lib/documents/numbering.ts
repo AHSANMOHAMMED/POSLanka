@@ -52,6 +52,7 @@ export const DOCUMENT_SERIES = {
   supplier_quotation: daily('supplier_quotation', 'supplier_quotations', 'quotation_no', 'SQ', 3),
   sales_order: daily('sales_order', 'sales_orders', 'order_no', 'SO', 3),
   grn: daily('grn', 'purchase_receipts', 'receipt_no', 'GRN', 3),
+  landed_cost: daily('landed_cost', 'landed_cost_vouchers', 'voucher_no', 'LCV', 3), // H3
   stock_take: daily('stock_take', 'stock_takes', 'count_no', 'SC', 3),
   dealer_payment: daily('dealer_payment', 'dealer_payments', 'payment_no', 'DP', 3),
   pos_opening: daily('pos_opening', 'pos_opening_entries', 'entry_number', 'POS', 3, 'local_day'),

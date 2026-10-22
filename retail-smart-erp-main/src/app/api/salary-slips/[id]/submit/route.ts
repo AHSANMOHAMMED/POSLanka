@@ -5,7 +5,9 @@ import { withTenantTransaction } from '@/lib/db'
 import { salarySlips, accountingSettings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { createGLEntries, type GLEntryInput } from '@/lib/accounting/gl'
+import { createGLEntries, tenantToday, GLValidationError } from '@/lib/accounting/gl'
+import { buildSalaryGLEntries } from '@/lib/payroll/slip-gl'
+import { applyAdvanceRecovery, AdvanceRecoveryError } from '@/lib/payroll/advance-recovery'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateParams } from '@/lib/validation/helpers'
@@ -51,68 +53,16 @@ export async function POST(
         .where(eq(accountingSettings.tenantId, tenantId))
         .limit(1)
 
-      const grossPay = Number(slip.grossPay || 0)
-      const netPay = Number(slip.netPay || 0)
-      const totalDeductions = Number(slip.totalDeductions || 0)
-      const totalEmployerContributions = Number(slip.totalEmployerContributions || 0)
-
       // Create GL entries if accounting settings are configured
-      if (settings?.defaultSalaryExpenseAccountId && settings?.defaultSalaryPayableAccountId) {
-        const glEntries: GLEntryInput[] = []
-        const postingDate = new Date().toISOString().split('T')[0]
-
-        // DEBIT: Salary Expense account for gross pay
-        if (grossPay > 0) {
-          glEntries.push({
-            accountId: settings.defaultSalaryExpenseAccountId,
-            debit: grossPay,
-            credit: 0,
-            partyType: 'employee',
-            partyId: slip.userId,
-            remarks: `Salary expense for ${slip.slipNo}`,
-          })
-        }
-
-        // DEBIT: Employer Contribution Expense for employer statutory contributions
-        if (totalEmployerContributions > 0 && settings.defaultEmployerContributionAccountId) {
-          glEntries.push({
-            accountId: settings.defaultEmployerContributionAccountId,
-            debit: totalEmployerContributions,
-            credit: 0,
-            partyType: 'employee',
-            partyId: slip.userId,
-            remarks: `Employer contributions for ${slip.slipNo}`,
-          })
-        }
-
-        // CREDIT: Salary Payable for net pay (what employee receives)
-        if (netPay > 0) {
-          glEntries.push({
-            accountId: settings.defaultSalaryPayableAccountId,
-            debit: 0,
-            credit: netPay,
-            partyType: 'employee',
-            partyId: slip.userId,
-            remarks: `Net salary payable for ${slip.slipNo}`,
-          })
-        }
-
-        // CREDIT: Statutory Contributions Payable for employee deductions + employer contributions
-        const statutoryPayable = totalDeductions + totalEmployerContributions
-        if (statutoryPayable > 0 && settings.defaultStatutoryPayableAccountId) {
-          glEntries.push({
-            accountId: settings.defaultStatutoryPayableAccountId,
-            debit: 0,
-            credit: statutoryPayable,
-            remarks: `Statutory contributions for ${slip.slipNo}`,
-          })
-        }
-
-        // Only post if we have balanced entries
+      if (settings) {
+        const glEntries = buildSalaryGLEntries(settings, [slip], {
+          label: `Salary ${slip.slipNo}`,
+          party: { userId: slip.userId },
+        })
         if (glEntries.length > 0) {
           await createGLEntries(tx, {
             tenantId,
-            postingDate,
+            postingDate: await tenantToday(tenantId),
             voucherType: 'salary_slip',
             voucherId: slip.id,
             voucherNumber: slip.slipNo,
@@ -121,6 +71,9 @@ export async function POST(
           })
         }
       }
+
+      // Recover the deducted advance installment(s) from the employee's open advances
+      await applyAdvanceRecovery(tx, tenantId, slip)
 
       // Update salary slip status
       const [updated] = await tx
@@ -148,6 +101,9 @@ export async function POST(
     }
     if (err?.message === 'INVALID_STATUS') {
       return NextResponse.json({ error: 'Only draft slips can be submitted' }, { status: 400 })
+    }
+    if (error instanceof GLValidationError || error instanceof AdvanceRecoveryError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
     }
     logError('api/salary-slips/[id]/submit', error)
     return NextResponse.json({ error: 'Failed to submit salary slip' }, { status: 500 })

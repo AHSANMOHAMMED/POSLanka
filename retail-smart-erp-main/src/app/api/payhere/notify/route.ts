@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { payhereTransactions, subscriptions, tenants, pendingCompanies } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
-import { verifyNotificationHash, getPayhereStatusFromCode } from '@/lib/payhere'
-import { getNextPeriodDates } from '@/lib/billing/proration'
+import { payhereTransactions, subscriptions, tenants, pendingCompanies, pricingTiers, accounts, creditTransactions } from '@/lib/db/schema'
+import { and, eq, ne, sql } from 'drizzle-orm'
+import { verifyNotificationHash, getPayhereStatusFromCode, isPayhereConfigured } from '@/lib/payhere'
+import { getNextPeriodDates, renewalStartDate } from '@/lib/billing/proration'
 import { logError } from '@/lib/ai/error-logger'
 import { activateCompanyFromPending } from '@/lib/billing/activate-company'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
@@ -26,6 +26,11 @@ export async function POST(request: NextRequest) {
     const statusMessage = formData.get('status_message') as string
     const cardHolderName = formData.get('card_holder_name') as string
     const cardNo = formData.get('card_no') as string
+
+    // An unconfigured merchant secret would make every signature forgeable (MD5 of '')
+    if (!isPayhereConfigured()) {
+      return NextResponse.json({ error: 'Payment gateway not configured' }, { status: 503 })
+    }
 
     if (!orderId || !statusCode || !md5sig) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -54,11 +59,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: 'ok' })
     }
 
-    // Amount validation: verify PayHere amount matches our expected amount
-    if (status === 'success' && payhereAmount) {
+    // Amount + currency validation: verify PayHere amount matches our expected amount
+    if (status === 'success') {
       const paidAmount = parseFloat(payhereAmount)
       const expectedAmount = parseFloat(transaction.amount)
-      if (isNaN(paidAmount) || isNaN(expectedAmount) || Math.abs(paidAmount - expectedAmount) > 0.01) {
+      const currencyOk = !payhereCurrency || !transaction.currency || payhereCurrency === transaction.currency
+      if (!currencyOk || isNaN(paidAmount) || isNaN(expectedAmount) || Math.abs(paidAmount - expectedAmount) > 0.01) {
         logError('api/payhere/notify', new Error(
           `Amount mismatch for order ${orderId}: expected ${expectedAmount}, got ${paidAmount}`
         ))
@@ -69,7 +75,7 @@ export async function POST(request: NextRequest) {
             status: 'failed',
             paymentMethod: paymentMethod || null,
             statusCode,
-            statusMessage: `Amount mismatch: expected ${expectedAmount}, got ${paidAmount}`,
+            statusMessage: `Amount mismatch: expected ${expectedAmount} ${transaction.currency}, got ${paidAmount} ${payhereCurrency}`,
             md5sig,
             updatedAt: new Date(),
           })
@@ -78,8 +84,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update transaction record
-    await db.update(payhereTransactions)
+    // Update transaction record. Guarded on "not already success" so concurrent / retried
+    // notifications cannot both run the activation below (double company creation, etc.).
+    const [updatedTxn] = await db.update(payhereTransactions)
       .set({
         payherePaymentId: payherePaymentId || null,
         status,
@@ -92,10 +99,11 @@ export async function POST(request: NextRequest) {
         paidAt: status === 'success' ? new Date() : null,
         updatedAt: new Date(),
       })
-      .where(eq(payhereTransactions.id, transaction.id))
+      .where(and(eq(payhereTransactions.id, transaction.id), ne(payhereTransactions.status, 'success')))
+      .returning({ id: payhereTransactions.id })
 
     // On successful payment, activate subscription or create company
-    if (status === 'success') {
+    if (status === 'success' && updatedTxn) {
       await handleSuccessfulPayment(transaction)
     }
 
@@ -139,13 +147,59 @@ async function handleSuccessfulPayment(transaction: {
       }
 
       if (isUpgradePayment) {
-        // Prorated upgrade: apply new tier, keep current period
+        // Prorated upgrade: apply new tier AND lock in its price — otherwise the next renewal
+        // checkout would charge the old (cheaper) grandfathered price for the new plan.
         updateData.tierId = transaction.newTierId
+        const newTier = await db.query.pricingTiers.findFirst({
+          where: eq(pricingTiers.id, transaction.newTierId!),
+          columns: { priceMonthly: true, priceYearly: true },
+        })
+        if (newTier) {
+          updateData.subscribedPriceMonthly = newTier.priceMonthly
+          updateData.subscribedPriceYearly = newTier.priceYearly
+          updateData.priceLockedAt = now
+        }
+        // Trial → paid (full price, no proration) or a lapsed period: the payment buys a
+        // fresh billing period. A prorated mid-period upgrade keeps the current period.
+        const periodEnd = subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null
+        if (subscription.status === 'trial' || !periodEnd || periodEnd.getTime() <= now.getTime()) {
+          const { periodStart, periodEnd: nextEnd } = getNextPeriodDates(now, billingCycle)
+          updateData.currentPeriodStart = periodStart
+          updateData.currentPeriodEnd = nextEnd
+          updateData.trialEndsAt = null
+        }
       } else {
-        // Renewal: start new billing period
-        const { periodStart, periodEnd } = getNextPeriodDates(now, billingCycle)
+        // Renewal: next period starts when the current one ends (early renewal keeps the
+        // remaining days), or now if it already lapsed.
+        const { periodStart, periodEnd } = getNextPeriodDates(renewalStartDate(now, subscription), billingCycle)
         updateData.currentPeriodStart = periodStart
         updateData.currentPeriodEnd = periodEnd
+        if (subscription.status === 'trial') updateData.trialEndsAt = null
+      }
+
+      // Wallet part of a split upgrade payment — deducted only now that the card payment
+      // succeeded (the upgrade route no longer pre-deducts it).
+      const walletPart = Number(transaction.walletCreditApplied || 0)
+      if (walletPart > 0) {
+        await db.transaction(async (tx) => {
+          const [acc] = await tx.update(accounts)
+            .set({
+              walletBalance: sql`${accounts.walletBalance} - least(${accounts.walletBalance}, ${walletPart.toFixed(2)}::numeric)`,
+              updatedAt: now,
+            })
+            .where(eq(accounts.id, transaction.accountId))
+            .returning({ walletBalance: accounts.walletBalance })
+          if (acc) {
+            await tx.insert(creditTransactions).values({
+              accountId: transaction.accountId,
+              type: 'debit',
+              amount: walletPart.toFixed(2),
+              description: 'Wallet portion of plan upgrade (card payment confirmed)',
+              balanceAfter: Number(acc.walletBalance).toFixed(2),
+              subscriptionId: subscription.id,
+            })
+          }
+        })
       }
 
       await db.update(subscriptions)

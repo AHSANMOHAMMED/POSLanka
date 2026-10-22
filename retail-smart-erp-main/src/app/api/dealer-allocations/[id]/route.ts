@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 import { dealerAllocations } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -31,8 +32,8 @@ export async function GET(
         with: {
           dealer: true,
           vehicleInventory: true,
-          allocatedByUser: true,
-          returnedByUser: true,
+          allocatedByUser: SAFE_USER,
+          returnedByUser: SAFE_USER,
           stockTransfer: true,
         },
       })

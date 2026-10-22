@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { superAdmins } from '@/lib/db/schema'
+import { checkRateLimit, recordRateLimitAttempt, clearRateLimit } from '@/lib/auth/rate-limit'
 
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
@@ -118,5 +119,16 @@ export async function checkAdminTotp(
   })
   if (!admin?.totpEnabled || !admin.totpSecret) return 'ok'
   if (!code) return 'required'
-  return verifyTotp(code, admin.totpSecret) ? 'ok' : 'invalid'
+  // The password was already verified (which resets the password lockout), so the 6-digit
+  // code needs its own brute-force limit: 5 wrong codes → locked for 15 minutes.
+  const key = `sa-totp:${superAdminId}`
+  if ((await checkRateLimit(key, TOTP_RATE_LIMIT)).limited) return 'invalid'
+  if (verifyTotp(code, admin.totpSecret)) {
+    await clearRateLimit(key, TOTP_RATE_LIMIT.category)
+    return 'ok'
+  }
+  await recordRateLimitAttempt(key, TOTP_RATE_LIMIT)
+  return 'invalid'
 }
+
+const TOTP_RATE_LIMIT = { maxAttempts: 5, windowMs: 15 * 60 * 1000, category: 'admin_totp' }

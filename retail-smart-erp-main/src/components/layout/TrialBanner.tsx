@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { X, Clock, ArrowRight, Zap } from 'lucide-react'
 import { useUserRole } from '@/hooks'
+import { sharedJson, whenIdle } from '@/lib/client/shared-fetch'
 
 interface TrialBannerProps {
   companySlug: string
@@ -48,8 +49,8 @@ export function TrialBanner({ companySlug }: TrialBannerProps) {
     }
 
     // Fetch subscription info
-    fetch(`/api/company/subscription`)
-      .then((res) => res.ok ? res.json() : Promise.reject())
+    whenIdle()
+      .then(() => sharedJson<SubscriptionInfo>('/api/company/subscription', { maxAgeMs: 300_000 }))
       .then((data) => {
         if (data.status) {
           setSubscription(data)

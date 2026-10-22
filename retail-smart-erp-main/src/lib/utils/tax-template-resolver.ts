@@ -14,6 +14,7 @@ type DbLike = any
 function toResolved(raw: {
   id: string
   name: string
+  taxCategory?: ResolvedTaxTemplate['taxCategory'] | null
   items: Array<{
     taxName: string
     rate: string
@@ -24,6 +25,7 @@ function toResolved(raw: {
   return {
     id: raw.id,
     name: raw.name,
+    ...(raw.taxCategory ? { taxCategory: raw.taxCategory } : {}),
     items: raw.items.map(i => ({
       taxName: i.taxName,
       rate: Number(i.rate),

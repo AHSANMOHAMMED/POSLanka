@@ -79,6 +79,18 @@ export interface CartItem {
   batchExpiry?: string | null
   /** D1 (UI only): batches the cashier can pick from */
   batchOptions?: CartBatchOption[]
+  /** H5: unit sold (null / undefined = base unit); quantity is in this unit */
+  uom?: string | null
+  uomFactor?: number
+  /** H5: price set by the cashier (or a label) — price lists do not change it */
+  priceLocked?: boolean
+  /** H5: additional barcode with a price override this line was scanned with (sale line `barcode`) */
+  barcode?: string
+  /** H5 (from /api/price-quote): promotion discount on this line, its labels, price list, catalog price */
+  promotionDiscount?: number
+  promotionLabels?: string[]
+  priceListName?: string | null
+  catalogPrice?: number
 }
 
 export interface CartBatchOption {

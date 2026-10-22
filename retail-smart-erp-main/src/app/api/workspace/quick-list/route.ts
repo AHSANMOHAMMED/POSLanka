@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { getQuickListKeys, fetchQuickListData } from '@/lib/workspace/metrics'
+import { getQuickListKeys, fetchQuickListData, canViewBlock } from '@/lib/workspace/metrics'
 import { logError } from '@/lib/ai/error-logger'
 
 // GET quick list data for a given list key
@@ -20,6 +20,9 @@ export async function GET(request: NextRequest) {
     const allowedKeys = getQuickListKeys()
     if (!allowedKeys.includes(key)) {
       return NextResponse.json({ error: 'Invalid quick list key' }, { status: 400 })
+    }
+    if (!canViewBlock(session, key)) {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
     const limitParam = request.nextUrl.searchParams.get('limit')

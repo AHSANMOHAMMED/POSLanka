@@ -51,7 +51,8 @@ export async function getTrialBalance(
   toDate: string,
   costCenterId?: string
 ): Promise<TrialBalanceRow[]> {
-  // Get all active ledger accounts
+  // All active ledger accounts, plus deactivated ones that still carry postings — dropping
+  // those made the trial balance stop balancing as soon as a used account was deactivated.
   const accounts = await db.select({
     id: chartOfAccounts.id,
     accountNumber: chartOfAccounts.accountNumber,
@@ -62,7 +63,9 @@ export async function getTrialBalance(
     .where(and(
       eq(chartOfAccounts.tenantId, tenantId),
       eq(chartOfAccounts.isGroup, false),
-      eq(chartOfAccounts.isActive, true),
+      sql`(${chartOfAccounts.isActive} = true OR EXISTS (
+        SELECT 1 FROM gl_entries g WHERE g.account_id = ${chartOfAccounts.id} AND g.posting_date <= ${toDate}
+      ))`,
     ))
     .orderBy(chartOfAccounts.accountNumber)
 
@@ -182,6 +185,9 @@ export async function getProfitAndLoss(
       gte(glEntries.postingDate, fromDate),
       lte(glEntries.postingDate, toDate),
       sql`${chartOfAccounts.rootType} IN ('income', 'expense')`,
+      // Period-closing vouchers zero income/expense into retained earnings; counting them made
+      // the P&L of a closed year (and the voucher's own stored net profit) read 0.
+      sql`${glEntries.voucherType} <> 'period_closing'`,
       ...(costCenterId ? [eq(glEntries.costCenterId, costCenterId)] : []),
     ))
     .groupBy(glEntries.accountId, chartOfAccounts.accountNumber, chartOfAccounts.name, chartOfAccounts.rootType, chartOfAccounts.accountType)
@@ -316,19 +322,24 @@ export async function getBalanceSheet(
     }
   }
 
-  // Calculate net profit for the period (to include in equity)
-  let netProfit = 0
-  // Use provided fiscal year start date; fallback to Jan 1 of current calendar year
-  // when no fiscal year is configured. Configure a fiscal year in settings for accuracy.
-  let fyStart: string
-  if (fiscalYearStartDate) {
-    fyStart = fiscalYearStartDate
-  } else {
-    fyStart = `${asOfDate.substring(0, 4)}-01-01`
-  }
-
-  const plResult = await getProfitAndLoss(db, tenantId, fyStart, asOfDate, costCenterId)
-  netProfit = plResult.netProfit
+  // Profit not yet closed into equity: ALL income/expense postings up to asOfDate, including
+  // period-closing vouchers (which net closed years to zero). Restricting this to the current
+  // fiscal year dropped prior unclosed years' profit (and any comparison date before the current
+  // year start), so the balance sheet did not balance.
+  void fiscalYearStartDate
+  const [pl] = await db.select({
+    income: sql<string>`COALESCE(SUM(CASE WHEN ${chartOfAccounts.rootType} = 'income' THEN CAST(${glEntries.credit} AS numeric) - CAST(${glEntries.debit} AS numeric) ELSE 0 END), 0)`,
+    expense: sql<string>`COALESCE(SUM(CASE WHEN ${chartOfAccounts.rootType} = 'expense' THEN CAST(${glEntries.debit} AS numeric) - CAST(${glEntries.credit} AS numeric) ELSE 0 END), 0)`,
+  })
+    .from(glEntries)
+    .innerJoin(chartOfAccounts, eq(glEntries.accountId, chartOfAccounts.id))
+    .where(and(
+      eq(glEntries.tenantId, tenantId),
+      lte(glEntries.postingDate, asOfDate),
+      sql`${chartOfAccounts.rootType} IN ('income', 'expense')`,
+      ...(costCenterId ? [eq(glEntries.costCenterId, costCenterId)] : []),
+    ))
+  const netProfit = Math.round((Number(pl?.income || 0) - Number(pl?.expense || 0)) * 100) / 100
 
   return {
     assets,

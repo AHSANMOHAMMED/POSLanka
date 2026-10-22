@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import localFont from "next/font/local"
 import { ThemeProvider } from "@/components/providers/ThemeProvider"
 import { ErrorCaptureProvider } from "@/components/providers/ErrorCaptureProvider"
+import { NavigationProgress } from "@/components/layout/NavigationProgress"
 import "./globals.css"
 
 // Inter (SIL OFL 1.1, see ./fonts/Inter-OFL-LICENSE.txt) is bundled so production builds never
@@ -102,6 +103,7 @@ export default function RootLayout({
         )}
       </head>
       <body suppressHydrationWarning>
+        <NavigationProgress />
         <ThemeProvider>
           <ErrorCaptureProvider>
             {children}

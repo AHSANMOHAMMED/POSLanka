@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { itemSupplierCosts, suppliers, purchases } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
@@ -18,6 +19,10 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    // Purchase costs are for item managers / purchasing, not POS staff
+    const permError = requirePermission(session, 'manageItems') && requirePermission(session, 'managePurchases')
+    if (permError) return permError
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { X, Info, AlertTriangle, AlertCircle } from 'lucide-react'
+import { sharedJson, whenIdle } from '@/lib/client/shared-fetch'
 
 interface Announcement {
   enabled: boolean
@@ -38,8 +39,8 @@ export function SystemAnnouncement() {
     }
 
     // Fetch announcement
-    fetch('/api/system/announcement')
-      .then((res) => res.json())
+    whenIdle()
+      .then(() => sharedJson<Announcement>('/api/system/announcement', { maxAgeMs: 300_000 }))
       .then((data) => {
         if (data.enabled && data.message) {
           setAnnouncement(data)

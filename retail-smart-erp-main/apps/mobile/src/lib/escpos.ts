@@ -344,6 +344,26 @@ export interface ReceiptLine {
   unit?: string | null
   unitPrice: number
   total: number
+  /** Tax invoices: line VAT rate (%) and amount. */
+  vatRate?: number | null
+  vatAmount?: number | null
+}
+
+/** Sri Lanka tax invoice / credit note particulars (VAT-registered seller, VAT charged). */
+export interface ReceiptTaxInvoice {
+  kind: 'tax_invoice' | 'credit_note'
+  supplierVatNo: string
+  buyer: { name: string; vatNo: string | null; address: string | null } | null
+  originalInvoiceNo: string | null
+  totalExclVat: number
+  totalVat: number
+  totalInclVat: number
+}
+
+/** 18 → "18", 2.5 → "2.5". */
+export function vatRateText(rate: number | null | undefined): string {
+  const r = Number(rate) || 0
+  return Number.isInteger(r) ? String(r) : String(Math.round(r * 100) / 100)
 }
 
 export interface ReceiptPayment {
@@ -378,6 +398,8 @@ export interface ReceiptInput {
   footerLines?: string[]
   returnPolicy?: string | null
   logo?: ReceiptLogo | null
+  /** Present when the receipt is a tax invoice / VAT credit note. */
+  taxInvoice?: ReceiptTaxInvoice | null
 }
 
 export interface ReceiptOptions {
@@ -450,12 +472,19 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
   b.align('left').rule('=')
 
   // Meta
-  b.bold(true).line(input.isReturn ? 'RETURN / CREDIT NOTE' : 'SALES RECEIPT').bold(false)
-  b.row('Invoice', input.invoiceNo)
+  const ti = input.taxInvoice || null
+  const title = ti ? (ti.kind === 'credit_note' ? 'CREDIT NOTE' : 'TAX INVOICE') : input.isReturn ? 'RETURN / CREDIT NOTE' : 'SALES RECEIPT'
+  b.bold(true).line(title).bold(false)
+  b.row(ti ? (ti.kind === 'credit_note' ? 'Credit Note' : 'Invoice No') : 'Invoice', input.invoiceNo)
   b.row('Date', formatReceiptDate(input.dateTime))
+  if (ti?.originalInvoiceNo) b.row('Against Inv', ti.originalInvoiceNo)
   if (input.counter) b.row('Counter', input.counter)
   if (input.cashier) b.row('Cashier', input.cashier)
-  if (input.customer?.name) b.row('Customer', input.customer.name)
+  if (ti?.buyer) {
+    b.row('Buyer', ti.buyer.name)
+    if (ti.buyer.address) b.paragraph(ti.buyer.address)
+    if (ti.buyer.vatNo) b.row('Buyer VAT No', ti.buyer.vatNo)
+  } else if (input.customer?.name) b.row('Customer', input.customer.name)
   b.rule('-')
 
   // Items
@@ -467,12 +496,14 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
     b.bold(true).columns(['Item', 'Qty', 'Price', 'Total'], [nameW, qtyW, priceW, totalW], undefined, false).bold(false)
     for (const l of input.lines) {
       b.columns([l.name, qtyText(l.qty) + (l.unit ? l.unit : ''), money(l.unitPrice), money(l.total)], [nameW, qtyW, priceW, totalW])
+      if (ti && l.vatAmount) b.row(`  VAT ${vatRateText(l.vatRate)}%`, money(l.vatAmount))
     }
   } else {
     // 58mm: item name on its own line, then "qty x price" and the line total.
     for (const l of input.lines) {
       b.paragraph(l.name)
       b.row(`  ${qtyText(l.qty)}${l.unit ? ` ${l.unit}` : ''} x ${money(l.unitPrice)}`, money(l.total))
+      if (ti && l.vatAmount) b.row(`  VAT ${vatRateText(l.vatRate)}%`, money(l.vatAmount))
     }
   }
   b.rule('-')
@@ -484,6 +515,12 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
     if (Math.abs(t.amount) > 0.004) b.row(t.name, money(t.amount))
   }
   b.bold(true).size(1, 2).row(input.isReturn ? 'REFUND' : 'TOTAL', `LKR ${money(input.total)}`).size(1, 1).bold(false)
+  if (ti) {
+    b.rule('-')
+    b.row('Total excl. VAT', money(ti.totalExclVat))
+    b.row('VAT', money(ti.totalVat))
+    b.row('Total incl. VAT', money(ti.totalInclVat))
+  }
   b.rule('-')
 
   for (const p of input.payments || []) {
@@ -528,6 +565,55 @@ export interface ZReportTender {
   variance?: number
 }
 
+/** H1: Z-report detail from the close response (`zReport`, see src/lib/pos/shift-report.ts). */
+export interface ZReportDetails {
+  tax?: { total: number; sales: number; returns: number; byName?: Array<{ taxName: string; rate: number | null; amount: number }> }
+  discounts?: { total: number; count: number }
+  voids?: { count: number; total: number; items?: Array<{ invoiceNo: string; total: number; reason: string | null }> }
+  returns?: { count: number; total: number }
+  cashMovements?: { paidIn: number; paidOut: number; count: number; voidedCount?: number }
+  approvals?: { count: number }
+  ledger?: { posted: boolean; ledgerCash: number; expectedCashMovement: number; difference: number; tiesOut: boolean }
+}
+
+/** Printable lines of the Z-report detail (shared by ESC/POS and HTML). */
+export function zReportDetailRows(d: ZReportDetails | null | undefined): Array<{ section: string; rows: Array<[string, string]> }> {
+  if (!d) return []
+  const out: Array<{ section: string; rows: Array<[string, string]> }> = []
+  if (d.cashMovements && (d.cashMovements.count > 0 || (d.cashMovements.voidedCount || 0) > 0)) {
+    out.push({ section: 'CASH PAID IN / OUT', rows: [
+      ['Paid in', money(d.cashMovements.paidIn)],
+      ['Paid out', `-${money(d.cashMovements.paidOut)}`],
+      ...(d.cashMovements.voidedCount ? [['Voided movements', String(d.cashMovements.voidedCount)] as [string, string]] : []),
+    ] })
+  }
+  if (d.tax) {
+    out.push({ section: 'TAX SUMMARY', rows: [
+      ...(d.tax.byName || []).map((t) => [`${t.taxName}${t.rate != null ? ` ${t.rate}%` : ''}`, money(t.amount)] as [string, string]),
+      ['Net tax', money(d.tax.total)],
+    ] })
+  }
+  const adj: Array<[string, string]> = []
+  if (d.discounts) adj.push([`Discounts (${d.discounts.count})`, `-${money(d.discounts.total)}`])
+  if (d.voids) {
+    adj.push([`Voids (${d.voids.count})`, money(d.voids.total)])
+    for (const v of (d.voids.items || []).slice(0, 20)) adj.push([`  ${v.invoiceNo}${v.reason ? ` ${v.reason}` : ''}`, money(v.total)])
+  }
+  if (d.returns) adj.push([`Returns (${d.returns.count})`, `-${money(d.returns.total)}`])
+  if (d.approvals?.count) adj.push(['Supervisor approvals', String(d.approvals.count)])
+  if (adj.length) out.push({ section: 'ADJUSTMENTS', rows: adj })
+  if (d.ledger) {
+    out.push({ section: 'LEDGER TIE-OUT', rows: d.ledger.posted
+      ? [
+          ['Drawer cash movement', money(d.ledger.expectedCashMovement)],
+          ['Cash ledger', money(d.ledger.ledgerCash)],
+          [d.ledger.tiesOut ? 'Ties out' : 'DIFFERENCE', d.ledger.tiesOut ? 'OK' : money(d.ledger.difference)],
+        ]
+      : [['Ledger', 'Not posted']] })
+  }
+  return out
+}
+
 export interface ZReportInput {
   business: ReceiptBusiness
   title?: string
@@ -544,6 +630,9 @@ export interface ZReportInput {
     totalVariance: number
   }
   tenders: ZReportTender[]
+  /** H1: tax, discounts, voids, returns, cash movements, ledger tie-out */
+  details?: ZReportDetails | null
+  varianceReason?: string | null
   notes?: string | null
   /** Receipt logo raster (same as receipts); printed above the business block. */
   logo?: ReceiptLogo | null
@@ -592,6 +681,12 @@ export function buildZReport(input: ZReportInput, opts: { paperWidth: PaperWidth
   b.rule('-')
   const tv = input.summary.totalVariance
   b.bold(true).size(1, 2).row('TOTAL VARIANCE', (tv > 0 ? '+' : '') + money(tv)).size(1, 1).bold(false)
+  if (input.varianceReason) b.row('Reason', input.varianceReason)
+  for (const sec of zReportDetailRows(input.details)) {
+    b.rule('-')
+    b.bold(true).line(sec.section).bold(false)
+    for (const [k, v] of sec.rows) b.row(k, v)
+  }
   if (input.notes) {
     b.line()
     b.paragraph(`Notes: ${input.notes}`)

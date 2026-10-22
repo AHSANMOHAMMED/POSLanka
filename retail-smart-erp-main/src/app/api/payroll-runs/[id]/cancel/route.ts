@@ -7,6 +7,7 @@ import { payrollRuns, salarySlips } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { reverseGLEntries } from '@/lib/accounting/gl'
+import { reverseAdvanceRecovery } from '@/lib/payroll/advance-recovery'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { cancelPayrollRunSchema } from '@/lib/validation/schemas/hr'
@@ -36,9 +37,8 @@ export async function POST(
     const { cancellationReason } = parsed.data
 
     const result = await withTenantTransaction(session.user.tenantId, async (db) => {
-      const run = await db.query.payrollRuns.findFirst({
-        where: eq(payrollRuns.id, id),
-      })
+      // Lock the run so two concurrent cancels cannot both reverse it
+      const [run] = await db.select().from(payrollRuns).where(eq(payrollRuns.id, id)).for('update')
 
       if (!run) {
         return { error: NextResponse.json({ error: 'Payroll run not found' }, { status: 404 }) }
@@ -74,6 +74,8 @@ export async function POST(
             } catch {
               // No individual GL entries for this slip — posted via run consolidation
             }
+            // Give back the advance installment(s) this slip recovered
+            await reverseAdvanceRecovery(db, slip.id)
           }
 
           await db

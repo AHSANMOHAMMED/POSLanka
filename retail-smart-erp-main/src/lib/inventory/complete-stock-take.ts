@@ -28,7 +28,9 @@ export interface CompleteStockTakeResult {
   warehouseId: string
   countNo: string
   adjustmentCount: number
-  applied: Array<{ lineId: string; itemId: string; delta: number; before: number; after: number; movementId: string | null }>
+  applied: Array<{ lineId: string; itemId: string; delta: number; before: number; after: number; movementId: string | null; unvalued?: boolean }>
+  /** H3: variances of items without a cost price — applied to stock but not valued in the GL */
+  unvaluedLines: Array<{ lineId: string; itemId: string; itemName: string; delta: number }>
 }
 
 /**
@@ -63,6 +65,7 @@ export async function completeStockTake(tx: DbTx, input: CompleteStockTakeInput)
 
   const failures: StockTakeCompletionError['lines'] = []
   const applied: CompleteStockTakeResult['applied'] = []
+  const unvaluedLines: CompleteStockTakeResult['unvaluedLines'] = []
 
   for (const line of lines) {
     if (line.appliedMovementId || line.appliedAt || line.countedQuantity === null) continue
@@ -90,6 +93,7 @@ export async function completeStockTake(tx: DbTx, input: CompleteStockTakeInput)
             source: 'stock_take',
             idempotencyKey: `stocktake:${line.id}`,
             allowNegative: true,
+            reasonCode: line.reasonCode || 'count_correction',
           })
           movementId = res.movementId
           before = res.before
@@ -104,7 +108,10 @@ export async function completeStockTake(tx: DbTx, input: CompleteStockTakeInput)
               quantityChange: delta,
               costPrice,
               notes: `Stock take ${stockTake.countNo}: ${label}`,
+              reasonCode: line.reasonCode || 'count_correction',
             })
+          } else if (!(costPrice > 0) && movementId && !res.skipped) {
+            unvaluedLines.push({ lineId: line.id, itemId: line.itemId, itemName: line.itemName, delta })
           }
         }
         await sp.update(stockTakeItems)
@@ -143,5 +150,6 @@ export async function completeStockTake(tx: DbTx, input: CompleteStockTakeInput)
     countNo: stockTake.countNo,
     adjustmentCount: applied.filter((a) => a.delta !== 0).length,
     applied,
+    unvaluedLines,
   }
 }

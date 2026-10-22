@@ -26,6 +26,9 @@ interface SaleRow {
   id: string
   invoiceNo: string
   total: string | number
+  /** GET /api/sales rows carry the sales table columns: taxAmount / discountAmount */
+  taxAmount?: string | number
+  discountAmount?: string | number
   tax?: string | number
   discount?: string | number
   paymentMethod?: string | null
@@ -69,8 +72,8 @@ function aggregateShiftSales(rows: SaleRow[], shiftId: string, truncated: boolea
       continue
     }
     gross += total
-    tax += Number(s.tax) || 0
-    discounts += Number(s.discount) || 0
+    tax += Number(s.taxAmount ?? s.tax) || 0
+    discounts += Number(s.discountAmount ?? s.discount) || 0
     count += 1
     const splits = s.payments && s.payments.length ? s.payments : [{ method: s.paymentMethod || 'cash', amount: total }]
     for (const p of splits) {

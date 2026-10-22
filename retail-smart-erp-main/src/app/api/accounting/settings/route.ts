@@ -3,7 +3,8 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { accountingSettings, chartOfAccounts } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
+import { isAdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
@@ -57,6 +58,7 @@ export async function PUT(request: NextRequest) {
       // Cost center & stock adjustment
       defaultCostCenterId,
       defaultStockAdjustmentAccountId,
+      defaultWipAccountId,
       // Payroll defaults
       defaultSalaryPayableAccountId,
       defaultStatutoryPayableAccountId,
@@ -67,6 +69,9 @@ export async function PUT(request: NextRequest) {
       defaultCashOverShortAccountId,
       defaultTaxTemplateId,
       defaultPurchaseTaxTemplateId,
+      defaultSrbnbAccountId,
+      defaultPriceVarianceAccountId,
+      stockAdjustmentReasonAccounts,
     } = parsed.data
 
     const tenantId = session!.user.tenantId
@@ -100,6 +105,7 @@ export async function PUT(request: NextRequest) {
       // Cost center & stock adjustment
       if (defaultCostCenterId !== undefined) updateData.defaultCostCenterId = defaultCostCenterId || null
       if (defaultStockAdjustmentAccountId !== undefined) updateData.defaultStockAdjustmentAccountId = defaultStockAdjustmentAccountId || null
+      if (defaultWipAccountId !== undefined) updateData.defaultWipAccountId = defaultWipAccountId || null
       // Payroll defaults
       if (defaultSalaryPayableAccountId !== undefined) updateData.defaultSalaryPayableAccountId = defaultSalaryPayableAccountId || null
       if (defaultStatutoryPayableAccountId !== undefined) updateData.defaultStatutoryPayableAccountId = defaultStatutoryPayableAccountId || null
@@ -113,6 +119,30 @@ export async function PUT(request: NextRequest) {
       // Default tax templates
       if (defaultTaxTemplateId !== undefined) updateData.defaultTaxTemplateId = defaultTaxTemplateId || null
       if (defaultPurchaseTaxTemplateId !== undefined) updateData.defaultPurchaseTaxTemplateId = defaultPurchaseTaxTemplateId || null
+      // H3: procure-to-pay accounts
+      if (defaultSrbnbAccountId !== undefined) updateData.defaultSrbnbAccountId = defaultSrbnbAccountId || null
+      if (defaultPriceVarianceAccountId !== undefined) updateData.defaultPriceVarianceAccountId = defaultPriceVarianceAccountId || null
+      if (stockAdjustmentReasonAccounts !== undefined) {
+        const cleaned = Object.fromEntries(Object.entries(stockAdjustmentReasonAccounts || {})
+          .filter(([code, acc]) => isAdjustmentReasonCode(code) && !!acc))
+        updateData.stockAdjustmentReasonAccounts = Object.keys(cleaned).length > 0 ? cleaned : null
+      }
+
+      // H3: SRBNB is a liability (goods received, bill pending); all mapped accounts must be ledgers of this tenant
+      const mapped = [defaultSrbnbAccountId, defaultPriceVarianceAccountId, ...Object.values(stockAdjustmentReasonAccounts || {})].filter((x): x is string => !!x)
+      if (mapped.length > 0) {
+        const found = await db.select({ id: chartOfAccounts.id, rootType: chartOfAccounts.rootType, isGroup: chartOfAccounts.isGroup })
+          .from(chartOfAccounts).where(inArray(chartOfAccounts.id, mapped))
+        const byId = new Map(found.map(a => [a.id, a]))
+        for (const id of mapped) {
+          const acc = byId.get(id)
+          if (!acc) return NextResponse.json({ error: 'Account not found' }, { status: 400 })
+          if (acc.isGroup) return NextResponse.json({ error: 'Group accounts cannot be used for posting' }, { status: 400 })
+        }
+        if (defaultSrbnbAccountId && byId.get(defaultSrbnbAccountId)?.rootType !== 'liability') {
+          return NextResponse.json({ error: 'Stock Received But Not Billed must be a liability account' }, { status: 400 })
+        }
+      }
 
       // Fix #2: Validate tax account is a liability account
       if (defaultTaxAccountId) {

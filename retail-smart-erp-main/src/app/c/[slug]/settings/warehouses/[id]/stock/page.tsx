@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { usePaginatedData, useRealtimeData } from '@/hooks'
 import { toast } from '@/components/ui/toast'
+import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
 import { Pagination } from '@/components/ui/pagination'
 import {
   Warehouse,
@@ -34,6 +35,7 @@ interface StockItem {
   currentStock: string
   minStock: string
   reorderQty: string | null
+  maxStock?: string | null
   binLocation: string | null
   updatedAt: string
   item: {
@@ -66,6 +68,11 @@ export default function WarehouseStockPage({ params }: PageProps) {
   const [adjustmentType, setAdjustmentType] = useState<'add' | 'subtract' | 'set'>('add')
   const [adjustmentQty, setAdjustmentQty] = useState('')
   const [adjustmentNotes, setAdjustmentNotes] = useState('')
+  const [adjustmentReason, setAdjustmentReason] = useState<AdjustmentReasonCode>('other')
+  // stock levels for reorder suggestions (min / reorder qty / order-up-to max)
+  const [levelMin, setLevelMin] = useState('')
+  const [levelReorder, setLevelReorder] = useState('')
+  const [levelMax, setLevelMax] = useState('')
   const [adjusting, setAdjusting] = useState(false)
 
   // Add item modal
@@ -76,6 +83,7 @@ export default function WarehouseStockPage({ params }: PageProps) {
   const [searchingItems, setSearchingItems] = useState(false)
   const [newItemStock, setNewItemStock] = useState('')
   const [newItemMinStock, setNewItemMinStock] = useState('')
+  const [newItemMaxStock, setNewItemMaxStock] = useState('')
   const [newItemBinLocation, setNewItemBinLocation] = useState('')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedNewItem, setSelectedNewItem] = useState<any | null>(null)
@@ -169,6 +177,7 @@ export default function WarehouseStockPage({ params }: PageProps) {
           quantity: parseFloat(newItemStock),
           type: 'set',
           minStock: newItemMinStock ? parseFloat(newItemMinStock) : 0,
+          ...(newItemMaxStock ? { maxStock: parseFloat(newItemMaxStock) } : {}),
           binLocation: newItemBinLocation || null,
           notes: 'Initial stock setup',
         }),
@@ -180,6 +189,7 @@ export default function WarehouseStockPage({ params }: PageProps) {
         setSelectedNewItem(null)
         setNewItemStock('')
         setNewItemMinStock('')
+        setNewItemMaxStock('')
         setNewItemBinLocation('')
         setItemSearch('')
         setSearchResults([])
@@ -214,11 +224,17 @@ export default function WarehouseStockPage({ params }: PageProps) {
           quantity: parseFloat(adjustmentQty),
           type: adjustmentType,
           notes: adjustmentNotes || `Stock ${adjustmentType}`,
+          reasonCode: adjustmentReason,
+          ...(levelMin !== '' && parseFloat(levelMin) !== parseFloat(selectedItem.minStock || '0') ? { minStock: parseFloat(levelMin) } : {}),
+          ...(levelReorder !== '' && levelReorder !== (selectedItem.reorderQty ?? '') ? { reorderQty: parseFloat(levelReorder) } : {}),
+          ...(levelMax !== (selectedItem.maxStock ?? '') ? { maxStock: levelMax === '' ? null : parseFloat(levelMax) } : {}),
         }),
       })
 
       if (res.ok) {
+        const data = await res.json().catch(() => ({}))
         toast.success('Stock updated')
+        if (data.warning) toast.warning(data.warning)
         setShowAdjustModal(false)
         setSelectedItem(null)
         setAdjustmentQty('')
@@ -242,6 +258,10 @@ export default function WarehouseStockPage({ params }: PageProps) {
     setAdjustmentType(type)
     setAdjustmentQty('')
     setAdjustmentNotes('')
+    setAdjustmentReason(type === 'set' ? 'count_correction' : type === 'subtract' ? 'shrinkage' : 'other')
+    setLevelMin(item.minStock ? String(parseFloat(item.minStock)) : '')
+    setLevelReorder(item.reorderQty ? String(parseFloat(item.reorderQty)) : '')
+    setLevelMax(item.maxStock ? String(parseFloat(item.maxStock)) : '')
     setShowAdjustModal(true)
   }
 
@@ -450,6 +470,35 @@ export default function WarehouseStockPage({ params }: PageProps) {
               </div>
 
               <div>
+                <label className="block text-sm font-medium mb-1">Reason</label>
+                <select
+                  value={adjustmentReason}
+                  onChange={(e) => setAdjustmentReason(e.target.value as AdjustmentReasonCode)}
+                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {ADJUSTMENT_REASON_CODES.map(c => <option key={c} value={c}>{ADJUSTMENT_REASON_LABELS[c]}</option>)}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-xs font-medium mb-1">Min Stock</label>
+                  <input type="number" min="0" step="0.001" value={levelMin} onChange={(e) => setLevelMin(e.target.value)}
+                    className="w-full px-2 py-1.5 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Reorder Qty</label>
+                  <input type="number" min="0" step="0.001" value={levelReorder} onChange={(e) => setLevelReorder(e.target.value)}
+                    className="w-full px-2 py-1.5 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1">Max Stock</label>
+                  <input type="number" min="0" step="0.001" value={levelMax} onChange={(e) => setLevelMax(e.target.value)}
+                    placeholder="Order up to" className="w-full px-2 py-1.5 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium mb-1">Notes (optional)</label>
                 <input
                   type="text"
@@ -586,6 +635,18 @@ export default function WarehouseStockPage({ params }: PageProps) {
                         onChange={(e) => setNewItemMinStock(e.target.value)}
                         className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                         placeholder="0"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Max Stock</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={newItemMaxStock}
+                        onChange={(e) => setNewItemMaxStock(e.target.value)}
+                        className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Order up to (optional)"
                       />
                     </div>
                   </div>

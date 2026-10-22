@@ -103,6 +103,12 @@ export async function PUT(
           throw new Error('NOT_FOUND')
         }
 
+        const effectiveStart = startDate !== undefined ? startDate : current.startDate
+        const effectiveEnd = endDate !== undefined ? endDate : current.endDate
+        if (effectiveStart && effectiveEnd && effectiveEnd < effectiveStart) {
+          throw new Error('INVALID_DATES')
+        }
+
         // Build update data
         const updateData: Record<string, unknown> = {
           updatedAt: new Date(),
@@ -136,6 +142,9 @@ export async function PUT(
     logError('api/vehicle-warranties/[id]', error)
     const message = error instanceof Error ? error.message : ''
 
+    if (message === 'INVALID_DATES') {
+      return NextResponse.json({ error: 'Warranty end date cannot be before the start date' }, { status: 400 })
+    }
     if (message === 'NOT_FOUND') {
       return NextResponse.json({ error: 'Warranty not found' }, { status: 404 })
     }

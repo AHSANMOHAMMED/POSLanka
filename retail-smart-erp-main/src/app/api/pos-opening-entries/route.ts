@@ -152,8 +152,26 @@ export async function POST(request: NextRequest) {
       if (existingShift) {
         return NextResponse.json({
           error: 'You already have an open shift. Please close it first.',
+          code: 'SHIFT_ALREADY_OPEN',
           existingShiftId: existingShift.id,
         }, { status: 400 })
+      }
+
+      // One drawer, one shift: the counter (POS profile) must not already be open for someone else
+      const counterShift = await db.query.posOpeningEntries.findFirst({
+        where: and(
+          eq(posOpeningEntries.posProfileId, posProfileId),
+          eq(posOpeningEntries.status, 'open')
+        ),
+        with: { user: SAFE_USER },
+      })
+      if (counterShift) {
+        const holder = Array.isArray(counterShift.user) ? counterShift.user[0] : counterShift.user
+        return NextResponse.json({
+          error: `Counter "${profile.name}" already has an open shift (${counterShift.entryNumber}${holder?.fullName ? `, ${holder.fullName}` : ''}). Close it first.`,
+          code: 'COUNTER_ALREADY_OPEN',
+          existingShiftId: counterShift.id,
+        }, { status: 409 })
       }
 
       // Entry number POS-YYYYMMDD-### from the per-tenant daily sequence
@@ -199,11 +217,27 @@ export async function POST(request: NextRequest) {
         },
       })
 
-      logAndBroadcast(session.user.tenantId, 'pos-shift', 'created', openingEntry.id)
+      logAndBroadcast(session.user.tenantId, 'pos-shift', 'created', openingEntry.id, {
+        userId: session.user.id,
+        entityName: entryNumber,
+        description: `Opened shift ${entryNumber} on ${profile.name}`,
+        metadata: { posOpeningEntryId: openingEntry.id, posProfileId, openingBalances },
+      })
 
       return NextResponse.json(completeEntry)
     })
   } catch (error) {
+    // Racing opens: the partial unique indexes (drizzle/0157) reject the second open shift
+    const pgCode = (error as { cause?: { code?: string } })?.cause?.code || (error as { code?: string })?.code
+    const constraint = (error as { cause?: { constraint?: string } })?.cause?.constraint || (error as { constraint?: string })?.constraint || ''
+    if (pgCode === '23505' && constraint.startsWith('pos_opening_entries_one_open_per')) {
+      return NextResponse.json({
+        error: constraint.endsWith('profile')
+          ? 'This counter already has an open shift. Close it first.'
+          : 'You already have an open shift. Please close it first.',
+        code: constraint.endsWith('profile') ? 'COUNTER_ALREADY_OPEN' : 'SHIFT_ALREADY_OPEN',
+      }, { status: 409 })
+    }
     logError('api/pos-opening-entries', error)
     console.error('POST /api/pos-opening-entries error:', error)
     return NextResponse.json({ error: 'Failed to start shift' }, { status: 500 })

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { recipes, recipeIngredients } from '@/lib/db/schema'
+import { items, recipes, recipeIngredients } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -83,6 +83,18 @@ export async function POST(
 
       if (!recipe) {
         return NextResponse.json({ error: 'Recipe not found' }, { status: 404 })
+      }
+
+      // Ingredient must be an item of this tenant (RLS-scoped) and not the dish itself
+      const ingredient = await db.query.items.findFirst({
+        where: eq(items.id, ingredientItemId),
+        columns: { id: true },
+      })
+      if (!ingredient) {
+        return NextResponse.json({ error: 'Ingredient item not found' }, { status: 404 })
+      }
+      if (recipe.itemId && recipe.itemId === ingredientItemId) {
+        return NextResponse.json({ error: 'A recipe cannot use its own item as an ingredient' }, { status: 400 })
       }
 
       const [newIngredient] = await db.insert(recipeIngredients).values({

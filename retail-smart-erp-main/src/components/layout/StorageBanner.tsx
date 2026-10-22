@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { X, HardDrive, ArrowRight, AlertTriangle } from 'lucide-react'
+import { sharedJson, whenIdle } from '@/lib/client/shared-fetch'
 
 interface StorageBannerProps {
   companySlug: string
@@ -33,8 +34,8 @@ export function StorageBanner({ companySlug }: StorageBannerProps) {
       }
     }
 
-    fetch('/api/company/storage-quota')
-      .then((res) => res.ok ? res.json() : Promise.reject())
+    whenIdle()
+      .then(() => sharedJson<StorageQuota>('/api/company/storage-quota', { maxAgeMs: 300_000 }))
       .then((data) => {
         if (data.warningLevel) {
           setQuota(data)

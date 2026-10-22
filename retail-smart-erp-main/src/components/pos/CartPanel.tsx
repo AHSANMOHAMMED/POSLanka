@@ -68,6 +68,11 @@ interface CartPanelProps {
   onTipChange?: (amount: number) => void
   onSendToKitchen?: () => void
   restaurantOrderId?: string | null
+
+  /** H5: cart-level promotions from /api/price-quote, and the coupon field */
+  cartPromotions?: Array<{ promotionId: string; label: string; amount: number }>
+  couponCode?: string
+  onCouponChange?: (code: string) => void
 }
 
 export function CartPanel({
@@ -117,6 +122,9 @@ export function CartPanel({
   onTipChange,
   onSendToKitchen,
   restaurantOrderId,
+  cartPromotions,
+  couponCode,
+  onCouponChange,
 }: CartPanelProps) {
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()
@@ -262,6 +270,25 @@ export function CartPanel({
                         {item.maxReturnQuantity} returnable
                       </span>
                     )}
+                    {/* H5: unit, price list and promotions of the line */}
+                    {item.uom && (
+                      <span className="inline-block mt-0.5 mr-1 px-1.5 py-0.5 text-xs rounded bg-gray-100 text-gray-700">
+                        {item.uom}{item.uomFactor && item.uomFactor !== 1 ? ` × ${item.uomFactor}` : ''}
+                      </span>
+                    )}
+                    {item.priceListName && (
+                      <span className="inline-block mt-0.5 mr-1 px-1.5 py-0.5 text-xs rounded bg-blue-50 text-blue-700">
+                        {item.priceListName}
+                        {item.catalogPrice !== undefined && item.catalogPrice !== item.unitPrice && (
+                          <s className="ml-1 text-gray-400">{item.catalogPrice.toFixed(2)}</s>
+                        )}
+                      </span>
+                    )}
+                    {!!item.promotionDiscount && item.promotionDiscount > 0 && (
+                      <p className="text-xs text-green-700 mt-0.5">
+                        {(item.promotionLabels || []).join(', ')} −{currencyCode} {item.promotionDiscount.toFixed(2)}
+                      </p>
+                    )}
                     {item.weight && item.isWeighable && (
                       <p className="text-xs text-orange-600 mt-0.5">
                         {item.weight.toFixed(3)} kg @ {currencyCode} {item.unitPrice.toFixed(2)}/kg
@@ -344,8 +371,11 @@ export function CartPanel({
                   {/* Price */}
                   <div className="text-right">
                     <div className={`text-lg font-bold ${item.total < 0 ? 'text-red-600' : 'text-gray-900'}`}>
-                      {currencyCode} {Math.abs(item.total).toFixed(2)}
+                      {currencyCode} {Math.abs(item.total - (item.promotionDiscount || 0)).toFixed(2)}
                     </div>
+                    {!!item.promotionDiscount && item.promotionDiscount > 0 && (
+                      <div className="text-xs text-gray-400 line-through">{currencyCode} {Math.abs(item.total).toFixed(2)}</div>
+                    )}
                     <div className="flex items-center gap-1 text-xs text-gray-500 justify-end">
                       <span>@</span>
                       <FormInput
@@ -393,6 +423,27 @@ export function CartPanel({
             <span>Items ({itemCount})</span>
             <span>{currencyCode} {Math.abs(subtotal).toFixed(2)}</span>
           </div>
+          {/* H5: cart promotions + coupon */}
+          {!isReturnMode && cartPromotions && cartPromotions.map((p) => (
+            <div key={p.promotionId} className="flex justify-between text-green-700 text-sm">
+              <span className="flex items-center gap-1"><Tag size={14} />{p.label}</span>
+              <span>-{currencyCode} {p.amount.toFixed(2)}</span>
+            </div>
+          ))}
+          {!isReturnMode && onCouponChange && (
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-gray-500">Coupon</span>
+              <input
+                aria-label="Coupon code"
+                key={`coupon-${couponCode || ''}`}
+                defaultValue={couponCode || ''}
+                placeholder="Code"
+                onBlur={(e) => onCouponChange(e.currentTarget.value.trim().toUpperCase())}
+                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                className="flex-1 px-2 py-1 border rounded text-sm uppercase"
+              />
+            </div>
+          )}
           {/* Discount Row */}
           {!isReturnMode && (
             <button

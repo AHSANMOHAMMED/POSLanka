@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { purchaseRequisitions, purchaseRequisitionItems, users, costCenters, suppliers, warehouses, items as itemsTable } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -17,6 +18,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requireAnyPermission(session, [...PURCHASING_VIEW_PERMISSIONS, 'createRequisitions', 'approveRequisitions'])
+    if (permError) return { error: permError }
+
     const [requisition] = await db.select({
       id: purchaseRequisitions.id,
       requisitionNo: purchaseRequisitions.requisitionNo,
@@ -77,6 +81,7 @@ export async function GET(
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if ('notFound' in result) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if ('error' in result) return result.error
   return NextResponse.json(result.data)
 }
 

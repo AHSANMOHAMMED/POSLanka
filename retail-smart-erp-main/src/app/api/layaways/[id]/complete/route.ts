@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db as rawDb, withAuthTenantTransaction } from '@/lib/db'
-import { layaways, layawayItems, sales, saleItems, payments, items as itemsTable, warehouseStock, warehouses, workOrderParts, workOrders, heldSales, insuranceEstimateItems, insuranceEstimates } from '@/lib/db/schema'
+import { layaways, layawayItems, sales, saleItems, payments, items as itemsTable, warehouseStock, warehouses, workOrderParts, workOrders, heldSales, insuranceEstimateItems, insuranceEstimates, accountingSettings } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
@@ -354,6 +354,9 @@ export async function POST(
     })
 
     // Post sale to GL (revenue, tax, COGS)
+    const [acct] = await tx.select({ advance: accountingSettings.defaultAdvanceReceivedAccountId })
+      .from(accountingSettings).where(eq(accountingSettings.tenantId, session.user.tenantId)).limit(1)
+    const advanceAccountId = acct?.advance || null
     const saleTaxBreakdownForGL = saleTaxBreakdown as TaxBreakdownItem[] | undefined
     await postSaleToGL(tx, session.user.tenantId, {
       saleId: newSale.id,
@@ -363,8 +366,12 @@ export async function POST(
       tax: parseCurrency(saleTaxAmount),
       discount: 0,
       total: parseCurrency(saleTotal),
-      amountPaid: parseCurrency(layaway.paidAmount),
-      creditAmount: 0,
+      // The layaway payments were already received (Dr Cash / Cr Customer Advance when each was
+      // taken). Completing settles the invoice from that advance — Dr Customer Advance, Cr AR —
+      // instead of debiting Cash a second time and leaving the advance liability open forever.
+      // (Without a Customer Advance account the payments were never posted, so fall back to cash.)
+      amountPaid: advanceAccountId ? 0 : parseCurrency(layaway.paidAmount),
+      creditAmount: advanceAccountId ? Math.min(parseCurrency(layaway.paidAmount), parseCurrency(saleTotal)) : 0,
       costOfGoodsSold: totalCOGS,
       paymentMethod: 'cash',
       customerId: layaway.customerId || null,

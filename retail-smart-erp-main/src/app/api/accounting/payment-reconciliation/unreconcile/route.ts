@@ -23,8 +23,16 @@ export async function POST(request: NextRequest) {
 
     for (const refId of paymentEntryReferenceIds) {
       // Get the reference
-      const [ref] = await tx.select().from(paymentEntryReferences).where(eq(paymentEntryReferences.id, refId))
+      const [ref] = await tx.select().from(paymentEntryReferences).where(eq(paymentEntryReferences.id, refId)).for('update')
       if (!ref) continue
+
+      // A cancelled payment entry already took its allocations off the invoices; unreconciling
+      // its leftover references would reduce the invoices' paid amount a second time.
+      if (ref.paymentEntryId) {
+        const [pe] = await tx.select({ status: paymentEntries.status }).from(paymentEntries)
+          .where(eq(paymentEntries.id, ref.paymentEntryId)).for('update')
+        if (!pe || pe.status !== 'submitted') continue
+      }
 
       const allocatedAmount = Number(ref.allocatedAmount)
 
@@ -43,6 +51,7 @@ export async function POST(request: NextRequest) {
         await tx.update(sales).set({
           paidAmount: sql`CAST(GREATEST(CAST(${sales.paidAmount} AS numeric) - ${allocatedAmount}, 0) AS numeric(12,2))`,
           status: sql`CASE
+            WHEN ${sales.status} = 'void' THEN ${sales.status}
             WHEN CAST(GREATEST(CAST(${sales.paidAmount} AS numeric) - ${allocatedAmount}, 0) AS numeric(12,2)) <= 0 THEN 'pending'
             WHEN CAST(GREATEST(CAST(${sales.paidAmount} AS numeric) - ${allocatedAmount}, 0) AS numeric(12,2)) < CAST(${sales.total} AS numeric) THEN 'partial'
             ELSE ${sales.status}
@@ -52,7 +61,8 @@ export async function POST(request: NextRequest) {
         await tx.update(purchases).set({
           paidAmount: sql`CAST(GREATEST(CAST(${purchases.paidAmount} AS numeric) - ${allocatedAmount}, 0) AS numeric(12,2))`,
           status: sql`CASE
-            WHEN CAST(GREATEST(CAST(${purchases.paidAmount} AS numeric) - ${allocatedAmount}, 0) AS numeric(12,2)) <= 0 THEN 'received'
+            WHEN ${purchases.status} IN ('cancelled', 'draft') THEN ${purchases.status}
+            WHEN CAST(GREATEST(CAST(${purchases.paidAmount} AS numeric) - ${allocatedAmount}, 0) AS numeric(12,2)) <= 0 THEN 'pending'
             WHEN CAST(GREATEST(CAST(${purchases.paidAmount} AS numeric) - ${allocatedAmount}, 0) AS numeric(12,2)) < CAST(${purchases.total} AS numeric) THEN 'partial'
             ELSE ${purchases.status}
           END`,

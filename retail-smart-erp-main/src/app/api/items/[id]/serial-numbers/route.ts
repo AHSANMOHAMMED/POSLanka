@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant, withTenantTransaction } from '@/lib/db'
-import { itemSerialNumbers, serialNumberMovements, warehouses } from '@/lib/db/schema'
+import { items, itemSerialNumbers, serialNumberMovements, warehouses } from '@/lib/db/schema'
+import { toApiError } from '@/lib/db/errors'
 import { eq, and, sql, ilike, desc } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -155,6 +156,19 @@ export async function POST(
     const userId = session!.user.id
 
     return await withTenantTransaction(tenantId, async (tx) => {
+      // The item (and warehouse) must belong to this tenant (RLS-scoped lookups)
+      const [item] = await tx.select({ id: items.id }).from(items).where(eq(items.id, itemId)).limit(1)
+      if (!item) {
+        return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+      }
+      if (body.warehouseId) {
+        const [wh] = await tx.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.id, body.warehouseId)).limit(1)
+        if (!wh) return NextResponse.json({ error: 'Warehouse not found' }, { status: 404 })
+      }
+
+      // Serialise concurrent entry of serials for the same item (duplicate check below)
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${'serials:' + itemId}))`)
+
       // Check for duplicate serial numbers within this item
       const duplicates = await checkDuplicateSerials(tx, itemId, parsedSerials)
       if (duplicates.length > 0) {
@@ -218,6 +232,8 @@ export async function POST(
       )
     })
   } catch (error) {
+    const mapped = toApiError(error)
+    if (mapped) return mapped
     logError('api/items/[id]/serial-numbers', error)
     return NextResponse.json(
       { error: 'Failed to create serial numbers' },

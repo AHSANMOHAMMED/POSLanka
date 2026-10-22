@@ -168,7 +168,33 @@ export async function loadReceiptModel(
   opts: LoadReceiptOptions = {}
 ): Promise<{ model: ReceiptModel; sale: SaleForReceipt; tenant: TenantReceiptInfo; settings: ReceiptSettings }> {
   const [sale, tenant] = await Promise.all([fetchSaleForReceipt(saleId), fetchTenantInfo()])
+  if (sale.isReturn && sale.returnAgainst && !sale.originalInvoiceNo) {
+    // A credit note must quote the invoice it adjusts. Non-critical (offline: printed without it).
+    try {
+      const orig = await fetchSaleForReceipt(sale.returnAgainst)
+      sale.originalInvoiceNo = orig.invoiceNo
+    } catch {
+      /* ignore */
+    }
+  }
   const lineNotes = opts.lineNotes ?? (await fetchSerialNotes(sale))
+  return modelFromSale(sale, tenant, { ...opts, lineNotes })
+}
+
+/**
+ * Receipt model for a sale that exists only on this device (queued offline, OFF- number): built
+ * from the cart with the cached tenant profile / receipt settings, no server round trip.
+ */
+export async function buildLocalReceiptModel(
+  sale: SaleForReceipt,
+  opts: LoadReceiptOptions = {}
+): Promise<{ model: ReceiptModel; sale: SaleForReceipt; tenant: TenantReceiptInfo; settings: ReceiptSettings }> {
+  const tenant = await fetchTenantInfo()
+  return modelFromSale(sale, tenant, opts)
+}
+
+function modelFromSale(sale: SaleForReceipt, tenant: TenantReceiptInfo, opts: LoadReceiptOptions) {
+  const lineNotes = opts.lineNotes || {}
   const settings = resolveReceiptSettings(tenant.receiptSettingsRaw ?? tenant.receiptSettings ?? {}, opts.posProfile)
   const model = buildReceiptModel({
     sale,

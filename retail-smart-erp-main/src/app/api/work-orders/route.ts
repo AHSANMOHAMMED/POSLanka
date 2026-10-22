@@ -1,60 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { workOrders, workOrderServices, workOrderParts, items, vehicles, customers, warehouseStock, sales } from '@/lib/db/schema'
+import { workOrders, workOrderServices, workOrderParts, items, vehicles, customers, sales } from '@/lib/db/schema'
 import { eq, desc, and, sql, or, ilike, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { requirePermission } from '@/lib/auth/roles'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { roundCurrency } from '@/lib/utils/currency'
-import type { TenantDb } from '@/lib/db/tenant-context'
+import { getAvailableStock, recalculateWorkOrderTotals } from '@/lib/dealership/work-orders'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { workOrdersListSchema, createWorkOrderSchema } from '@/lib/validation/schemas/work-orders'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
-
-// Helper function to get available stock (current - reserved from draft work orders)
-// Requires RLS-aware db connection to be passed in
-async function getAvailableStock(db: TenantDb, itemId: string) {
-  const item = await db.query.items.findFirst({
-    where: eq(items.id, itemId),
-  })
-
-  if (!item) return { available: 0, itemName: 'Unknown' }
-
-  // Get reserved quantity from draft work orders
-  const reservedResult = await db
-    .select({
-      reservedQty: sql<string>`COALESCE(SUM(CAST(${workOrderParts.quantity} AS DECIMAL)), 0)`,
-    })
-    .from(workOrderParts)
-    .innerJoin(workOrders, eq(workOrderParts.workOrderId, workOrders.id))
-    .where(
-      and(
-        eq(workOrderParts.itemId, itemId),
-        eq(workOrders.status, 'draft')
-      )
-    )
-
-  const reserved = parseFloat(reservedResult[0]?.reservedQty || '0')
-
-  // Get aggregated stock from all warehouses
-  const [stockData] = await db
-    .select({
-      totalStock: sql<string>`COALESCE(SUM(CAST(${warehouseStock.currentStock} AS DECIMAL)), 0)`,
-    })
-    .from(warehouseStock)
-    .where(eq(warehouseStock.itemId, itemId))
-  const current = parseFloat(stockData?.totalStock || '0')
-
-  return {
-    available: Math.max(0, current - reserved),
-    itemName: item.name
-  }
-}
 
 // GET all work orders for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -277,17 +237,27 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Validate stock availability for all parts before transaction
+      // Validate stock availability in the work order's warehouse (same rule as adding parts
+      // later: all active reservations count). Lines of the same item are checked together.
+      const requestedByItem = new Map<string, number>()
       for (const part of parts) {
-        const { available, itemName } = await getAvailableStock(db, part.itemId)
-        if (part.quantity > available) {
+        requestedByItem.set(part.itemId, (requestedByItem.get(part.itemId) || 0) + part.quantity)
+      }
+      for (const [partItemId, requested] of requestedByItem) {
+        const item = await db.query.items.findFirst({ where: eq(items.id, partItemId), columns: { name: true, trackStock: true } })
+        if (!item) {
+          return NextResponse.json({ error: 'Invalid part item' }, { status: 400 })
+        }
+        if (!item.trackStock) continue
+        const available = await getAvailableStock(db, partItemId, warehouseId)
+        if (requested > available) {
           return NextResponse.json({
-            error: `Insufficient stock for "${itemName}". Available: ${available.toFixed(0)}, Requested: ${part.quantity}`
+            error: `Insufficient stock for "${item.name}". Available: ${available.toFixed(0)}, Requested: ${requested}`
           }, { status: 400 })
         }
       }
 
-      // Calculate totals from services and parts
+      // Provisional totals (recomputed with tax templates once the lines are stored)
       const { subtotal, taxAmount, total } = calculateTotals(services, parts)
 
       // Create work order in transaction with atomic order number generation
@@ -344,6 +314,12 @@ export async function POST(request: NextRequest) {
               total: String(roundCurrency(p.quantity * p.unitPrice - (p.discount || 0))),
             }))
           )
+        }
+
+        // Tax: same per-line template calculation the parts/services endpoints use
+        if (services.length > 0 || parts.length > 0) {
+          const totals = await recalculateWorkOrderTotals(tx, newWorkOrder.id, session.user.tenantId)
+          return { ...newWorkOrder, subtotal: String(totals.subtotal), taxAmount: String(totals.taxAmount), taxBreakdown: totals.taxBreakdown, total: String(totals.total) }
         }
 
         return newWorkOrder

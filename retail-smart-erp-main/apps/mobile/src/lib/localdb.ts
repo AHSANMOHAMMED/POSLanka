@@ -12,6 +12,7 @@ import * as SecureStore from 'expo-secure-store'
 import * as Crypto from 'expo-crypto'
 import { apiGet, getUser, qs } from './api'
 import { analyseScan, normalizeScaleConfig, type ScaleBarcodeConfig, type ScanAnalysis } from './barcodeParse'
+import { buildExtraBarcodeIndex, extraBarcodeScan, type ExtraBarcode, type OfflinePricingBundle } from './catalogUnits'
 import { getQueuedSales } from './offlineQueue'
 import { pendingStockFromQueue, recomputeLocalStock } from './pendingStock'
 import { formatOfflineRef } from './offlineRef'
@@ -60,6 +61,8 @@ export interface OfflineBundle {
   savedAt?: string
   /** false for a device-made stub that only carries the cached shift (no tax data yet) */
   complete?: boolean
+  /** H5: price lists, promotions, units, unit conversions and additional barcodes (newer servers) */
+  pricing?: OfflinePricingBundle
 }
 
 interface SyncPage {
@@ -525,11 +528,22 @@ export async function getLocalItem(id: string): Promise<LocalItem | null> {
 
 export interface LocalScanMatch {
   item: LocalItem
-  matchedBy: 'barcode' | 'plu' | 'sku'
+  matchedBy: 'barcode' | 'plu' | 'sku' | 'item_barcode' | 'uom_barcode'
+  /** H5: unit of the scanned code (null = base unit), its factor, quantity per scan and unit price */
+  uom?: string | null
+  uomFactor?: number
+  packQty?: number
+  uomPrice?: number
+  /** item_barcodes.price_override (the code fixes the price) */
+  priceOverride?: number | null
+  /** the additional / unit barcode that matched */
+  matchedBarcode?: string
   /** weight / count from a scale or GS1 label */
   quantity?: number
   /** unit price from a price-embedded label */
   unitPrice?: number
+  /** amount payable printed on the label (price-embedded scale label, GS1 AI 392n) = line total */
+  lineTotal?: number
   scan: ScanAnalysis
 }
 
@@ -546,6 +560,17 @@ export async function findByCode(code: string, scaleConfig?: Partial<ScaleBarcod
     let row: ItemRow | null = null
     if (cand.field === 'barcode') {
       row = await db.getFirstAsync<ItemRow>(`${SELECT_ITEM} WHERE i.is_active = 1 AND i.barcode = ? LIMIT 1`, cand.lookup)
+      // H5: additional / unit barcodes from the offline bundle
+      const extra = row ? undefined : (await extraBarcodes()).get(cand.lookup)
+      if (extra) {
+        const xrow = await db.getFirstAsync<ItemRow>(`${SELECT_ITEM} WHERE i.is_active = 1 AND i.id = ? LIMIT 1`, extra.itemId)
+        if (xrow) {
+          const item = toItem(xrow)
+          const x = extraBarcodeScan(extra, Number(item.sellingPrice) || 0)
+          return { item, matchedBy: extra.source, scan, uom: x.uom, uomFactor: x.uomFactor, packQty: x.packQty, uomPrice: x.uomPrice, priceOverride: extra.priceOverride, matchedBarcode: cand.lookup,
+            quantity: x.quantity, unitPrice: x.unitPrice, lineTotal: x.lineTotal }
+        }
+      }
     } else if (cand.field === 'plu') {
       row = await db.getFirstAsync<ItemRow>(`${SELECT_ITEM} WHERE i.is_active = 1 AND i.plu_code = ? LIMIT 1`, cand.lookup)
     } else {
@@ -562,12 +587,14 @@ export async function findByCode(code: string, scaleConfig?: Partial<ScaleBarcod
         const unitPrice = Number(item.sellingPrice)
         match.quantity = unitPrice > 0 ? Math.round((scan.scale.value / unitPrice) * 1000) / 1000 : 1
         match.unitPrice = unitPrice > 0 ? unitPrice : scan.scale.value
+        match.lineTotal = scan.scale.value
       }
     }
     if (scan.gs1) {
       if (scan.gs1.netWeightKg) match.quantity = scan.gs1.netWeightKg
       else if (scan.gs1.count) match.quantity = scan.gs1.count
-      if (scan.gs1.price) match.unitPrice = scan.gs1.price
+      // AI 392n is the amount payable for the whole trade item (weight / count), not a unit price
+      if (scan.gs1.price) match.lineTotal = scan.gs1.price
     }
     return match
   }
@@ -633,6 +660,16 @@ async function bundleKey(): Promise<string | null> {
 }
 
 let bundleCache: { key: string; bundle: OfflineBundle | null } | null = null
+let extraIndexCache: { bundle: OfflineBundle | null; index: Map<string, ExtraBarcode> } | null = null
+
+/** H5: barcode index of the cached bundle's additional / unit barcodes (rebuilt when the bundle changes). */
+async function extraBarcodes(): Promise<Map<string, ExtraBarcode>> {
+  const bundle = await getBundle().catch(() => null)
+  if (extraIndexCache && extraIndexCache.bundle === bundle) return extraIndexCache.index
+  const index = buildExtraBarcodeIndex(bundle?.pricing)
+  extraIndexCache = { bundle, index }
+  return index
+}
 
 export async function getBundle(): Promise<OfflineBundle | null> {
   const key = await bundleKey()

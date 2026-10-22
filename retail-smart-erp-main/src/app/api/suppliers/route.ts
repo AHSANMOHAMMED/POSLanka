@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, SUPPLIER_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { withTenant } from '@/lib/db'
 import { suppliers } from '@/lib/db/schema'
 import { ilike, sql } from 'drizzle-orm'
@@ -18,6 +19,9 @@ export async function GET(request: NextRequest) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const permError = requireAnyPermission(session, SUPPLIER_VIEW_PERMISSIONS)
+    if (permError) return permError
 
     const parsed = validateSearchParams(request, suppliersListSchema)
     if (!parsed.success) return parsed.response

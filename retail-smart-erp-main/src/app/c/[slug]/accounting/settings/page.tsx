@@ -1,11 +1,20 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Save, Loader2 } from 'lucide-react'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { useRealtimeData, useUnsavedChangesWarning } from '@/hooks'
 import { toast } from '@/components/ui/toast'
 import { PageLoading } from '@/components/ui/loading-spinner'
+import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS } from '@/lib/inventory/adjustment-reasons'
+
+interface PurchasingSettings {
+  matchPriceTolerancePct: number
+  matchQtyTolerancePct: number
+  matchAction: 'warn' | 'block'
+  autoReorder: boolean
+}
+const defaultPurchasing: PurchasingSettings = { matchPriceTolerancePct: 0, matchQtyTolerancePct: 0, matchAction: 'warn', autoReorder: false }
 
 interface Account {
   id: string
@@ -64,6 +73,9 @@ interface AccountingSettings {
   defaultPurchaseTaxTemplateId: string | null
   defaultCostCenterId: string | null
   defaultStockAdjustmentAccountId: string | null
+  defaultSrbnbAccountId: string | null
+  defaultPriceVarianceAccountId: string | null
+  stockAdjustmentReasonAccounts: Record<string, string> | null
   currentFiscalYearId: string | null
   autoPostSales: boolean
   autoPostPurchases: boolean
@@ -94,6 +106,9 @@ const defaultSettings: AccountingSettings = {
   defaultPurchaseTaxTemplateId: null,
   defaultCostCenterId: null,
   defaultStockAdjustmentAccountId: null,
+  defaultSrbnbAccountId: null,
+  defaultPriceVarianceAccountId: null,
+  stockAdjustmentReasonAccounts: null,
   currentFiscalYearId: null,
   autoPostSales: false,
   autoPostPurchases: false,
@@ -108,8 +123,23 @@ export default function AccountingSettingsPage() {
   const [taxTemplates, setTaxTemplates] = useState<TaxTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [purchasing, setPurchasing] = useState<PurchasingSettings>(defaultPurchasing)
+  const [savedPurchasing, setSavedPurchasing] = useState<PurchasingSettings>(defaultPurchasing)
+
+  const fetchPurchasing = useCallback(async () => {
+    try {
+      const res = await fetch('/api/purchasing/settings')
+      if (res.ok) {
+        const data = await res.json()
+        setPurchasing(data)
+        setSavedPurchasing(data)
+      }
+    } catch { /* section stays at defaults */ }
+  }, [])
+  useEffect(() => { fetchPurchasing() }, [fetchPurchasing])
 
   const hasUnsavedChanges = JSON.stringify(settings) !== JSON.stringify(savedSettings)
+    || JSON.stringify(purchasing) !== JSON.stringify(savedPurchasing)
   useUnsavedChangesWarning(hasUnsavedChanges)
 
   const fetchData = useCallback(async () => {
@@ -172,6 +202,21 @@ export default function AccountingSettingsPage() {
         body: JSON.stringify(settings),
       })
 
+      if (res.ok && JSON.stringify(purchasing) !== JSON.stringify(savedPurchasing)) {
+        const pRes = await fetch('/api/purchasing/settings', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(purchasing),
+        })
+        if (pRes.ok) {
+          const p = await pRes.json()
+          setPurchasing(p)
+          setSavedPurchasing(p)
+        } else {
+          const p = await pRes.json().catch(() => ({}))
+          toast.error(p.error || 'Failed to save purchasing settings')
+        }
+      }
       if (res.ok) {
         const data = await res.json()
         setSettings(data)
@@ -418,6 +463,69 @@ export default function AccountingSettingsPage() {
             {accountSelect('Cash Over/Short Account', 'defaultCashOverShortAccountId', () =>
               accountsByType('expense')
             )}
+          </div>
+        </div>
+
+        {/* H3: Purchasing & Inventory Section */}
+        <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-5">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white uppercase tracking-wider mb-1">
+            Purchasing & Inventory
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+            Goods receipts post Dr Stock / Cr Stock Received But Not Billed; the supplier invoice clears it. Without a price
+            variance account, invoice-vs-GRN price differences go into the cost of stock on hand (COGS for goods already sold).
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {accountSelect('Stock Received But Not Billed', 'defaultSrbnbAccountId', () => accountsByType('liability'))}
+            {accountSelect('Purchase Price Variance Account (optional)', 'defaultPriceVarianceAccountId', () => accountsByType('expense'))}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">3-way match: price tolerance (%)</label>
+              <input type="number" min={0} step="0.1" className={selectClass} value={purchasing.matchPriceTolerancePct}
+                onChange={(e) => setPurchasing((p) => ({ ...p, matchPriceTolerancePct: Number(e.target.value) || 0 }))} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">3-way match: quantity tolerance (%)</label>
+              <input type="number" min={0} step="0.1" className={selectClass} value={purchasing.matchQtyTolerancePct}
+                onChange={(e) => setPurchasing((p) => ({ ...p, matchQtyTolerancePct: Number(e.target.value) || 0 }))} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">On 3-way mismatch</label>
+              <select className={selectClass} value={purchasing.matchAction}
+                onChange={(e) => setPurchasing((p) => ({ ...p, matchAction: e.target.value === 'block' ? 'block' : 'warn' }))}>
+                <option value="warn">Warn (submit and flag the invoice)</option>
+                <option value="block">Block submitting the invoice</option>
+              </select>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 mt-6">
+              <input type="checkbox" checked={purchasing.autoReorder}
+                onChange={(e) => setPurchasing((p) => ({ ...p, autoReorder: e.target.checked }))} />
+              Auto reorder: create draft purchase requisitions daily for items at or below minimum stock
+            </label>
+          </div>
+          <h4 className="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider mt-5 mb-2">
+            Stock adjustment account per reason (optional — falls back to the Stock Adjustment account)
+          </h4>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            {ADJUSTMENT_REASON_CODES.map((code) => (
+              <div key={code}>
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{ADJUSTMENT_REASON_LABELS[code]}</label>
+                <select
+                  className={selectClass}
+                  value={settings.stockAdjustmentReasonAccounts?.[code] || ''}
+                  onChange={(e) => setSettings((prev) => {
+                    const next = { ...(prev.stockAdjustmentReasonAccounts || {}) }
+                    if (e.target.value) next[code] = e.target.value
+                    else delete next[code]
+                    return { ...prev, stockAdjustmentReasonAccounts: Object.keys(next).length ? next : null }
+                  })}
+                >
+                  <option value="">-- Default --</option>
+                  {accountsByType('expense').map((a) => (
+                    <option key={a.id} value={a.id}>{a.accountNumber} - {a.name}</option>
+                  ))}
+                </select>
+              </div>
+            ))}
           </div>
         </div>
 

@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { commissions, commissionRates, sales, workOrders, users } from '@/lib/db/schema'
-import { eq, and, isNull } from 'drizzle-orm'
+import { eq, and, isNull, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { roundCurrency, parseCurrency } from '@/lib/utils/currency'
 import { logError } from '@/lib/ai/error-logger'
@@ -166,6 +166,12 @@ export async function POST(request: NextRequest) {
         if (!sale) {
           return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
         }
+        if (sale.status === 'void') {
+          return NextResponse.json({ error: 'Cannot calculate commission on a void sale' }, { status: 400 })
+        }
+        if (sale.isReturn) {
+          return NextResponse.json({ error: 'Cannot calculate commission on a return' }, { status: 400 })
+        }
 
         // Check if commission already exists for this sale and user
         const existingCommission = await db.query.commissions.findFirst({
@@ -182,9 +188,17 @@ export async function POST(request: NextRequest) {
         }
 
         // Calculate commission for each sale item
+        let keptSaleTotal = 0
         for (const saleItem of sale.items) {
           const categoryId = saleItem.item?.categoryId || null
-          const amount = parseCurrency(saleItem.total)
+          // Commission only on what the customer kept: returned quantities earn nothing
+          const qty = parseCurrency(saleItem.quantity)
+          const returnedQty = Math.min(qty, parseCurrency(saleItem.returnedQuantity))
+          if (qty > 0 && returnedQty >= qty) continue
+          const amount = qty > 0 && returnedQty > 0
+            ? roundCurrency(parseCurrency(saleItem.total) * (qty - returnedQty) / qty)
+            : parseCurrency(saleItem.total)
+          keptSaleTotal += amount
 
           // Find applicable commission rate
           const rateConfig = await findCommissionRate(db, userId, null, categoryId)
@@ -206,8 +220,13 @@ export async function POST(request: NextRequest) {
         }
 
         // If no item-level commissions, try sale-level commission
-        if (calculations.length === 0) {
-          const totalAmount = parseCurrency(sale.total)
+        const hasReturns = sale.items.some((si) => parseCurrency(si.returnedQuantity) > 0)
+        if (calculations.length === 0 && !(hasReturns && keptSaleTotal <= 0)) {
+          // Scale the sale total by the share of goods kept when part of it was returned
+          const grossLines = sale.items.reduce((sum, si) => sum + parseCurrency(si.total), 0)
+          const totalAmount = hasReturns && grossLines > 0
+            ? roundCurrency(parseCurrency(sale.total) * keptSaleTotal / grossLines)
+            : parseCurrency(sale.total)
           const rateConfig = await findCommissionRate(db, userId, null, null)
 
           if (rateConfig) {
@@ -343,6 +362,10 @@ export async function POST(request: NextRequest) {
 
       // Create commission records in transaction with duplicate re-check (FOR UPDATE)
       const createdCommissions = await db.transaction(async (tx) => {
+        // Serialise concurrent calculations for the same document + user (FOR UPDATE on zero
+        // rows locks nothing, so two requests could both pass the duplicate check)
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`commission:${saleId || workOrderId}:${userId}`}))`)
+
         // Re-check for duplicates inside transaction with lock to prevent race conditions
         const duplicateCheck = saleId
           ? await tx.select({ id: commissions.id }).from(commissions)

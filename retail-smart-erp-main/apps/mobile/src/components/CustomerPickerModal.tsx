@@ -14,6 +14,11 @@ export interface Customer {
   balance?: string | number | null
   creditLimit?: string | number | null
   taxExempt?: boolean | null
+  /** Buyer particulars printed on a TAX INVOICE (GET /api/customers returns the full row) */
+  taxId?: string | null
+  address?: string | null
+  addressLine1?: string | null
+  city?: string | null
 }
 
 interface Props {

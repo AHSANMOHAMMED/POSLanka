@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { getChartKeys, fetchChartData } from '@/lib/workspace/metrics'
+import { getChartKeys, fetchChartData, canViewBlock } from '@/lib/workspace/metrics'
 import { logError } from '@/lib/ai/error-logger'
 
 // GET chart data for a given chart key
@@ -20,6 +20,9 @@ export async function GET(request: NextRequest) {
     const allowedKeys = getChartKeys()
     if (!allowedKeys.includes(key)) {
       return NextResponse.json({ error: 'Invalid chart key' }, { status: 400 })
+    }
+    if (!canViewBlock(session, key)) {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
     return await withTenant(session.user.tenantId, async (db) => {

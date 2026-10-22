@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 import { dealerAllocations, dealers, vehicleInventory } from '@/lib/db/schema'
 import { eq, and, desc, sql, or, ilike } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
@@ -58,8 +59,8 @@ export async function GET(request: NextRequest) {
         with: {
           dealer: true,
           vehicleInventory: true,
-          allocatedByUser: true,
-          returnedByUser: true,
+          allocatedByUser: SAFE_USER,
+          returnedByUser: SAFE_USER,
           stockTransfer: true,
         },
         orderBy: [desc(dealerAllocations.createdAt)],
@@ -105,20 +106,28 @@ export async function POST(request: NextRequest) {
     const { dealerId, vehicleInventoryId: vehInvId, askingPrice, minimumPrice, notes } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
-      // Validate dealer exists
+      // Validate dealer exists and can take stock
       const dealer = await db.query.dealers.findFirst({
         where: eq(dealers.id, dealerId),
       })
       if (!dealer) {
         return NextResponse.json({ error: 'Dealer not found' }, { status: 404 })
       }
+      if (!dealer.isActive || (dealer.status && dealer.status !== 'active')) {
+        return NextResponse.json({ error: `Cannot allocate to a ${dealer.isActive ? dealer.status : 'inactive'} dealer` }, { status: 400 })
+      }
 
-      // Validate vehicle inventory exists
-      const vehicle = await db.query.vehicleInventory.findFirst({
-        where: eq(vehicleInventory.id, vehInvId),
-      })
+      // Lock the vehicle row so two allocations of the same vehicle cannot race past the
+      // "already allocated" check (one vehicle can only sit with one dealer).
+      const [vehicle] = await db.select().from(vehicleInventory).where(eq(vehicleInventory.id, vehInvId)).for('update')
       if (!vehicle) {
         return NextResponse.json({ error: 'Vehicle inventory not found' }, { status: 404 })
+      }
+      if (vehicle.status === 'sold' || vehicle.saleId) {
+        return NextResponse.json({ error: 'This vehicle has been sold and cannot be allocated' }, { status: 400 })
+      }
+      if (!vehicle.isActive) {
+        return NextResponse.json({ error: 'This vehicle is inactive' }, { status: 400 })
       }
 
       // Check for existing active allocation on this vehicle

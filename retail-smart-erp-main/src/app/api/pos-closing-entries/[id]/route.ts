@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { posClosingEntries, posOpeningEntries, posClosingReconciliation } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq, or } from 'drizzle-orm'
 import { reverseGLEntries } from '@/lib/accounting/gl'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -145,17 +145,27 @@ export async function PUT(
         updateData.cancelledAt = new Date()
         updateData.cancelledBy = session.user.id
 
-        // 2. Revert the opening entry back to 'open' so the shift can be re-closed
+        // 2. Revert the opening entry back to 'open' so the shift can be re-closed (only while
+        //    neither the cashier nor the counter has opened another shift since)
+        const opening = await db.query.posOpeningEntries.findFirst({ where: eq(posOpeningEntries.id, existing.openingEntryId) })
+        if (opening) {
+          const otherOpen = await db.query.posOpeningEntries.findFirst({
+            where: and(
+              eq(posOpeningEntries.status, 'open'),
+              or(eq(posOpeningEntries.userId, opening.userId), eq(posOpeningEntries.posProfileId, opening.posProfileId)),
+            ),
+          })
+          if (otherOpen) {
+            return { error: NextResponse.json({ error: `Shift ${otherOpen.entryNumber} is open for this cashier or counter. Close it before cancelling this closing entry.`, code: 'SHIFT_ALREADY_OPEN' }, { status: 409 }) }
+          }
+        }
         await db.update(posOpeningEntries)
           .set({ status: 'open' })
           .where(eq(posOpeningEntries.id, existing.openingEntryId))
 
-        // 3. Reverse GL entries from cash over/short posting
-        try {
-          await reverseGLEntries(db, session.user.tenantId, 'pos_shift_closing', id)
-        } catch (glError) {
-          logError('api/pos-closing-entries/[id]/cancel/gl-reversal', glError)
-        }
+        // 3. Reverse GL entries from the over/short posting. A failed reversal must roll the whole
+        //    cancellation back: the shift would otherwise reopen with its variance still booked.
+        await reverseGLEntries(db, session.user.tenantId, 'pos_shift_closing', id)
 
         // 4. Delete reconciliation records (they'll be recreated on next close)
         await db.delete(posClosingReconciliation)
@@ -209,6 +219,10 @@ export async function PUT(
     return NextResponse.json(updated)
   } catch (error) {
     logError('api/pos-closing-entries/[id]', error)
+    const message = error instanceof Error ? error.message : ''
+    if (error instanceof Error && error.name === 'GLValidationError') {
+      return NextResponse.json({ error: `Cannot cancel the closing entry: the variance posting could not be reversed (${message})`, code: 'GL_REVERSAL_FAILED' }, { status: 400 })
+    }
     return NextResponse.json({ error: 'Failed to update closing entry' }, { status: 500 })
   }
 }

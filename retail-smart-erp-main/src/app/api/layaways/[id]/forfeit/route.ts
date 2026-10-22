@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { roundCurrency, parseCurrency } from '@/lib/utils/currency'
 import { postLayawayForfeitToGL } from '@/lib/accounting/auto-post'
-import { reverseGLEntries } from '@/lib/accounting/gl'
+import { postLayawayCashRefundToGL } from '@/lib/layaways/gl'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
@@ -124,20 +124,26 @@ export async function POST(
       }
     }
 
-    // Reverse original layaway payment GL entries (Dr Cash, Cr Advance)
-    try {
-      await reverseGLEntries(tx, session.user.tenantId, 'layaway_payment', id)
-    } catch {
-      // No GL entries to reverse is fine
-    }
-
-    // Post GL for the forfeited portion (Dr Advance Received, Cr Revenue)
+    // GL: the deposits sit in Customer Advance (Dr Cash / Cr Advance when received). The cash
+    // stays in the drawer, so the payment entries are NOT reversed:
+    //   forfeited portion      -> Dr Advance, Cr Income
+    //   refund to store credit -> stays in Customer Advance (same account backs store credit)
+    //   refund not to credit   -> paid back in cash: Dr Advance, Cr Cash
     if (forfeitedAmount > 0) {
       await postLayawayForfeitToGL(tx, session.user.tenantId, {
         layawayId: id,
         layawayNo: layaway.layawayNo,
         forfeitedAmount,
         customerId: layaway.customerId || '',
+      })
+    }
+    const cashRefund = calculatedRefund > 0 && !refundProcessed ? calculatedRefund : 0
+    if (cashRefund > 0) {
+      await postLayawayCashRefundToGL(tx, session.user.tenantId, {
+        layawayId: id,
+        layawayNo: layaway.layawayNo,
+        amount: cashRefund,
+        customerId: layaway.customerId,
       })
     }
 
@@ -164,6 +170,7 @@ export async function POST(
           forfeitedAmount: forfeitedAmount.toFixed(2),
           refundProcessed,
           refundToCredit: refundProcessed,
+          cashRefundAmount: cashRefund.toFixed(2),
         },
       },
       tenantId: session.user.tenantId,

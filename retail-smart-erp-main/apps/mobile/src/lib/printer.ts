@@ -21,6 +21,7 @@ import {
   money,
   paymentLabel,
   qtyText,
+  vatRateText,
   sanitizeAscii,
   type PaperWidth,
   type ReceiptInput,
@@ -564,12 +565,23 @@ export async function shareReceiptPdf(input: ReceiptInput): Promise<void> {
 }
 
 export function receiptHtml(input: ReceiptInput): string {
+  const ti = input.taxInvoice || null
   const lines = input.lines
     .map(
       (l) =>
-        `<tr><td>${escapeHtml(l.name)}</td><td class="r">${escapeHtml(qtyText(l.qty))}${l.unit ? escapeHtml(l.unit) : ''}</td><td class="r">${money(l.unitPrice)}</td><td class="r">${money(l.total)}</td></tr>`
+        `<tr><td>${escapeHtml(l.name)}</td><td class="r">${escapeHtml(qtyText(l.qty))}${l.unit ? escapeHtml(l.unit) : ''}</td><td class="r">${money(l.unitPrice)}</td><td class="r">${money(l.total)}</td></tr>` +
+        (ti && l.vatAmount ? `<tr><td colspan="3">&nbsp;&nbsp;VAT ${escapeHtml(vatRateText(l.vatRate))}%</td><td class="r">${money(l.vatAmount)}</td></tr>` : '')
     )
     .join('')
+  const title = ti ? (ti.kind === 'credit_note' ? 'CREDIT NOTE' : 'TAX INVOICE') : input.isReturn ? 'RETURN / CREDIT NOTE' : 'SALES RECEIPT'
+  const buyerRows = ti?.buyer
+    ? `<tr><td>Buyer</td><td class="r">${escapeHtml(ti.buyer.name)}</td></tr>` +
+      (ti.buyer.address ? `<tr><td colspan="2">${escapeHtml(ti.buyer.address)}</td></tr>` : '') +
+      (ti.buyer.vatNo ? `<tr><td>Buyer VAT No</td><td class="r">${escapeHtml(ti.buyer.vatNo)}</td></tr>` : '')
+    : input.customer?.name ? `<tr><td>Customer</td><td class="r">${escapeHtml(input.customer.name)}</td></tr>` : ''
+  const vatTotals = ti
+    ? `<tr><td>Total excl. VAT</td><td class="r">${money(ti.totalExclVat)}</td></tr><tr><td>VAT</td><td class="r">${money(ti.totalVat)}</td></tr><tr><td>Total incl. VAT</td><td class="r">${money(ti.totalInclVat)}</td></tr>`
+    : ''
   const taxes = (input.taxLines || [])
     .filter((t) => Math.abs(t.amount) > 0.004)
     .map((t) => `<tr><td>${escapeHtml(t.name)}</td><td class="r">${money(t.amount)}</td></tr>`)
@@ -588,13 +600,14 @@ export function receiptHtml(input: ReceiptInput): string {
     ${businessHeaderHtml(input.business, input.logo)}
     ${headerLines.map((h) => `<div class="c">${escapeHtml(h).replace(/\n/g, '<br>')}</div>`).join('')}
     <hr>
-    <div class="b">${input.isReturn ? 'RETURN / CREDIT NOTE' : 'SALES RECEIPT'}</div>
+    <div class="b">${title}</div>
     <table>
-      <tr><td>Invoice</td><td class="r">${escapeHtml(input.invoiceNo)}</td></tr>
+      <tr><td>${ti ? (ti.kind === 'credit_note' ? 'Credit Note' : 'Invoice No') : 'Invoice'}</td><td class="r">${escapeHtml(input.invoiceNo)}</td></tr>
       <tr><td>Date</td><td class="r">${escapeHtml(formatReceiptDate(input.dateTime))}</td></tr>
+      ${ti?.originalInvoiceNo ? `<tr><td>Against Inv</td><td class="r">${escapeHtml(ti.originalInvoiceNo)}</td></tr>` : ''}
       ${input.counter ? `<tr><td>Counter</td><td class="r">${escapeHtml(input.counter)}</td></tr>` : ''}
       ${input.cashier ? `<tr><td>Cashier</td><td class="r">${escapeHtml(input.cashier)}</td></tr>` : ''}
-      ${input.customer?.name ? `<tr><td>Customer</td><td class="r">${escapeHtml(input.customer.name)}</td></tr>` : ''}
+      ${buyerRows}
     </table>
     <hr>
     <table><tr class="b"><td>Item</td><td class="r">Qty</td><td class="r">Price</td><td class="r">Total</td></tr>${lines}</table>
@@ -604,6 +617,7 @@ export function receiptHtml(input: ReceiptInput): string {
       ${input.discount && Math.abs(input.discount) > 0.004 ? `<tr><td>Discount</td><td class="r">-${money(Math.abs(input.discount))}</td></tr>` : ''}
       ${taxes}
       <tr class="b big"><td>${input.isReturn ? 'REFUND' : 'TOTAL'}</td><td class="r">LKR ${money(input.total)}</td></tr>
+      ${vatTotals}
     </table>
     <hr>
     <table>${payments}${input.change && input.change > 0.004 ? `<tr><td>Change</td><td class="r">${money(input.change)}</td></tr>` : ''}</table>

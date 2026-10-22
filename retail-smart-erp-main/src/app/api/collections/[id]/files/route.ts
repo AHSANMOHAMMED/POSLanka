@@ -101,6 +101,9 @@ export async function DELETE(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const permError = requirePermission(session, 'manageFiles')
+    if (permError) return permError
+
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data

@@ -172,6 +172,17 @@ export async function POST(request: NextRequest) {
         // numeric max of existing RO- numbers): unique and continuous, tenants never block each other
         const orderNo = await nextDocNo(tx, session.user.tenantId, 'restaurant_order')
 
+        // Seat check under a row lock: two waiters opening the same table at the same moment must
+        // not both get an order (the pre-check above runs without a lock; the first order marks
+        // the table occupied before the second one can read it).
+        if (orderType === 'dine_in' && tableId) {
+          const [lockedTable] = await tx.select({ id: restaurantTables.id, status: restaurantTables.status })
+            .from(restaurantTables).where(eq(restaurantTables.id, tableId)).for('update')
+          if (!lockedTable || (lockedTable.status !== 'available' && lockedTable.status !== 'reserved')) {
+            throw new Error('TABLE_NOT_AVAILABLE')
+          }
+        }
+
         // Create the restaurant order
         const orderResult = await tx.insert(restaurantOrders).values({
           tenantId: session.user.tenantId,
@@ -230,6 +241,9 @@ export async function POST(request: NextRequest) {
     const message = error instanceof Error ? error.message : ''
     if (message === 'USER_NOT_FOUND') {
       return NextResponse.json({ error: 'User not found for this tenant. Please log out and log in again.' }, { status: 400 })
+    }
+    if (message === 'TABLE_NOT_AVAILABLE') {
+      return NextResponse.json({ error: 'Table is not available' }, { status: 400 })
     }
     logError('api/restaurant-orders', error)
     return NextResponse.json({ error: 'Failed to create restaurant order' }, { status: 500 })

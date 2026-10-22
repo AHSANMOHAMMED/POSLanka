@@ -9,6 +9,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { triggerNotification } from '@/lib/notifications/auto-trigger'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
+import { getAvailableStock } from '@/lib/dealership/work-orders'
 import { updateInsuranceEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
@@ -19,8 +20,10 @@ const validStatusTransitions: Record<string, string[]> = {
   draft: ['submitted', 'cancelled'],
   submitted: ['under_review', 'cancelled'],
   under_review: ['approved', 'partially_approved', 'rejected', 'cancelled'],
-  approved: ['work_order_created', 'cancelled'],
-  partially_approved: ['work_order_created', 'draft', 'cancelled'], // Can revise (back to draft), convert, or cancel
+  // 'work_order_created' is set only by POST /convert (which actually creates the work order);
+  // setting it here would drop the stock hold and mark the estimate converted with no work order.
+  approved: ['cancelled'],
+  partially_approved: ['draft', 'cancelled'], // Can revise (back to draft) or cancel; convert via /convert
   rejected: ['draft', 'cancelled'], // Can revise (back to draft) or cancel
   work_order_created: [], // Terminal state
   cancelled: [], // Terminal state
@@ -404,88 +407,9 @@ export async function PUT(
 
             // Calculate reserved stock from all sources and validate each unique item
             for (const [itemId, { item, totalQty }] of itemQtyMap) {
-              let totalReserved = 0
-
-              // 1. Reserved from draft work orders (warehouse-scoped)
-              const workOrderWhere = currentEstimate.warehouseId
-                ? and(eq(workOrderParts.itemId, itemId), eq(workOrders.status, 'draft'), eq(workOrders.warehouseId, currentEstimate.warehouseId))
-                : and(eq(workOrderParts.itemId, itemId), eq(workOrders.status, 'draft'))
-              const [workOrderReserved] = await tx
-                .select({
-                  reservedQty: sql<string>`COALESCE(SUM(CAST(${workOrderParts.quantity} AS DECIMAL)), 0)`,
-                })
-                .from(workOrderParts)
-                .innerJoin(workOrders, eq(workOrderParts.workOrderId, workOrders.id))
-                .where(workOrderWhere)
-              totalReserved += parseFloat(workOrderReserved?.reservedQty || '0')
-
-              // 2. Reserved from non-expired held sales (warehouse-scoped)
-              const heldSalesWhere = currentEstimate.warehouseId
-                ? and(eq(heldSales.warehouseId, currentEstimate.warehouseId), sql`${heldSales.expiresAt} > NOW()`)
-                : sql`${heldSales.expiresAt} > NOW()`
-              const heldSalesData = await tx.query.heldSales.findMany({
-                where: heldSalesWhere,
-              })
-              for (const held of heldSalesData) {
-                const cartItems = held.cartItems as Array<{ itemId: string; quantity: number }>
-                if (Array.isArray(cartItems)) {
-                  for (const cartItem of cartItems) {
-                    if (cartItem.itemId === itemId) {
-                      totalReserved += cartItem.quantity || 0
-                    }
-                  }
-                }
-              }
-
-              // 3. Reserved from OTHER estimates with holdStock (not this one, warehouse-scoped)
-              const otherEstWhere = currentEstimate.warehouseId
-                ? and(
-                    eq(insuranceEstimateItems.itemId, itemId),
-                    eq(insuranceEstimates.holdStock, true),
-                    eq(insuranceEstimates.warehouseId, currentEstimate.warehouseId),
-                    sql`${insuranceEstimates.status} NOT IN ('cancelled', 'work_order_created')`,
-                    sql`${insuranceEstimates.id} != ${id}`
-                  )
-                : and(
-                    eq(insuranceEstimateItems.itemId, itemId),
-                    eq(insuranceEstimates.holdStock, true),
-                    sql`${insuranceEstimates.status} NOT IN ('cancelled', 'work_order_created')`,
-                    sql`${insuranceEstimates.id} != ${id}`
-                  )
-              const [otherEstimatesReserved] = await tx
-                .select({
-                  reservedQty: sql<string>`COALESCE(SUM(CAST(${insuranceEstimateItems.quantity} AS DECIMAL)), 0)`,
-                })
-                .from(insuranceEstimateItems)
-                .innerJoin(insuranceEstimates, eq(insuranceEstimateItems.estimateId, insuranceEstimates.id))
-                .where(otherEstWhere)
-              totalReserved += parseFloat(otherEstimatesReserved?.reservedQty || '0')
-
-              // Get stock from specific warehouse (or aggregated if no warehouse)
-              let currentStock = 0
-              if (currentEstimate.warehouseId) {
-                const [stockData] = await tx
-                  .select({
-                    totalStock: sql<string>`COALESCE(${warehouseStock.currentStock}, '0')`,
-                  })
-                  .from(warehouseStock)
-                  .where(
-                    and(
-                      eq(warehouseStock.warehouseId, currentEstimate.warehouseId),
-                      eq(warehouseStock.itemId, itemId)
-                    )
-                  )
-                currentStock = parseFloat(stockData?.totalStock || '0')
-              } else {
-                const [stockData] = await tx
-                  .select({
-                    totalStock: sql<string>`COALESCE(SUM(CAST(${warehouseStock.currentStock} AS DECIMAL)), 0)`,
-                  })
-                  .from(warehouseStock)
-                  .where(eq(warehouseStock.itemId, itemId))
-                currentStock = parseFloat(stockData?.totalStock || '0')
-              }
-              const availableStock = Math.max(0, currentStock - totalReserved)
+              // Same availability rule as everywhere else (active work orders, held sales,
+              // other hold-stock estimates, outbound transfers); this estimate is excluded.
+              const availableStock = await getAvailableStock(tx, itemId, currentEstimate.warehouseId, { excludeEstimateId: id, lock: true })
 
               if (totalQty > availableStock) {
                 stockWarnings.push(`${item!.name}: need ${totalQty}, available ${availableStock}`)

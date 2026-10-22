@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { authWithCompany } from '@/lib/auth'
+import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { db as rawDb, withTenant } from '@/lib/db'
 import { sales, payments, customers, customerCreditTransactions, paymentEntryReferences, paymentEntries, journalEntryItems, journalEntries } from '@/lib/db/schema'
-import { eq, and, isNotNull } from 'drizzle-orm'
+import { eq, and, isNotNull, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { roundCurrency } from '@/lib/utils/currency'
 import { postPaymentToGL, postCreditPaymentToGL } from '@/lib/accounting/auto-post'
@@ -178,6 +178,21 @@ export async function POST(
     if (!parsed.success) return parsed.response
     const { amount, method, reference, creditAmount, addOverpaymentToCredit } = parsed.data
 
+    // Store credit is paid through creditAmount (it deducts the customer's balance); a gift card
+    // must be redeemed through the POS / gift-card flow, which draws the card down. Recording
+    // either as a plain payment row would mark the invoice paid with no money behind it.
+    if (amount > 0 && (method === 'credit' || method === 'gift_card')) {
+      return NextResponse.json({
+        error: method === 'credit'
+          ? 'Use the store credit amount to pay with customer credit'
+          : 'Gift card payments must be redeemed from the gift card',
+        code: 'INVALID_PAYMENT_METHOD',
+      }, { status: 400 })
+    }
+
+    // Resolve valid user ID (session.user.id may be accountId for stale JWTs)
+    const userId = await resolveUserIdRequired(session)
+
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       const cashCardAmount = amount
@@ -201,13 +216,38 @@ export async function POST(
         if (!sale) {
           throw new Error('NOT_FOUND')
         }
+        // A voided invoice is closed for good; a return pays money out, it does not collect
+        if (sale.status === 'void') {
+          throw new Error('SALE_VOID')
+        }
+        if (sale.isReturn) {
+          throw new Error('SALE_IS_RETURN')
+        }
+        // Keeping an overpayment as store credit needs a customer to hold it
+        if (addOverpaymentToCredit && !sale.customerId) {
+          throw new Error('NO_CUSTOMER_FOR_CREDIT')
+        }
+        if (creditUsed > 0 && !sale.customerId) {
+          throw new Error('NO_CUSTOMER_FOR_CREDIT')
+        }
 
         // Calculate current balance from non-voided payments (inside transaction with lock)
         const existingPayments = await tx.query.payments.findMany({
           where: eq(payments.saleId, saleId),
         })
         const activePayments = existingPayments.filter(p => !p.voidedAt)
-        const currentPaid = roundCurrency(activePayments.reduce((sum, p) => sum + parseFloat(p.amount), 0))
+        // Payment entries allocated to this invoice (accounting) settle it too — same as GET
+        const [peAlloc] = await tx
+          .select({ total: sql<string>`COALESCE(SUM(${paymentEntryReferences.allocatedAmount}), 0)` })
+          .from(paymentEntryReferences)
+          .leftJoin(paymentEntries, eq(paymentEntryReferences.paymentEntryId, paymentEntries.id))
+          .where(and(
+            eq(paymentEntryReferences.referenceType, 'sale'),
+            eq(paymentEntryReferences.referenceId, saleId),
+            sql`(${paymentEntries.status} = 'submitted' OR ${paymentEntryReferences.sourceJeItemId} IS NOT NULL)`,
+          ))
+        const currentPaid = roundCurrency(activePayments.reduce((sum, p) => sum + parseFloat(p.amount), 0)
+          + (parseFloat(peAlloc?.total || '0') || 0))
         const balanceDue = roundCurrency(parseFloat(sale.total) - currentPaid)
 
         if (balanceDue <= 0) {
@@ -244,7 +284,7 @@ export async function POST(
             amount: String(cashCardAmount),
             method: method || 'cash',
             reference: reference || null,
-            receivedBy: session.user.id,
+            receivedBy: userId,
           })
         }
 
@@ -256,7 +296,7 @@ export async function POST(
             amount: String(creditUsed),
             method: 'credit',
             reference: null,
-            receivedBy: session.user.id,
+            receivedBy: userId,
           })
         }
 
@@ -286,7 +326,7 @@ export async function POST(
                 referenceType: 'sale',
                 referenceId: saleId,
                 notes: `Payment for ${sale.invoiceNo}`,
-                createdBy: session.user.id,
+                createdBy: userId,
               })
             }
 
@@ -302,7 +342,7 @@ export async function POST(
                 referenceType: 'sale',
                 referenceId: saleId,
                 notes: `Overpayment for ${sale.invoiceNo}`,
-                createdBy: session.user.id,
+                createdBy: userId,
               })
             }
 
@@ -384,6 +424,18 @@ export async function POST(
         code: 'OVERPAYMENT',
         remainingBalance: remaining,
       }, { status: 400 })
+    }
+    if (message === 'SALE_VOID') {
+      return NextResponse.json({ error: 'Cannot add a payment to a voided sale' }, { status: 400 })
+    }
+    if (message === 'SALE_IS_RETURN') {
+      return NextResponse.json({ error: 'Cannot add a payment to a return' }, { status: 400 })
+    }
+    if (message === 'NO_CUSTOMER_FOR_CREDIT') {
+      return NextResponse.json({ error: 'This sale has no customer to hold or use store credit' }, { status: 400 })
+    }
+    if (message === 'USER_NOT_FOUND') {
+      return NextResponse.json({ error: 'User not found for this tenant. Please log out and log in again.' }, { status: 400 })
     }
     if (message === 'Insufficient customer credit balance') {
       return NextResponse.json({ error: message }, { status: 400 })

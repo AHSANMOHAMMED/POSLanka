@@ -168,29 +168,33 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ data: result.data, pagination: result.pagination })
 }
 
-// A17: Helper to calculate next date based on recurrence pattern
-function getNextDate(currentDate: Date, pattern: string): Date {
-  const next = new Date(currentDate)
-  switch (pattern) {
-    case 'daily':
-      next.setDate(next.getDate() + 1)
-      break
-    case 'weekly':
-      next.setDate(next.getDate() + 7)
-      break
-    case 'biweekly':
-      next.setDate(next.getDate() + 14)
-      break
-    case 'monthly':
-      next.setMonth(next.getMonth() + 1)
-      break
-  }
-  return next
+// A17: Recurrence dates are calendar dates: do the arithmetic in UTC on the Y-M-D parts so the
+// server timezone can never shift an occurrence by a day (local midnight in Asia/Colombo is
+// 18:30 UTC of the previous day, which toISOString() turned into "yesterday").
+// Monthly keeps the original day of month, clamped to the month's last day (31 Jan -> 28/29 Feb
+// -> 31 Mar), instead of overflowing into the next month.
+function parseYmd(dateStr: string): { y: number; m: number; d: number } {
+  const [y, m, d] = dateStr.slice(0, 10).split('-').map(Number)
+  return { y, m, d }
 }
 
-// A17: Format date to YYYY-MM-DD
-function formatDateToISO(date: Date): string {
-  return date.toISOString().split('T')[0]
+function formatYmd(y: number, m: number, d: number): string {
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+/** The n-th occurrence (n >= 1) after `startDate` for the pattern, as YYYY-MM-DD. */
+function nthOccurrence(startDate: string, pattern: string, n: number): string {
+  const { y, m, d } = parseYmd(startDate)
+  if (pattern === 'monthly') {
+    const monthIndex = (m - 1) + n
+    const ty = y + Math.floor(monthIndex / 12)
+    const tm = (monthIndex % 12) + 1
+    const lastDay = new Date(Date.UTC(ty, tm, 0)).getUTCDate()
+    return formatYmd(ty, tm, Math.min(d, lastDay))
+  }
+  const stepDays = pattern === 'daily' ? 1 : pattern === 'weekly' ? 7 : pattern === 'biweekly' ? 14 : 0
+  const t = new Date(Date.UTC(y, m - 1, d + stepDays * n))
+  return formatYmd(t.getUTCFullYear(), t.getUTCMonth() + 1, t.getUTCDate())
 }
 
 // POST create new appointment
@@ -283,21 +287,20 @@ export async function POST(request: NextRequest) {
 
     // Create recurring appointments if pattern is set
     if (pattern !== 'none' && recurrenceEndDate) {
-      const endDate = new Date(recurrenceEndDate + 'T23:59:59')
-      let currentDate = new Date(scheduledDate + 'T00:00:00')
+      const endDate = recurrenceEndDate.slice(0, 10)
       const maxOccurrences = 52
 
       let count = 0
       while (count < maxOccurrences) {
-        currentDate = getNextDate(currentDate, pattern)
-        if (currentDate > endDate) break
+        const occurrence = nthOccurrence(scheduledDate, pattern, count + 1)
+        if (occurrence > endDate) break
 
         const [recurring] = await tx.insert(appointments).values({
           tenantId: session.user.tenantId,
           customerId: customerId || null,
           vehicleId: vehicleId || null,
           serviceTypeId: serviceTypeId || null,
-          scheduledDate: formatDateToISO(currentDate),
+          scheduledDate: occurrence,
           scheduledTime,
           durationMinutes: duration,
           status: 'scheduled',

@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { eq, desc, and } from 'drizzle-orm'
 import { withAuthTenant } from '@/lib/db/with-auth-tenant'
-import { quotations, quotationItems } from '@/lib/db/schema'
+import { quotations, quotationItems, quotationStatusEnum } from '@/lib/db/schema'
 import { requireTenantFeature } from '@/lib/features/check'
 import { z } from 'zod'
 import { validateBody } from '@/lib/validation/helpers'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { requirePermission } from '@/lib/auth/roles'
 
 const itemSchema = z.object({
   itemId: z.string().uuid().optional().nullable(),
@@ -39,6 +40,9 @@ export async function GET(request: NextRequest) {
     }
 
     const status = request.nextUrl.searchParams.get('status')
+    if (status && !(quotationStatusEnum.enumValues as readonly string[]).includes(status)) {
+      return { error: 'Invalid status filter', status: 400 as const }
+    }
     const rows = await db.query.quotations.findMany({
       where: status
         ? and(
@@ -63,6 +67,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requirePermission(session, 'createSales')
+    if (permError) return { response: permError }
+
     const feature = await requireTenantFeature(session.user.tenantId, 'quotation')
     if (!feature.ok) {
       return { error: 'Quotation module disabled', status: 403 as const }
@@ -114,6 +121,7 @@ export async function POST(request: NextRequest) {
   })
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if ('response' in result) return result.response
   if ('error' in result) {
     return NextResponse.json({ error: result.error }, { status: result.status })
   }

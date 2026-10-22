@@ -79,7 +79,14 @@ export async function PUT(
 
     if (body.status) updates.status = body.status
     if (body.notes !== undefined) updates.notes = body.notes
-    if (body.expiryDate !== undefined) updates.expiryDate = body.expiryDate
+    if (body.expiryDate !== undefined) {
+      // A malformed date would otherwise reach the date column and 500
+      const expiry = body.expiryDate.trim()
+      if (expiry && !/^\d{4}-\d{2}-\d{2}$/.test(expiry)) {
+        return { error: NextResponse.json({ error: 'Expiry date must be YYYY-MM-DD' }, { status: 400 }) }
+      }
+      updates.expiryDate = expiry || null
+    }
 
     const [updated] = await tx.update(itemBatches)
       .set(updates)

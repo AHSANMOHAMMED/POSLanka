@@ -6,6 +6,7 @@ import { Home, ChevronRight, Loader2, CheckCircle, AlertCircle, Plus, Trash2 } f
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { toast } from '@/components/ui/toast'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
+import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
 
 interface Warehouse {
   id: string
@@ -39,7 +40,8 @@ export default function BulkStockAdjustmentPage() {
   const [preview, setPreview] = useState<PreviewRow[]>([])
   const [loading, setLoading] = useState(false)
   const [applying, setApplying] = useState(false)
-  const [result, setResult] = useState<{ adjusted: number; total: number; errors: string[] } | null>(null)
+  const [result, setResult] = useState<{ adjusted: number; total: number; errors: string[]; warnings?: string[] } | null>(null)
+  const [reasonCode, setReasonCode] = useState<AdjustmentReasonCode>('count_correction')
 
   // New row state
   const [addItemName, setAddItemName] = useState('')
@@ -120,13 +122,20 @@ export default function BulkStockAdjustmentPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           warehouseId,
+          reasonCode,
           adjustments: rows.map(r => ({ itemId: r.itemId, newQuantity: r.newQuantity, reason: r.reason })),
         }),
       })
-      if (!res.ok) throw new Error('Failed')
-      const data = await res.json()
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        // all-or-nothing: nothing was applied
+        setResult({ adjusted: 0, total: rows.length, errors: data.errors || [data.error || 'Failed to apply adjustments'] })
+        toast.error(data.error || 'Failed to apply adjustments')
+        return
+      }
       setResult(data)
       toast.success(`Adjusted ${data.adjusted} of ${data.total} items`)
+      if (data.warnings?.length) toast.warning(`${data.warnings.length} adjustment(s) not valued in the GL (no cost price)`)
     } catch {
       toast.error('Failed to apply adjustments')
     } finally {
@@ -158,6 +167,14 @@ export default function BulkStockAdjustmentPage() {
         >
           <option value="">Select warehouse...</option>
           {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+        <label className="text-xs text-muted-foreground block mt-3">Reason *</label>
+        <select
+          value={reasonCode}
+          onChange={e => setReasonCode(e.target.value as AdjustmentReasonCode)}
+          className="block mt-1 px-3 py-2 border rounded text-sm bg-background text-foreground w-full max-w-md"
+        >
+          {ADJUSTMENT_REASON_CODES.map(c => <option key={c} value={c}>{ADJUSTMENT_REASON_LABELS[c]}</option>)}
         </select>
       </div>
 
@@ -250,6 +267,15 @@ export default function BulkStockAdjustmentPage() {
               {result.errors.map((err, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm text-orange-700 dark:text-orange-300">
                   <AlertCircle className="h-3.5 w-3.5" /> {err}
+                </div>
+              ))}
+            </div>
+          )}
+          {result.warnings && result.warnings.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {result.warnings.map((w, i) => (
+                <div key={i} className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+                  <AlertCircle className="h-3.5 w-3.5" /> {w}
                 </div>
               ))}
             </div>

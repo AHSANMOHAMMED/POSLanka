@@ -6,6 +6,7 @@ import { giftCards } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { isExpiredOn, tenantTodayDate } from '@/lib/gift-cards/lifecycle'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -49,10 +50,8 @@ export async function POST(
 
         // Check if card is expired
         if (currentCard.expiryDate) {
-          const expiryDate = new Date(currentCard.expiryDate)
-          const today = new Date()
-          today.setHours(0, 0, 0, 0)
-          if (expiryDate < today) {
+          const today = await tenantTodayDate(session!.user.tenantId)
+          if (isExpiredOn(currentCard.expiryDate, today)) {
             throw new Error('EXPIRED')
           }
         }

@@ -9,6 +9,14 @@ import {
 
 // ==================== SHARED PURCHASE ITEM SCHEMAS ====================
 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD')
+/** Batch (lot) of received goods, for items with trackBatches (all optional). */
+const batchInfoSchema = z.object({
+  batchNumber: z.string().trim().max(100).optional(),
+  expiryDate: isoDate.optional(),
+  manufacturingDate: isoDate.optional(),
+})
+
 /** Item for purchases and purchase orders */
 const purchaseItemSchema = z.object({
   itemId: z.string().uuid().optional(),
@@ -219,6 +227,8 @@ export const updatePurchaseSchema = z.object({
   status: z.enum(['pending', 'cancelled']).optional(),
   cancellationReason: z.string().max(1000).optional(),
   itemSerials: z.record(z.string(), z.string()).optional(),
+  /** Batch per purchase line id (submit), for trackBatches items. */
+  itemBatches: z.record(z.string(), batchInfoSchema).optional(),
   changesSummary: z.string().max(2000).optional(),
 }).merge(optimisticLockSchema)
 
@@ -288,7 +298,7 @@ const receiveItemSchema = z.object({
   itemId: uuidSchema,
   receivedQuantity: z.coerce.number().min(0, 'Received quantity cannot be negative'),
   notes: z.string().max(500).optional(),
-})
+}).merge(batchInfoSchema)
 export const receivePurchaseOrderSchema = z.object({
   items: z.array(receiveItemSchema).min(1, 'At least one item is required'),
   notes: z.string().max(2000).optional(),
@@ -307,6 +317,8 @@ export const createPurchaseInvoiceSchema = z.object({
   costCenterId: optionalUuid,
   updateStock: z.boolean().optional().default(false),
   receivedQuantities: z.record(z.string(), z.string()).optional(),
+  /** Batch per PO line id (with updateStock), for trackBatches items. */
+  itemBatches: z.record(z.string(), batchInfoSchema).optional(),
 })
 
 // PUT /api/purchase-requisitions/[id]

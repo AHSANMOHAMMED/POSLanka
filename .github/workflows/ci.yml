@@ -141,6 +141,22 @@ jobs:
         run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/e1-final.ts
       - name: Refund to original payment methods
         run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/f1-refund-original.ts
+      - name: Module audits (sales, inventory, purchasing, customers, auth, mobile, automotive)
+        env:
+          PAYHERE_MERCHANT_ID: '1211111'
+          PAYHERE_MERCHANT_SECRET: testsecret
+        run: |
+          for t in gA-sales gB-inventory gC-purchasing gE-customers-hospitality gF-auth gH-automotive; do
+            npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
+          done
+          npx tsx scripts/tests/gG-mobile.ts
+      - name: POS cash controls, Sri Lanka VAT, procure-to-pay, pricing & catalog
+        run: |
+          for t in h1-pos-controls h2-tax h3-inventory-purchasing h5-pricing-catalog; do
+            npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
+          done
+      - name: Platform (offline sync, backup, API keys, dashboard, read permissions)
+        run: npx tsx --tsconfig scripts/tests/h4-harness/tsconfig.json scripts/tests/h4-platform.ts
 
   build:
     name: Production build

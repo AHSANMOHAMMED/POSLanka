@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { accountAuth as auth } from '@/lib/auth/account-auth'
 import { db } from '@/lib/db'
 import { subscriptions, pricingTiers, accounts, creditTransactions } from '@/lib/db/schema'
-import { eq, and } from 'drizzle-orm'
-import { calculateProration, getPriceForCycle } from '@/lib/billing/proration'
-import { getSubscriptionPrice } from '@/lib/billing/pricing'
+import { eq, and, sql } from 'drizzle-orm'
+import { quotePlanChange } from '@/lib/billing/plan-change'
 import { logError } from '@/lib/ai/error-logger'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -63,12 +62,11 @@ export async function POST(
     }
 
     const currentBillingCycle = (subscription.billingCycle || 'monthly') as 'monthly' | 'yearly'
-    const currentPrice = getSubscriptionPrice(subscription, currentTier, currentBillingCycle)
-    const newPrice = getPriceForCycle(
-      Number(newTier.priceMonthly),
-      Number(newTier.priceYearly),
-      billingCycle as 'monthly' | 'yearly'
-    )
+    const quote = quotePlanChange(subscription, currentTier, newTier, billingCycle as 'monthly' | 'yearly')
+    if (!quote.ok) {
+      return NextResponse.json({ error: quote.error }, { status: 400 })
+    }
+    const { currentPrice, newPrice } = quote
 
     // Fetch wallet balance (needed for both preview and execute)
     const account = await db.query.accounts.findFirst({
@@ -77,7 +75,7 @@ export async function POST(
     const walletBalance = Number(account?.walletBalance || 0)
 
     // For trial subscriptions, no proration needed - full price for new plan
-    if (subscription.status === 'trial') {
+    if (quote.noProration) {
       if (action === 'preview') {
         return NextResponse.json({
           currentTier: { id: currentTier.id, name: currentTier.displayName, price: currentPrice },
@@ -100,17 +98,7 @@ export async function POST(
       })
     }
 
-    // Calculate proration for paid plan changes
-    if (!subscription.currentPeriodStart || !subscription.currentPeriodEnd) {
-      return NextResponse.json({ error: 'Subscription period not set' }, { status: 400 })
-    }
-
-    const proration = calculateProration({
-      currentPlanPrice: currentPrice,
-      newPlanPrice: newPrice,
-      currentPeriodStart: subscription.currentPeriodStart,
-      currentPeriodEnd: subscription.currentPeriodEnd,
-    })
+    const proration = quote.proration!
 
     // Determine if billing cycle is changing
     const cycleChanging = currentBillingCycle !== billingCycle
@@ -157,13 +145,39 @@ export async function POST(
     // UPGRADE: amountDue > 0
     if (proration.amountDue > 0) {
       if (walletBalance >= proration.amountDue) {
-        // Wallet covers the full amount - deduct and apply atomically
-        const newBalance = Math.round((walletBalance - proration.amountDue) * 100) / 100
+        // Wallet covers the full amount - deduct and apply atomically. The debit is a
+        // conditional decrement so two concurrent requests cannot both spend the same balance.
+        const debited = await db.transaction(async (tx) => {
+          // Guard on the plan we priced so a double-submit cannot charge twice
+          const [changed] = await tx.update(subscriptions)
+            .set({
+              tierId: newTierId,
+              billingCycle,
+              subscribedPriceMonthly: newTier.priceMonthly,
+              subscribedPriceYearly: newTier.priceYearly,
+              priceLockedAt: new Date(),
+              updatedAt: new Date(),
+            })
+            .where(and(
+              eq(subscriptions.id, subscription.id),
+              eq(subscriptions.tierId, currentTier.id),
+              sql`coalesce(${subscriptions.billingCycle}, 'monthly') = ${currentBillingCycle}`,
+            ))
+            .returning({ id: subscriptions.id })
+          if (!changed) return null
 
-        await db.transaction(async (tx) => {
-          await tx.update(accounts)
-            .set({ walletBalance: newBalance.toFixed(2), updatedAt: new Date() })
-            .where(eq(accounts.id, accountId))
+          const [row] = await tx.update(accounts)
+            .set({
+              walletBalance: sql`${accounts.walletBalance} - ${proration.amountDue.toFixed(2)}::numeric`,
+              updatedAt: new Date(),
+            })
+            .where(and(
+              eq(accounts.id, accountId),
+              sql`${accounts.walletBalance} >= ${proration.amountDue.toFixed(2)}::numeric`,
+            ))
+            .returning({ walletBalance: accounts.walletBalance })
+          if (!row) throw new Error('WALLET_INSUFFICIENT') // rolls back the plan change
+          const newBalance = Number(row.walletBalance)
 
           await tx.insert(creditTransactions).values({
             accountId: accountId,
@@ -173,18 +187,15 @@ export async function POST(
             balanceAfter: newBalance.toFixed(2),
             subscriptionId: subscription.id,
           })
-
-          await tx.update(subscriptions)
-            .set({
-              tierId: newTierId,
-              billingCycle,
-              subscribedPriceMonthly: newTier.priceMonthly,
-              subscribedPriceYearly: newTier.priceYearly,
-              priceLockedAt: new Date(),
-              updatedAt: new Date(),
-            })
-            .where(eq(subscriptions.id, subscription.id))
+          return newBalance
+        }).catch((err) => {
+          if (err instanceof Error && err.message === 'WALLET_INSUFFICIENT') return null
+          throw err
         })
+
+        if (debited === null) {
+          return NextResponse.json({ error: 'Subscription or wallet balance changed. Please refresh and try again.' }, { status: 409 })
+        }
 
         broadcastAccountChange(accountId, 'account-subscription', 'updated', subscription.id)
         broadcastAccountChange(accountId, 'account-wallet', 'updated', accountId)
@@ -193,31 +204,16 @@ export async function POST(
           success: true,
           paidFromWallet: true,
           amountCharged: proration.amountDue,
-          newWalletBalance: newBalance,
+          newWalletBalance: debited,
         })
       }
 
-      // Wallet insufficient - partial wallet deduction + PayHere for remainder
+      // Wallet insufficient - wallet covers part, PayHere the remainder. The wallet part is
+      // NOT deducted here: /api/payhere/checkout re-computes the split server-side and the
+      // PayHere notify webhook deducts it only once the card payment succeeds — so an
+      // abandoned / failed payment no longer silently empties the wallet.
       const walletCredit = walletBalance > 0 ? walletBalance : 0
       const paymentNeeded = Math.round((proration.amountDue - walletCredit) * 100) / 100
-
-      // If wallet has balance, deduct atomically (will be recorded in credit transaction)
-      if (walletCredit > 0) {
-        await db.transaction(async (tx) => {
-          await tx.update(accounts)
-            .set({ walletBalance: '0.00', updatedAt: new Date() })
-            .where(eq(accounts.id, accountId))
-
-          await tx.insert(creditTransactions).values({
-            accountId: accountId,
-            type: 'debit',
-            amount: walletCredit.toFixed(2),
-            description: `Partial wallet deduction for upgrade: ${currentTier.displayName} → ${newTier.displayName}`,
-            balanceAfter: '0.00',
-            subscriptionId: subscription.id,
-          })
-        })
-      }
 
       // Return info for PayHere checkout - include newTierId so checkout can store it
       return NextResponse.json({
@@ -232,23 +228,11 @@ export async function POST(
 
     // DOWNGRADE: amountDue < 0 - credit the difference to wallet atomically
     const creditAmount = Math.abs(proration.amountDue)
-    const newBalance = Math.round((walletBalance + creditAmount) * 100) / 100
 
-    await db.transaction(async (tx) => {
-      await tx.update(accounts)
-        .set({ walletBalance: newBalance.toFixed(2), updatedAt: new Date() })
-        .where(eq(accounts.id, accountId))
-
-      await tx.insert(creditTransactions).values({
-        accountId: accountId,
-        type: 'credit',
-        amount: creditAmount.toFixed(2),
-        description: `Plan downgrade credit: ${currentTier.displayName} → ${newTier.displayName} (prorated)`,
-        balanceAfter: newBalance.toFixed(2),
-        subscriptionId: subscription.id,
-      })
-
-      await tx.update(subscriptions)
+    const newBalance = await db.transaction(async (tx) => {
+      // Apply the plan change first, guarded on the plan we priced: a double-submitted
+      // downgrade must not credit the wallet twice.
+      const [changed] = await tx.update(subscriptions)
         .set({
           tierId: newTierId,
           billingCycle,
@@ -257,8 +241,37 @@ export async function POST(
           priceLockedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(subscriptions.id, subscription.id))
+        .where(and(
+          eq(subscriptions.id, subscription.id),
+          eq(subscriptions.tierId, currentTier.id),
+          sql`coalesce(${subscriptions.billingCycle}, 'monthly') = ${currentBillingCycle}`,
+        ))
+        .returning({ id: subscriptions.id })
+      if (!changed) return null
+
+      const [row] = await tx.update(accounts)
+        .set({
+          walletBalance: sql`${accounts.walletBalance} + ${creditAmount.toFixed(2)}::numeric`,
+          updatedAt: new Date(),
+        })
+        .where(eq(accounts.id, accountId))
+        .returning({ walletBalance: accounts.walletBalance })
+      const balanceAfter = Number(row?.walletBalance ?? 0)
+
+      await tx.insert(creditTransactions).values({
+        accountId: accountId,
+        type: 'credit',
+        amount: creditAmount.toFixed(2),
+        description: `Plan downgrade credit: ${currentTier.displayName} → ${newTier.displayName} (prorated)`,
+        balanceAfter: balanceAfter.toFixed(2),
+        subscriptionId: subscription.id,
+      })
+      return balanceAfter
     })
+
+    if (newBalance === null) {
+      return NextResponse.json({ error: 'Subscription changed in the meantime. Please refresh and try again.' }, { status: 409 })
+    }
 
     broadcastAccountChange(accountId, 'account-subscription', 'updated', subscription.id)
     broadcastAccountChange(accountId, 'account-wallet', 'updated', accountId)

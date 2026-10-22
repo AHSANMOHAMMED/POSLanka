@@ -5,6 +5,7 @@ import { useChatStore, ChatMessage } from '@/lib/stores/chat-store'
 import { useWebSocket, useDataChange } from './useWebSocket'
 import { useSession } from 'next-auth/react'
 import type { DataChangeEvent } from '@/lib/websocket/events'
+import { sharedJson, whenIdle } from '@/lib/client/shared-fetch'
 
 export function useStaffChat() {
   const store = useChatStore()
@@ -19,11 +20,8 @@ export function useStaffChat() {
   // Fetch conversations list
   const fetchConversations = useCallback(async () => {
     try {
-      const res = await fetch('/api/chat/conversations')
-      if (res.ok) {
-        const data = await res.json()
-        store.setConversations(data.data || [])
-      }
+      const data = await sharedJson<{ data?: Parameters<typeof store.setConversations>[0] }>('/api/chat/conversations', { maxAgeMs: 0 })
+      store.setConversations(data.data || [])
     } catch {
       // silent fail
     }
@@ -91,14 +89,9 @@ export function useStaffChat() {
   // Fetch unread count with backoff on failure
   const fetchUnreadCount = useCallback(async () => {
     try {
-      const res = await fetch('/api/chat/unread')
-      if (res.ok) {
-        const data = await res.json()
-        store.setTotalUnreadCount(data.unreadCount || 0)
-        failCountRef.current = 0
-      } else {
-        failCountRef.current++
-      }
+      const data = await sharedJson<{ unreadCount?: number }>('/api/chat/unread', { maxAgeMs: 0 })
+      store.setTotalUnreadCount(data.unreadCount || 0)
+      failCountRef.current = 0
     } catch {
       failCountRef.current++
     }
@@ -187,7 +180,8 @@ export function useStaffChat() {
       }, delay)
     }
 
-    fetchUnreadCount().then(schedulePoll)
+    // Chat badge is low priority: let the page's own requests go first
+    whenIdle().then(() => { if (!cancelled) fetchUnreadCount().then(schedulePoll) })
 
     // Resume polling when tab becomes visible again
     const handleVisibility = () => {
@@ -206,7 +200,7 @@ export function useStaffChat() {
 
   // Initial fetch of conversations
   useEffect(() => {
-    fetchConversations()
+    whenIdle().then(fetchConversations)
   }, [fetchConversations])
 
   return {

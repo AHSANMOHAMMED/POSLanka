@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { dealerPayments, dealers } from '@/lib/db/schema'
+import { dealerPayments, dealers, dealerAllocations } from '@/lib/db/schema'
 import { eq, and, desc, sql, or, ilike, gte, lte } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
           dealerAllocation: true,
           sale: true,
           createdByUser: SAFE_USER,
-          confirmedByUser: true,
+          confirmedByUser: SAFE_USER,
         },
         orderBy: [desc(dealerPayments.createdAt)],
         limit,
@@ -128,6 +128,16 @@ export async function POST(request: NextRequest) {
         const [dealer] = await tx.select().from(dealers).where(eq(dealers.id, dealerId)).for('update')
         if (!dealer) {
           throw new Error('DEALER_NOT_FOUND')
+        }
+
+        // A payment linked to an allocation must be for that allocation's dealer (and vehicle)
+        if (dealerAllocationId) {
+          const allocation = await tx.query.dealerAllocations.findFirst({
+            where: eq(dealerAllocations.id, dealerAllocationId),
+          })
+          if (!allocation || allocation.dealerId !== dealerId || (vehInvId && allocation.vehicleInventoryId !== vehInvId)) {
+            throw new Error('ALLOCATION_MISMATCH')
+          }
         }
 
         const today = new Date()
@@ -198,6 +208,9 @@ export async function POST(request: NextRequest) {
     }
     if (err.message === 'DEALER_NOT_FOUND') {
       return NextResponse.json({ error: 'Dealer not found' }, { status: 404 })
+    }
+    if (err.message === 'ALLOCATION_MISMATCH') {
+      return NextResponse.json({ error: 'The allocation does not belong to this dealer / vehicle' }, { status: 400 })
     }
     logError('api/dealer-payments', error)
     return NextResponse.json({ error: 'Failed to create dealer payment' }, { status: 500 })

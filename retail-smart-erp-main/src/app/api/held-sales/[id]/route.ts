@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 import { withTenant } from '@/lib/db'
 import { heldSales } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -20,6 +21,10 @@ export async function GET(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // H4: same permission as holding a sale
+    const permError = requirePermission(session, 'createSales')
+    if (permError) return permError
+
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
@@ -31,7 +36,7 @@ export async function GET(
         with: {
           customer: true,
           vehicle: true,
-          heldByUser: true,
+          heldByUser: SAFE_USER,
         },
       })
 

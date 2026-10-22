@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { reservationsListSchema, createReservationSchema } from '@/lib/validation/schemas/restaurant'
+import { findTableReservationConflict } from '@/lib/restaurant/reservation-conflicts'
 
 function generateConfirmationCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // Exclude confusing chars (0,O,1,I)
@@ -145,13 +146,22 @@ export async function POST(request: NextRequest) {
     } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
-      // Validate table if provided
+      // Validate table if provided, and refuse to double-book it. The table row is locked so
+      // two bookings for the same slot made at the same moment cannot both pass the check.
       if (tableId) {
-        const table = await db.query.restaurantTables.findFirst({
-          where: eq(restaurantTables.id, tableId),
-        })
+        const [table] = await db.select({ id: restaurantTables.id })
+          .from(restaurantTables).where(eq(restaurantTables.id, tableId)).for('update')
         if (!table) {
           return NextResponse.json({ error: 'Table not found' }, { status: 404 })
+        }
+        const conflict = await findTableReservationConflict(db, {
+          tableId, reservationDate, reservationTime, estimatedDuration,
+        })
+        if (conflict) {
+          return NextResponse.json({
+            error: `This table is already reserved at ${conflict.reservationTime.slice(0, 5)}${conflict.customerName ? ` (${conflict.customerName})` : ''}. Choose another table or time.`,
+            code: 'TABLE_DOUBLE_BOOKED',
+          }, { status: 409 })
         }
       }
 

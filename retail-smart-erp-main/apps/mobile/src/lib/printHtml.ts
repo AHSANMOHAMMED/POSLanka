@@ -1,6 +1,6 @@
 // Pure HTML fragments for the `system` print transport (expo-print) and PDF receipts.
 // No React Native imports, so tests can render them under Node.
-import { formatReceiptDate, money, paymentLabel, type ReceiptBusiness, type ReceiptLogo, type ZReportInput } from './escpos'
+import { formatReceiptDate, money, paymentLabel, zReportDetailRows, type ReceiptBusiness, type ReceiptLogo, type ZReportInput } from './escpos'
 
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -64,6 +64,10 @@ export function zReportHtml(input: ZReportInput): string {
     <table><tr class="b"><td>Tender</td><td class="r">Expected</td><td class="r">Counted</td><td class="r">Variance</td></tr>${tenders}</table>
     <hr>
     <table><tr class="b big"><td>TOTAL VARIANCE</td><td class="r">${tv > 0 ? '+' : ''}${money(tv)}</td></tr></table>
+    ${input.varianceReason ? `<p>Reason: ${escapeHtml(input.varianceReason)}</p>` : ''}
+    ${zReportDetailRows(input.details)
+      .map((sec) => `<hr><div class="b">${escapeHtml(sec.section)}</div><table>${sec.rows.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="r">${escapeHtml(v)}</td></tr>`).join('')}</table>`)
+      .join('')}
     ${input.notes ? `<p>Notes: ${escapeHtml(input.notes)}</p>` : ''}
     <p>Signature: ____________________</p>
     <div class="c">Powered by POSLanka</div>`

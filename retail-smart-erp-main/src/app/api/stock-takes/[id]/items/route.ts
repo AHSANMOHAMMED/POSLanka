@@ -82,6 +82,7 @@ export async function PUT(
           countedBy: session.user.id,
           countedAt: new Date(),
           notes: update.notes || item.notes,
+          ...(update.reasonCode ? { reasonCode: update.reasonCode } : {}),
         })
         .where(eq(stockTakeItems.id, update.itemId))
     }

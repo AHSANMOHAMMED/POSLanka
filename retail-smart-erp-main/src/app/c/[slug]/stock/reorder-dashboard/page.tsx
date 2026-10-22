@@ -16,16 +16,27 @@ interface ReorderItem {
   categoryName: string
   supplierId: string | null
   supplierName: string
+  warehouseId: string
+  warehouseName: string
   currentStock: number
+  reservedStock: number
+  onOrder: number
+  onRequisition: number
+  projectedStock: number
   minStock: number
+  maxStock: number | null
+  unitCost: number
   suggestedQty: number
   estimatedCost: number
   leadTimeDays: number | null
 }
 
 interface SupplierGroup {
+  key: string
   supplierId: string
   supplierName: string
+  warehouseId: string
+  warehouseName: string
   items: ReorderItem[]
   totalCost: number
 }
@@ -56,7 +67,7 @@ export default function ReorderDashboardPage() {
         const result = await res.json()
         setData(result)
         // Auto-expand all groups
-        setExpandedGroups(new Set(result.supplierGroups.map((g: SupplierGroup) => g.supplierId)))
+        setExpandedGroups(new Set(result.supplierGroups.map((g: SupplierGroup) => g.key)))
       } else {
         toast.error('Failed to load reorder data')
       }
@@ -68,7 +79,7 @@ export default function ReorderDashboardPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
-  useRealtimeData(fetchData, { entityType: ['item', 'purchase', 'warehouse-stock'], refreshOnMount: false })
+  useRealtimeData(fetchData, { entityType: ['item', 'purchase', 'purchase-order', 'purchase-requisition', 'warehouse-stock'], refreshOnMount: false })
 
   function toggleGroup(supplierId: string) {
     setExpandedGroups(prev => {
@@ -79,51 +90,45 @@ export default function ReorderDashboardPage() {
     })
   }
 
-  async function handleCreatePO(group: SupplierGroup) {
-    if (group.supplierId === 'no-supplier') {
+  // H3: one draft PO per supplier + warehouse (the suggestion's own warehouse), or a draft
+  // purchase requisition; open POs / requisitions count as on order afterwards.
+  async function handleCreate(group: SupplierGroup, mode: 'purchase_order' | 'requisition') {
+    if (mode === 'purchase_order' && group.supplierId === 'no-supplier') {
       toast.error('Cannot create PO for items without a supplier')
       return
     }
 
-    setCreatingPO(group.supplierId)
+    setCreatingPO(`${group.key}:${mode}`)
     try {
-      // Get first warehouse from the items (they all should be from the same or we pick the first)
-      const warehouseRes = await fetch('/api/warehouses?all=true')
-      const warehouses = await warehouseRes.json()
-      const firstWarehouse = (Array.isArray(warehouses) ? warehouses : warehouses.data)?.[0]
-
-      if (!firstWarehouse) {
-        toast.error('No warehouse found')
-        return
-      }
-
-      // Create PO
-      const poRes = await fetch('/api/purchase-orders', {
+      const res = await fetch('/api/purchase-orders/from-reorder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          supplierId: group.supplierId,
-          warehouseId: firstWarehouse.id,
-          notes: `Auto-generated from reorder dashboard`,
-          items: group.items.map(item => ({
+          mode,
+          lines: group.items.map(item => ({
             itemId: item.itemId,
-            itemName: item.itemName,
+            warehouseId: item.warehouseId,
+            supplierId: item.supplierId,
             quantity: item.suggestedQty,
-            unitPrice: item.estimatedCost / (item.suggestedQty || 1),
+            unitPrice: item.unitCost,
           })),
         }),
       })
-
-      if (poRes.ok) {
-        const po = await poRes.json()
-        toast.success(`Purchase Order ${po.orderNo} created`)
-        router.push(`/c/${tenantSlug}/purchase-orders/${po.id}`)
-      } else {
-        const err = await poRes.json()
-        toast.error(err.error || 'Failed to create purchase order')
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast.error(body.error || 'Failed to create document')
+        return
+      }
+      const doc = body.documents?.[0]
+      if (mode === 'purchase_order' && doc) {
+        toast.success(`Purchase Order ${doc.number} created`)
+        router.push(`/c/${tenantSlug}/purchase-orders/${doc.id}`)
+      } else if (doc) {
+        toast.success(`Purchase Requisition ${doc.number} created`)
+        router.push(`/c/${tenantSlug}/purchase-requisitions/${doc.id}`)
       }
     } catch {
-      toast.error('Error creating purchase order')
+      toast.error('Error creating document')
     } finally {
       setCreatingPO(null)
     }
@@ -198,34 +203,43 @@ export default function ReorderDashboardPage() {
           ) : (
             <div className="space-y-3">
               {data.supplierGroups.map((group) => (
-                <div key={group.supplierId} className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+                <div key={group.key} className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
                   <button
-                    onClick={() => toggleGroup(group.supplierId)}
+                    onClick={() => toggleGroup(group.key)}
                     className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-700/50"
                   >
                     <div className="flex items-center gap-3">
                       <Truck size={16} className="text-gray-400" />
                       <span className="font-medium text-gray-900 dark:text-white">{group.supplierName}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">→ {group.warehouseName}</span>
                       <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-0.5 rounded-full">
                         {group.items.length} item{group.items.length !== 1 ? 's' : ''}
                       </span>
                       <span className="text-xs text-gray-500">Est: {formatCurrency(group.totalCost, currency)}</span>
                     </div>
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleCreate(group, 'requisition') }}
+                        disabled={creatingPO !== null}
+                        className="px-3 py-1 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded text-xs hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 flex items-center gap-1"
+                      >
+                        {creatingPO === `${group.key}:requisition` ? <Loader2 size={12} className="animate-spin" /> : null}
+                        Create Requisition
+                      </button>
                       {group.supplierId !== 'no-supplier' && (
                         <button
-                          onClick={(e) => { e.stopPropagation(); handleCreatePO(group) }}
-                          disabled={creatingPO === group.supplierId}
+                          onClick={(e) => { e.stopPropagation(); handleCreate(group, 'purchase_order') }}
+                          disabled={creatingPO !== null}
                           className="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
                         >
-                          {creatingPO === group.supplierId ? <Loader2 size={12} className="animate-spin" /> : <ShoppingCart size={12} />}
+                          {creatingPO === `${group.key}:purchase_order` ? <Loader2 size={12} className="animate-spin" /> : <ShoppingCart size={12} />}
                           Create PO
                         </button>
                       )}
-                      {expandedGroups.has(group.supplierId) ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                      {expandedGroups.has(group.key) ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
                     </div>
                   </button>
-                  {expandedGroups.has(group.supplierId) && (
+                  {expandedGroups.has(group.key) && (
                     <div className="border-t border-gray-100 dark:border-gray-700">
                       <table className="w-full text-sm">
                         <thead>
@@ -233,14 +247,17 @@ export default function ReorderDashboardPage() {
                             <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">Item</th>
                             <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 uppercase">SKU</th>
                             <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Current</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Reserved</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">On Order</th>
                             <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Min Level</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Max Level</th>
                             <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Suggested Qty</th>
                             <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 uppercase">Est. Cost</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50 dark:divide-gray-800">
                           {group.items.map((item) => (
-                            <tr key={item.itemId} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                            <tr key={`${item.itemId}:${item.warehouseId}`} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                               <td className="px-4 py-2 font-medium text-gray-900 dark:text-white">{item.itemName}</td>
                               <td className="px-4 py-2 text-gray-500">{item.itemSku}</td>
                               <td className="px-4 py-2 text-right">
@@ -248,7 +265,10 @@ export default function ReorderDashboardPage() {
                                   {item.currentStock}
                                 </span>
                               </td>
+                              <td className="px-4 py-2 text-right text-gray-600 dark:text-gray-400">{item.reservedStock || '-'}</td>
+                              <td className="px-4 py-2 text-right text-gray-600 dark:text-gray-400">{(item.onOrder + item.onRequisition) || '-'}</td>
                               <td className="px-4 py-2 text-right text-gray-600 dark:text-gray-400">{item.minStock}</td>
+                              <td className="px-4 py-2 text-right text-gray-600 dark:text-gray-400">{item.maxStock ?? '-'}</td>
                               <td className="px-4 py-2 text-right font-medium text-blue-600">{item.suggestedQty}</td>
                               <td className="px-4 py-2 text-right text-gray-700 dark:text-gray-300">{formatCurrency(item.estimatedCost, currency)}</td>
                             </tr>

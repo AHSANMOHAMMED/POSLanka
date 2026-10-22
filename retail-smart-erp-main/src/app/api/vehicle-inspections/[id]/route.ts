@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 import { dealershipInspections } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -30,7 +31,7 @@ export async function GET(
         where: eq(dealershipInspections.id, id),
         with: {
           vehicleInventory: true,
-          inspectedByUser: true,
+          inspectedByUser: SAFE_USER,
         },
       })
 

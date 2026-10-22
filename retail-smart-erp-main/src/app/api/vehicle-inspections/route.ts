@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 import { dealershipInspections, vehicleInventory } from '@/lib/db/schema'
 import { eq, and, desc, sql, or, ilike } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
@@ -58,7 +59,7 @@ export async function GET(request: NextRequest) {
         where: whereClause,
         with: {
           vehicleInventory: true,
-          inspectedByUser: true,
+          inspectedByUser: SAFE_USER,
         },
         orderBy: [desc(dealershipInspections.createdAt)],
         limit,

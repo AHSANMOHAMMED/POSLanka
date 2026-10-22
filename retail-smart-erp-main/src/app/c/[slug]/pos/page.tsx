@@ -21,6 +21,7 @@ import {
   CashierLockModal,
   CashDrawerFloatModal,
   PriceCheckModal,
+  CashMovementModal,
 } from '@/components/pos'
 import { POS_SEARCH_INPUT_ID } from '@/components/pos/ProductGrid'
 import { publishPosDisplay, createIdlePosDisplayState } from '@/lib/pos/display-channel'
@@ -71,7 +72,7 @@ import {
   type KitchenPlan,
   type KitchenSentMap,
 } from '@/lib/print/kitchen-delta'
-import { fetchLogoRaster, loadReceiptModel } from '@/lib/print/receipt-loader'
+import { fetchLogoRaster, loadReceiptModel, buildLocalReceiptModel, type SaleForReceipt } from '@/lib/print/receipt-loader'
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
 import type { PaperSize } from '@/lib/print/types'
 import { useCurrency } from '@/hooks/useCurrency'
@@ -82,6 +83,7 @@ import { usePOSBusinessConfig } from '@/hooks/usePOSBusinessConfig'
 import { useOfflinePos } from '@/hooks/useOfflinePos'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel } from '@/lib/utils/item-display'
+import { usePriceQuote, lineNet } from '@/components/pos/price-quote'
 
 /** Printed receipt / return / offline receipt numbers scanned at the POS (W8). */
 const RECEIPT_CODE_RE = /^(INV|RTN|OFF)-/i
@@ -177,7 +179,7 @@ export default function POSPage() {
   const [splitEnabled, setSplitEnabled] = useState(false)
   const [splitSecondMethod, setSplitSecondMethod] = useState('card')
   const [splitSecondAmount, setSplitSecondAmount] = useState('')
-  const { online, queueSale, cacheCatalog, loadCachedCatalog } = useOfflinePos()
+  const { online, queueSale, cacheCatalog, loadCachedCatalog, newClientSaleId: generateClientSaleId } = useOfflinePos()
   // Gift card state
   const [giftCardNumber, setGiftCardNumber] = useState('')
   const [giftCardInfo, setGiftCardInfo] = useState<GiftCardInfo | null>(null)
@@ -234,13 +236,24 @@ export default function POSPage() {
     | { type: 'price_override'; cartLineId: string; newPrice: number; itemName: string; originalPrice: number }
     | { type: 'cart_void' }
     | { type: 'quick_add_item' }
+    /** H1: the server refused the sale (403 APPROVAL_REQUIRED) — approve and retry */
+    | { type: 'sale_approval'; scopes: string[]; message: string }
   const [supervisorRequest, setSupervisorRequest] = useState<SupervisorRequest | null>(null)
+  // H1: signed supervisor approvals for the current cart (sent with the sale, spent once)
+  const approvalTokensRef = useRef<string[]>([])
+  const [showCashMovementModal, setShowCashMovementModal] = useState(false)
   const [terminalLocked, setTerminalLocked] = useState(false)
   const [clearCartConfirm, setClearCartConfirm] = useState(false)
   const lastActivityRef = useRef(Date.now())
   // One idempotency key per cart: survives retries, reset after a successful sale / clear
-  const clientSaleIdRef = useRef<string>(typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : '')
-  const newClientSaleId = () => { clientSaleIdRef.current = typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : '' }
+  // (generateClientSaleId also works where crypto.randomUUID does not, e.g. plain-http LAN tills)
+  const clientSaleIdRef = useRef<string>('')
+  const newClientSaleId = () => { clientSaleIdRef.current = generateClientSaleId() }
+  /** The cart's idempotency key, created on first use (before the first POST /api/sales) */
+  const ensureClientSaleId = () => {
+    if (!clientSaleIdRef.current) clientSaleIdRef.current = generateClientSaleId()
+    return clientSaleIdRef.current
+  }
 
   // Supermarket: weighable item state
   const [weightInputItem, setWeightInputItem] = useState<Item | null>(null)
@@ -292,6 +305,8 @@ export default function POSPage() {
   const [tables, setTables] = useState<RestaurantTable[]>([])
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null)
   const [restaurantOrderId, setRestaurantOrderId] = useState<string | null>(null)
+  // H5: coupon entered at the till (price lists / promotions come from /api/price-quote)
+  const [couponCode, setCouponCode] = useState('')
   /** Quantities already on a kitchen ticket, per cart line, for the current restaurant order. */
   const kitchenSentRef = useRef<{ orderId: string | null; sent: KitchenSentMap }>({ orderId: null, sent: {} })
   const [tipAmount, setTipAmount] = useState(0)
@@ -305,6 +320,9 @@ export default function POSPage() {
   const [printingReceipt] = useState(false)
   // Receipt printer (ESC/POS via USB / Bluetooth / print agent) + camera scanner
   const printer = usePrinter()
+  // Offline sales (OFF- receipt numbers) exist only on this device until they sync: their receipt
+  // is printed from the cart (keyed `offline:<OFF-ref>` in lastSaleId)
+  const offlineReceiptsRef = useRef(new Map<string, SaleForReceipt>())
   const [showPrinterSettings, setShowPrinterSettings] = useState(false)
   const [showCameraScan, setShowCameraScan] = useState(false)
 
@@ -751,13 +769,60 @@ export default function POSPage() {
     addToCartDirect(item, { quantity })
   }
 
+  /**
+   * Weighed / price-label lines are kept in the cart as quantity 1 at the label amount (the
+   * weight rides along for display and the kitchen). The sale itself must record the weight as
+   * the quantity so stock goes down by the weight, at a per-unit price that reproduces the label
+   * amount to the cent (any sub-cent remainder becomes a tiny line discount).
+   */
+  function toSaleLine<T extends CartItem>(c: T): T & { discount?: number } {
+    if (!c.isWeighable || !c.weight || !(c.weight > 0) || c.quantity !== 1) return c
+    const qty = Math.round(c.weight * 1000) / 1000
+    const lineTotal = roundCurrency(c.total)
+    if (!(qty > 0) || qty === 1) return c
+    const base = roundCurrency(lineTotal / qty)
+    for (let k = 0; k <= 5; k++) {
+      for (const p of k === 0 ? [base] : [roundCurrency(base + k / 100), roundCurrency(base - k / 100)]) {
+        if (p >= 0 && roundCurrency(p * qty) === lineTotal) {
+          return { ...c, quantity: qty, unitPrice: p, total: lineTotal }
+        }
+      }
+    }
+    const p = Math.ceil((lineTotal / qty) * 100) / 100
+    return { ...c, quantity: qty, unitPrice: p, discount: roundCurrency(roundCurrency(p * qty) - lineTotal), total: lineTotal }
+  }
+
   /** Add a scanned item honouring scan-derived quantity/price (weighing-scale labels, GS1 net weight / price) or scan multiplier. */
   function addScannedItem(
-    item: Item & { scan?: { quantity?: number; unitPrice?: number; lineTotal?: number; symbology?: string; batchNo?: string } },
+    item: Item & {
+      scan?: { quantity?: number; unitPrice?: number; lineTotal?: number; symbology?: string; batchNo?: string; matchedBy?: string }
+      uom?: string | null; uomFactor?: number; packQty?: number; uomPrice?: number; priceOverride?: number | null; matchedBarcode?: string | null
+    },
     overrideQty?: number
   ) {
     const scan = item.scan
     const effectiveMult = (overrideQty && overrideQty > 0) ? overrideQty : 1
+
+    // H5: additional / unit barcode (box of 12, pack of 6 …): sell packQty of that unit
+    if (!isReturnMode && !item.trackSerialNumbers && (scan?.matchedBy === 'item_barcode' || scan?.matchedBy === 'uom_barcode')
+      && ((item.uom && (item.uomFactor || 1) !== 1) || (item.packQty || 1) !== 1 || item.priceOverride != null)) {
+      const qty = (item.packQty || 1) * effectiveMult
+      const unitPrice = roundCurrency(item.uomPrice ?? parseFloat(item.sellingPrice))
+      setCart(prev => [...prev, {
+        cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        itemId: item.id,
+        name: item.uom ? `${formatItemLabel(item, company.businessType)} (${item.uom})` : formatItemLabel(item, company.businessType),
+        quantity: qty,
+        unitPrice,
+        total: roundCurrency(unitPrice * qty),
+        uom: item.uom || null,
+        uomFactor: item.uomFactor || 1,
+        priceLocked: item.priceOverride != null,
+        ...(item.priceOverride != null && item.matchedBarcode ? { barcode: item.matchedBarcode } : {}),
+        taxTemplateId: item.taxTemplateId || null,
+      }])
+      return
+    }
     // D1: GS1 batch (AI 10) on a batch-tracked item → sell that batch
     if (scan?.batchNo && item.trackBatches && !isReturnMode && !item.trackSerialNumbers && !item.isWeighable) {
       addToCartDirect(item, { batchNumber: scan.batchNo, quantity: effectiveMult })
@@ -1015,7 +1080,7 @@ export default function POSPage() {
   function applyPrice(cartLineId: string, newPrice: number) {
     setCart(prev => prev.map(c =>
       c.cartLineId === cartLineId
-        ? { ...c, unitPrice: newPrice, total: c.quantity * newPrice }
+        ? { ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true }
         : c
     ))
   }
@@ -1035,7 +1100,7 @@ export default function POSPage() {
     }
     setCart(cart.map(c =>
       c.cartLineId === cartLineId
-        ? { ...c, unitPrice: newPrice, total: c.quantity * newPrice }
+        ? { ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true }
         : c
     ))
   }
@@ -1051,6 +1116,7 @@ export default function POSPage() {
 
   function clearCart() {
     newClientSaleId()
+    approvalTokensRef.current = []
     setCart([])
     setSelectedCustomer(null)
     setSelectedVehicle(null)
@@ -1058,6 +1124,7 @@ export default function POSPage() {
     setReturnAgainstSale(null)
     setExchangeFrom(null)
     setSaleDiscount({ type: 'percentage', value: 0, reason: '' })
+    setCouponCode('')
     setLoyaltyPointsToRedeem('')
     setShowLoyaltyRedeem(false)
     setRestaurantOrderId(null)
@@ -1631,7 +1698,7 @@ export default function POSPage() {
           warehouseId: posWarehouse?.id,
           posOpeningEntryId: activeShift?.id,
           customerId: selectedCustomer?.id,
-          clientSaleId: clientSaleIdRef.current || undefined,
+          clientSaleId: ensureClientSaleId(),
         }),
       })
       const data = await res.json()
@@ -1689,7 +1756,21 @@ export default function POSPage() {
 
   // ─── Computed Values ──────────────────────────────────────────
 
-  const subtotal = cart.reduce((sum, item) => sum + item.total, 0)
+  // H5: price lists + promotions (sales only; returns / exchanges / restaurant orders keep their prices)
+  const pricingEnabled = !isReturnMode && !exchangeFrom && !restaurantOrderId
+  const { cartPromotions, cartPromotionDiscount, applyQuote } = usePriceQuote({
+    cart, setCart, enabled: pricingEnabled, online,
+    tenantSlug: company.tenantSlug,
+    customerType: (selectedCustomer as { customerType?: string | null } | null)?.customerType ?? null,
+    categoryOf: (itemId) => items.find((i) => i.id === itemId)?.categoryId ?? null,
+    customerId: selectedCustomer?.id || null,
+    posProfileId: posProfile?.id || null,
+    couponCodes: couponCode ? [couponCode] : [],
+    toSaleLine,
+  })
+
+  // line totals net of their promotions (what POST /api/sales checks the subtotal against)
+  const subtotal = roundCurrency(cart.reduce((sum, item) => sum + lineNet(item), 0))
   const itemCount = cart.reduce((sum, item) => sum + Math.abs(item.quantity), 0)
 
   const discountAmount = saleDiscount.value > 0
@@ -1697,7 +1778,7 @@ export default function POSPage() {
       ? (Math.abs(subtotal) * saleDiscount.value) / 100
       : saleDiscount.value)
     : 0
-  const afterDiscount = subtotal - (subtotal >= 0 ? discountAmount : -discountAmount)
+  const afterDiscount = subtotal - (subtotal >= 0 ? discountAmount + cartPromotionDiscount : -discountAmount)
 
   const loyaltyRedeemPoints = parseInt(loyaltyPointsToRedeem) || 0
   const loyaltyConversionFactor = loyaltyProgram ? parseFloat(loyaltyProgram.conversionFactor) : 0
@@ -1715,7 +1796,7 @@ export default function POSPage() {
 
     // Proportionally distribute discount across items
     const absSubtotal = Math.abs(subtotal)
-    const discRatio = absSubtotal > 0 ? 1 - (discountAmount / absSubtotal) : 1
+    const discRatio = absSubtotal > 0 ? 1 - ((discountAmount + cartPromotionDiscount) / absSubtotal) : 1
 
     let totalTax = 0
     const allBreakdowns: TaxBreakdownItem[][] = []
@@ -1723,7 +1804,7 @@ export default function POSPage() {
       // Resolve template: item-level → default → null (zero tax)
       const templateId = item.taxTemplateId
       const template = templateId ? taxTemplatesMap.get(templateId) || defaultTaxTemplate : defaultTaxTemplate
-      const discountedLineTotal = item.total * discRatio
+      const discountedLineTotal = lineNet(item) * discRatio
       const result = calculateItemTax(discountedLineTotal, template, false)
       totalTax += result.totalTax
       if (result.breakdown.length > 0) {
@@ -1743,14 +1824,15 @@ export default function POSPage() {
       saleTaxBreakdown: aggregateTaxBreakdown(allBreakdowns),
       cartWithTax: updatedCart,
     }
-  }, [cart, subtotal, discountAmount, isTaxExempt, isReturnMode, taxTemplatesMap, defaultTaxTemplate])
+  }, [cart, subtotal, discountAmount, cartPromotionDiscount, isTaxExempt, isReturnMode, taxTemplatesMap, defaultTaxTemplate])
 
-  // Check if any template has inclusive components
-  const hasInclusiveTax = useMemo(() => {
-    return saleTaxBreakdown.some(b => b.includedInPrice)
+  // Only exclusive tax components are added on top; inclusive ones are already in the prices.
+  // (A cart can mix both — e.g. one item on a VAT-inclusive template, another exclusive.)
+  const exclusiveTax = useMemo(() => {
+    return roundCurrency(saleTaxBreakdown.filter(b => !b.includedInPrice).reduce((s, b) => s + b.amount, 0))
   }, [saleTaxBreakdown])
 
-  const total = hasInclusiveTax ? afterDiscount : afterDiscount + tax
+  const total = roundCurrency(afterDiscount + exclusiveTax)
 
   const filteredVehicles = useMemo(() => {
     if (!selectedCustomer?.id) return vehicles
@@ -1811,14 +1893,31 @@ export default function POSPage() {
   // ─── Supervisor PIN override ───────────────────────────────────
   async function authorizeSupervisor(pin: string, reason: string): Promise<boolean> {
     if (!supervisorRequest) return false
+    // Scopes the server checks for this action (the token is verified again on POST /api/sales)
+    const approvalScopes = supervisorRequest.type === 'custom_discount' ? ['discount']
+      : supervisorRequest.type === 'price_override' ? ['price_change']
+        : supervisorRequest.type === 'sale_approval' ? supervisorRequest.scopes
+          : []
     const res = await fetch('/api/auth/verify-pin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin, scope: 'supervisor', permission: 'manageSales', reason }),
+      body: JSON.stringify({
+        pin, scope: 'supervisor', permission: 'manageSales', reason,
+        approvalScopes: approvalScopes.length > 0 ? approvalScopes : undefined,
+        context: {
+          posOpeningEntryId: activeShift?.id,
+          posProfileId: posProfile?.id,
+          detail: supervisorRequest.type === 'sale_approval' ? supervisorRequest.message
+            : supervisorRequest.type === 'price_override' ? `${supervisorRequest.itemName}: ${supervisorRequest.originalPrice} → ${supervisorRequest.newPrice}`
+              : supervisorRequest.type === 'custom_discount' ? `discount ${supervisorRequest.discount.value}${supervisorRequest.discount.type === 'percentage' ? '%' : ''}`
+                : 'cart void',
+        },
+      }),
     })
     const data = await res.json().catch(() => ({}))
     if (res.status === 429) throw new Error(data.error || 'Too many attempts')
     if (!res.ok || !data.ok) return false
+    if (approvalScopes.length > 0 && data.approvalToken) approvalTokensRef.current = [...approvalTokensRef.current, data.approvalToken]
     const approver: string = data.user?.name || 'Supervisor'
     if (supervisorRequest.type === 'custom_discount') {
       const d = supervisorRequest.discount
@@ -1831,7 +1930,9 @@ export default function POSPage() {
       setShowQuickAddModal(true)
     }
     toast.success(`Approved by ${approver}`)
+    const retrySale = supervisorRequest.type === 'sale_approval'
     setSupervisorRequest(null)
+    if (retrySale) void completeSale()
     return true
   }
 
@@ -1978,7 +2079,7 @@ export default function POSPage() {
       !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
     const modalOpen = showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
       || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || showFloatModal || showPriceCheckModal
-      || showQuickAddModal || !!variantPickerParentItem || !!supervisorRequest || clearCartConfirm
+      || showQuickAddModal || !!variantPickerParentItem || !!supervisorRequest || clearCartConfirm || showCashMovementModal
 
     let barcodeBuffer = ''
     let lastKeyTime = 0
@@ -2051,7 +2152,7 @@ export default function POSPage() {
     return () => window.removeEventListener('keydown', onKey)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPayment, showDiscountModal, showHeldSalesModal, showCustomerModal, showVehicleModal, showShiftOpenModal, showShiftCloseModal,
-      showReturnLookupModal, showFloatModal, showPriceCheckModal, showQuickAddModal, variantPickerParentItem, supervisorRequest, clearCartConfirm, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
+      showReturnLookupModal, showFloatModal, showPriceCheckModal, showQuickAddModal, variantPickerParentItem, supervisorRequest, clearCartConfirm, showCashMovementModal, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
 
   // ─── Customer-facing display mirror (/pos/display) ─────────────
   useEffect(() => {
@@ -2104,6 +2205,46 @@ export default function POSPage() {
     setShowPayment(true)
   }
 
+  /** Receipt source for a sale queued offline (what the customer was charged on this device). */
+  function rememberOfflineReceipt(offlineRef: string, payload: Record<string, unknown>) {
+    const lines = (payload.cartItems as Array<CartItem & { discount?: number }>) || []
+    const splits = payload.paymentSplits as Array<{ method: string; amount: number }> | undefined
+    const total = Number(payload.total) || 0
+    const paid = Number(payload.amountPaid) || 0
+    const sale: SaleForReceipt = {
+      id: `offline:${offlineRef}`,
+      invoiceNo: offlineRef,
+      createdAt: new Date().toISOString(),
+      customerName: selectedCustomer?.name || null,
+      customer: selectedCustomer ? { name: selectedCustomer.name, phone: selectedCustomer.phone || null } : null,
+      subtotal: Number(payload.subtotal) || 0,
+      discountAmount: roundCurrency((Number(payload.discount) || 0) + (Number(payload.promotionDiscount) || 0)),
+      promotionDiscount: Number(payload.promotionDiscount) || 0,
+      taxAmount: Number(payload.tax) || 0,
+      taxBreakdown: payload.taxBreakdown,
+      total,
+      paidAmount: paid,
+      changeAmount: payload.paymentMethod === 'cash' && paid > total ? roundCurrency(paid - total) : 0,
+      items: lines.map((l) => ({
+        itemName: l.name,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        total: roundCurrency(l.unitPrice * l.quantity - (l.discount || 0) - (l.promotionDiscount || 0)),
+        discount: roundCurrency((l.discount || 0) + (l.promotionDiscount || 0)),
+        uom: l.uom || null,
+        taxAmount: l.taxAmount,
+        taxRate: l.taxRate,
+        promotions: l.promotionDiscount ? [{ label: (l.promotionLabels || []).join(', ') || 'Promotion', amount: l.promotionDiscount }] : null,
+      })),
+      payments: splits && splits.length
+        ? splits.map((sp) => ({ method: sp.method, amount: sp.amount }))
+        : [{ method: String(payload.paymentMethod || 'cash'), amount: Math.min(paid, total) || total }],
+    }
+    offlineReceiptsRef.current.set(sale.id, sale)
+    setLastSaleId(sale.id)
+    if (posProfile?.printReceiptOnComplete) printReceiptForSale(sale.id)
+  }
+
   async function completeSale() {
     if (cart.length === 0 || processing) return
 
@@ -2148,7 +2289,7 @@ export default function POSPage() {
             amountPaid: 0,
             creditAmount: 0,
             addOverpaymentToCredit: refundMethod === 'credit',
-            clientSaleId: clientSaleIdRef.current || undefined,
+            clientSaleId: ensureClientSaleId(),
             isReturn: true,
             returnAgainst: returnAgainstSale?.id,
             // refund is priced by the server from the original invoice; it answers with refundAmount
@@ -2222,7 +2363,7 @@ export default function POSPage() {
         : undefined
 
     const salePayload = {
-      clientSaleId: clientSaleIdRef.current || undefined,
+      clientSaleId: ensureClientSaleId(),
       customerId: selectedCustomer?.id,
       vehicleId: selectedVehicle?.id,
       warehouseId: posWarehouse?.id,
@@ -2233,7 +2374,7 @@ export default function POSPage() {
       vehicleDescription: selectedVehicle
         ? `${selectedVehicle.year ? `${selectedVehicle.year} ` : ''}${selectedVehicle.make} ${selectedVehicle.model}`
         : undefined,
-      cartItems: cartWithTax,
+      cartItems: cartWithTax.map(toSaleLine),
       paymentMethod,
       paymentSplits,
       subtotal,
@@ -2251,19 +2392,27 @@ export default function POSPage() {
       restaurantOrderId: restaurantOrderId || undefined,
       tipAmount: tip > 0 ? tip : undefined,
       giftCardId: paymentMethod === 'gift_card' && giftCardInfo ? giftCardInfo.id : undefined,
+      approvalTokens: approvalTokensRef.current.length > 0 ? [...approvalTokensRef.current] : undefined,
+      // H5: cart promotions are not part of `discount` (manual); the server recomputes both
+      promotionDiscount: cartPromotionDiscount > 0 ? cartPromotionDiscount : undefined,
+      couponCodes: couponCode ? [couponCode] : undefined,
+      soldAt: online ? undefined : new Date().toISOString(),
     }
 
     setProcessing(true)
     try {
       if (!online) {
-        await queueSale(salePayload as Record<string, unknown>)
+        const queued = await queueSale(salePayload as Record<string, unknown>)
         clearCart()
         setShowPayment(false)
         setAmountPaid('')
         setCreditAmount('')
         setSplitEnabled(false)
         setSplitSecondAmount('')
-        toast.success('Sale queued offline — will sync when online')
+        // H4: the offline receipt number (OFF-…) identifies the sale until it syncs
+        setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
+        rememberOfflineReceipt(queued.offlineRef, salePayload as Record<string, unknown>)
+        toast.success(`Sale queued offline (receipt ${queued.offlineRef}) — will sync when online`)
         return
       }
 
@@ -2316,19 +2465,35 @@ export default function POSPage() {
         }
       } else {
         const error = await res.json()
+        if (res.status === 403 && error.code === 'APPROVAL_REQUIRED') {
+          // Over the counter's discount limit, below catalog price or over the credit limit:
+          // a supervisor approves on this terminal and the sale is retried with the token
+          setSupervisorRequest({ type: 'sale_approval', scopes: error.scopes || [], message: error.error || 'Supervisor approval required' })
+          return
+        }
+        if (res.status === 409 && error.code === 'PRICE_CHANGED' && error.quote) {
+          // H5: price lists / promotions changed (or the quote was not back yet): show the server's
+          // prices and let the cashier take payment again
+          applyQuote(error.quote)
+          setShowPayment(false)
+          toast.warning('Prices or promotions changed — review the cart and take payment again')
+          return
+        }
         toast.error(error.error || 'Failed to complete sale')
       }
     } catch (error) {
       console.error('Error completing sale:', error)
       try {
-        await queueSale(salePayload as Record<string, unknown>)
+        const queued = await queueSale(salePayload as Record<string, unknown>)
         clearCart()
         setShowPayment(false)
         setAmountPaid('')
         setCreditAmount('')
         setSplitEnabled(false)
         setSplitSecondAmount('')
-        toast.success('Network error — sale queued offline')
+        setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
+        rememberOfflineReceipt(queued.offlineRef, salePayload as Record<string, unknown>)
+        toast.success(`Network error — sale queued offline (receipt ${queued.offlineRef})`)
       } catch {
         toast.error('Error completing sale')
       }
@@ -2340,13 +2505,17 @@ export default function POSPage() {
   // ─── Receipt Printing ─────────────────────────────────────────
 
   async function printReceiptForSale(saleId: string) {
+    const receiptOpts = { posProfile: posProfile || null, cashier: cashierName || null, counter: posProfile?.name || null }
+    // Offline sale: model built on this device from the cart, marked with its OFF- number
+    const offlineSale = offlineReceiptsRef.current.get(saleId)
+    const loadModel = async () => offlineSale
+      ? buildLocalReceiptModel(offlineSale, { ...receiptOpts, copyLabel: 'OFFLINE SALE - pending sync' })
+      : loadReceiptModel(saleId, receiptOpts)
     // Direct ESC/POS printing (USB / Bluetooth / print agent). Falls back to the HTML path below on failure.
     if (printer.isRawPrinter) {
-      const printed = await printer.printReceipt(saleId, {
-        posProfile: posProfile || null,
-        cashier: cashierName || null,
-        counter: posProfile?.name || null,
-      })
+      const printed = offlineSale
+        ? await printer.printReceiptModel((await loadModel()).model)
+        : await printer.printReceipt(saleId, receiptOpts)
       if (printed) {
         setLastSale(null)
         setLastSaleId(null)
@@ -2356,11 +2525,7 @@ export default function POSPage() {
     }
     try {
       // Shared receipt model -> branded HTML (logo, business profile, invoice barcode / QR).
-      const { model } = await loadReceiptModel(saleId, {
-        posProfile: posProfile || null,
-        cashier: cashierName || null,
-        counter: posProfile?.name || null,
-      })
+      const { model } = await loadModel()
       const paperWidth: 58 | 80 = posProfile?.receiptPrintFormat === '58mm' ? 58 : 80
       const logo = model.logo.show ? await fetchLogoRaster(paperWidth === 58 ? 384 : 576, model.logo.widthPct, model.logo.url) : null
       const html = await renderReceiptHtml(model, paperWidth, {
@@ -2561,6 +2726,7 @@ export default function POSPage() {
         posWarehouseName={posWarehouse?.name || null}
         onOpenShift={() => setShowShiftOpenModal(true)}
         onCloseShift={() => setShowShiftCloseModal(true)}
+        onCashMovement={() => setShowCashMovementModal(true)}
         onOpenReturnLookup={() => setShowReturnLookupModal(true)}
         cartHasItems={cart.length > 0}
         onReturnModeConfirm={() => setReturnModeConfirm(true)}
@@ -2617,6 +2783,9 @@ export default function POSPage() {
         onTipChange={config.enableTips ? setTipAmount : undefined}
         onSendToKitchen={config.enableKitchenSend ? handleSendToKitchen : undefined}
         restaurantOrderId={restaurantOrderId}
+        cartPromotions={pricingEnabled ? cartPromotions : []}
+        couponCode={couponCode}
+        onCouponChange={isReturnMode ? undefined : setCouponCode}
       />
 
       <POSPaymentModal
@@ -2819,8 +2988,18 @@ export default function POSPage() {
               }
             : supervisorRequest?.type === 'price_override'
               ? { itemName: supervisorRequest.itemName, originalPrice: supervisorRequest.originalPrice, requestedPrice: supervisorRequest.newPrice }
-              : {}),
+              : supervisorRequest?.type === 'sale_approval'
+                ? { message: supervisorRequest.message }
+                : {}),
         }}
+      />
+
+      {/* H1: cash paid in / out of the drawer */}
+      <CashMovementModal
+        isOpen={showCashMovementModal}
+        onClose={() => setShowCashMovementModal(false)}
+        shift={activeShift ? { id: activeShift.id, entryNumber: activeShift.entryNumber } : null}
+        cashierName={cashierName}
       />
 
       {/* Terminal lock screen */}

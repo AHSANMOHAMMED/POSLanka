@@ -34,6 +34,8 @@ export interface StockChangeInput {
   idempotencyKey?: string | null
   /** Allow the result to go below zero (stock takes, corrections). Default false. */
   allowNegative?: boolean
+  /** H3: adjustment reason code (src/lib/inventory/adjustment-reasons.ts), stored on the movement. */
+  reasonCode?: string | null
 }
 
 export interface StockChangeResult {
@@ -174,6 +176,9 @@ export async function applyStockChange(tx: DbTx, input: StockChangeInput): Promi
     )
     RETURNING id
   `))
+  if (input.reasonCode) {
+    await tx.execute(sql`UPDATE stock_movements SET reason_code = ${input.reasonCode} WHERE id = ${movement.id}`)
+  }
 
   return {
     movementId: movement.id,

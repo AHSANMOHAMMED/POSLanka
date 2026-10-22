@@ -15,6 +15,7 @@ import { MessageList } from './MessageList'
 import { MessageInput } from './MessageInput'
 import { NewChatModal } from './NewChatModal'
 import { cn } from '@/lib/utils'
+import { sharedJson, whenIdle } from '@/lib/client/shared-fetch'
 
 // ─── AI Markdown Renderer ────────────────────────────────────────────
 
@@ -181,8 +182,8 @@ export function ChatHub() {
 
   // Check AI enabled
   useEffect(() => {
-    fetch('/api/ai/status')
-      .then(r => r.ok ? r.json() : Promise.reject())
+    whenIdle()
+      .then(() => sharedJson<{ enabled: boolean }>('/api/ai/status', { maxAgeMs: 300_000 }))
       .then(d => setAiEnabled(d.enabled))
       .catch(() => setAiEnabled(false))
   }, [])

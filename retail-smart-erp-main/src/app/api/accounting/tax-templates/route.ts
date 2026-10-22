@@ -10,6 +10,13 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { taxTemplatesListSchema, createTaxTemplateSchema } from '@/lib/validation/schemas/accounting'
+import { TAX_CATEGORIES } from '@/lib/utils/tax-category'
+import { z } from 'zod'
+
+// H2: VAT treatment of the template (standard / zero_rated / exempt / out_of_scope)
+const createWithCategorySchema = createTaxTemplateSchema.extend({
+  taxCategory: z.enum(TAX_CATEGORIES).default('standard'),
+})
 
 export async function GET(request: NextRequest) {
   try {
@@ -95,9 +102,9 @@ export async function POST(request: NextRequest) {
     const quotaError = await requireQuota(session!.user.tenantId, 'standard')
     if (quotaError) return quotaError
 
-    const parsed = await validateBody(request, createTaxTemplateSchema)
+    const parsed = await validateBody(request, createWithCategorySchema)
     if (!parsed.success) return parsed.response
-    const { name, isActive, items } = parsed.data
+    const { name, isActive, items, taxCategory } = parsed.data
 
     const tenantId = session!.user.tenantId
 
@@ -107,6 +114,7 @@ export async function POST(request: NextRequest) {
         tenantId,
         name,
         isActive,
+        taxCategory,
       }).returning()
 
       // Create tax template items if provided

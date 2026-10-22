@@ -5,7 +5,9 @@ import { withTenantTransaction } from '@/lib/db'
 import { payrollRuns, salarySlips, accountingSettings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { createGLEntries, type GLEntryInput } from '@/lib/accounting/gl'
+import { createGLEntries, tenantToday, GLValidationError } from '@/lib/accounting/gl'
+import { buildSalaryGLEntries } from '@/lib/payroll/slip-gl'
+import { applyAdvanceRecovery, AdvanceRecoveryError } from '@/lib/payroll/advance-recovery'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateParams } from '@/lib/validation/helpers'
@@ -47,103 +49,44 @@ export async function POST(
         return NextResponse.json({ error: 'Only draft payroll runs can be processed' }, { status: 400 })
       }
 
-      // Submit all draft salary slips in this run
-      const slips = await db.query.salarySlips.findMany({
-        where: eq(salarySlips.payrollRunId, id),
-      })
+      // Submit all draft salary slips in this run (locked so a concurrent individual submit
+      // cannot post the same slip twice)
+      const slips = await db.select().from(salarySlips)
+        .where(eq(salarySlips.payrollRunId, id))
+        .for('update')
 
+      const toSubmit = slips.filter((slip) => slip.status === 'draft')
       let submittedCount = 0
-      for (const slip of slips) {
-        if (slip.status === 'draft') {
-          await db
-            .update(salarySlips)
-            .set({
-              status: 'submitted',
-              submittedAt: new Date(),
-              submittedBy: session.user.id,
-              updatedAt: new Date(),
-            })
-            .where(eq(salarySlips.id, slip.id))
-          submittedCount++
-        }
+      for (const slip of toSubmit) {
+        await db
+          .update(salarySlips)
+          .set({
+            status: 'submitted',
+            submittedAt: new Date(),
+            submittedBy: session.user.id,
+            updatedAt: new Date(),
+          })
+          .where(eq(salarySlips.id, slip.id))
+        // Recover the deducted advance installment(s) from the employee's open advances
+        await applyAdvanceRecovery(db, session.user.tenantId, slip)
+        submittedCount++
       }
 
-      // Create consolidated GL journal entry for the entire payroll run
+      // Consolidated GL for the slips submitted HERE only. Slips that were submitted on their own
+      // already posted their own 'salary_slip' voucher, and cancelled slips must not be paid —
+      // the stored run totals included both.
       const [settings] = await db
         .select()
         .from(accountingSettings)
         .where(eq(accountingSettings.tenantId, session.user.tenantId))
         .limit(1)
 
-      if (settings?.defaultSalaryExpenseAccountId && settings?.defaultSalaryPayableAccountId) {
-        const postingDate = new Date().toISOString().split('T')[0]
-        const glEntries: GLEntryInput[] = []
-
-        // DEBIT: Salary Expense for total gross pay
-        if (run.totalGrossPay && Number(run.totalGrossPay) > 0) {
-          glEntries.push({
-            accountId: settings.defaultSalaryExpenseAccountId,
-            debit: Number(run.totalGrossPay),
-            credit: 0,
-            remarks: `Payroll run ${run.runNo} - Gross salary expense`,
-          })
-        }
-
-        // DEBIT: Employer Contribution Expense
-        if (run.totalEmployerContributions && Number(run.totalEmployerContributions) > 0 && settings.defaultEmployerContributionAccountId) {
-          glEntries.push({
-            accountId: settings.defaultEmployerContributionAccountId,
-            debit: Number(run.totalEmployerContributions),
-            credit: 0,
-            remarks: `Payroll run ${run.runNo} - Employer contributions`,
-          })
-        }
-
-        // CREDIT: Salary Payable for total net pay
-        if (run.totalNetPay && Number(run.totalNetPay) > 0) {
-          glEntries.push({
-            accountId: settings.defaultSalaryPayableAccountId,
-            debit: 0,
-            credit: Number(run.totalNetPay),
-            remarks: `Payroll run ${run.runNo} - Net salary payable`,
-          })
-        }
-
-        // Separate advance deductions from statutory deductions
-        const totalAdvanceDeductions = slips.reduce(
-          (sum, s) => sum + Number(s.advanceDeduction || 0), 0
-        )
-        const pureDeductions = Number(run.totalDeductions || 0) - totalAdvanceDeductions
-
-        // CREDIT: Statutory Contributions Payable (excludes advance recovery)
-        const statutoryPayable = pureDeductions + Number(run.totalEmployerContributions || 0)
-        if (statutoryPayable > 0 && settings.defaultStatutoryPayableAccountId) {
-          glEntries.push({
-            accountId: settings.defaultStatutoryPayableAccountId,
-            debit: 0,
-            credit: statutoryPayable,
-            remarks: `Payroll run ${run.runNo} - Statutory contributions payable`,
-          })
-        }
-
-        // CREDIT: Employee Advance Account (advance recovery reduces the receivable)
-        if (totalAdvanceDeductions > 0) {
-          const advanceAccountId = settings.defaultEmployeeAdvanceAccountId || settings.defaultStatutoryPayableAccountId
-          if (advanceAccountId) {
-            glEntries.push({
-              accountId: advanceAccountId,
-              debit: 0,
-              credit: totalAdvanceDeductions,
-              remarks: `Payroll run ${run.runNo} - Advance recovery`,
-            })
-          }
-        }
-
-        // Only create GL entries if we have a balanced set
+      if (settings && toSubmit.length > 0) {
+        const glEntries = buildSalaryGLEntries(settings, toSubmit, { label: `Payroll run ${run.runNo}` })
         if (glEntries.length > 0) {
           await createGLEntries(db, {
             tenantId: session.user.tenantId,
-            postingDate,
+            postingDate: await tenantToday(session.user.tenantId),
             voucherType: 'payroll_run',
             voucherId: run.id,
             voucherNumber: run.runNo,
@@ -153,10 +96,24 @@ export async function POST(
         }
       }
 
+      // Run totals = the slips that are actually part of the run now (not cancelled ones)
+      const live = slips.filter((slip) => slip.status !== 'cancelled')
+      const sum = (pick: (x: typeof slips[number]) => unknown) =>
+        (live.reduce((acc, x) => acc + Math.round((Number(pick(x)) || 0) * 100), 0) / 100).toFixed(2)
+      const totals = {
+        totalEmployees: live.length,
+        totalGrossPay: sum((x) => x.grossPay),
+        totalDeductions: sum((x) => x.totalDeductions),
+        totalEmployerContributions: sum((x) => x.totalEmployerContributions),
+        totalNetPay: sum((x) => x.netPay),
+        totalCommissions: sum((x) => x.commissionAmount),
+      }
+
       // Mark run as completed — all operations succeeded atomically
       const [updated] = await db
         .update(payrollRuns)
         .set({
+          ...totals,
           status: 'completed',
           processedAt: new Date(),
           processedBy: session.user.id,
@@ -166,16 +123,17 @@ export async function POST(
         .returning()
 
       // Broadcast outside transaction scope is fine — these are non-critical notifications
-      for (const slip of slips) {
-        if (slip.status === 'draft') {
-          logAndBroadcast(session.user.tenantId, 'salary-slip', 'updated', slip.id)
-        }
+      for (const slip of toSubmit) {
+        logAndBroadcast(session.user.tenantId, 'salary-slip', 'updated', slip.id)
       }
       logAndBroadcast(session.user.tenantId, 'payroll-run', 'updated', id)
 
       return NextResponse.json({ ...updated, submittedSlips: submittedCount })
     })
   } catch (error) {
+    if (error instanceof GLValidationError || error instanceof AdvanceRecoveryError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
     logError('api/payroll-runs/[id]/process', error)
     return NextResponse.json({ error: 'Failed to process payroll run' }, { status: 500 })
   }

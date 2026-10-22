@@ -4,7 +4,7 @@
 // GET /api/sales?search=. Lines carry originalSaleItemId and the remaining quantity; the
 // server prices the return from the original invoice (incl. tax) and answers with the
 // refund it actually paid (refundAmount), which is what we print.
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Modal, View, Text, StyleSheet, Pressable, ScrollView, ActivityIndicator, Alert } from 'react-native'
 import * as Crypto from 'expo-crypto'
 import { apiGet, apiPost, asList, qs } from '../lib/api'
@@ -13,6 +13,7 @@ import { shiftCounterName, type Shift } from '../lib/shift'
 import { THEME, formatLKR } from '../lib/theme'
 import { receiptFromSale, type BusinessInfo } from '../lib/receipt'
 import type { SaleResultData } from './TenderModal'
+import { IdempotencyKey } from '../lib/idempotency'
 
 /**
  * Refund back to how the customer paid: several methods → 'original' (server splits the refund
@@ -83,6 +84,10 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
   const [selected, setSelected] = useState<ReturnableSale | null>(null)
   const [qty, setQty] = useState<Record<number, number>>({})
   const [busy, setBusy] = useState(false)
+  // One clientSaleId per return attempt: a retry after a timeout (the first request may have been
+  // recorded) re-sends the same key, so the server answers with the existing return instead of
+  // refunding twice. A new key is minted only when the sale or the quantities change.
+  const returnKey = useRef(new IdempotencyKey(() => Crypto.randomUUID()))
 
   useEffect(() => {
     if (!visible) return
@@ -191,8 +196,9 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
     const refund = Math.abs(total)
 
     const refundChoice = chooseRefundMethod(selected)
+    const signature = JSON.stringify([selected.id, cartItems.map((c) => [c.originalSaleItemId || c.itemId || c.name, c.quantity])])
     const payload = {
-      clientSaleId: Crypto.randomUUID(),
+      clientSaleId: returnKey.current.for(signature),
       customerId: selected.customerId || undefined,
       cartItems,
       paymentMethod: 'cash',
@@ -217,8 +223,11 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
         Alert.alert(res.status === 0 ? 'No Connection' : 'Return Failed', res.status === 0 ? 'Returns cannot be processed offline.' : res.error)
         return
       }
+      returnKey.current.reset()
       const sale = res.data || {}
       const refunded = typeof sale.refundAmount === 'number' ? sale.refundAmount : refund
+      // Refund method actually used (the return row's paymentMethod), for the slip / result screen
+      const paidOutMethod = typeof sale.paymentMethod === 'string' && sale.paymentMethod ? sale.paymentMethod : refundChoice.method === 'card' ? 'card' : 'cash'
       const receipt = receiptFromSale(
         { ...sale, invoiceNo: sale.invoiceNo || 'Return recorded', total: sale.total ?? total, items: sale.items?.length ? sale.items : cartItems.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: c.unitPrice, total: c.total })), isReturn: true },
         {
@@ -226,14 +235,19 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
           shift,
           cashier: cashierName,
           customerName: selected.customerName || undefined,
-          fallbackPayment: { method: 'cash', amount: -refunded },
+          // CREDIT NOTE particulars: the buyer and the invoice being credited
+          customer: sale.customer
+            ? { name: sale.customer.name ?? selected.customerName ?? null, taxId: sale.customer.taxId ?? null, address: sale.customer.address ?? null }
+            : selected.customerName ? { name: selected.customerName } : null,
+          originalInvoiceNo: sale.originalInvoiceNo || selected.invoiceNo,
+          fallbackPayment: { method: paidOutMethod, amount: -refunded },
         }
       )
       onReturnComplete({
         invoiceNo: sale.invoiceNo || 'Return recorded',
         total: refunded,
         change: 0,
-        tenderMethod: 'CASH REFUND',
+        tenderMethod: refundChoice.method === 'original' ? 'REFUND TO ORIGINAL METHODS' : `${paidOutMethod.replace('_', ' ').toUpperCase()} REFUND`,
         isReturn: true,
         receipt,
       })

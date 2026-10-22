@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       throw new Error('NEXTAUTH_SECRET not configured')
     }
 
-    let payload: { userId?: string; email?: string; tenantId?: string; purpose?: string }
+    let payload: { userId?: string; email?: string; tenantId?: string; purpose?: string; iat?: number }
     try {
       const result = await jwtVerify(token, new TextEncoder().encode(secret))
       payload = result.payload as typeof payload
@@ -76,6 +76,16 @@ export async function POST(request: NextRequest) {
     if (user.email !== payload.email) {
       return NextResponse.json(
         { error: 'Invalid reset link. Please request a new one.' },
+        { status: 400 }
+      )
+    }
+
+    // Single use: a link issued before the last password change (i.e. this link, or an
+    // older one, was already used) must not work again — the JWT itself stays valid for 1h.
+    if (user.passwordChangedAt && payload.iat &&
+        Math.floor(user.passwordChangedAt.getTime() / 1000) >= payload.iat) {
+      return NextResponse.json(
+        { error: 'This reset link has already been used. Please request a new one.' },
         { status: 400 }
       )
     }

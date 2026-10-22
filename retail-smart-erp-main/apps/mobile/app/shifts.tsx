@@ -11,7 +11,7 @@ import {
   RefreshControl,
 } from 'react-native'
 import { router } from 'expo-router'
-import { apiPost, getUser, logout, type AuthUser } from '../src/lib/api'
+import { apiGet, apiPost, getUser, logout, type AuthUser } from '../src/lib/api'
 import {
   fetchCurrentShift,
   fetchMyProfiles,
@@ -28,6 +28,45 @@ import { THEME, formatLKR } from '../src/lib/theme'
 import { ErrorView } from '../src/components/StateViews'
 import { getPrinterSettings, isPrintingEnabled, printerErrorMessage, printZReport } from '../src/lib/printer'
 import { loadBusinessInfo, resolveReceiptSettings, zReportFromClose } from '../src/lib/receipt'
+import { getQueuedSales, isOnline, syncNow } from '../src/lib/offlineQueue'
+import { unsyncedSalesForShift } from '../src/lib/shiftGuard'
+import { SupervisorPinModal, type SupervisorApprovalRequest } from '../src/components/SupervisorPinModal'
+import type { ZReportDetails } from '../src/lib/escpos'
+
+/** H1: structured variance reasons (mirror of SHIFT_VARIANCE_REASONS on the server) */
+const VARIANCE_REASONS: Array<{ value: string; label: string }> = [
+  { value: 'counting_error', label: 'Counting error' },
+  { value: 'change_error', label: 'Wrong change' },
+  { value: 'unrecorded_sale', label: 'Sale not recorded' },
+  { value: 'unrecorded_expense', label: 'Unrecorded expense' },
+  { value: 'card_terminal_mismatch', label: 'Card terminal mismatch' },
+  { value: 'theft_suspected', label: 'Suspected theft' },
+  { value: 'other', label: 'Other' },
+]
+
+const CASH_CATEGORIES = {
+  paid_out: [
+    { value: 'petty_expense', label: 'Petty expense' },
+    { value: 'supplier_payment', label: 'Supplier' },
+    { value: 'bank_drop', label: 'Bank drop' },
+    { value: 'other', label: 'Other' },
+  ],
+  paid_in: [
+    { value: 'float_top_up', label: 'Float top-up' },
+    { value: 'other', label: 'Other' },
+  ],
+} as const
+type CashMovementType = keyof typeof CASH_CATEGORIES
+
+interface CashMovementRow {
+  id: string
+  movementNo: string
+  type: CashMovementType
+  category: string
+  amount: string
+  note: string | null
+  status: 'posted' | 'voided'
+}
 
 interface ReconciliationRow {
   paymentMethod: string
@@ -49,6 +88,8 @@ interface CloseShiftResponse {
     totalTransactions: number
     totalVariance: number
   }
+  zReport?: ZReportDetails
+  varianceReason?: string | null
 }
 
 function num(v: string | number | undefined | null): number {
@@ -71,6 +112,10 @@ export default function ShiftsScreen() {
   const [closingAmounts, setClosingAmounts] = useState<Record<string, string>>({})
   const [closingNotes, setClosingNotes] = useState('')
   const [closingResult, setClosingResult] = useState<CloseShiftResponse | null>(null)
+  // H1: the server reports a drawer variance → a structured reason is required to close
+  const [varianceInfo, setVarianceInfo] = useState<{ byMethod: Record<string, number>; total: number } | null>(null)
+  const [varianceReason, setVarianceReason] = useState('')
+  const [varianceNote, setVarianceNote] = useState('')
   /** The shift that was just closed (for the Z-report header) and the print state. */
   const [closedShift, setClosedShift] = useState<Shift | null>(null)
   const [closedNotes, setClosedNotes] = useState<string>('')
@@ -197,14 +242,33 @@ export default function ShiftsScreen() {
 
     setBusy(true)
     try {
+      if (varianceInfo && !varianceReason) {
+        Alert.alert('Reason Required', 'Select why the drawer does not balance.')
+        return
+      }
+      if (varianceReason === 'other' && !varianceNote.trim()) {
+        Alert.alert('Note Required', 'Describe the variance when the reason is "Other".')
+        return
+      }
       const res = await apiPost<CloseShiftResponse>(`/api/pos-opening-entries/${shift.id}/close`, {
         actualAmounts,
         notes: closingNotes.trim() || undefined,
+        varianceReason: varianceReason || undefined,
+        varianceNote: varianceNote.trim() || undefined,
       })
       if (!res.ok) {
+        const body = res.data as unknown as { code?: string; varianceByMethod?: Record<string, number>; totalVariance?: number } | null
+        if (res.status === 400 && body?.code === 'VARIANCE_REASON_REQUIRED') {
+          setVarianceInfo({ byMethod: body.varianceByMethod || {}, total: body.totalVariance || 0 })
+          Alert.alert('Drawer Does Not Balance', `Variance ${formatLKR(body.totalVariance || 0)}. Recount, or select a reason below and close again.`)
+          return
+        }
         Alert.alert(res.status === 0 ? 'Network Error' : 'Could Not Close Shift', res.error)
         return
       }
+      setVarianceInfo(null)
+      setVarianceReason('')
+      setVarianceNote('')
       const notes = closingNotes.trim()
       setClosingResult(res.data)
       setClosedShift(shift)
@@ -222,7 +286,34 @@ export default function ShiftsScreen() {
     }
   }
 
-  function confirmClose() {
+  async function confirmClose() {
+    if (!shift) return
+    // Offline sales of this shift must reach the server before reconciliation, otherwise their
+    // cash is counted in the drawer but missing from "expected" (false variance posted to the GL).
+    let unsynced = unsyncedSalesForShift(await getQueuedSales(), shift.id, user?.tenantSlug)
+    if (unsynced.pending > 0 && isOnline()) {
+      setBusy(true)
+      try {
+        await syncNow()
+      } finally {
+        setBusy(false)
+      }
+      unsynced = unsyncedSalesForShift(await getQueuedSales(), shift.id, user?.tenantSlug)
+    }
+    if (unsynced.pending > 0 || unsynced.rejected > 0) {
+      const parts: string[] = []
+      if (unsynced.pending > 0) parts.push(`${unsynced.pending} offline sale(s) are still waiting to sync`)
+      if (unsynced.rejected > 0) parts.push(`${unsynced.rejected} offline sale(s) were rejected and need attention`)
+      Alert.alert(
+        'Offline Sales Not Synced',
+        `${parts.join(' and ')} (${formatLKR(unsynced.amount)}). Closing now reconciles the drawer without them, so the count will show a variance. Sync them from the POS screen first.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { text: 'Close Anyway', style: 'destructive', onPress: handleCloseShift },
+        ]
+      )
+      return
+    }
     Alert.alert('Close Shift?', 'This ends the current register session and runs reconciliation.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Close Shift', style: 'destructive', onPress: handleCloseShift },
@@ -322,6 +413,8 @@ export default function ShiftsScreen() {
               <Text style={styles.posBtnText}>Go to POS →</Text>
             </Pressable>
 
+            <CashMovementsSection shift={shift} />
+
             <View style={styles.closeSection}>
               <Text style={styles.closeTitle}>Close Shift & Reconcile</Text>
               <Text style={styles.closeSub}>Count what is physically in the drawer for each tender opened on this shift:</Text>
@@ -342,6 +435,28 @@ export default function ShiftsScreen() {
                   </View>
                 </View>
               ))}
+
+              {varianceInfo && (
+                <View style={styles.floatBox}>
+                  <Text style={[styles.floatBoxTitle, { color: THEME.colors.error }]}>
+                    VARIANCE {Object.entries(varianceInfo.byMethod).filter(([, v]) => Math.abs(v) >= 0.01).map(([m, v]) => `${paymentMethodLabel(m)} ${v > 0 ? '+' : ''}${v.toFixed(2)}`).join(' · ')}
+                  </Text>
+                  <View style={[styles.quickChips, { flexWrap: 'wrap' }]}>
+                    {VARIANCE_REASONS.map((r) => (
+                      <Pressable key={r.value} style={[styles.chip, varianceReason === r.value && styles.chipActive]} onPress={() => setVarianceReason(r.value)}>
+                        <Text style={[styles.chipText, varianceReason === r.value && styles.chipTextActive]}>{r.label}</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                  <TextInput
+                    style={styles.notesInput}
+                    placeholder={varianceReason === 'other' ? 'Describe the variance (required)' : 'Variance note (optional)'}
+                    placeholderTextColor={THEME.colors.textSubtle}
+                    value={varianceNote}
+                    onChangeText={setVarianceNote}
+                  />
+                </View>
+              )}
 
               <TextInput
                 style={styles.notesInput}
@@ -750,3 +865,118 @@ const styles = StyleSheet.create({
   setupPrinterBtn: { height: 44, borderRadius: 12, borderWidth: 1, borderColor: THEME.colors.border, alignItems: 'center', justifyContent: 'center', backgroundColor: THEME.colors.surfaceContainerLow, marginBottom: 4 },
   setupPrinterText: { color: THEME.colors.textMuted, fontSize: 12, fontWeight: '700' },
 })
+
+/** H1: cash paid in / out of the drawer during the open shift (supervisor PIN when required). */
+function CashMovementsSection({ shift }: { shift: Shift }) {
+  const [type, setType] = useState<CashMovementType>('paid_out')
+  const [category, setCategory] = useState<string>('petty_expense')
+  const [amount, setAmount] = useState('')
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [rows, setRows] = useState<CashMovementRow[]>([])
+  const [approval, setApproval] = useState<(SupervisorApprovalRequest & { retry: (token: string) => void }) | null>(null)
+
+  const load = useCallback(async () => {
+    const res = await apiGet<{ data: CashMovementRow[] }>(`/api/pos-cash-movements?openingEntryId=${shift.id}`)
+    if (res.ok) setRows(res.data?.data || [])
+  }, [shift.id])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  async function submit(approvalToken?: string) {
+    const value = Math.round(num(amount) * 100) / 100
+    if (!(value > 0)) {
+      Alert.alert('Amount Required', 'Enter an amount greater than zero.')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await apiPost<CashMovementRow>('/api/pos-cash-movements', {
+        openingEntryId: shift.id, type, category, amount: value, note: note.trim() || undefined, approvalToken,
+      })
+      const body = res.data as unknown as { code?: string; scopes?: string[] } | null
+      if (!res.ok && res.status === 403 && body?.code === 'APPROVAL_REQUIRED') {
+        setApproval({ scopes: body.scopes || [], message: res.error, amount: value, posOpeningEntryId: shift.id, retry: (t) => submit(t) })
+        return
+      }
+      if (!res.ok) {
+        Alert.alert('Cash Movement Failed', res.error)
+        return
+      }
+      setAmount('')
+      setNote('')
+      load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function voidRow(row: CashMovementRow, approvalToken?: string) {
+    const res = await apiPost<CashMovementRow>(`/api/pos-cash-movements/${row.id}/void`, { reason: 'Voided on device', approvalToken })
+    const body = res.data as unknown as { code?: string; scopes?: string[] } | null
+    if (!res.ok && res.status === 403 && body?.code === 'APPROVAL_REQUIRED') {
+      setApproval({ scopes: body.scopes || ['cash_movement_void'], message: res.error, amount: num(row.amount), posOpeningEntryId: shift.id, retry: (t) => voidRow(row, t) })
+      return
+    }
+    if (!res.ok) {
+      Alert.alert('Void Failed', res.error)
+      return
+    }
+    load()
+  }
+
+  return (
+    <View style={styles.floatBox}>
+      <Text style={styles.floatBoxTitle}>CASH PAID IN / OUT</Text>
+      <View style={styles.quickChips}>
+        {(['paid_out', 'paid_in'] as CashMovementType[]).map((t) => (
+          <Pressable key={t} style={[styles.chip, type === t && styles.chipActive]} onPress={() => { setType(t); setCategory(CASH_CATEGORIES[t][0].value) }}>
+            <Text style={[styles.chipText, type === t && styles.chipTextActive]}>{t === 'paid_out' ? 'Paid Out' : 'Paid In'}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <View style={[styles.quickChips, { flexWrap: 'wrap' }]}>
+        {CASH_CATEGORIES[type].map((c) => (
+          <Pressable key={c.value} style={[styles.chip, category === c.value && styles.chipActive]} onPress={() => setCategory(c.value)}>
+            <Text style={[styles.chipText, category === c.value && styles.chipTextActive]}>{c.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <View style={[styles.inputRow, { marginTop: 10 }]}>
+        <Text style={styles.inputPrefix}>LKR</Text>
+        <TextInput style={styles.cashInput} keyboardType="decimal-pad" placeholder="0.00" placeholderTextColor={THEME.colors.textSubtle} value={amount} onChangeText={setAmount} />
+      </View>
+      <TextInput style={styles.notesInput} placeholder={category === 'other' ? 'Note (required)' : 'Note (optional)'} placeholderTextColor={THEME.colors.textSubtle} value={note} onChangeText={setNote} />
+      <Pressable style={[styles.posBtn, busy && { opacity: 0.6 }]} onPress={() => submit()} disabled={busy}>
+        <Text style={styles.posBtnText}>{busy ? 'Saving…' : `Record ${type === 'paid_out' ? 'Paid Out' : 'Paid In'}`}</Text>
+      </Pressable>
+      {rows.map((r) => (
+        <View key={r.id} style={styles.floatRow}>
+          <Text style={[styles.floatMethod, r.status === 'voided' && { textDecorationLine: 'line-through', color: THEME.colors.textSubtle }]}>
+            {r.movementNo} {CASH_CATEGORIES[r.type]?.find((c) => c.value === r.category)?.label || r.category}
+          </Text>
+          <Text style={styles.floatAmount}>{r.type === 'paid_out' ? '-' : '+'}{formatLKR(r.amount)}</Text>
+          {r.status === 'posted' && r.category !== 'void_refund' ? (
+            <Pressable onPress={() => Alert.alert('Void Movement?', `Void ${r.movementNo}?`, [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Void', style: 'destructive', onPress: () => voidRow(r) },
+            ])}>
+              <Text style={{ color: THEME.colors.error, fontWeight: '700', marginLeft: 8 }}>Void</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ))}
+      <SupervisorPinModal
+        request={approval}
+        onCancel={() => setApproval(null)}
+        onApproved={(token) => {
+          const retry = approval?.retry
+          setApproval(null)
+          retry?.(token)
+        }}
+      />
+    </View>
+  )
+}

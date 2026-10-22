@@ -13,6 +13,10 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { receivePurchaseOrderSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { receiveIntoBatch } from '@/lib/purchasing/batch-receipt'
+import { postGoodsReceiptToGL } from '@/lib/accounting/auto-post'
+import { grnPostedValue } from '@/lib/purchasing/srbnb'
+import { tenantToday } from '@/lib/accounting/gl'
 
 // POST receive items for a purchase order (partial receiving)
 export async function POST(
@@ -80,7 +84,7 @@ export async function POST(
 
       // Aggregate the request by PO line: the same line may appear several times in
       // one request and must be validated (and applied) cumulatively, once.
-      const aggregated = new Map<string, { qty: number; notes?: string }>()
+      const aggregated = new Map<string, { qty: number; notes?: string; parts: { qty: number; batchNumber?: string; expiryDate?: string; manufacturingDate?: string }[] }>()
       for (const receiveItem of receiveItems) {
         if (!orderItemMap.has(receiveItem.itemId)) {
           return { error: NextResponse.json({
@@ -91,6 +95,11 @@ export async function POST(
         aggregated.set(receiveItem.itemId, {
           qty: Math.round(((prev?.qty || 0) + receiveItem.receivedQuantity) * 1000) / 1000,
           notes: prev?.notes || receiveItem.notes,
+          // one part per request row: the same PO line may be received into several batches
+          parts: [...(prev?.parts || []), {
+            qty: receiveItem.receivedQuantity, batchNumber: receiveItem.batchNumber,
+            expiryDate: receiveItem.expiryDate, manufacturingDate: receiveItem.manufacturingDate,
+          }],
         })
       }
 
@@ -108,8 +117,12 @@ export async function POST(
         }
       }
 
+      if (![...aggregated.values()].some(a => a.qty > 0)) {
+        return { error: NextResponse.json({ error: 'Nothing to receive: all quantities are 0' }, { status: 400 }) }
+      }
+
       // Track which items were updated and their new totals
-      const updatedItems: { poItem: typeof orderItems[0]; newCumulativeReceived: number; receivedQty: number; notes?: string }[] = []
+      const updatedItems: { poItem: typeof orderItems[0]; newCumulativeReceived: number; receivedQty: number; notes?: string; parts: { qty: number; batchNumber?: string; expiryDate?: string; manufacturingDate?: string }[] }[] = []
 
       for (const [lineId, agg] of aggregated) {
         if (agg.qty <= 0) continue // Skip lines with 0 quantity
@@ -123,7 +136,7 @@ export async function POST(
           .set({ receivedQuantity: newCumulativeReceived.toString() })
           .where(eq(purchaseOrderItems.id, lineId))
 
-        updatedItems.push({ poItem, newCumulativeReceived, receivedQty: agg.qty, notes: agg.notes })
+        updatedItems.push({ poItem, newCumulativeReceived, receivedQty: agg.qty, notes: agg.notes, parts: agg.parts })
       }
 
       // Create Purchase Receipt (GRN) record: GRN-YYYYMMDD-### from the per-tenant daily sequence
@@ -177,6 +190,15 @@ export async function POST(
             source: 'purchase',
             idempotencyKey: `po-receive:${receipt.id}:${u.poItem.id}`,
           })
+          // batch-tracked items: into the given batch(es), else a batch named after the GRN
+          for (const part of u.parts) {
+            await receiveIntoBatch(tx, {
+              tenantId: session.user.tenantId, itemId, warehouseId: order.warehouseId, qty: part.qty,
+              batchNumber: part.batchNumber, expiryDate: part.expiryDate, manufacturingDate: part.manufacturingDate,
+              defaultBatchNumber: receipt.receiptNo, supplierId: order.supplierId, purchaseReceiptId: receipt.id,
+              docType: 'grn', docId: receipt.id, lineId: u.poItem.id,
+            })
+          }
         }
       }
 
@@ -192,7 +214,27 @@ export async function POST(
           quantityAccepted: updated.receivedQty.toString(),
           quantityRejected: '0',
           notes: updated.notes || null,
+          unitCost: updated.poItem.unitPrice || '0',
         })
+      }
+
+      // H3: goods put into stock are on the ledger from now on: Dr Stock / Cr Stock Received But
+      // Not Billed at PO price. The supplier invoice clears SRBNB later (src/lib/purchasing/srbnb.ts).
+      // Not configured / auto-posting off → nothing posted, gl_posted stays false (the invoice then
+      // posts the stock, as before).
+      if (updateStock && order.warehouseId) {
+        const stockItemIds = [...new Set(updatedItems.map(u => u.poItem.itemId).filter((x): x is string => !!x))]
+        const value = await grnPostedValue(tx, receipt.id, stockItemIds)
+        const posted = await postGoodsReceiptToGL(tx, session.user.tenantId, {
+          receiptId: receipt.id,
+          receiptNo: receipt.receiptNo,
+          postingDate: await tenantToday(session.user.tenantId),
+          value,
+          supplierId: order.supplierId,
+        })
+        if (posted && posted.length > 0) {
+          await tx.update(purchaseReceipts).set({ glPosted: true }).where(eq(purchaseReceipts.id, receipt.id))
+        }
       }
 
       // Recalculate all item received quantities to determine new PO status

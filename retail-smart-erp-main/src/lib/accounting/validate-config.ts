@@ -18,6 +18,8 @@ type OperationType =
   | 'gift_card_sale'
   | 'pos_shift_close'
   | 'work_order_invoice'
+  | 'goods_receipt'
+  | 'landed_cost'
 
 // Maps each operation to the accounts it requires and the auto-post flag it checks
 const OPERATION_REQUIREMENTS: Record<OperationType, {
@@ -73,6 +75,22 @@ const OPERATION_REQUIREMENTS: Record<OperationType, {
     accounts: [
       { field: 'defaultCashOverShortAccountId', label: 'Cash Over/Short' },
       { field: 'defaultCashAccountId', label: 'Cash' },
+    ],
+  },
+  // H3: GRN with stock update posts Dr Stock / Cr Stock Received But Not Billed
+  goods_receipt: {
+    autoPostFlag: 'autoPostPurchases',
+    accounts: [
+      { field: 'defaultStockAccountId', label: 'Stock / Inventory' },
+      { field: 'defaultSrbnbAccountId', label: 'Stock Received But Not Billed' },
+    ],
+  },
+  landed_cost: {
+    autoPostFlag: 'autoPostPurchases',
+    accounts: [
+      { field: 'defaultStockAccountId', label: 'Stock / Inventory' },
+      { field: 'defaultCOGSAccountId', label: 'Cost of Goods Sold' },
+      { field: 'defaultPayableAccountId', label: 'Accounts Payable' },
     ],
   },
   work_order_invoice: {

@@ -4,6 +4,7 @@ import { withTenant } from '@/lib/db'
 import { giftCards } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { isExpiredOn, tenantTodayDate } from '@/lib/gift-cards/lifecycle'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { lookupGiftCardSchema } from '@/lib/validation/schemas/gift-cards'
 
@@ -36,10 +37,8 @@ export async function GET(request: NextRequest) {
 
       // Auto-mark expired cards
       if (card.status === 'active' && card.expiryDate) {
-        const expiryDate = new Date(card.expiryDate)
-        const today = new Date()
-        today.setHours(0, 0, 0, 0)
-        if (expiryDate < today) {
+        const today = await tenantTodayDate(session!.user.tenantId)
+        if (isExpiredOn(card.expiryDate, today)) {
           await db.update(giftCards)
             .set({ status: 'expired' })
             .where(eq(giftCards.id, card.id))

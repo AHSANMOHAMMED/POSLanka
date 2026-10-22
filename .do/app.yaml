@@ -59,6 +59,7 @@ services:
       - { key: NEXTAUTH_URL_INTERNAL, value: "http://127.0.0.1:3000", scope: RUN_TIME }
       - { key: NEXTAUTH_SECRET, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
       - { key: CRON_SECRET, value: CHANGE_ME, scope: RUN_TIME, type: SECRET }
+      - { key: EINVOICE_TRANSMITTER, value: disabled, scope: RUN_TIME }   # einvoice-sync cron: queue only until IRD RAMIS
       - { key: ALLOWED_HOSTS, value: "poslanka.lk,app.poslanka.lk,www.poslanka.lk", scope: RUN_TIME }
       - { key: STORAGE_ENDPOINT, value: "https://sgp1.digitaloceanspaces.com", scope: RUN_TIME }
       - { key: STORAGE_REGION, value: us-east-1, scope: RUN_TIME }

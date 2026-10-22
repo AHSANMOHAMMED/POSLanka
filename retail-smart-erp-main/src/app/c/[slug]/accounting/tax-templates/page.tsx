@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Plus,
   Pencil,
@@ -8,7 +8,11 @@ import {
   Loader2,
   Receipt,
   X,
+  AlertTriangle,
+  Info,
+  Wand2,
 } from 'lucide-react'
+import { TAX_CATEGORIES, TAX_CATEGORY_LABELS, type TaxCategory } from '@/lib/utils/tax-category'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { usePaginatedData } from '@/hooks'
 import { toast } from '@/components/ui/toast'
@@ -28,6 +32,7 @@ interface TaxTemplate {
   id: string
   name: string
   isActive: boolean
+  taxCategory?: TaxCategory
   items?: TaxTemplateItem[]
   createdAt: string
   updatedAt: string
@@ -48,9 +53,16 @@ const emptyItem: TaxTemplateItem = {
   includedInPrice: false,
 }
 
+interface ComplianceIssue {
+  code: string
+  severity: 'warning' | 'info'
+  message: string
+}
+
 const emptyForm = {
   name: '',
   isActive: true,
+  taxCategory: 'standard' as TaxCategory,
   items: [{ ...emptyItem }] as TaxTemplateItem[],
 }
 
@@ -67,6 +79,9 @@ export default function TaxTemplatesPage() {
   const [deleteTemplate, setDeleteTemplate] = useState<TaxTemplate | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [accounts, setAccounts] = useState<Account[]>([])
+  const [issues, setIssues] = useState<ComplianceIssue[]>([])
+  const [country, setCountry] = useState<string | null>(null)
+  const [fixing, setFixing] = useState(false)
 
   const {
     data: templates,
@@ -82,6 +97,51 @@ export default function TaxTemplatesPage() {
     entityType: 'tax-template',
     storageKey: 'tax-templates-page-size',
   })
+
+  const loadCompliance = useCallback(async () => {
+    try {
+      const res = await fetch('/api/accounting/tax-templates/compliance')
+      if (res.ok) {
+        const data = await res.json()
+        setIssues(data.issues || [])
+        setCountry(data.country || null)
+      }
+    } catch {
+      // non-critical
+    }
+  }, [])
+
+  useEffect(() => {
+    loadCompliance()
+  }, [loadCompliance, templates])
+
+  async function runCompliance(action: 'fix' | 'seed') {
+    setFixing(true)
+    try {
+      const res = await fetch('/api/accounting/tax-templates/compliance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to update tax templates')
+        return
+      }
+      if (action === 'seed') {
+        toast.success(data.created?.length ? `Added: ${data.created.join(', ')}` : 'All country templates already exist')
+      } else {
+        const changed = [...(data.updatedTemplates || []), ...(data.deactivatedTemplates || []), ...(data.seeded || [])]
+        toast.success(changed.length || data.legacyRateUpdated ? 'Tax templates updated to current Sri Lanka rules' : 'Nothing to change')
+      }
+      refresh()
+      loadCompliance()
+    } catch {
+      toast.error('Error updating tax templates')
+    } finally {
+      setFixing(false)
+    }
+  }
 
   // Fetch accounts for the dropdown
   useEffect(() => {
@@ -116,6 +176,7 @@ export default function TaxTemplatesPage() {
         setForm({
           name: t.name,
           isActive: t.isActive,
+          taxCategory: t.taxCategory || 'standard',
           items:
             t.items && t.items.length > 0
               ? t.items.map((item: TaxTemplateItem) => ({
@@ -175,6 +236,7 @@ export default function TaxTemplatesPage() {
       const body = {
         name: form.name.trim(),
         isActive: form.isActive,
+        taxCategory: form.taxCategory,
         items: validItems.map((item) => ({
           id: item.id,
           taxName: item.taxName.trim(),
@@ -246,15 +308,55 @@ export default function TaxTemplatesPage() {
       onRefresh={refresh}
       searchPlaceholder="Search tax templates..."
       actionContent={
-        <button
-          onClick={handleAdd}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={16} />
-          Add Tax Template
-        </button>
+        <div className="flex items-center gap-2">
+          {country && (
+            <button
+              onClick={() => runCompliance('seed')}
+              disabled={fixing}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-50 transition-colors"
+            >
+              <Wand2 size={16} />
+              Load country templates
+            </button>
+          )}
+          <button
+            onClick={handleAdd}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
+          >
+            <Plus size={16} />
+            Add Tax Template
+          </button>
+        </div>
       }
     >
+      {issues.length > 0 && (
+        <div className="mb-3 space-y-2">
+          {issues.map((issue) => (
+            <div
+              key={issue.code}
+              className={`flex items-start gap-2 rounded border px-3 py-2 text-sm ${
+                issue.severity === 'warning'
+                  ? 'border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-200'
+                  : 'border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-800 dark:bg-blue-900/20 dark:text-blue-200'
+              }`}
+            >
+              {issue.severity === 'warning' ? <AlertTriangle size={16} className="mt-0.5 shrink-0" /> : <Info size={16} className="mt-0.5 shrink-0" />}
+              <span className="flex-1">{issue.message}</span>
+            </div>
+          ))}
+          <button
+            onClick={() => runCompliance('fix')}
+            disabled={fixing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 text-white text-sm font-medium rounded hover:bg-amber-700 disabled:opacity-50 transition-colors"
+          >
+            {fixing ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+            Apply current Sri Lanka rates
+          </button>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Changes apply to new documents only; issued invoices keep the tax they were issued with.
+          </p>
+        </div>
+      )}
       <div className="bg-white dark:bg-gray-800 rounded border dark:border-gray-700 list-container-xl overflow-x-auto">
         <table className="w-full">
           <caption className="sr-only">Tax Templates</caption>
@@ -262,6 +364,9 @@ export default function TaxTemplatesPage() {
             <tr>
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">
                 Name
+              </th>
+              <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">
+                VAT Treatment
               </th>
               <th scope="col" className="px-4 py-3 text-center text-sm font-medium text-gray-600 dark:text-gray-400">
                 Tax Items
@@ -277,7 +382,7 @@ export default function TaxTemplatesPage() {
           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
             {templates.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={5} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
                   <div className="flex flex-col items-center gap-2">
                     <Receipt size={32} className="text-gray-300 dark:text-gray-600" />
                     <p>No tax templates found. Add your first tax template to get started.</p>
@@ -295,6 +400,9 @@ export default function TaxTemplatesPage() {
                     <span className="font-medium text-gray-900 dark:text-white text-sm">
                       {template.name}
                     </span>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    {TAX_CATEGORY_LABELS[template.taxCategory || 'standard']}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300">
@@ -356,9 +464,25 @@ export default function TaxTemplatesPage() {
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                     className={inputClass}
-                    placeholder="e.g. VAT 15%"
+                    placeholder="e.g. VAT 18%"
                     required
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    VAT Treatment
+                  </label>
+                  <select
+                    value={form.taxCategory}
+                    onChange={(e) => setForm({ ...form, taxCategory: e.target.value as TaxCategory })}
+                    className={selectClass}
+                  >
+                    {TAX_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {TAX_CATEGORY_LABELS[c]}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex items-end">
                   <div className="flex items-center gap-2 pb-2">

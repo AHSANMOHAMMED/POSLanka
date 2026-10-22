@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { salarySlips } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { salarySlips, salarySlipComponents, payrollRuns } from '@/lib/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
+import { computeSalarySlip } from '@/lib/payroll/compute-salary-slip'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -87,11 +88,80 @@ export async function PUT(
       if (body.paymentMethod !== undefined) updateData.paymentMethod = body.paymentMethod
       if (body.paymentReference !== undefined) updateData.paymentReference = body.paymentReference
 
+      // Changing the days must re-prorate the pay: saving "20 of 30 days" while keeping the
+      // full-month amounts paid the employee for days not worked.
+      const totalWorkingDays = body.totalWorkingDays !== undefined ? Number(body.totalWorkingDays) : Number(existing.totalWorkingDays)
+      const paymentDays = body.paymentDays !== undefined ? Number(body.paymentDays) : Number(existing.paymentDays)
+      const daysChanged = totalWorkingDays !== Number(existing.totalWorkingDays) || paymentDays !== Number(existing.paymentDays)
+      let recomputed: Awaited<ReturnType<typeof computeSalarySlip>> | null = null
+      if (daysChanged) {
+        try {
+          recomputed = await computeSalarySlip(db, {
+            employeeProfileId: existing.employeeProfileId,
+            payrollMonth: existing.payrollMonth,
+            payrollYear: existing.payrollYear,
+            totalWorkingDays,
+            paymentDays,
+            commissionAmount: Number(existing.commissionAmount) || 0,
+            includeAdvanceRecovery: true,
+          })
+        } catch (computeError) {
+          return NextResponse.json({ error: computeError instanceof Error ? computeError.message : 'Could not compute salary' }, { status: 400 })
+        }
+        Object.assign(updateData, {
+          baseSalary: String(recomputed.baseSalary),
+          grossPay: String(recomputed.grossPay),
+          totalDeductions: String(recomputed.totalDeductions),
+          totalEmployerContributions: String(recomputed.totalEmployerContributions),
+          netPay: String(recomputed.netPay),
+          advanceDeduction: String(recomputed.advanceDeduction),
+          salaryStructureId: recomputed.salaryStructureId,
+          salaryStructureName: recomputed.salaryStructureName,
+        })
+      }
+
       const [updated] = await db
         .update(salarySlips)
         .set(updateData)
-        .where(eq(salarySlips.id, id))
+        .where(and(eq(salarySlips.id, id), eq(salarySlips.status, 'draft')))
         .returning()
+
+      if (!updated) {
+        return NextResponse.json({ error: 'Only draft slips can be edited' }, { status: 400 })
+      }
+
+      if (recomputed) {
+        await db.delete(salarySlipComponents).where(eq(salarySlipComponents.salarySlipId, id))
+        if (recomputed.components.length > 0) {
+          await db.insert(salarySlipComponents).values(
+            recomputed.components.map((c) => ({
+              tenantId: session.user.tenantId,
+              salarySlipId: id,
+              componentId: c.componentId,
+              componentName: c.componentName,
+              componentType: c.componentType,
+              abbreviation: c.abbreviation,
+              formulaUsed: c.formulaUsed,
+              amount: String(c.amount),
+              isStatutory: c.isStatutory,
+              doNotIncludeInTotal: c.doNotIncludeInTotal,
+              isPayableByEmployer: c.isPayableByEmployer,
+              sortOrder: c.sortOrder,
+            }))
+          )
+        }
+        // Keep the payroll run's totals in step with the edited slip
+        if (existing.payrollRunId) {
+          const d = (a: unknown, b: unknown) => ((Math.round((Number(a) || 0) * 100) - Math.round((Number(b) || 0) * 100)) / 100).toFixed(2)
+          await db.update(payrollRuns).set({
+            totalGrossPay: sql`${payrollRuns.totalGrossPay} + ${d(recomputed.grossPay, existing.grossPay)}`,
+            totalDeductions: sql`${payrollRuns.totalDeductions} + ${d(recomputed.totalDeductions, existing.totalDeductions)}`,
+            totalEmployerContributions: sql`${payrollRuns.totalEmployerContributions} + ${d(recomputed.totalEmployerContributions, existing.totalEmployerContributions)}`,
+            totalNetPay: sql`${payrollRuns.totalNetPay} + ${d(recomputed.netPay, existing.netPay)}`,
+            updatedAt: new Date(),
+          }).where(eq(payrollRuns.id, existing.payrollRunId))
+        }
+      }
 
       logAndBroadcast(session.user.tenantId, 'salary-slip', 'updated', id)
 

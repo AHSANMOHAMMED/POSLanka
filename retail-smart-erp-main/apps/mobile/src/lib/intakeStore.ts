@@ -8,6 +8,7 @@ import * as FileSystem from 'expo-file-system'
 import * as Crypto from 'expo-crypto'
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo'
 import { apiPost, isNetworkError } from './api'
+import { isTransientStatus } from './httpStatus'
 
 export type IntakeMode = 'receive' | 'count'
 
@@ -210,8 +211,22 @@ export interface UploadOutcome {
   rejectedLines?: number
 }
 
-/** Create the server batch if needed, then push all unconfirmed lines. */
-export async function uploadBatch(clientBatchId: string): Promise<UploadOutcome> {
+const uploadsInFlight = new Map<string, Promise<UploadOutcome>>()
+
+/**
+ * Create the server batch if needed, then push all unconfirmed lines. Calls for the same batch
+ * share one run (Sync button + auto-sync on reconnect), so lines are never sent twice in parallel
+ * and the batch is never created twice.
+ */
+export function uploadBatch(clientBatchId: string): Promise<UploadOutcome> {
+  const running = uploadsInFlight.get(clientBatchId)
+  if (running) return running
+  const p = runUploadBatch(clientBatchId).finally(() => uploadsInFlight.delete(clientBatchId))
+  uploadsInFlight.set(clientBatchId, p)
+  return p
+}
+
+async function runUploadBatch(clientBatchId: string): Promise<UploadOutcome> {
   const b = await getLocalBatch(clientBatchId)
   if (!b) return { ok: false, offline: false, error: 'Batch not found on this device' }
 
@@ -225,7 +240,8 @@ export async function uploadBatch(clientBatchId: string): Promise<UploadOutcome>
     if (!res.ok) {
       const offline = isNetworkError(res)
       b.lastError = res.error
-      if (!offline) b.rejected = true
+      // 5xx / 408 / 429 / 401 are retried later; only a real 4xx refusal needs the user.
+      if (!isTransientStatus(res.status) && res.status !== 401) b.rejected = true
       if (offline) online = false
       await persist()
       return { ok: false, offline, error: res.error }
@@ -269,8 +285,8 @@ export async function uploadBatch(clientBatchId: string): Promise<UploadOutcome>
       continue
     }
     const offline = isNetworkError(res)
-    if (offline || isBatchLevel(res.status) || res.status >= 500 || chunk.length === 1) {
-      if (chunk.length === 1 && !offline && !isBatchLevel(res.status) && res.status < 500) {
+    if (offline || isBatchLevel(res.status) || isTransientStatus(res.status) || chunk.length === 1) {
+      if (chunk.length === 1 && !offline && !isBatchLevel(res.status) && !isTransientStatus(res.status)) {
         // a single bad line: mark it and carry on with the rest
         chunk[0].rejected = true
         chunk[0].error = res.error
@@ -293,7 +309,7 @@ export async function uploadBatch(clientBatchId: string): Promise<UploadOutcome>
         uploaded++
         continue
       }
-      if (isNetworkError(one) || isBatchLevel(one.status) || one.status >= 500) {
+      if (isNetworkError(one) || isBatchLevel(one.status) || isTransientStatus(one.status)) {
         b.lastError = one.error
         if (isNetworkError(one)) online = false
         await persist()

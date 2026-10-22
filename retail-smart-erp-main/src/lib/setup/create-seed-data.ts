@@ -24,6 +24,7 @@ import {
   letterHeads,
   printTemplates,
   modesOfPayment,
+  taxTemplates,
 } from '@/lib/db/schema'
 import { getChartOfAccountsForBusinessType, SYSTEM_ACCOUNT_DEFAULTS, type AccountTemplate } from '@/lib/accounting/default-coa'
 import {
@@ -34,6 +35,7 @@ import {
   printTemplateDocumentTypes,
 } from './seed-data'
 import type { ServiceGroupSeed } from './seed-data'
+import { seedCountryTaxTemplates } from './seed-tax-templates'
 
 export interface WarehouseInput {
   name: string
@@ -138,6 +140,12 @@ export interface SetupWizardData {
     sendInvite: boolean
   }>
 
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function seedTenantTaxTemplates(tx: any, tenantId: string, setDefault: boolean) {
+  const [t] = await tx.select({ country: tenants.country }).from(tenants).where(eq(tenants.id, tenantId)).limit(1)
+  await seedCountryTaxTemplates(tx, tenantId, t?.country || 'LK', { setDefault })
 }
 
 export async function createSeedData(
@@ -245,6 +253,10 @@ export async function createSeedData(
 
   // 7. Chart of Accounts (always create chart of accounts)
   await seedChartOfAccounts(tx, tenantId, businessType, tenantCurrency || 'LKR', data.accountOverrides, data.coaTemplate)
+
+  // 7b. Country tax templates (LK: VAT 18%, zero-rated, exempt). Only a tenant that chose a tax
+  // rate in setup (VAT-registered) gets a default sales template; others start untaxed.
+  await seedTenantTaxTemplates(tx, tenantId, Number(data.taxRate) > 0)
 
   // 7a. Modes of Payment (always created — Cash, Bank Transfer, Credit Card, Cheque)
   await seedModesOfPayment(tx, tenantId)
@@ -812,6 +824,7 @@ export async function createMinimalDefaults(
 
   // Seed COA and accounting settings even for skip path
   await seedChartOfAccounts(tx, tenantId, bType, currency, undefined, 'numbered')
+  await seedTenantTaxTemplates(tx, tenantId, false)
 
   // Seed modes of payment (Cash, Bank Transfer, Credit Card, Cheque)
   await seedModesOfPayment(tx, tenantId)
@@ -862,6 +875,8 @@ async function seedChartOfAccounts(
 
   // Delete any existing COA and accounting settings for this tenant to handle retries
   await tx.delete(accountingSettings).where(eq(accountingSettings.tenantId, tenantId))
+  // Seeded tax template items reference the tax account (re-seeded right after, see seedTenantTaxTemplates)
+  await tx.delete(taxTemplates).where(eq(taxTemplates.tenantId, tenantId))
   await tx.delete(chartOfAccounts).where(eq(chartOfAccounts.tenantId, tenantId))
 
   async function insertAccounts(accounts: AccountTemplate[], parentId: string | null) {

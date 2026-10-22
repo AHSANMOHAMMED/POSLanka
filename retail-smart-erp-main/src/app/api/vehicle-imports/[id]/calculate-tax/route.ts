@@ -58,6 +58,14 @@ export async function POST(
         overrides: body.overrides,
       })
 
+      // Port handling / clearing / transport recorded on the import are part of what the
+      // vehicle cost to land (the calculator itself only knows CIF + taxes).
+      const additionalCosts = parseFloat(record.additionalCosts ?? '0') || 0
+      if (additionalCosts > 0) {
+        breakdown.additionalCosts = additionalCosts
+        breakdown.totalLandedCost = Math.round((breakdown.cifValueLkr + breakdown.totalTaxes + additionalCosts) * 100) / 100
+      }
+
       // Save calculated values back to the import record
       const [updated] = await db.update(vehicleImports).set({
         fobValue: breakdown.fobValue.toString(),

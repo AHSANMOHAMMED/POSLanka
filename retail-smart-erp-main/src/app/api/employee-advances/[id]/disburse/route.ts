@@ -5,7 +5,7 @@ import { withTenantTransaction } from '@/lib/db'
 import { employeeAdvances, accountingSettings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { createGLEntries, type GLEntryInput } from '@/lib/accounting/gl'
+import { createGLEntries, tenantToday, type GLEntryInput } from '@/lib/accounting/gl'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -37,9 +37,10 @@ export async function POST(
     const tenantId = session.user.tenantId
 
     const result = await withTenantTransaction(tenantId, async (tx) => {
-      const advance = await tx.query.employeeAdvances.findFirst({
-        where: eq(employeeAdvances.id, id),
-      })
+      // Lock the advance: two concurrent disburse clicks must not both pay out and post GL
+      const [advance] = await tx.select().from(employeeAdvances)
+        .where(eq(employeeAdvances.id, id))
+        .for('update')
 
       if (!advance) throw new Error('NOT_FOUND')
       if (advance.status !== 'approved') throw new Error('INVALID_STATUS')
@@ -55,7 +56,7 @@ export async function POST(
 
       // Create GL entries if accounting settings are configured
       if (settings?.defaultEmployeeAdvanceAccountId && settings?.defaultCashAccountId) {
-        const postingDate = new Date().toISOString().split('T')[0]
+        const postingDate = await tenantToday(tenantId)
         const glEntries: GLEntryInput[] = [
           // DEBIT: Employee Advances (current asset) - money owed by employee
           {

@@ -4,7 +4,7 @@ import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { users, accountTenants } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
-import { requirePermission, canModifyUser } from '@/lib/auth/roles'
+import { requirePermission, canModifyUser, rolePermissionsNotHeld } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validatePasswordStrength } from '@/lib/utils/validation'
@@ -13,6 +13,7 @@ import { updateUserSchema } from '@/lib/validation/schemas/users'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { isUniqueViolation } from '@/lib/db/errors'
+import { requireUserSeat } from '@/lib/billing/user-limit'
 
 // GET single user by ID
 export async function GET(
@@ -111,6 +112,29 @@ export async function PUT(
           }
         }
 
+        // Owner role is granted only through account management (same rule as POST /api/users):
+        // nobody — not even an owner — can promote staff to owner from here.
+        if (role === 'owner' && current.role !== 'owner') {
+          throw new Error('CANNOT_ASSIGN_OWNER')
+        }
+
+        // Plan seat limit when re-activating a deactivated user
+        if (isActive === true && !current.isActive) {
+          const seatError = await requireUserSeat(session.user.tenantId)
+          if (seatError) throw new Error('USER_LIMIT')
+        }
+
+        // Cannot assign a role that holds permissions the actor lacks
+        if (role !== undefined && role !== current.role &&
+            rolePermissionsNotHeld(session.user.role, role, session.user.tenantId, session.user.customRoleId).length > 0) {
+          throw new Error('INSUFFICIENT_RANK')
+        }
+        // ...nor take over such a user by resetting their credentials (password / email / PIN)
+        if (current.id !== session.user.id && (password || pin !== undefined || (email && email !== current.email)) &&
+            rolePermissionsNotHeld(session.user.role, current.role, session.user.tenantId, session.user.customRoleId).length > 0) {
+          throw new Error('INSUFFICIENT_RANK')
+        }
+
         // Role hierarchy: cannot modify users at or above your rank
         // Owners are protected — only another owner can modify an owner
         if (!canModifyUser(session.user.role, current.role, role)) {
@@ -147,6 +171,8 @@ export async function PUT(
             throw new Error('INVALID_PASSWORD')
           }
           updateData.passwordHash = await bcrypt.hash(password, 12)
+          // Sign the user out everywhere (JWT check rejects tokens issued before this)
+          updateData.passwordChangedAt = new Date()
         }
 
         // POS PIN: hash on save, empty string clears
@@ -169,10 +195,14 @@ export async function PUT(
             updatedAt: users.updatedAt,
           })
 
-        // Sync isActive to accountTenants when status changes
-        if (isActive !== undefined && current.accountId) {
-          await db.update(accountTenants)
-            .set({ isActive, updatedAt: new Date() })
+        // Sync isActive / role to accountTenants (the account-portal membership) so the
+        // portal cannot hand back a role or access the owner just removed.
+        if ((isActive !== undefined || role !== undefined) && current.accountId) {
+          const memberUpdate: Record<string, unknown> = { updatedAt: new Date() }
+          if (isActive !== undefined) memberUpdate.isActive = isActive
+          if (role !== undefined) memberUpdate.role = role
+          await tx.update(accountTenants)
+            .set(memberUpdate)
             .where(and(
               eq(accountTenants.accountId, current.accountId),
               eq(accountTenants.tenantId, session.user.tenantId)
@@ -205,6 +235,12 @@ export async function PUT(
     }
     if (message === 'CANNOT_MODIFY_OWN_STATUS') {
       return NextResponse.json({ error: 'You cannot change your own status' }, { status: 400 })
+    }
+    if (message === 'CANNOT_ASSIGN_OWNER') {
+      return NextResponse.json({ error: 'Owner role can only be assigned through account management.' }, { status: 400 })
+    }
+    if (message === 'USER_LIMIT') {
+      return NextResponse.json({ error: 'Your plan user limit has been reached. Upgrade your plan or deactivate a user first.', code: 'USER_LIMIT' }, { status: 402 })
     }
     if (message === 'INSUFFICIENT_RANK') {
       return NextResponse.json({ error: 'You do not have permission to modify this user' }, { status: 403 })

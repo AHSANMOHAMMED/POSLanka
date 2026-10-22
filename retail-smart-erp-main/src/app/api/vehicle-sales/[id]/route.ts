@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { vehicleSaleDetails, vehicleInventory, vehicleMakes, vehicleModels, sales, customers, financingOptions } from '@/lib/db/schema'
+import { vehicleSaleDetails, vehicleInventory, vehicleMakes, vehicleModels, sales, customers, financingOptions, vehicleWarranties } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -99,15 +99,51 @@ export async function PUT(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, updateVehicleSaleDetailSchema)
     if (!parsed.success) return parsed.response
-    const { deliveryDate, deliveryNotes, warrantyType, warrantyMonths, warrantyMileage, warrantyPrice, commissionAmount } = parsed.data
+    const { deliveryDate, deliveryNotes, warrantyType, warrantyMonths, warrantyMileage, warrantyPrice, commissionAmount, status, cancellationReason } = parsed.data
+
+    // Cancelling voids the invoice: same permission as voiding a sale
+    if (status === 'cancelled') {
+      const voidPermError = requirePermission(session, 'voidSales')
+      if (voidPermError) return voidPermError
+    }
 
     return await withTenant(session!.user.tenantId, async (db) => {
-      const existing = await db.query.vehicleSaleDetails.findFirst({
-        where: eq(vehicleSaleDetails.id, id),
-      })
+      const [existing] = await db.select().from(vehicleSaleDetails).where(eq(vehicleSaleDetails.id, id)).for('update')
 
       if (!existing) {
         return NextResponse.json({ error: 'Vehicle sale not found' }, { status: 404 })
+      }
+
+      if (status === 'cancelled') {
+        // Lock the invoice and the vehicle; a cancelled sale puts the vehicle back on sale.
+        const [sale] = await db.select().from(sales).where(eq(sales.id, existing.saleId)).for('update')
+        if (!sale) {
+          return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
+        }
+        if (sale.status === 'void') {
+          return NextResponse.json({ error: 'This vehicle sale is already cancelled' }, { status: 400 })
+        }
+        await db.update(sales)
+          .set({ status: 'void', voidReason: cancellationReason || 'Vehicle sale cancelled', voidedAt: new Date() })
+          .where(eq(sales.id, sale.id))
+
+        const [vehicle] = await db.select().from(vehicleInventory).where(eq(vehicleInventory.id, existing.vehicleInventoryId)).for('update')
+        // Only release the vehicle if it is still recorded as sold on THIS invoice
+        if (vehicle && vehicle.saleId === sale.id) {
+          await db.update(vehicleInventory)
+            .set({ status: 'available', soldDate: null, soldPrice: null, saleId: null, updatedAt: new Date() })
+            .where(eq(vehicleInventory.id, vehicle.id))
+        }
+
+        // Warranties sold with this sale no longer apply
+        await db.update(vehicleWarranties)
+          .set({ status: 'cancelled', isActive: false, updatedAt: new Date() })
+          .where(eq(vehicleWarranties.saleId, sale.id))
+
+        logAndBroadcast(session!.user.tenantId, 'vehicle-sale', 'updated', id)
+        logAndBroadcast(session!.user.tenantId, 'vehicle-inventory', 'updated', existing.vehicleInventoryId)
+        logAndBroadcast(session!.user.tenantId, 'sale', 'updated', sale.id)
+        return NextResponse.json({ ...existing, saleStatus: 'void' })
       }
 
       const updateData: Record<string, unknown> = { updatedAt: new Date() }

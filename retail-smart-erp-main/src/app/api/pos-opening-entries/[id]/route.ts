@@ -11,6 +11,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePosOpeningEntrySchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { listShiftCashMovements, shiftCashMovementTotals } from '@/lib/pos/shift-report'
 
 // GET a single opening entry
 export async function GET(
@@ -100,7 +101,10 @@ export async function GET(
         const rows = sale.payments || []
         if (rows.length === 0) {
           if (!method || !paymentMethodBreakdown[method]) return
-          const amount = parseFloat(sale.total)
+          const amount = sale.isReturn
+            ? parseFloat(sale.total)
+            // only what was received (an unpaid on-account sale put nothing in the drawer)
+            : Math.max(0, parseFloat(sale.paidAmount || '0') || 0)
           if (sale.isReturn) {
             paymentMethodBreakdown[method].returns += Math.abs(amount)
             paymentMethodBreakdown[method].netSales -= Math.abs(amount)
@@ -134,13 +138,17 @@ export async function GET(
         }
       })
 
+      // H1: drawer cash paid in / out during the shift
+      const movementTotals = await shiftCashMovementTotals(db, id)
+      const cashMovements = await listShiftCashMovements(db, id)
+
       // Calculate expected amounts and variances
       const expectedAmounts: Record<string, number> = {}
       const variances: Record<string, number> = {}
       
       Object.entries(paymentMethodBreakdown).forEach(([method, breakdown]) => {
         const opening = openingBalances[method] || 0
-        const expected = opening + breakdown.netSales
+        const expected = Math.round((opening + breakdown.netSales + (method === 'cash' ? movementTotals.net : 0)) * 100) / 100
         expectedAmounts[method] = expected
         
         // For now, variance is 0 since we don't have actual amounts yet
@@ -155,7 +163,10 @@ export async function GET(
           totalReturns: returnsTotal,
           netSales: salesTotal - returnsTotal,
           totalTransactions: entry.sales.length,
+          cashPaidIn: movementTotals.paidIn,
+          cashPaidOut: movementTotals.paidOut,
         },
+        cashMovements,
         paymentMethodBreakdown: {
           openingBalances,
           salesByMethod: paymentMethodBreakdown,
@@ -239,6 +250,12 @@ export async function PUT(
         if (saleCount > 0) {
           return NextResponse.json({
             error: `Cannot cancel shift with ${saleCount} sale(s). Void all sales first or close the shift normally.`,
+          }, { status: 400 })
+        }
+        // Paid-ins / paid-outs are posted to the GL: void them first (or close the shift normally)
+        if ((await shiftCashMovementTotals(db, id)).count > 0) {
+          return NextResponse.json({
+            error: 'Cannot cancel a shift with cash paid in / out. Void the cash movements first or close the shift normally.',
           }, { status: 400 })
         }
 

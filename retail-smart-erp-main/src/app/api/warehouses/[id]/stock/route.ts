@@ -85,6 +85,7 @@ export async function GET(
           currentStock: warehouseStock.currentStock,
           minStock: warehouseStock.minStock,
           reorderQty: warehouseStock.reorderQty,
+          maxStock: warehouseStock.maxStock,
           binLocation: warehouseStock.binLocation,
           updatedAt: warehouseStock.updatedAt,
           item: {
@@ -146,7 +147,7 @@ export async function POST(
 
     const parsed = await validateBody(request, adjustWarehouseStockSchema)
     if (!parsed.success) return parsed.response
-    const { itemId, quantity, type, notes, binLocation, minStock, reorderQty, costCenterId } = parsed.data
+    const { itemId, quantity, type, notes, binLocation, minStock, reorderQty, maxStock, costCenterId, reasonCode } = parsed.data
 
     // Issue #62: Use transaction with FOR UPDATE lock for stock adjustments
     return await withTenantTransaction(session!.user.tenantId, async (tx) => {
@@ -173,7 +174,7 @@ export async function POST(
 
       // If just updating settings (no quantity change)
       if (quantity === undefined) {
-        if (binLocation === undefined && minStock === undefined && reorderQty === undefined) {
+        if (binLocation === undefined && minStock === undefined && reorderQty === undefined && maxStock === undefined) {
           return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
         }
         await tx.insert(warehouseStock).values({
@@ -188,6 +189,7 @@ export async function POST(
         if (binLocation !== undefined) updates.binLocation = binLocation
         if (minStock !== undefined) updates.minStock = minStock.toString()
         if (reorderQty !== undefined) updates.reorderQty = reorderQty?.toString()
+        if (maxStock !== undefined) updates.maxStock = maxStock === null ? null : maxStock.toString()
 
         const [updated] = await tx.update(warehouseStock)
           .set(updates)
@@ -227,6 +229,7 @@ export async function POST(
           userId,
           source: 'manual',
           costCenterId: costCenterId || null,
+          reasonCode: reasonCode || (type === 'set' ? 'count_correction' : 'other'),
         })
       } catch (err) {
         const message = err instanceof Error ? err.message : ''
@@ -245,6 +248,7 @@ export async function POST(
       if (binLocation !== undefined) settingUpdates.binLocation = binLocation
       if (minStock !== undefined) settingUpdates.minStock = minStock.toString()
       if (reorderQty !== undefined) settingUpdates.reorderQty = reorderQty?.toString()
+      if (maxStock !== undefined) settingUpdates.maxStock = maxStock === null ? null : maxStock.toString()
       if (Object.keys(settingUpdates).length > 0) {
         await tx.update(warehouseStock)
           .set({ ...settingUpdates, updatedAt: new Date() })
@@ -264,8 +268,11 @@ export async function POST(
           costPrice,
           costCenterId: costCenterId || null,
           notes: notes || `Stock ${type}: ${quantity}`,
+          reasonCode: reasonCode || (type === 'set' ? 'count_correction' : 'other'),
         })
       }
+      // H3: an item without a cost price cannot be valued: the change is not in the GL — say so
+      const unvalued = costPrice <= 0 && change.delta !== 0
 
       // Broadcast changes
       logAndBroadcast(tenantId, 'warehouse-stock', 'updated', warehouseId, { userId })
@@ -284,7 +291,9 @@ export async function POST(
         })
       }
 
-      return NextResponse.json(updated)
+      return NextResponse.json(unvalued
+        ? { ...updated, unvalued: true, warning: `${item.name} has no cost price: this adjustment is not valued in the GL` }
+        : updated)
     })
   } catch (error) {
     const mapped = toApiError(error)

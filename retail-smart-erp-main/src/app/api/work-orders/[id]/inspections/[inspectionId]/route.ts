@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 import { vehicleInspections, inspectionPhotos, workOrders } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { deleteInspectionPhotoFiles } from '@/lib/utils/file-cleanup'
@@ -66,7 +67,7 @@ export async function GET(
               },
             },
           },
-          inspectedByUser: true,
+          inspectedByUser: SAFE_USER,
           responses: true,
           damageMarks: true,
           photos: true,
@@ -186,7 +187,7 @@ export async function PUT(
               },
             },
           },
-          inspectedByUser: true,
+          inspectedByUser: SAFE_USER,
           responses: true,
           damageMarks: true,
           photos: true,

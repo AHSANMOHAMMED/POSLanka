@@ -8,6 +8,12 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateTaxTemplateSchema } from '@/lib/validation/schemas/accounting'
+import { TAX_CATEGORIES } from '@/lib/utils/tax-category'
+import { z } from 'zod'
+
+const updateWithCategorySchema = updateTaxTemplateSchema.extend({
+  taxCategory: z.enum(TAX_CATEGORIES).optional(),
+})
 import { idParamSchema } from '@/lib/validation/schemas/common'
 
 export async function GET(
@@ -60,7 +66,7 @@ export async function PUT(
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
-    const parsed = await validateBody(request, updateTaxTemplateSchema)
+    const parsed = await validateBody(request, updateWithCategorySchema)
     if (!parsed.success) return parsed.response
     const body = parsed.data
     const tenantId = session!.user.tenantId
@@ -81,6 +87,7 @@ export async function PUT(
 
       if (body.name !== undefined) updateData.name = body.name
       if (body.isActive !== undefined) updateData.isActive = body.isActive
+      if (body.taxCategory !== undefined) updateData.taxCategory = body.taxCategory
 
       const [updated] = await tx.update(taxTemplates)
         .set(updateData)

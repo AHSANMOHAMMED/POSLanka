@@ -41,6 +41,15 @@ export interface ReversePurchaseCostInput {
   userId: string | null
   /** 'cancel' | 'delete' — only used in notes */
   action: 'cancel' | 'delete'
+  /**
+   * Quantities whose cost to take back. Default: the purchase's own lines, capped per item at
+   * the stock this purchase actually received (stock_movements 'purchase' rows) — lines covered
+   * by an earlier goods receipt never went through applyPurchaseCost on this document.
+   * Goods-receipt cancellation passes the receipt's lines (purchaseId = receipt id).
+   */
+  lines?: { itemId: string; qty: number; unitPrice: number }[]
+  /** Document label for notes, default 'Purchase'. */
+  label?: string
 }
 
 export interface CostReversal {
@@ -52,19 +61,44 @@ export interface CostReversal {
 
 export async function reversePurchaseCost(tx: DbTx, input: ReversePurchaseCostInput): Promise<CostReversal[]> {
   const { tenantId, purchaseId } = input
-  const lines = rows<{ item_id: string; quantity: string; unit_price: string }>(await tx.execute(sql`
-    SELECT item_id, quantity, unit_price FROM purchase_items
-    WHERE purchase_id = ${purchaseId} AND item_id IS NOT NULL AND quantity > 0
-    ORDER BY item_id
-  `))
-  // aggregate lines of the same item
+  const label = input.label || 'Purchase'
   const byItem = new Map<string, { qty: number; value: number }>()
-  for (const l of lines) {
-    const agg = byItem.get(l.item_id) || { qty: 0, value: 0 }
-    const q = parseFloat(l.quantity)
-    agg.qty = round3(agg.qty + q)
-    agg.value += q * parseFloat(l.unit_price)
-    byItem.set(l.item_id, agg)
+  if (input.lines) {
+    for (const l of input.lines) {
+      if (!(l.qty > 0)) continue
+      const agg = byItem.get(l.itemId) || { qty: 0, value: 0 }
+      agg.qty = round3(agg.qty + l.qty)
+      agg.value += l.qty * l.unitPrice
+      byItem.set(l.itemId, agg)
+    }
+  } else {
+    const lines = rows<{ item_id: string; quantity: string; unit_price: string }>(await tx.execute(sql`
+      SELECT item_id, quantity, unit_price FROM purchase_items
+      WHERE purchase_id = ${purchaseId} AND item_id IS NOT NULL AND quantity > 0
+      ORDER BY item_id
+    `))
+    // aggregate lines of the same item
+    for (const l of lines) {
+      const agg = byItem.get(l.item_id) || { qty: 0, value: 0 }
+      const q = parseFloat(l.quantity)
+      agg.qty = round3(agg.qty + q)
+      agg.value += q * parseFloat(l.unit_price)
+      byItem.set(l.item_id, agg)
+    }
+    // cap at the quantity this purchase itself put into stock (and costed)
+    const stocked = new Map(rows<{ item_id: string; q: string }>(await tx.execute(sql`
+      SELECT item_id, SUM(qty_change) AS q FROM stock_movements
+      WHERE tenant_id = ${tenantId} AND reference_type = 'purchase' AND reference_id = ${purchaseId} AND qty_change > 0
+      GROUP BY item_id
+    `)).map(r => [r.item_id, parseFloat(r.q)]))
+    for (const [itemId, agg] of [...byItem.entries()]) {
+      const cap = round3(stocked.get(itemId) || 0)
+      if (!(cap > 0)) { byItem.delete(itemId); continue }
+      if (cap < agg.qty) {
+        agg.value = agg.value * (cap / agg.qty)
+        agg.qty = cap
+      }
+    }
   }
 
   const out: CostReversal[] = []
@@ -142,7 +176,7 @@ export async function reversePurchaseCost(tx: DbTx, input: ReversePurchaseCostIn
         ${round2(avgPrice).toFixed(2)}::numeric, ${agg.qty.toFixed(3)}::numeric,
         ${stockBefore.toFixed(3)}::numeric, ${stockAfter.toFixed(3)}::numeric,
         ${purchaseId}, ${input.purchaseNo.slice(0, 50)},
-        ${`Purchase ${input.action === 'delete' ? 'deleted' : 'cancelled'}: ${ruleText}`}, ${input.userId || null}
+        ${`${label} ${input.action === 'delete' ? 'deleted' : 'cancelled'}: ${ruleText}`}, ${input.userId || null}
       )
     `)
 
@@ -169,7 +203,7 @@ export async function reversePurchaseOrderReceipt(
   if (!purchase.purchaseOrderId) return null
   const poId = purchase.purchaseOrderId
 
-  await tx.execute(sql`SELECT id FROM purchase_orders WHERE id = ${poId} FOR UPDATE`)
+  const [po] = rows<{ status: string }>(await tx.execute(sql`SELECT status FROM purchase_orders WHERE id = ${poId} FOR UPDATE`))
   const lines = rows<{ item_id: string | null; quantity: string; purchase_order_item_id: string | null; po_received_qty: string | null }>(await tx.execute(sql`
     SELECT item_id, quantity, purchase_order_item_id, po_received_qty FROM purchase_items WHERE purchase_id = ${purchase.id}
   `))
@@ -213,7 +247,9 @@ export async function reversePurchaseOrderReceipt(
     totalOrdered += parseFloat(p.quantity)
     totalReceived += next
   }
-  const status = totalReceived >= totalOrdered && totalOrdered > 0 ? 'fully_received'
+  // A cancelled PO stays cancelled (cancelling its invoice must not re-open it)
+  const status = po?.status === 'cancelled' ? 'cancelled'
+    : totalReceived >= totalOrdered && totalOrdered > 0 ? 'fully_received'
     : totalReceived > 0 ? 'partially_received' : 'confirmed'
   await tx.execute(sql`
     UPDATE purchase_orders SET status = ${status}::purchase_order_status, updated_at = now() WHERE id = ${poId}

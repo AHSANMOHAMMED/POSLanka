@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { purchaseOrders, purchaseOrderItems, purchases, purchaseItems, suppliers } from '@/lib/db/schema'
+import { purchaseOrders, purchaseOrderItems, purchases, purchaseItems } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { applyStockChange, type StockChangeInput } from '@/lib/inventory/apply-stock-change'
 import { applyPurchaseCost, stockErrorResponse } from '@/lib/purchasing/stock-cost'
@@ -16,6 +16,12 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createPurchaseInvoiceSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { adjustSupplierBalance } from '@/lib/purchasing/supplier-balance'
+import { receiveIntoBatch } from '@/lib/purchasing/batch-receipt'
+import { findDuplicateSupplierInvoice, duplicateSupplierInvoiceResponse } from '@/lib/purchasing/supplier-invoice'
+import { unbilledGrnStock } from '@/lib/purchasing/grn-coverage'
+import { planGrnClearing } from '@/lib/purchasing/srbnb'
+import { evaluateThreeWayMatch, matchBlockedMessage } from '@/lib/purchasing/three-way-match'
 
 // POST create invoice from purchase order
 export async function POST(
@@ -28,7 +34,7 @@ export async function POST(
 
   const parsed = await validateBody(request, createPurchaseInvoiceSchema)
   if (!parsed.success) return parsed.response
-  const { supplierInvoiceNo, supplierBillDate, paymentTerm, notes, costCenterId, updateStock, receivedQuantities } = parsed.data
+  const { supplierInvoiceNo, supplierBillDate, paymentTerm, notes, costCenterId, updateStock, receivedQuantities, itemBatches = {} } = parsed.data
 
   const preSession = await authWithCompany()
   if (!preSession) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -100,6 +106,15 @@ export async function POST(
           }, { status: 400 }) }
         }
       }
+
+      // The same supplier bill must not be posted twice
+      const duplicate = await findDuplicateSupplierInvoice(tx, {
+        tenantId: session.user.tenantId,
+        supplierId: order.supplierId,
+        supplierInvoiceNo,
+        lock: true,
+      })
+      if (duplicate) return { error: duplicateSupplierInvoiceResponse(supplierInvoiceNo!, duplicate) }
 
       // Get PO items
       const orderItems = await tx
@@ -187,6 +202,19 @@ export async function POST(
         invoiceTaxBreakdown = taxResult.taxBreakdown
       }
 
+      // H3: 3-way match (prices come from the PO; quantities vs received / ordered)
+      const match = await evaluateThreeWayMatch(tx, {
+        tenantId: session.user.tenantId,
+        purchaseOrderId: id,
+        lines: invoiceItems.map(item => ({ itemId: item.itemId, itemName: item.itemName, quantity: parseFloat(item.quantity), unitPrice: parseFloat(item.unitPrice) })),
+      })
+      if (match.status === 'mismatch' && match.action === 'block') {
+        throw new Error(matchBlockedMessage(match))
+      }
+      // Goods already put into stock by this PO's GRNs and not yet billed (read before the new
+      // invoice exists, so it does not count as billed). Without updateStock the invoice bills them.
+      const grnRemaining = !updateStock ? await unbilledGrnStock(tx, session.user.tenantId, id) : new Map<string, number>()
+
       // Create purchase invoice
       const [newPurchase] = await tx.insert(purchases).values({
         tenantId: session.user.tenantId,
@@ -206,6 +234,9 @@ export async function POST(
         costCenterId: costCenterId || null,
         notes: notes || null,
         createdBy: session.user.id,
+        matchStatus: match.status,
+        matchDetails: match,
+        matchedAt: new Date(),
       }).returning()
 
       // Add invoice items
@@ -213,13 +244,54 @@ export async function POST(
         ...item,
         purchaseId: newPurchase.id,
       }))
-      await tx.insert(purchaseItems).values(purchaseItemsData)
+      const insertedLines = await tx.insert(purchaseItems).values(purchaseItemsData).returning({ id: purchaseItems.id })
 
-      // Update supplier balance
+      // H3: lines billed against GL-posted GRN stock clear Stock Received But Not Billed
+      let grnClearing: { srbnbAmount: number; priceVariance: number; cogsAdjustment: number } | undefined
+      if (grnRemaining.size > 0) {
+        const remaining = new Map(grnRemaining)
+        const lines = invoiceItems.map((item) => {
+          const qty = parseFloat(item.quantity)
+          const fromGrn = item.itemId ? Math.min(qty, Math.max(0, remaining.get(item.itemId) || 0)) : 0
+          if (item.itemId && fromGrn > 0) remaining.set(item.itemId, Math.round(((remaining.get(item.itemId) || 0) - fromGrn) * 1000) / 1000)
+          return { itemId: item.itemId, qty, unitPrice: parseFloat(item.unitPrice), fromGrn }
+        })
+        const linesValue = lines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0)
+        const plan = await planGrnClearing(tx, {
+          tenantId: session.user.tenantId,
+          purchaseOrderId: id,
+          excludePurchaseId: newPurchase.id,
+          grnRemaining,
+          lines,
+          netFactor: linesValue > 0 ? (total - taxAmount) / linesValue : 1,
+          purchaseId: newPurchase.id,
+          purchaseNo,
+          supplierId: order.supplierId,
+          userId: session.user.id,
+        })
+        for (let i = 0; i < insertedLines.length; i++) {
+          const l = plan.lines[i]
+          if (l && l.srbnbQty > 0) {
+            await tx.update(purchaseItems)
+              .set({ srbnbQty: l.srbnbQty.toString(), srbnbAmount: l.srbnbAmount.toFixed(2) })
+              .where(eq(purchaseItems.id, insertedLines[i].id))
+          }
+        }
+        if (plan.srbnbAmount !== 0) grnClearing = plan
+      }
+
+      // Update supplier balance (with the audit row the supplier statement is built from)
       if (total > 0) {
-        await tx.update(suppliers)
-          .set({ balance: sql`${suppliers.balance} + ${total}` })
-          .where(eq(suppliers.id, order.supplierId))
+        await adjustSupplierBalance(tx, {
+          tenantId: session.user.tenantId,
+          supplierId: order.supplierId,
+          delta: total,
+          type: 'purchase',
+          referenceType: 'purchase',
+          referenceId: newPurchase.id,
+          notes: `Purchase ${purchaseNo} created from PO ${order.orderNo}`,
+          userId: session.user.id,
+        })
       }
 
       // Post purchase GL entries (Dr Stock/Inventory, Dr Tax, Cr Accounts Payable)
@@ -235,16 +307,18 @@ export async function POST(
         amountPaid: 0,
         supplierId: order.supplierId || null,
         costCenterId: costCenterId || null,
+        grnClearing,
       })
 
       // Update stock if requested (single stock writer, signed ledger rows). D1: the incoming
       // quantity also updates the weighted-average cost (applyPurchaseCost reads the total stock
       // BEFORE this line's receipt, so cost and stock are applied line by line in item order).
       if (updateStock && order.warehouseId) {
-        const stockInputs: Array<StockChangeInput & { unitPrice: number }> = []
+        const stockInputs: Array<StockChangeInput & { unitPrice: number; poLineId: string }> = []
         invoiceItems.forEach((item, idx) => {
           if (!item.itemId) return
           stockInputs.push({
+            poLineId: item.purchaseOrderItemId,
             unitPrice: parseFloat(item.unitPrice),
             tenantId: session.user.tenantId,
             warehouseId: order.warehouseId,
@@ -262,7 +336,7 @@ export async function POST(
           })
         })
         stockInputs.sort((a, b) => (a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0))
-        for (const { unitPrice, ...input } of stockInputs) {
+        for (const { unitPrice, poLineId, ...input } of stockInputs) {
           await applyPurchaseCost(tx, {
             tenantId: session.user.tenantId,
             itemId: input.itemId,
@@ -275,6 +349,13 @@ export async function POST(
             notes: `Purchase invoice ${purchaseNo} (from PO ${order.orderNo})`,
           })
           await applyStockChange(tx, input)
+          const b = itemBatches[poLineId] || {}
+          await receiveIntoBatch(tx, {
+            tenantId: session.user.tenantId, itemId: input.itemId, warehouseId: order.warehouseId, qty: input.qty,
+            batchNumber: b.batchNumber, expiryDate: b.expiryDate, manufacturingDate: b.manufacturingDate,
+            defaultBatchNumber: purchaseNo, supplierId: order.supplierId,
+            docType: 'purchase', docId: newPurchase.id, lineId: poLineId,
+          })
         }
       }
 

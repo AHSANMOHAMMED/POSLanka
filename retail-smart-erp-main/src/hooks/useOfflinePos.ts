@@ -1,14 +1,23 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import {
   enqueuePendingSale,
-  listPendingSales,
   mergeCatalogSnapshot,
   loadCatalogSnapshot,
-  syncPendingSales,
+  refreshQueueState,
+  startOfflineSync,
+  subscribeQueue,
+  getQueueState,
+  syncNow,
+  retryPendingSale,
+  discardPendingSale,
+  type OfflineQueueState,
   type PendingSale,
 } from '@/lib/offline/pos-queue'
+import { generateClientSaleId, isUuid } from '@/lib/offline/sync-policy'
+import { nextOfflineRef } from '@/lib/offline/offline-ref'
+import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 
 function subscribeOnline(onChange: () => void) {
   window.addEventListener('online', onChange)
@@ -29,62 +38,46 @@ function getOnlineServerSnapshot() {
 
 export function useOfflinePos() {
   const online = useSyncExternalStore(subscribeOnline, getOnlineSnapshot, getOnlineServerSnapshot)
-  const [pendingCount, setPendingCount] = useState(0)
-  const mounted = useRef(false)
+  const company = useCompanyOptional()
+  const tenantSlug = company?.tenantSlug ?? null
+  const [queue, setQueue] = useState<OfflineQueueState>(getQueueState)
+
+  // One shared sync engine per tab: retries on 'online', on a backoff timer and periodically.
+  useEffect(() => {
+    const stop = startOfflineSync(tenantSlug)
+    const unsubscribe = subscribeQueue(setQueue)
+    return () => {
+      unsubscribe()
+      stop()
+    }
+  }, [tenantSlug])
 
   const refreshPending = useCallback(async () => {
-    try {
-      const list = await listPendingSales()
-      setPendingCount(list.length)
-    } catch {
-      // IndexedDB unavailable
-    }
+    await refreshQueueState()
   }, [])
-
-  useEffect(() => {
-    mounted.current = true
-    const id = window.setTimeout(() => {
-      if (mounted.current) void refreshPending()
-    }, 0)
-
-    const onOnline = () => {
-      void syncPendingSales((payload) =>
-        fetch('/api/sales', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-      ).then(() => {
-        if (mounted.current) void refreshPending()
-      })
-    }
-
-    window.addEventListener('online', onOnline)
-    return () => {
-      mounted.current = false
-      window.clearTimeout(id)
-      window.removeEventListener('online', onOnline)
-    }
-  }, [refreshPending])
 
   const queueSale = useCallback(
     async (payload: Record<string, unknown>) => {
-      const clientSaleId =
-        (payload.clientSaleId as string) ||
-        (typeof crypto !== 'undefined' && crypto.randomUUID
-          ? crypto.randomUUID()
-          : `offline-${Date.now()}`)
+      const clientSaleId = isUuid(payload.clientSaleId) ? payload.clientSaleId : generateClientSaleId()
+      // Every queued sale carries an offline receipt number: the server then treats the replay as a
+      // completed offline sale (closed shift / expired approval token → accepted and flagged for
+      // review) instead of re-checking it as a live online sale.
+      const offlineRef = typeof payload.offlineRef === 'string' && payload.offlineRef
+        ? payload.offlineRef
+        : await nextOfflineRef(tenantSlug)
       const sale: PendingSale = {
         clientSaleId,
-        payload: { ...payload, clientSaleId },
+        payload: { ...payload, clientSaleId, offlineRef },
         createdAt: new Date().toISOString(),
         attempts: 0,
+        tenantSlug,
+        offlineRef,
       }
       await enqueuePendingSale(sale)
-      await refreshPending()
-      return clientSaleId
+      await refreshQueueState()
+      return { clientSaleId, offlineRef }
     },
-    [refreshPending]
+    [tenantSlug]
   )
 
   const cacheCatalog = useCallback(async (items: unknown[]) => {
@@ -98,10 +91,20 @@ export function useOfflinePos() {
 
   return {
     online,
-    pendingCount,
+    pendingCount: queue.pending,
+    rejectedCount: queue.rejected,
+    queuedSales: queue.entries,
+    syncing: queue.syncing,
+    lastSyncAt: queue.lastSyncAt,
+    lastSyncError: queue.lastError,
     queueSale,
     cacheCatalog,
     loadCachedCatalog,
     refreshPending,
+    syncNow: () => syncNow({ force: true }),
+    retrySale: retryPendingSale,
+    discardSale: discardPendingSale,
+    /** Generate the idempotency key BEFORE the first POST so a lost reply cannot duplicate the sale. */
+    newClientSaleId: generateClientSaleId,
   }
 }

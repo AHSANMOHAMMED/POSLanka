@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { supplierQuotations, supplierQuotationItems, suppliers, users, purchaseRequisitions } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -17,6 +18,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+    if (permError) return { error: permError }
+
     const [quotation] = await db.select({
       id: supplierQuotations.id,
       quotationNo: supplierQuotations.quotationNo,
@@ -58,6 +62,7 @@ export async function GET(
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if ('notFound' in result) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if ('error' in result) return result.error
   return NextResponse.json(result.data)
 }
 
@@ -97,7 +102,8 @@ export async function PUT(
       const validTransitions: Record<string, string[]> = {
         draft: ['submitted', 'cancelled'],
         submitted: ['received', 'cancelled'],
-        received: ['awarded', 'rejected', 'cancelled'],
+        // 'awarded' is set only by /convert-to-po (with the PO it was awarded to)
+        received: ['rejected', 'cancelled'],
       }
       const allowed = validTransitions[existing.status] || []
       if (!allowed.includes(body.status)) {

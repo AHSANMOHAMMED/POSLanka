@@ -4,6 +4,7 @@ import { purchaseOrders, purchaseOrderItems, purchases, suppliers, warehouses, u
 import { eq, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseOrderSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -13,9 +14,11 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 const validTransitions: Record<string, string[]> = {
   'draft': ['submitted', 'cancelled'],
   'submitted': ['confirmed', 'cancelled'],  // Issue #45: Removed draft (no submitted→draft)
-  'confirmed': ['invoice_created', 'cancelled'],  // Can also go to partially_received/fully_received via /receive endpoint
-  'partially_received': ['invoice_created', 'cancelled'],  // Can receive more or create invoice
-  'fully_received': ['invoice_created', 'cancelled'],  // All received, can create invoice
+  // 'invoice_created' is set only by /create-invoice (which creates the invoice); setting it by
+  // hand would leave a PO with no invoice that can no longer be received or invoiced.
+  'confirmed': ['cancelled'],  // Can also go to partially_received/fully_received via /receive endpoint
+  'partially_received': ['cancelled'],  // Can receive more or create invoice
+  'fully_received': ['cancelled'],  // All received, can create invoice
   'invoice_created': ['cancelled'],  // Issue #41: Allow cancellation from invoice_created
   'cancelled': [],
 }
@@ -30,6 +33,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+    if (permError) return { error: permError }
+
     // Get purchase order with joins (RLS filters by tenant)
     const [order] = await db
       .select({
@@ -191,6 +197,16 @@ export async function PUT(
     const lockedStatuses = ['confirmed', 'partially_received', 'fully_received', 'invoice_created', 'cancelled']
     if (lockedStatuses.includes(currentOrder.status) && warehouseId !== undefined) {
       return { error: NextResponse.json({ error: 'Warehouse cannot be changed after order is confirmed' }, { status: 400 }) }
+    }
+
+    // Referenced supplier / warehouse must exist in this tenant (RLS-scoped lookups)
+    if (supplierId !== undefined && supplierId !== currentOrder.supplierId) {
+      const [s] = await tx.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.id, supplierId))
+      if (!s) return { error: NextResponse.json({ error: 'Supplier not found' }, { status: 404 }) }
+    }
+    if (warehouseId !== undefined && warehouseId !== currentOrder.warehouseId) {
+      const [w] = await tx.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.id, warehouseId))
+      if (!w) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
     }
 
     // Build update data

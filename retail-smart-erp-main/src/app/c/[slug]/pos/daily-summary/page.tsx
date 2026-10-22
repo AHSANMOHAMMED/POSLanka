@@ -39,6 +39,17 @@ interface DailySummaryData {
     netSales: number
     totalTransactions: number
     totalVariance: number
+    // H1: Z-report totals of the day's closings
+    taxTotal?: number
+    discountTotal?: number
+    voidsCount?: number
+    voidsTotal?: number
+    returnsCount?: number
+    cashPaidIn?: number
+    cashPaidOut?: number
+    approvals?: number
+    ledgerTiesOut?: boolean
+    shiftsWithReport?: number
   }
   paymentMethodBreakdown: ReconciliationItem[]
   shifts: ShiftSummary[]
@@ -179,6 +190,20 @@ export default function DailySummaryPage() {
                 {summary.totalVariance >= 0 ? '+' : ''}{formatCurrency(summary.totalVariance, currency)}
               </p>
             </div>
+          </div>
+        )}
+
+        {/* H1: tax, discounts, voids, cash paid in / out, ledger tie-out */}
+        {summary && !!summary.shiftsWithReport && (
+          <div className="bg-white dark:bg-gray-800 border rounded p-4 mb-6 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div><p className="text-gray-500">Tax collected</p><p className="font-semibold dark:text-white">{formatCurrency(summary.taxTotal || 0, currency)}</p></div>
+            <div><p className="text-gray-500">Discounts</p><p className="font-semibold dark:text-white">{formatCurrency(summary.discountTotal || 0, currency)}</p></div>
+            <div><p className="text-gray-500">Voids</p><p className="font-semibold dark:text-white">{summary.voidsCount || 0} · {formatCurrency(summary.voidsTotal || 0, currency)}</p></div>
+            <div><p className="text-gray-500">Returns</p><p className="font-semibold dark:text-white">{summary.returnsCount || 0}</p></div>
+            <div><p className="text-gray-500">Cash paid in</p><p className="font-semibold dark:text-white">{formatCurrency(summary.cashPaidIn || 0, currency)}</p></div>
+            <div><p className="text-gray-500">Cash paid out</p><p className="font-semibold dark:text-white">{formatCurrency(summary.cashPaidOut || 0, currency)}</p></div>
+            <div><p className="text-gray-500">Supervisor approvals</p><p className="font-semibold dark:text-white">{summary.approvals || 0}</p></div>
+            <div><p className="text-gray-500">Ledger tie-out</p><p className={`font-semibold ${summary.ledgerTiesOut ? 'text-green-600' : 'text-red-600'}`}>{summary.ledgerTiesOut ? 'OK' : 'Check shifts'}</p></div>
           </div>
         )}
 

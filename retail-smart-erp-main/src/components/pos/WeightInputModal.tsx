@@ -43,6 +43,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
 
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setInputValue('')
       // Default input unit matches baseUnit
       setInputUnit(baseUnit)

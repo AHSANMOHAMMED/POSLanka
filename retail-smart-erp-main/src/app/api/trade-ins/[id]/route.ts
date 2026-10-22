@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { authWithCompany } from '@/lib/auth'
+import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { tradeInVehicles, vehicleInventory } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { tradeInVehicles, vehicleInventory, vehicleMakes, vehicleModels } from '@/lib/db/schema'
+import { eq, and, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -55,6 +55,7 @@ export async function PUT(
     }
     const permError = requirePermission(session, 'manageVehicles')
     if (permError) return permError
+    const userId = await resolveUserIdRequired(session)
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
@@ -100,12 +101,42 @@ export async function PUT(
         if (conditionNotes !== undefined) updateData.conditionNotes = conditionNotes || null
         if (appraisedBy !== undefined) updateData.appraisedBy = appraisedBy
 
-        if (status !== undefined) {
+        if (status !== undefined && status !== current.status) {
+          // Once the vehicle is in stock the trade-in is final (its inventory record exists),
+          // and a rejected appraisal cannot be stocked without being accepted first.
+          if (current.status === 'added_to_inventory' || current.addedToInventoryId) {
+            throw new Error('ALREADY_IN_INVENTORY')
+          }
+          if (status === 'added_to_inventory' && current.status === 'rejected') {
+            throw new Error('REJECTED_TRADE_IN')
+          }
+        }
+
+        if (status !== undefined && status !== current.status) {
           updateData.status = status
 
           // When trade-in is accepted and added to inventory, create a vehicleInventory record
           if (status === 'added_to_inventory') {
             const tradeInVin = vin ? vin.trim().toUpperCase() : current.vin
+            if (tradeInVin) {
+              const clash = await tx.query.vehicleInventory.findFirst({
+                where: eq(vehicleInventory.vin, tradeInVin),
+                columns: { id: true },
+              })
+              if (clash) throw new Error('DUPLICATE_VIN')
+            }
+            // Carry make/model over when they match the catalogue (names are free text here)
+            const makeName = (make ?? current.make)?.trim()
+            const modelName = (model ?? current.model)?.trim()
+            const makeRow = makeName
+              ? await tx.query.vehicleMakes.findFirst({ where: sql`lower(${vehicleMakes.name}) = lower(${makeName})`, columns: { id: true } })
+              : undefined
+            const modelRow = makeRow && modelName
+              ? await tx.query.vehicleModels.findFirst({
+                  where: and(eq(vehicleModels.makeId, makeRow.id), sql`lower(${vehicleModels.name}) = lower(${modelName})`),
+                  columns: { id: true },
+                })
+              : undefined
             const tradeInYear = year ?? current.year
             const tradeInMileage = mileage ?? current.mileage
             const tradeInColor = color || current.color
@@ -119,6 +150,10 @@ export async function PUT(
             const [newInventory] = await tx.insert(vehicleInventory).values({
               tenantId: session.user.tenantId,
               vin: tradeInVin || null,
+              makeId: makeRow?.id ?? null,
+              modelId: modelRow?.id ?? null,
+              source: 'trade_in',
+              purchaseDate: new Date().toISOString().slice(0, 10),
               year: tradeInYear,
               condition: tradeInCondition,
               status: 'available',
@@ -127,7 +162,7 @@ export async function PUT(
               purchasePrice,
               description: `Trade-in vehicle. Trade-in ID: ${id}`,
               isActive: true,
-              createdBy: session.user.id,
+              createdBy: userId,
             }).returning()
 
             // Store reference to the created inventory record
@@ -157,6 +192,18 @@ export async function PUT(
 
     if (message === 'NOT_FOUND') {
       return NextResponse.json({ error: 'Trade-in not found' }, { status: 404 })
+    }
+    if (message === 'ALREADY_IN_INVENTORY') {
+      return NextResponse.json({ error: 'This trade-in has already been added to inventory' }, { status: 400 })
+    }
+    if (message === 'REJECTED_TRADE_IN') {
+      return NextResponse.json({ error: 'A rejected trade-in cannot be added to inventory' }, { status: 400 })
+    }
+    if (message === 'DUPLICATE_VIN') {
+      return NextResponse.json({ error: 'A vehicle with this VIN is already in inventory' }, { status: 400 })
+    }
+    if (message === 'USER_NOT_FOUND') {
+      return NextResponse.json({ error: 'User not found for this tenant. Please log out and log in again.' }, { status: 400 })
     }
 
     return NextResponse.json({ error: 'Failed to update trade-in' }, { status: 500 })

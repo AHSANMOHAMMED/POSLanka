@@ -33,6 +33,10 @@ export interface PerItemTaxResult {
   taxBreakdown: TaxBreakdownItem[] | null
   baseAmount: number    // amount before exclusive tax
   totalAmount: number   // baseAmount + exclusive taxes
+  /** Template applied to the line (null = none / zero line) */
+  taxTemplateId?: string | null
+  /** VAT treatment of that template, when known */
+  taxCategory?: 'standard' | 'zero_rated' | 'exempt' | 'out_of_scope' | null
 }
 
 export interface DocumentTaxResult {
@@ -134,6 +138,8 @@ export async function recalculateDocumentTax(
       taxBreakdown: taxResult.breakdown.length > 0 ? taxResult.breakdown : null,
       baseAmount: taxResult.baseAmount,
       totalAmount: taxResult.totalAmount,
+      taxTemplateId: template?.id ?? null,
+      taxCategory: template?.taxCategory ?? null,
     })
   }
 

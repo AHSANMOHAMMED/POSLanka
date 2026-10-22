@@ -82,7 +82,7 @@ SUPER_ADMIN_EMAIL=... SUPER_ADMIN_PASSWORD=... npx tsx scripts/create-super-admi
 curl https://app.poslanka.lk/api/health      # expect "tenantIsolation":"app_role"
 ```
 
-- **Cron:** set the GitHub secrets `CRON_SECRET` and `APP_URL` so `.github/workflows/cron.yml` drives `/api/cron/*`.
+- **Cron:** set the GitHub secrets `CRON_SECRET` and `APP_URL` so `.github/workflows/cron.yml` drives `/api/cron/*`. This includes `einvoice-sync` every 10 min and `auto-reorder` daily at 02:30 Asia/Colombo (both `POST`, `Authorization: Bearer $CRON_SECRET`; see PRODUCTION_DEPLOYMENT.md → Scheduled Jobs). `EINVOICE_TRANSMITTER` defaults to `disabled` (queue only).
 - **Backups:**
   - Managed PostgreSQL keeps daily backups with 7-day point-in-time recovery.
   - Enable versioning or lifecycle rules on the Spaces bucket.

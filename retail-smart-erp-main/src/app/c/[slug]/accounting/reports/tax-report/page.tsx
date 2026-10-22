@@ -1,6 +1,8 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
+import { useParams } from 'next/navigation'
 import { Receipt, Loader2 } from 'lucide-react'
 import { ReportPageLayout, SummaryCard } from '@/components/reports/ReportPageLayout'
 import { toast } from '@/components/ui/toast'
@@ -41,6 +43,7 @@ export default function TaxReportPage() {
   const [toDate, setToDate] = useState('')
   const [data, setData] = useState<TaxReportData | null>(null)
   const [loading, setLoading] = useState(false)
+  const { slug } = useParams<{ slug: string }>()
 
   async function handleGenerate() {
     if (!fromDate || !toDate) { toast.error('Please select both dates'); return }
@@ -73,6 +76,9 @@ export default function TaxReportPage() {
             {loading ? <Loader2 size={14} className="animate-spin" /> : <Receipt size={14} />}
             Generate
           </button>
+          <Link href={`/c/${slug}/accounting/reports/vat-schedule`} className="px-3 py-2 text-sm text-blue-600 dark:text-blue-400 hover:underline">
+            Per-invoice VAT schedules →
+          </Link>
         </div>
       }
       loading={loading}

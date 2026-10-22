@@ -8,6 +8,7 @@ import { PermissionGuard } from '@/components/auth/PermissionGuard'
 import { Breadcrumb } from '@/components/ui/page-header'
 import { Loader2, Shield, Save } from 'lucide-react'
 import { getRolesForBusinessType, ROLE_HIERARCHY, type UserRole } from '@/lib/auth/roles'
+import { invalidateShared } from '@/lib/client/shared-fetch'
 
 interface ModuleAccessRow {
   moduleKey: string
@@ -118,6 +119,7 @@ export default function ModuleAccessPage() {
         body: JSON.stringify({ entries: rows }),
       })
       if (res.ok) {
+        invalidateShared('/api/module-access')
         toast.success('Module access updated')
         setDirty(false)
       } else {

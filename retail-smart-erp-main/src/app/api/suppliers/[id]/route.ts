@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, SUPPLIER_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { withTenant } from '@/lib/db'
 import { suppliers, items, purchaseOrders, purchases } from '@/lib/db/schema'
 import { eq, and, ne, notInArray } from 'drizzle-orm'
@@ -20,6 +21,9 @@ export async function GET(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const permError = requireAnyPermission(session, SUPPLIER_VIEW_PERMISSIONS)
+    if (permError) return permError
 
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
@@ -168,6 +172,28 @@ export async function DELETE(
         )
       }
 
+      // Supplier ledger must be settled, and documents keep their supplier: anything that
+      // references it (purchases incl. cancelled ones, any PO) blocks the delete — deactivate
+      // the supplier instead. (Without this the FK makes the delete fail with a 500.)
+      const current = await db.query.suppliers.findFirst({ where: eq(suppliers.id, id) })
+      if (!current) {
+        return NextResponse.json({ error: 'Supplier not found' }, { status: 404 })
+      }
+      if (Math.abs(parseFloat(current.balance || '0')) >= 0.005) {
+        return NextResponse.json(
+          { error: `Cannot delete supplier with an outstanding balance (${parseFloat(current.balance || '0').toFixed(2)}). Settle it or deactivate the supplier instead.` },
+          { status: 400 }
+        )
+      }
+      const anyPurchase = await db.query.purchases.findFirst({ where: eq(purchases.supplierId, id) })
+      const anyPO = anyPurchase ? null : await db.query.purchaseOrders.findFirst({ where: eq(purchaseOrders.supplierId, id) })
+      if (anyPurchase || anyPO) {
+        return NextResponse.json(
+          { error: 'Cannot delete supplier with purchase history. Deactivate the supplier instead.' },
+          { status: 400 }
+        )
+      }
+
       const [deleted] = await db.delete(suppliers)
         .where(eq(suppliers.id, id))
         .returning()
@@ -182,6 +208,13 @@ export async function DELETE(
       return NextResponse.json({ success: true })
     })
   } catch (error) {
+    const code = (error as { code?: string; cause?: { code?: string } })?.code ?? (error as { cause?: { code?: string } })?.cause?.code
+    if (code === '23503') {
+      return NextResponse.json(
+        { error: 'Cannot delete supplier: it is referenced by other records (quotations, costs, history). Deactivate the supplier instead.' },
+        { status: 400 }
+      )
+    }
     logError('api/suppliers/[id]', error)
     return NextResponse.json({ error: 'Failed to delete supplier' }, { status: 500 })
   }

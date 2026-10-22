@@ -8,6 +8,17 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { authWithCompany } from '@/lib/auth'
 import { validateBody } from '@/lib/validation/helpers'
 import { paymentReconciliationReconcileSchema } from '@/lib/validation/schemas/accounting'
+import { validateInvoiceAllocations, PaymentAllocationError } from '@/lib/accounting/payment-entry'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function checkAllocation(tx: any, party: { partyType: string | null; partyId: string | null }, referenceType: string, referenceId: string, referenceNumber: string | null | undefined, allocatedAmount: number, outstandingAmount: number) {
+  if (referenceType === 'sale' || referenceType === 'purchase') {
+    // Locks the invoice and re-checks void/return/party/outstanding against its current state
+    await validateInvoiceAllocations(tx, party, [{ referenceType, referenceId, referenceNumber, allocatedAmount }])
+  } else if (Math.round(allocatedAmount * 100) > Math.round(outstandingAmount * 100)) {
+    throw new PaymentAllocationError(`Allocation of ${allocatedAmount.toFixed(2)} exceeds the outstanding ${Math.max(0, outstandingAmount).toFixed(2)} on ${referenceNumber || 'the journal entry'}`)
+  }
+}
 
 // POST: Execute reconciliation - allocate payments to invoices
 export async function POST(request: NextRequest) {
@@ -24,7 +35,9 @@ export async function POST(request: NextRequest) {
   const parsed = await validateBody(request, paymentReconciliationReconcileSchema)
   if (!parsed.success) return parsed.response
 
-  const result = await withAuthTenantTransaction(async (session, tx) => {
+  let result: Response | null
+  try {
+  result = await withAuthTenantTransaction(async (session, tx) => {
     const tenantId = session.user.tenantId
     const { allocations } = parsed.data
 
@@ -43,9 +56,10 @@ export async function POST(request: NextRequest) {
 
       if (paymentEntryId) {
         // === Payment Entry-based allocation (existing flow) ===
-        const [pe] = await tx.select().from(paymentEntries).where(eq(paymentEntries.id, paymentEntryId))
+        // Locked: two reconciliations must not both spend the same unallocated amount
+        const [pe] = await tx.select().from(paymentEntries).where(eq(paymentEntries.id, paymentEntryId)).for('update')
         if (!pe || pe.status !== 'submitted') continue
-        if (Number(pe.unallocatedAmount) < allocatedAmount) continue
+        if (Math.round(Number(pe.unallocatedAmount) * 100) < Math.round(allocatedAmount * 100)) continue
 
         partyType = pe.partyType as 'customer' | 'supplier'
         partyId = pe.partyId
@@ -82,6 +96,8 @@ export async function POST(request: NextRequest) {
           totalAmount = jeAmount
           outstandingAmount = Math.round((jeAmount - alreadyAllocated) * 100) / 100
         }
+
+        await checkAllocation(tx, { partyType, partyId }, referenceType, referenceId, referenceNumber, allocatedAmount, outstandingAmount)
 
         // Create payment entry reference
         await tx.insert(paymentEntryReferences).values({
@@ -172,6 +188,8 @@ export async function POST(request: NextRequest) {
           outstandingAmount = Math.round((jeAmount - Number(invAllocated?.total || 0)) * 100) / 100
         }
 
+        await checkAllocation(tx, { partyType, partyId }, referenceType, referenceId, referenceNumber, allocatedAmount, outstandingAmount)
+
         // Create payment entry reference with sourceJeItemId
         await tx.insert(paymentEntryReferences).values({
           tenantId,
@@ -242,6 +260,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, reconciled: allocations.length })
   })
+  } catch (error) {
+    if (error instanceof PaymentAllocationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+    throw error
+  }
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   return result

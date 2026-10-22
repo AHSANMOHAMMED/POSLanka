@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { payrollRuns, salarySlips, salarySlipComponents, employeeProfiles } from '@/lib/db/schema'
-import { eq, and, sql, inArray } from 'drizzle-orm'
+import { eq, and, sql, inArray, ne } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { computeSalarySlip } from '@/lib/payroll/compute-salary-slip'
 import { logError } from '@/lib/ai/error-logger'
@@ -137,10 +137,11 @@ export async function POST(request: NextRequest) {
             eq(salarySlips.employeeProfileId, profile.id),
             eq(salarySlips.payrollMonth, payrollMonth),
             eq(salarySlips.payrollYear, payrollYear),
+            ne(salarySlips.status, 'cancelled'),
           ),
         })
 
-        if (existingSlip && existingSlip.status !== 'cancelled') continue
+        if (existingSlip) continue
 
         try {
           const computed = await computeSalarySlip(db, {
@@ -155,7 +156,8 @@ export async function POST(request: NextRequest) {
           slipCount++
           const slipNo = await nextDocNo(db, session.user.tenantId, 'salary_slip', { period: `${payrollYear}-${monthStr}` })
           const startDate = `${payrollYear}-${monthStr}-01`
-          const endDate = new Date(payrollYear, payrollMonth, 0).toISOString().split('T')[0]
+          // Last day of the month, computed in UTC (local-midnight → toISOString shifted it a day back east of UTC)
+          const endDate = `${payrollYear}-${monthStr}-${String(new Date(Date.UTC(payrollYear, payrollMonth, 0)).getUTCDate()).padStart(2, '0')}`
 
           const [slip] = await db
             .insert(salarySlips)

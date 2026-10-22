@@ -236,67 +236,16 @@ export async function restoreSaleLineBatches(tx: DbTx, input: RestoreBatchesInpu
       UPDATE sale_item_batches SET returned_quantity = returned_quantity + ${q.toFixed(3)}::numeric WHERE id = ${a.id}
     `)
 
-    const [src] = rows<{
-      id: string; batch_number: string; expiry_date: string | null; manufacturing_date: string | null; warehouse_id: string | null
-      item_id: string; supplier_id: string | null; supplier_batch_number: string | null; purchase_receipt_id: string | null; status: string
-    }>(await tx.execute(sql`
-      SELECT id, batch_number, expiry_date::text AS expiry_date, manufacturing_date::text AS manufacturing_date, warehouse_id,
-             item_id, supplier_id, supplier_batch_number, purchase_receipt_id, status::text AS status
-      FROM item_batches WHERE id = ${a.batch_id}
-      FOR UPDATE
-    `))
-    if (!src) continue
-
-    const sameWarehouse = !src.warehouse_id || src.warehouse_id === input.toWarehouseId
-    let toBatchId: string
-    if (sameWarehouse && !input.quarantine) {
-      await tx.execute(sql`
-        UPDATE item_batches
-        SET current_quantity = current_quantity + ${q.toFixed(3)}::numeric,
-            status = CASE WHEN status = 'consumed' THEN 'active'::batch_status ELSE status END,
-            updated_at = now()
-        WHERE id = ${src.id}
-      `)
-      toBatchId = src.id
-    } else {
-      // same batch number in the destination warehouse (created on demand)
-      const targetStatus = input.quarantine ? 'quarantine' : 'active'
-      const [existing] = rows<{ id: string }>(await tx.execute(sql`
-        SELECT id FROM item_batches
-        WHERE tenant_id = ${input.tenantId} AND item_id = ${src.item_id} AND warehouse_id = ${input.toWarehouseId}
-          AND batch_number = ${src.batch_number}
-          AND expiry_date IS NOT DISTINCT FROM ${src.expiry_date}::date
-          AND (status = ${targetStatus}::batch_status OR (${targetStatus}::text = 'active' AND status = 'consumed'))
-        ORDER BY created_at
-        LIMIT 1
-        FOR UPDATE
-      `))
-      if (existing) {
-        await tx.execute(sql`
-          UPDATE item_batches
-          SET current_quantity = current_quantity + ${q.toFixed(3)}::numeric,
-              status = CASE WHEN status = 'consumed' THEN 'active'::batch_status ELSE status END,
-              updated_at = now()
-          WHERE id = ${existing.id}
-        `)
-        toBatchId = existing.id
-      } else {
-        const [created] = rows<{ id: string }>(await tx.execute(sql`
-          INSERT INTO item_batches (
-            tenant_id, item_id, batch_number, warehouse_id, manufacturing_date, expiry_date,
-            initial_quantity, current_quantity, supplier_batch_number, purchase_receipt_id, supplier_id, status, notes
-          ) VALUES (
-            ${input.tenantId}, ${src.item_id}, ${src.batch_number}, ${input.toWarehouseId},
-            ${src.manufacturing_date}::date, ${src.expiry_date}::date,
-            ${q.toFixed(3)}::numeric, ${q.toFixed(3)}::numeric, ${src.supplier_batch_number}, ${src.purchase_receipt_id},
-            ${src.supplier_id}, ${targetStatus}::batch_status,
-            ${input.quarantine ? 'Returned goods (quarantine)' : 'Returned goods'}::text
-          )
-          RETURNING id
-        `))
-        toBatchId = created.id
-      }
-    }
+    const put = await putIntoBatch(tx, {
+      tenantId: input.tenantId,
+      srcBatchId: a.batch_id,
+      toWarehouseId: input.toWarehouseId,
+      qty: q,
+      quarantine: input.quarantine,
+      notes: input.quarantine ? 'Returned goods (quarantine)' : 'Returned goods',
+    })
+    if (!put) continue
+    const { src, toBatchId } = put
 
     if (input.returnSaleItemId) {
       await tx.execute(sql`
@@ -308,6 +257,90 @@ export async function restoreSaleLineBatches(tx: DbTx, input: RestoreBatchesInpu
   }
 
   return { restored, unallocated: left }
+}
+
+export interface PutIntoBatchInput {
+  tenantId: string
+  /** Batch the quantity originally came from (its number / expiry are kept). */
+  srcBatchId: string
+  toWarehouseId: string
+  qty: number
+  /** Restore with status 'quarantine' (not sellable). */
+  quarantine?: boolean
+  /** Notes on a batch created in the destination warehouse. */
+  notes?: string
+}
+
+/**
+ * Put `qty` back into a batch: into the source batch itself when it lives in (or is not bound to)
+ * `toWarehouseId`, otherwise into the batch with the same number + expiry in that warehouse
+ * (created on demand). Returns null when the source batch no longer exists.
+ */
+export async function putIntoBatch(tx: DbTx, input: PutIntoBatchInput): Promise<{
+  src: { id: string; batch_number: string; expiry_date: string | null }
+  toBatchId: string
+} | null> {
+  const q = round3(Number(input.qty))
+  const [src] = rows<{
+    id: string; batch_number: string; expiry_date: string | null; manufacturing_date: string | null; warehouse_id: string | null
+    item_id: string; supplier_id: string | null; supplier_batch_number: string | null; purchase_receipt_id: string | null; status: string
+  }>(await tx.execute(sql`
+    SELECT id, batch_number, expiry_date::text AS expiry_date, manufacturing_date::text AS manufacturing_date, warehouse_id,
+           item_id, supplier_id, supplier_batch_number, purchase_receipt_id, status::text AS status
+    FROM item_batches WHERE id = ${input.srcBatchId}
+    FOR UPDATE
+  `))
+  if (!src) return null
+  if (!(q > 0)) return { src, toBatchId: src.id }
+
+  const sameWarehouse = !src.warehouse_id || src.warehouse_id === input.toWarehouseId
+  if (sameWarehouse && !input.quarantine) {
+    await tx.execute(sql`
+      UPDATE item_batches
+      SET current_quantity = current_quantity + ${q.toFixed(3)}::numeric,
+          status = CASE WHEN status = 'consumed' THEN 'active'::batch_status ELSE status END,
+          updated_at = now()
+      WHERE id = ${src.id}
+    `)
+    return { src, toBatchId: src.id }
+  }
+
+  // same batch number in the destination warehouse (created on demand)
+  const targetStatus = input.quarantine ? 'quarantine' : 'active'
+  const [existing] = rows<{ id: string }>(await tx.execute(sql`
+    SELECT id FROM item_batches
+    WHERE tenant_id = ${input.tenantId} AND item_id = ${src.item_id} AND warehouse_id = ${input.toWarehouseId}
+      AND batch_number = ${src.batch_number}
+      AND expiry_date IS NOT DISTINCT FROM ${src.expiry_date}::date
+      AND (status = ${targetStatus}::batch_status OR (${targetStatus}::text = 'active' AND status = 'consumed'))
+    ORDER BY created_at
+    LIMIT 1
+    FOR UPDATE
+  `))
+  if (existing) {
+    await tx.execute(sql`
+      UPDATE item_batches
+      SET current_quantity = current_quantity + ${q.toFixed(3)}::numeric,
+          status = CASE WHEN status = 'consumed' THEN 'active'::batch_status ELSE status END,
+          updated_at = now()
+      WHERE id = ${existing.id}
+    `)
+    return { src, toBatchId: existing.id }
+  }
+  const [created] = rows<{ id: string }>(await tx.execute(sql`
+    INSERT INTO item_batches (
+      tenant_id, item_id, batch_number, warehouse_id, manufacturing_date, expiry_date,
+      initial_quantity, current_quantity, supplier_batch_number, purchase_receipt_id, supplier_id, status, notes
+    ) VALUES (
+      ${input.tenantId}, ${src.item_id}, ${src.batch_number}, ${input.toWarehouseId},
+      ${src.manufacturing_date}::date, ${src.expiry_date}::date,
+      ${q.toFixed(3)}::numeric, ${q.toFixed(3)}::numeric, ${src.supplier_batch_number}, ${src.purchase_receipt_id},
+      ${src.supplier_id}, ${targetStatus}::batch_status,
+      ${input.notes ?? null}::text
+    )
+    RETURNING id
+  `))
+  return { src, toBatchId: created.id }
 }
 
 export interface SaleLineBatchInfo {

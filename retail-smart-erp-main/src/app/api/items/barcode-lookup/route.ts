@@ -3,6 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { items, warehouseStock, tenants } from '@/lib/db/schema'
 import { eq, and, inArray, or } from 'drizzle-orm'
+import { findExtraBarcodes, type ExtraBarcodeMatch } from '@/lib/pricing/catalog'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { barcodeLookupSchema } from '@/lib/validation/schemas/items'
 import { analyseScan, normalizeScaleConfig, type ScaleBarcodeConfig } from '@/lib/inventory/barcode-parse'
@@ -35,8 +36,12 @@ export async function GET(request: NextRequest) {
       const pluValues = scan.candidates.filter((c) => c.field === 'plu').map((c) => c.lookup)
       const skuValues = scan.candidates.filter((c) => c.field === 'sku').map((c) => c.lookup)
 
+      // H5: additional barcodes (item_barcodes) and unit barcodes (item_uoms)
+      const extras = await findExtraBarcodes(db, session.user.tenantId, barcodeValues)
+
       const conditions = []
       if (barcodeValues.length) conditions.push(inArray(items.barcode, barcodeValues))
+      if (extras.length) conditions.push(inArray(items.id, extras.map((e) => e.itemId)))
       if (pluValues.length) conditions.push(inArray(items.pluCode, pluValues))
       if (skuValues.length) conditions.push(inArray(items.sku, skuValues))
       if (conditions.length === 0) {
@@ -55,10 +60,13 @@ export async function GET(request: NextRequest) {
       // Pick the match for the highest-priority candidate
       let result = matches[0]
       let matchedBy: string = 'barcode'
+      let extra: ExtraBarcodeMatch | null = null
       outer: for (const cand of scan.candidates) {
         for (const m of matches) {
           const val = cand.field === 'barcode' ? m.barcode : cand.field === 'plu' ? m.pluCode : m.sku
           if (val && val === cand.lookup) { result = m; matchedBy = cand.field; break outer }
+          const x = cand.field === 'barcode' ? extras.find((e) => e.itemId === m.id && e.barcode === cand.lookup) : undefined
+          if (x) { result = m; matchedBy = x.source; extra = x; break outer }
         }
       }
 
@@ -110,11 +118,44 @@ export async function GET(request: NextRequest) {
         if (scan.gs1.productionDate) scanInfo.productionDate = scan.gs1.productionDate
         if (scan.gs1.netWeightKg) scanInfo.quantity = scan.gs1.netWeightKg
         else if (scan.gs1.count) scanInfo.quantity = scan.gs1.count
-        if (scan.gs1.price) scanInfo.unitPrice = scan.gs1.price
+        if (scan.gs1.price) {
+          // AI 392n is the amount payable for the pack (line total), not a per-unit price:
+          // a 1.25 kg pack labelled 875.00 is 700.00/kg, not 875.00 × 1.25
+          const qty = typeof scanInfo.quantity === 'number' && scanInfo.quantity > 0 ? scanInfo.quantity : 1
+          scanInfo.lineTotal = scan.gs1.price
+          // 4 decimals so quantity × unitPrice reproduces the amount to the cent
+          scanInfo.unitPrice = Math.round((scan.gs1.price / qty) * 10000) / 10000
+        }
+      }
+
+      // H5: unit of measure of the scanned code. uom-aware clients use uom / uomFactor / packQty /
+      // uomPrice; older clients get the same sale expressed in base units through scan.quantity /
+      // scan.unitPrice / scan.lineTotal (stock is always kept in base units).
+      const basePrice = parseFloat(result.sellingPrice)
+      const uomFactor = extra?.factor ?? 1
+      const packQty = extra?.packQty ?? 1
+      const uomPrice = extra
+        ? (extra.priceOverride ?? extra.uomPrice ?? Math.round(basePrice * uomFactor * 100) / 100)
+        : basePrice
+      if (extra && scanInfo.quantity === undefined && (packQty !== 1 || uomFactor !== 1 || extra.priceOverride !== null)) {
+        const baseQty = Math.round(packQty * uomFactor * 1000) / 1000
+        scanInfo.quantity = baseQty
+        scanInfo.lineTotal = Math.round(packQty * uomPrice * 100) / 100
+        scanInfo.unitPrice = Math.round(((packQty * uomPrice) / baseQty) * 10000) / 10000
       }
 
       return NextResponse.json({
         id: result.id,
+        productType: result.productType,
+        uom: extra?.uom ?? null,
+        uomFactor,
+        packQty,
+        uomPrice,
+        /** item_barcodes.price_override: the code fixes the price (client sends priceLocked) */
+        priceOverride: extra?.priceOverride ?? null,
+        /** the additional / unit barcode that matched (sent back on the sale line as `barcode`) */
+        matchedBarcode: extra?.barcode ?? null,
+        barcodeLabel: extra?.label ?? null,
         name: result.name,
         sku: result.sku,
         barcode: result.barcode,

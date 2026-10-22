@@ -12,6 +12,8 @@ export interface ResolvedTaxTemplate {
   id: string
   name: string
   items: ResolvedTaxTemplateItem[]
+  /** VAT treatment (tax_templates.tax_category); absent on templates resolved by older code. */
+  taxCategory?: 'standard' | 'zero_rated' | 'exempt' | 'out_of_scope'
 }
 
 export interface ResolvedTaxTemplateItem {

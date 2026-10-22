@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { sales } from '@/lib/db/schema'
 import { eq, and, sql, gte, lte } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { tenantDayRange, localTs } from '@/lib/reports/date-range'
 
 export async function GET(request: NextRequest) {
   try {
@@ -28,10 +29,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'fromDate and toDate are required' }, { status: 400 })
     }
 
+    // Inclusive local business days (tenant timezone, Asia/Colombo by default)
+    const range = await tenantDayRange(session.user.tenantId, fromDate, toDate)
+
     return await withTenant(session.user.tenantId, async (db) => {
       // Sales grouped by hour of day
       const data = await db.select({
-        hour: sql<number>`EXTRACT(HOUR FROM ${sales.createdAt})::int`,
+        hour: sql<number>`EXTRACT(HOUR FROM ${localTs(sales.createdAt, range.tz)})::int`,
         orderCount: sql<number>`COUNT(*)::int`,
         totalRevenue: sql<string>`COALESCE(SUM(CAST(${sales.total} AS numeric)), 0)`,
         avgOrderValue: sql<string>`CASE WHEN COUNT(*) > 0 THEN SUM(CAST(${sales.total} AS numeric)) / COUNT(*) ELSE 0 END`,
@@ -39,13 +43,13 @@ export async function GET(request: NextRequest) {
         .from(sales)
         .where(and(
           eq(sales.tenantId, session.user.tenantId),
-          gte(sales.createdAt, new Date(fromDate)),
-          lte(sales.createdAt, new Date(toDate + 'T23:59:59')),
+          gte(sales.createdAt, range.from),
+          lte(sales.createdAt, range.to),
           sql`${sales.status} != 'void'`,
           eq(sales.isReturn, false),
         ))
-        .groupBy(sql`EXTRACT(HOUR FROM ${sales.createdAt})`)
-        .orderBy(sql`EXTRACT(HOUR FROM ${sales.createdAt})`)
+        .groupBy(sql`EXTRACT(HOUR FROM ${localTs(sales.createdAt, range.tz)})`)
+        .orderBy(sql`EXTRACT(HOUR FROM ${localTs(sales.createdAt, range.tz)})`)
 
       let totalOrders = 0
       let totalRevenue = 0

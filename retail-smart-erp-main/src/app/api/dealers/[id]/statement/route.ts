@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { dealerPayments, dealers } from '@/lib/db/schema'
-import { eq, and, gte, lte, sql } from 'drizzle-orm'
+import { eq, and, gte, lt, lte, sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams, validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -59,7 +59,7 @@ export async function GET(
           dealerAllocation: true,
           sale: true,
           createdByUser: SAFE_USER,
-          confirmedByUser: true,
+          confirmedByUser: SAFE_USER,
         },
         orderBy: [sql`${dealerPayments.paymentDate} ASC, ${dealerPayments.createdAt} ASC`],
       })
@@ -82,7 +82,10 @@ export async function GET(
           .from(dealerPayments)
           .where(and(
             eq(dealerPayments.dealerId, id),
-            lte(dealerPayments.paymentDate, startDate)
+            // strictly before the period: payments ON startDate are listed as entries below
+            lt(dealerPayments.paymentDate, startDate),
+            // cancelled payments no longer affect the balance
+            sql`COALESCE(${dealerPayments.status}, 'pending') != 'cancelled'`
           ))
         openingBalance = parseFloat(result?.total || '0')
       }
@@ -93,10 +96,13 @@ export async function GET(
         const amount = parseFloat(payment.amount || '0')
         // inbound: dealer pays company -> balance decreases
         // outbound: company pays dealer -> balance increases
-        if (payment.direction === 'inbound') {
-          runningBalance -= amount
+        // (cancelled payments are listed but do not move the running balance)
+        if (payment.status === 'cancelled') {
+          // no balance effect
+        } else if (payment.direction === 'inbound') {
+          runningBalance = Math.round((runningBalance - amount) * 100) / 100
         } else {
-          runningBalance += amount
+          runningBalance = Math.round((runningBalance + amount) * 100) / 100
         }
 
         return {

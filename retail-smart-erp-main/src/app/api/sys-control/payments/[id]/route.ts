@@ -6,7 +6,7 @@ import {
   pendingCompanies,
   tenants,
 } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { adminAudit, withRateLimit, STRICT_LIMIT, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -49,6 +49,19 @@ export async function PUT(
       return NextResponse.json({ error: 'Payment already processed' }, { status: 400 })
     }
 
+    // Claim the deposit atomically so a double-click / two admins cannot approve it twice
+    // (each approval would extend the subscription again or try to create the company twice).
+    const [claimed] = await db.update(paymentDeposits)
+      .set({ status, updatedAt: new Date() })
+      .where(and(eq(paymentDeposits.id, id), eq(paymentDeposits.status, 'pending')))
+      .returning({ id: paymentDeposits.id })
+    if (!claimed) {
+      return NextResponse.json({ error: 'Payment already processed' }, { status: 400 })
+    }
+    const releaseClaim = () => db.update(paymentDeposits)
+      .set({ status: 'pending', updatedAt: new Date() })
+      .where(eq(paymentDeposits.id, id))
+
     // Handle approval — perform activation BEFORE marking payment as approved
     if (status === 'approved') {
       // Case 1: Pending company payment - create the company
@@ -58,6 +71,7 @@ export async function PUT(
         })
 
         if (!pending || (pending.status !== 'pending_approval' && pending.status !== 'pending_payment')) {
+          await releaseClaim()
           return NextResponse.json({
             error: 'Pending company is not in a valid state for activation',
           }, { status: 400 })
@@ -67,6 +81,7 @@ export async function PUT(
           const billingCycle = (pending.billingCycle || 'monthly') as 'monthly' | 'yearly'
           await activateCompanyFromPending(pending, billingCycle)
         } catch (err) {
+          await releaseClaim()
           if (err instanceof ActivationError) {
             return NextResponse.json({ error: err.message, code: err.code }, { status: 400 })
           }

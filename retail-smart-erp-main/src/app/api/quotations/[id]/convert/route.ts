@@ -3,6 +3,8 @@ import { eq, and } from 'drizzle-orm'
 import { withAuthTenantTransaction } from '@/lib/db/with-auth-tenant'
 import { quotations, quotationItems } from '@/lib/db/schema'
 import { requireTenantFeature } from '@/lib/features/check'
+import { requirePermission } from '@/lib/auth/roles'
+import { getTenantTimezone, localParts } from '@/lib/notifications/alert-settings'
 
 /**
  * Marks quotation as converted and returns cart payload for POS/sale creation.
@@ -13,11 +15,28 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return NextResponse.json({ error: 'Quotation not found' }, { status: 404 })
+  }
 
   const result = await withAuthTenantTransaction(async (session, db, _client) => {
+    const permError = requirePermission(session, 'createSales')
+    if (permError) return { response: permError }
+
     const feature = await requireTenantFeature(session.user.tenantId, 'quotation')
     if (!feature.ok) {
       return { error: 'Quotation module disabled', status: 403 as const }
+    }
+
+    // Lock the quotation row: two concurrent conversions must not both hand out the cart
+    // (one quotation -> one sale).
+    const [locked] = await db
+      .select({ id: quotations.id })
+      .from(quotations)
+      .where(and(eq(quotations.id, id), eq(quotations.tenantId, session.user.tenantId)))
+      .for('update')
+    if (!locked) {
+      return { error: 'Quotation not found', status: 404 as const }
     }
 
     const quote = await db.query.quotations.findFirst({
@@ -30,7 +49,13 @@ export async function POST(
     if (quote.status === 'converted') {
       return { error: 'Already converted', status: 400 as const }
     }
-    if (quote.validUntil && new Date(quote.validUntil) < new Date()) {
+    if (quote.status === 'cancelled' || quote.status === 'rejected') {
+      return { error: `A ${quote.status} quotation cannot be converted`, status: 400 as const }
+    }
+    // "Valid until" is a calendar date in the shop's timezone: the quote is still valid for the
+    // whole of that day (not only until 00:00 UTC = 05:30 in Colombo).
+    const today = localParts(new Date(), await getTenantTimezone(session.user.tenantId)).date
+    if (quote.validUntil && String(quote.validUntil).slice(0, 10) < today) {
       await db
         .update(quotations)
         .set({ status: 'expired', updatedAt: new Date() })
@@ -63,6 +88,7 @@ export async function POST(
   })
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if ('response' in result) return result.response
   if ('error' in result) {
     return NextResponse.json({ error: result.error }, { status: result.status })
   }

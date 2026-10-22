@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
+import { SAFE_USER } from '@/lib/db/safe-columns'
 import { vehicleInspections, inspectionTemplates, inspectionResponses, workOrders } from '@/lib/db/schema'
 import { eq, and, or, isNull } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -54,7 +55,7 @@ export async function GET(
               },
             },
           },
-          inspectedByUser: true,
+          inspectedByUser: SAFE_USER,
           responses: true,
           damageMarks: true,
           photos: true,
@@ -226,7 +227,7 @@ export async function POST(
               },
             },
           },
-          inspectedByUser: true,
+          inspectedByUser: SAFE_USER,
           responses: true,
           damageMarks: true,
           photos: true,

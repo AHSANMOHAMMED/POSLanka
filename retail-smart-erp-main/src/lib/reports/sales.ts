@@ -3,6 +3,7 @@
 
 import { eq, and, sql, gte, lte } from 'drizzle-orm'
 import { sales, saleItems, payments, items, glEntries, chartOfAccounts } from '@/lib/db/schema'
+import { tenantDayRange, localTs } from './date-range'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DbInstance = any
@@ -17,19 +18,22 @@ export async function getSalesSummary(
   }
 ) {
   const { fromDate, toDate, groupBy = 'day' } = filters
+  const range = await tenantDayRange(tenantId, fromDate, toDate)
 
   // Totals
   const [totals] = await db.select({
     totalSales: sql<string>`COALESCE(SUM(CASE WHEN ${sales.isReturn} = false THEN CAST(${sales.total} AS numeric) ELSE 0 END), 0)`,
-    totalReturns: sql<string>`COALESCE(SUM(CASE WHEN ${sales.isReturn} = true THEN CAST(${sales.total} AS numeric) ELSE 0 END), 0)`,
+    // Return documents are stored with NEGATIVE totals; report the returned amount as a
+    // positive magnitude so netSales = sales - returns (it was sales + returns).
+    totalReturns: sql<string>`COALESCE(SUM(CASE WHEN ${sales.isReturn} = true THEN ABS(CAST(${sales.total} AS numeric)) ELSE 0 END), 0)`,
     orderCount: sql<number>`COUNT(CASE WHEN ${sales.isReturn} = false THEN 1 END)::int`,
     returnCount: sql<number>`COUNT(CASE WHEN ${sales.isReturn} = true THEN 1 END)::int`,
   })
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
-      gte(sales.createdAt, new Date(fromDate)),
-      lte(sales.createdAt, new Date(toDate + 'T23:59:59')),
+      gte(sales.createdAt, range.from),
+      lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
     ))
 
@@ -45,11 +49,11 @@ export async function getSalesSummary(
 
   switch (groupBy) {
     case 'week':
-      groupExpr = sql`TO_CHAR(DATE_TRUNC('week', ${sales.createdAt}), 'YYYY-"W"IW')`
+      groupExpr = sql`TO_CHAR(DATE_TRUNC('week', ${localTs(sales.createdAt, range.tz)}), 'IYYY-"W"IW')`
       groupLabel = 'Week'
       break
     case 'month':
-      groupExpr = sql`TO_CHAR(${sales.createdAt}, 'YYYY-MM')`
+      groupExpr = sql`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM')`
       groupLabel = 'Month'
       break
     case 'customer':
@@ -65,21 +69,23 @@ export async function getSalesSummary(
       groupLabel = 'Payment Method'
       break
     default:
-      groupExpr = sql`TO_CHAR(${sales.createdAt}, 'YYYY-MM-DD')`
+      groupExpr = sql`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM-DD')`
       groupLabel = 'Date'
   }
 
   const grouped = await db.select({
     group: groupExpr.as('group_key'),
     totalSales: sql<string>`COALESCE(SUM(CASE WHEN ${sales.isReturn} = false THEN CAST(${sales.total} AS numeric) ELSE 0 END), 0)`,
-    totalReturns: sql<string>`COALESCE(SUM(CASE WHEN ${sales.isReturn} = true THEN CAST(${sales.total} AS numeric) ELSE 0 END), 0)`,
+    // Return documents are stored with NEGATIVE totals; report the returned amount as a
+    // positive magnitude so netSales = sales - returns (it was sales + returns).
+    totalReturns: sql<string>`COALESCE(SUM(CASE WHEN ${sales.isReturn} = true THEN ABS(CAST(${sales.total} AS numeric)) ELSE 0 END), 0)`,
     orderCount: sql<number>`COUNT(CASE WHEN ${sales.isReturn} = false THEN 1 END)::int`,
   })
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
-      gte(sales.createdAt, new Date(fromDate)),
-      lte(sales.createdAt, new Date(toDate + 'T23:59:59')),
+      gte(sales.createdAt, range.from),
+      lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
     ))
     .groupBy(groupExpr)
@@ -111,10 +117,11 @@ export async function getSalesByItem(
   tenantId: string,
   filters: { fromDate: string; toDate: string; categoryId?: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const conditions = [
     eq(saleItems.tenantId, tenantId),
-    gte(sales.createdAt, new Date(filters.fromDate)),
-    lte(sales.createdAt, new Date(filters.toDate + 'T23:59:59')),
+    gte(sales.createdAt, range.from),
+    lte(sales.createdAt, range.to),
     sql`${sales.status} != 'void'`,
   ]
   if (filters.categoryId) {
@@ -126,7 +133,7 @@ export async function getSalesByItem(
     itemName: saleItems.itemName,
     sku: items.sku,
     qtySold: sql<string>`SUM(CASE WHEN ${sales.isReturn} = false THEN CAST(${saleItems.quantity} AS numeric) ELSE 0 END)`,
-    qtyReturned: sql<string>`SUM(CASE WHEN ${sales.isReturn} = true THEN CAST(${saleItems.quantity} AS numeric) ELSE 0 END)`,
+    qtyReturned: sql<string>`SUM(CASE WHEN ${sales.isReturn} = true THEN ABS(CAST(${saleItems.quantity} AS numeric)) ELSE 0 END)`,
     revenue: sql<string>`SUM(CASE WHEN ${sales.isReturn} = false THEN CAST(${saleItems.total} AS numeric) ELSE 0 END)`,
     avgPrice: sql<string>`COALESCE(AVG(CASE WHEN ${sales.isReturn} = false THEN CAST(${saleItems.unitPrice} AS numeric) END), 0)`,
   })
@@ -154,6 +161,7 @@ export async function getSalesByCustomer(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const data = await db.select({
     customerId: sales.customerId,
     customerName: sql<string>`COALESCE(${sales.customerName}, 'Walk-in Customer')`,
@@ -165,8 +173,8 @@ export async function getSalesByCustomer(
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
-      gte(sales.createdAt, new Date(filters.fromDate)),
-      lte(sales.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(sales.createdAt, range.from),
+      lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
     ))
     .groupBy(sales.customerId, sales.customerName)
@@ -188,8 +196,9 @@ export async function getDailySales(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const data = await db.select({
-    date: sql<string>`TO_CHAR(${sales.createdAt}, 'YYYY-MM-DD')`,
+    date: sql<string>`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM-DD')`,
     totalSales: sql<string>`COALESCE(SUM(CAST(${sales.total} AS numeric)), 0)`,
     orderCount: sql<number>`COUNT(*)::int`,
     avgOrder: sql<string>`CASE WHEN COUNT(*) > 0 THEN SUM(CAST(${sales.total} AS numeric)) / COUNT(*) ELSE 0 END`,
@@ -197,17 +206,17 @@ export async function getDailySales(
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
-      gte(sales.createdAt, new Date(filters.fromDate)),
-      lte(sales.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(sales.createdAt, range.from),
+      lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
       eq(sales.isReturn, false),
     ))
-    .groupBy(sql`TO_CHAR(${sales.createdAt}, 'YYYY-MM-DD')`)
-    .orderBy(sql`TO_CHAR(${sales.createdAt}, 'YYYY-MM-DD')`)
+    .groupBy(sql`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM-DD')`)
+    .orderBy(sql`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM-DD')`)
 
   // Get payment breakdown per day
   const paymentData = await db.select({
-    date: sql<string>`TO_CHAR(${sales.createdAt}, 'YYYY-MM-DD')`,
+    date: sql<string>`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM-DD')`,
     method: payments.method,
     amount: sql<string>`COALESCE(SUM(CAST(${payments.amount} AS numeric)), 0)`,
   })
@@ -215,13 +224,13 @@ export async function getDailySales(
     .innerJoin(sales, eq(payments.saleId, sales.id))
     .where(and(
       eq(payments.tenantId, tenantId),
-      gte(sales.createdAt, new Date(filters.fromDate)),
-      lte(sales.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(sales.createdAt, range.from),
+      lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
       sql`${payments.voidedAt} IS NULL`,
       eq(sales.isReturn, false),
     ))
-    .groupBy(sql`TO_CHAR(${sales.createdAt}, 'YYYY-MM-DD')`, payments.method)
+    .groupBy(sql`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM-DD')`, payments.method)
 
   // Build payment map
   const paymentMap = new Map<string, Record<string, number>>()
@@ -305,40 +314,55 @@ export async function getTaxReport(
   tenantId: string,
   filters: { fromDate: string; toDate: string }
 ) {
+  const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   // Tax collected on sales
   const salesTax = await db.select({
-    month: sql<string>`TO_CHAR(${sales.createdAt}, 'YYYY-MM')`,
-    taxCollected: sql<string>`COALESCE(SUM(CAST(${sales.taxAmount} AS numeric)), 0)`,
-    salesTotal: sql<string>`COALESCE(SUM(CAST(${sales.total} AS numeric)), 0)`,
+    month: sql<string>`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM')`,
+    // Output tax is NET of returns: a refunded sale gives the VAT back (return documents carry
+    // negative amounts). Excluding returns over-stated the tax payable.
+    taxCollected: sql<string>`COALESCE(SUM(CASE WHEN ${sales.isReturn} THEN -ABS(CAST(${sales.taxAmount} AS numeric)) ELSE CAST(${sales.taxAmount} AS numeric) END), 0)`,
+    salesTotal: sql<string>`COALESCE(SUM(CASE WHEN ${sales.isReturn} THEN -ABS(CAST(${sales.total} AS numeric)) ELSE CAST(${sales.total} AS numeric) END), 0)`,
   })
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
-      gte(sales.createdAt, new Date(filters.fromDate)),
-      lte(sales.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(sales.createdAt, range.from),
+      lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
-      eq(sales.isReturn, false),
     ))
-    .groupBy(sql`TO_CHAR(${sales.createdAt}, 'YYYY-MM')`)
-    .orderBy(sql`TO_CHAR(${sales.createdAt}, 'YYYY-MM')`)
+    .groupBy(sql`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM')`)
+    .orderBy(sql`TO_CHAR(${localTs(sales.createdAt, range.tz)}, 'YYYY-MM')`)
 
   // Import purchases for tax paid
   const { purchases: purchasesTable } = await import('@/lib/db/schema')
 
   const purchaseTax = await db.select({
-    month: sql<string>`TO_CHAR(${purchasesTable.createdAt}, 'YYYY-MM')`,
-    taxPaid: sql<string>`COALESCE(SUM(CAST(${purchasesTable.taxAmount} AS numeric)), 0)`,
-    purchaseTotal: sql<string>`COALESCE(SUM(CAST(${purchasesTable.total} AS numeric)), 0)`,
+    month: sql<string>`TO_CHAR(${localTs(purchasesTable.createdAt, range.tz)}, 'YYYY-MM')`,
+    // Input tax net of purchase returns (returned goods give the input VAT back)
+    taxPaid: sql<string>`COALESCE(SUM(CASE WHEN ${purchasesTable.isReturn} THEN -ABS(CAST(${purchasesTable.taxAmount} AS numeric)) ELSE CAST(${purchasesTable.taxAmount} AS numeric) END), 0)`,
+    purchaseTotal: sql<string>`COALESCE(SUM(CASE WHEN ${purchasesTable.isReturn} THEN -ABS(CAST(${purchasesTable.total} AS numeric)) ELSE CAST(${purchasesTable.total} AS numeric) END), 0)`,
   })
     .from(purchasesTable)
     .where(and(
       eq(purchasesTable.tenantId, tenantId),
-      eq(purchasesTable.isReturn, false),
-      gte(purchasesTable.createdAt, new Date(filters.fromDate)),
-      lte(purchasesTable.createdAt, new Date(filters.toDate + 'T23:59:59')),
+      gte(purchasesTable.createdAt, range.from),
+      lte(purchasesTable.createdAt, range.to),
       sql`${purchasesTable.status} NOT IN ('cancelled', 'draft')`,
     ))
-    .groupBy(sql`TO_CHAR(${purchasesTable.createdAt}, 'YYYY-MM')`)
+    .groupBy(sql`TO_CHAR(${localTs(purchasesTable.createdAt, range.tz)}, 'YYYY-MM')`)
+
+  // H2: customer credit notes reduce and debit notes add output VAT (by posting date)
+  const noteTax = await db.execute(sql`
+    SELECT TO_CHAR(posting_date, 'YYYY-MM') AS month, SUM(tax) AS tax, SUM(total) AS total FROM (
+      SELECT COALESCE(posting_date, created_at::date) AS posting_date, -tax AS tax, -total AS total
+        FROM credit_notes WHERE tenant_id = ${tenantId} AND status IN ('issued', 'applied')
+      UNION ALL
+      SELECT COALESCE(posting_date, created_at::date), tax, total
+        FROM debit_notes WHERE tenant_id = ${tenantId} AND status = 'issued'
+    ) n
+    WHERE posting_date BETWEEN ${filters.fromDate}::date AND ${filters.toDate}::date
+    GROUP BY 1
+  `)
 
   // Merge by month — collect all months from BOTH sales and purchases
   const salesMap = new Map<string, { taxCollected: number; salesTotal: number }>()
@@ -347,6 +371,14 @@ export async function getTaxReport(
     salesMap.set(row.month, {
       taxCollected: Math.round(Number(row.taxCollected) * 100) / 100,
       salesTotal: Math.round(Number(row.salesTotal) * 100) / 100,
+    })
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const row of ((noteTax as any).rows ?? noteTax) as any[]) {
+    const cur = salesMap.get(row.month) || { taxCollected: 0, salesTotal: 0 }
+    salesMap.set(row.month, {
+      taxCollected: Math.round((cur.taxCollected + Number(row.tax)) * 100) / 100,
+      salesTotal: Math.round((cur.salesTotal + Number(row.total)) * 100) / 100,
     })
   }
 

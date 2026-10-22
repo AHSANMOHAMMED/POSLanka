@@ -8,6 +8,7 @@ import {
   concatBytes,
   DOT_WIDTH,
   type ZReportInput,
+  type ZReportDetails,
   type ZReportMethod,
   type TextRasterizer,
 } from '@/lib/print/escpos/encoder'
@@ -33,7 +34,7 @@ import {
   type TenantReceiptInfo,
 } from '@/lib/print/receipt-loader'
 import { resolveReceiptSettings, type LegacyProfileReceiptFields } from '@/lib/print/receipt-settings'
-import { buildBusinessBlock, num } from '@/lib/print/receipt-model'
+import { buildBusinessBlock, num, type ReceiptModel } from '@/lib/print/receipt-model'
 import { buildKitchenTicketEscPos, type KitchenTicketInput } from '@/lib/print/escpos/kitchen-ticket'
 import {
   getPrinterForRole,
@@ -122,6 +123,9 @@ export interface ZReportSource {
   reconciliation?: Array<{ paymentMethod: string; expectedAmount?: string | number; actualAmount?: string | number; variance?: number }>
   shift?: { entryNumber?: string; openingTime?: string; posProfile?: { name?: string } | null } | null
   cashier?: string | null
+  /** H1: Z-report detail from the close response (tax, discounts, voids, returns, cash movements, ledger) */
+  zReport?: ZReportDetails | null
+  varianceReason?: string | null
 }
 
 export function closingToZReportInput(src: ZReportSource, tenant: TenantResponse): ZReportInput {
@@ -172,6 +176,8 @@ export function closingToZReportInput(src: ZReportSource, tenant: TenantResponse
       totalVariance: src.summary?.totalVariance ?? pm.totalVariance ?? null,
     },
     methods,
+    details: src.zReport ?? null,
+    varianceReason: src.varianceReason ?? null,
     notes: src.closingEntry?.notes ?? null,
     currency: tenant.currency || null,
   }
@@ -238,6 +244,15 @@ export async function buildReceiptBytesForSale(
     counter: opts.counter,
     lineNotes: opts.lineNotes,
   })
+  return buildReceiptBytesFromModel(printerProfile, model, opts)
+}
+
+/** ESC/POS bytes for an already built receipt model (also offline receipts built on the device). */
+export async function buildReceiptBytesFromModel(
+  printerProfile: PrinterProfile,
+  model: ReceiptModel,
+  opts: PrintReceiptOptions = {}
+): Promise<{ bytes: Uint8Array; invoiceNo: string }> {
   const widthDots = DOT_WIDTH[printerProfile.paperWidth] as 384 | 576
   const logo = model.logo.show ? await fetchLogoRaster(widthDots, model.logo.widthPct, model.logo.url) : null
   const logoRaster = logoToPackedRaster(logo)
@@ -439,6 +454,21 @@ export function usePrinter() {
     [profile, printBytes]
   )
 
+  /** Print a receipt model built on the device (offline sale, OFF- number). */
+  const printReceiptModel = useCallback(
+    async (model: ReceiptModel, opts: PrintReceiptOptions = {}): Promise<boolean> => {
+      let built: { bytes: Uint8Array; invoiceNo: string }
+      try {
+        built = await buildReceiptBytesFromModel(profile, model, opts)
+      } catch (e) {
+        setStatus({ state: 'error', message: errorMessage(e) })
+        return false
+      }
+      return printBytes(built.bytes, `Receipt-${built.invoiceNo}`)
+    },
+    [profile, printBytes]
+  )
+
   const printZReport = useCallback(
     async (closing: ZReportSource | ZReportInput): Promise<boolean> => {
       const tenant = await fetchTenantInfo()
@@ -517,6 +547,7 @@ export function usePrinter() {
     /** True when receipts should go straight to a raw ESC/POS printer. */
     isRawPrinter: settings.transport !== 'browser',
     printReceipt,
+    printReceiptModel,
     printZReport,
     openDrawer,
     testPrint,

@@ -336,6 +336,28 @@ export function canModifyUser(
 }
 
 /**
+ * Permissions the target role would have that the actor lacks (tenant overrides included).
+ * Rank alone is not enough: a manager (rank 80) outranks system_manager / hr_manager but does
+ * NOT hold manageSettings / processPayroll — creating such a user would let a manager gain
+ * those powers by logging in as it. Owners may grant anything.
+ */
+export function rolePermissionsNotHeld(
+  actorRole: string,
+  targetRole: string,
+  tenantId?: string,
+  actorCustomRoleId?: string | null,
+): Permission[] {
+  if (actorRole === 'owner' && !actorCustomRoleId) return []
+  const missing: Permission[] = []
+  for (const perm of Object.keys(ROLE_PERMISSIONS) as Permission[]) {
+    if (hasPermission(targetRole, perm, tenantId) && !hasPermission(actorRole, perm, tenantId, actorCustomRoleId)) {
+      missing.push(perm)
+    }
+  }
+  return missing
+}
+
+/**
  * Check if a user role has a specific permission.
  * When tenantId is provided, checks tenant-specific overrides first.
  * When customRoleId is provided, checks custom role permissions.

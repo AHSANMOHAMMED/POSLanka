@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { hasAnyPermission, GIFT_CARD_LIST_PERMISSIONS } from '@/lib/auth/field-access'
 import { withTenant } from '@/lib/db'
 import { giftCards, customers } from '@/lib/db/schema'
 import { eq, and, sql, ilike } from 'drizzle-orm'
@@ -18,6 +19,11 @@ export async function GET(request: NextRequest) {
     const session = await authWithCompany()
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // H4: the full card register is for sales managers / reporting; the POS uses /api/gift-cards/lookup
+    if (!hasAnyPermission(session, GIFT_CARD_LIST_PERMISSIONS)) {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
     const parsed = validateSearchParams(request, giftCardsListSchema)
@@ -49,6 +55,8 @@ export async function GET(request: NextRequest) {
       // Get gift cards with pagination
       const result = await db.query.giftCards.findMany({
         where: whereClause,
+        // H4: card PINs only for sales managers (the gift-card settings page shows them)
+        ...(requirePermission(session, 'manageSales') ? { columns: { pin: false } } : {}),
         with: {
           issuedToCustomer: {
             columns: {

@@ -17,6 +17,7 @@ import {
   Scale, PieChart, ArrowDownRight, ArrowUpRight, CalendarDays,
   Boxes, Bookmark, Lock, PlayCircle, AlertCircle, Calculator,
   Layers, Play, Printer, User, Search, Barcode, Tag,
+  Ruler, Tags, BadgePercent,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -106,6 +107,9 @@ export const ICON_MAP: Record<string, LucideIcon> = {
   Search,
   Barcode,
   Tag,
+  Ruler,
+  Tags,
+  BadgePercent,
 }
 
 export function getIcon(name: string): LucideIcon {

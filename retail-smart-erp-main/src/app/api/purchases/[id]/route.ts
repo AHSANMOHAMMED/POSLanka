@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { purchases, purchaseItems, purchasePayments, suppliers, warehouses, users, purchaseOrders, items as itemsTable, supplierBalanceAudit, itemSerialNumbers, serialNumberMovements, itemSupplierCosts } from '@/lib/db/schema'
+import { purchases, purchaseItems, purchasePayments, suppliers, warehouses, users, purchaseOrders, items as itemsTable, itemSerialNumbers, serialNumberMovements, itemSupplierCosts } from '@/lib/db/schema'
 import { eq, and, sql, ne } from 'drizzle-orm'
 import { applyStockChange, notifyStockDecreased } from '@/lib/inventory/apply-stock-change'
 import {
@@ -18,6 +18,14 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { reversePurchaseCost, reversePurchaseOrderReceipt } from '@/lib/purchasing/purchase-reversal'
+import { adjustSupplierBalance } from '@/lib/purchasing/supplier-balance'
+import { unbilledGrnStock } from '@/lib/purchasing/grn-coverage'
+import { receiveIntoBatch, reverseDocBatches } from '@/lib/purchasing/batch-receipt'
+import { findDuplicateSupplierInvoice, duplicateSupplierInvoiceResponse } from '@/lib/purchasing/supplier-invoice'
+import { planGrnClearing, reversePriceVariance } from '@/lib/purchasing/srbnb'
+import { evaluateThreeWayMatch, matchBlockedMessage } from '@/lib/purchasing/three-way-match'
+import { activeLandedCostFor } from '@/lib/purchasing/landed-cost'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 
 // GET single purchase with items
 export async function GET(
@@ -29,6 +37,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+    if (permError) return { error: permError }
+
     // Get purchase with joins (RLS filters by tenant)
     const [purchase] = await db
       .select({
@@ -57,6 +68,9 @@ export async function GET(
         cancelledAt: purchases.cancelledAt,
         tags: purchases.tags,
         costCenterId: purchases.costCenterId,
+        matchStatus: purchases.matchStatus,
+        matchDetails: purchases.matchDetails,
+        matchedAt: purchases.matchedAt,
         createdAt: purchases.createdAt,
         updatedAt: purchases.updatedAt,
       })
@@ -85,6 +99,8 @@ export async function GET(
         unitPrice: purchaseItems.unitPrice,
         tax: purchaseItems.tax,
         total: purchaseItems.total,
+        srbnbQty: purchaseItems.srbnbQty,
+        srbnbAmount: purchaseItems.srbnbAmount,
       })
       .from(purchaseItems)
       .leftJoin(itemsTable, eq(purchaseItems.itemId, itemsTable.id))
@@ -141,6 +157,7 @@ export async function PUT(
     cancellationReason,
     expectedUpdatedAt,
     itemSerials = {},
+    itemBatches = {},
     changesSummary,
   } = parsed.data
 
@@ -186,40 +203,9 @@ export async function PUT(
           updatedAt: new Date(),
         }
 
-        // Reverse supplier balance with audit trail (only if invoice was submitted - draft never updated balance)
-        const unpaidAmount = Math.round((parseFloat(currentPurchase.total) - parseFloat(currentPurchase.paidAmount)) * 100) / 100
-        if (currentPurchase.status !== 'draft' && currentPurchase.supplierId && unpaidAmount > 0) {
-          // Get current supplier balance BEFORE update
-          const [currentSupplier] = await tx
-            .select({ balance: suppliers.balance })
-            .from(suppliers)
-            .where(eq(suppliers.id, currentPurchase.supplierId))
-            .for('update')
-
-          const previousBalance = parseFloat(currentSupplier?.balance || '0')
-          const newBalance = Math.round((previousBalance - unpaidAmount) * 100) / 100
-
-          await tx.update(suppliers)
-            .set({ balance: newBalance.toString() })
-            .where(eq(suppliers.id, currentPurchase.supplierId))
-
-          // Create audit record
-          await tx.insert(supplierBalanceAudit).values({
-            tenantId: session.user.tenantId,
-            supplierId: currentPurchase.supplierId,
-            type: 'cancel',
-            amount: (-unpaidAmount).toString(),
-            previousBalance: previousBalance.toString(),
-            newBalance: newBalance.toString(),
-            referenceType: 'purchase',
-            referenceId: currentPurchase.id,
-            notes: `Purchase ${currentPurchase.purchaseNo} cancelled - unpaid balance reversed`,
-            createdBy: session.user.id,
-          })
-        }
-
         // A purchase with active returns cannot be cancelled: the returns already
         // moved stock / balances and would be reversed twice. Cancel them first.
+        // (Checked before anything is written: an error response still commits.)
         if (!currentPurchase.isReturn) {
           const [activeReturn] = await tx
             .select({ id: purchases.id, purchaseNo: purchases.purchaseNo })
@@ -236,6 +222,34 @@ export async function PUT(
               code: 'HAS_ACTIVE_RETURNS',
             }, { status: 400 }) }
           }
+        }
+
+        // H3: landed cost charges spread onto this invoice's goods must be cancelled first
+        const landed = await activeLandedCostFor(tx, 'purchase', id)
+        if (landed) {
+          return { error: NextResponse.json({
+            error: `Cannot cancel: landed cost voucher ${landed.voucherNo} is allocated to this purchase. Cancel the voucher first.`,
+            code: 'HAS_LANDED_COST',
+          }, { status: 400 }) }
+        }
+
+        // Reverse the supplier balance with audit trail (only if submitted - a draft never
+        // touched it). The whole document total is reversed, matching the GL void of the
+        // purchase voucher: payments already made stay on the supplier as a credit (negative
+        // balance = the supplier owes us). For a purchase return the total is negative, so
+        // cancelling it puts the returned amount back on the payable.
+        const docTotal = Math.round(parseFloat(currentPurchase.total) * 100) / 100
+        if (currentPurchase.status !== 'draft' && currentPurchase.supplierId && docTotal !== 0) {
+          await adjustSupplierBalance(tx, {
+            tenantId: session.user.tenantId,
+            supplierId: currentPurchase.supplierId,
+            delta: -docTotal,
+            type: 'cancel',
+            referenceType: 'purchase',
+            referenceId: currentPurchase.id,
+            notes: `${currentPurchase.isReturn ? 'Purchase return' : 'Purchase'} ${currentPurchase.purchaseNo} cancelled - balance reversed`,
+            userId: session.user.id,
+          })
         }
 
         // Reverse exactly the stock movements recorded for this document (receipt
@@ -259,6 +273,11 @@ export async function PUT(
           })
         }
 
+        // H3: invoice-vs-GRN price difference that went into the item cost comes back out
+        if (!currentPurchase.isReturn && currentPurchase.status !== 'draft') {
+          await reversePriceVariance(tx, { tenantId: session.user.tenantId, purchaseId: id, purchaseNo: currentPurchase.purchaseNo, userId: session.user.id })
+        }
+
         const stockChanges: StockChangeRecord[] = await reverseMovements(tx, recordedMovements, {
           tenantId: session.user.tenantId,
           referenceType: 'purchase',
@@ -269,6 +288,8 @@ export async function PUT(
           source: currentPurchase.isReturn ? 'purchase_return' : 'purchase',
           costCenterId: currentPurchase.costCenterId || null,
         })
+        // batches: received quantity comes out of its batches, returned quantity goes back
+        await reverseDocBatches(tx, session.user.tenantId, 'purchase', id)
 
         // Cancelling a purchase return brings the serials sent back to the supplier
         // into stock again ('returned' -> 'available').
@@ -384,6 +405,28 @@ export async function PUT(
         return { error: NextResponse.json({ error: 'Only draft purchases can be submitted' }, { status: 400 }) }
       }
 
+      // The same supplier bill must not be posted twice (locked: concurrent submits serialise)
+      const duplicate = await findDuplicateSupplierInvoice(tx, {
+        tenantId: session.user.tenantId,
+        supplierId: currentPurchase.supplierId,
+        supplierInvoiceNo: currentPurchase.supplierInvoiceNo,
+        excludePurchaseId: id,
+        lock: true,
+      })
+      if (duplicate) return { error: duplicateSupplierInvoiceResponse(currentPurchase.supplierInvoiceNo!, duplicate) }
+
+      // Invoice for a purchase order: quantities already put into stock by the PO's goods
+      // receipts (GRN with updateStock) and not yet billed are NOT received again. The PO row
+      // is locked so concurrent invoices / receipt cancellations of the same PO serialise.
+      let grnRemaining = new Map<string, number>()
+      if (currentPurchase.purchaseOrderId) {
+        await tx.select({ id: purchaseOrders.id }).from(purchaseOrders)
+          .where(eq(purchaseOrders.id, currentPurchase.purchaseOrderId)).for('update')
+        grnRemaining = await unbilledGrnStock(tx, session.user.tenantId, currentPurchase.purchaseOrderId, id)
+      }
+      const grnRemainingAll = new Map(grnRemaining)
+      const fromGrnByLine = new Map<string, number>()
+
       // Recalculate totals from items (dual mode: template or manual flat tax)
       const purchaseItemsList = await tx
         .select()
@@ -418,34 +461,28 @@ export async function PUT(
         total = Math.round((subtotal + taxAmount) * 100) / 100
       }
 
+      // H3: 3-way match (invoice vs PO price / qty vs GRN received qty). 'block' refuses the submit.
+      const match = await evaluateThreeWayMatch(tx, {
+        tenantId: session.user.tenantId,
+        purchaseOrderId: currentPurchase.purchaseOrderId,
+        purchaseId: id,
+        lines: purchaseItemsList.map(item => ({ itemId: item.itemId, itemName: item.itemName, quantity: parseFloat(item.quantity), unitPrice: parseFloat(item.unitPrice) })),
+      })
+      if (match.status === 'mismatch' && match.action === 'block') {
+        throw new Error(matchBlockedMessage(match))
+      }
+
       // Update supplier balance with audit trail (increase what we owe them)
       if (currentPurchase.supplierId && total > 0) {
-        // Get current supplier balance BEFORE update
-        const [currentSupplier] = await tx
-          .select({ balance: suppliers.balance })
-          .from(suppliers)
-          .where(eq(suppliers.id, currentPurchase.supplierId))
-          .for('update')
-
-        const previousBalance = parseFloat(currentSupplier?.balance || '0')
-        const newBalance = Math.round((previousBalance + total) * 100) / 100
-
-        await tx.update(suppliers)
-          .set({ balance: newBalance.toString() })
-          .where(eq(suppliers.id, currentPurchase.supplierId))
-
-        // Create audit record
-        await tx.insert(supplierBalanceAudit).values({
+        await adjustSupplierBalance(tx, {
           tenantId: session.user.tenantId,
           supplierId: currentPurchase.supplierId,
+          delta: total,
           type: 'purchase',
-          amount: total.toString(),
-          previousBalance: previousBalance.toString(),
-          newBalance: newBalance.toString(),
           referenceType: 'purchase',
           referenceId: currentPurchase.id,
           notes: `Purchase ${currentPurchase.purchaseNo} submitted`,
-          createdBy: session.user.id,
+          userId: session.user.id,
         })
       }
 
@@ -460,35 +497,50 @@ export async function PUT(
         for (const { item } of stockLines) {
           const itemId = item.itemId!
           const qty = parseFloat(item.quantity)
+          // Part of this line may already be in stock from the PO's goods receipt
+          const fromGrn = Math.min(qty, Math.max(0, grnRemaining.get(itemId) || 0))
+          if (fromGrn > 0) grnRemaining.set(itemId, Math.round(((grnRemaining.get(itemId) || 0) - fromGrn) * 1000) / 1000)
+          fromGrnByLine.set(item.id, fromGrn)
+          const stockQty = Math.round((qty - fromGrn) * 1000) / 1000
 
-          // Weighted average over TOTAL stock across all warehouses, read before
-          // this line's stock is added (also writes item_cost_history 'purchase').
-          await applyPurchaseCost(tx, {
-            tenantId: session.user.tenantId,
-            itemId,
-            supplierId: currentPurchase.supplierId,
-            unitPrice: parseFloat(item.unitPrice),
-            qty,
-            referenceId: currentPurchase.id,
-            referenceNo: currentPurchase.purchaseNo,
-            userId: session.user.id,
-          })
+          if (stockQty > 0) {
+            // Weighted average over TOTAL stock across all warehouses, read before
+            // this line's stock is added (also writes item_cost_history 'purchase').
+            await applyPurchaseCost(tx, {
+              tenantId: session.user.tenantId,
+              itemId,
+              supplierId: currentPurchase.supplierId,
+              unitPrice: parseFloat(item.unitPrice),
+              qty: stockQty,
+              referenceId: currentPurchase.id,
+              referenceNo: currentPurchase.purchaseNo,
+              userId: session.user.id,
+            })
 
-          await applyStockChange(tx, {
-            tenantId: session.user.tenantId,
-            warehouseId: effectiveWarehouseId,
-            itemId,
-            mode: 'delta',
-            qty,
-            type: 'in',
-            referenceType: 'purchase',
-            referenceId: currentPurchase.id,
-            notes: `Purchase Invoice ${currentPurchase.purchaseNo} submitted`,
-            userId: session.user.id,
-            source: 'purchase',
-            costCenterId: currentPurchase.costCenterId || null,
-            idempotencyKey: `purchase-in:${currentPurchase.id}:${item.id}`,
-          })
+            await applyStockChange(tx, {
+              tenantId: session.user.tenantId,
+              warehouseId: effectiveWarehouseId,
+              itemId,
+              mode: 'delta',
+              qty: stockQty,
+              type: 'in',
+              referenceType: 'purchase',
+              referenceId: currentPurchase.id,
+              notes: `Purchase Invoice ${currentPurchase.purchaseNo} submitted`,
+              userId: session.user.id,
+              source: 'purchase',
+              costCenterId: currentPurchase.costCenterId || null,
+              idempotencyKey: `purchase-in:${currentPurchase.id}:${item.id}`,
+            })
+            // batch-tracked items: into the given batch, else a batch named after the invoice
+            const b = itemBatches[item.id] || {}
+            await receiveIntoBatch(tx, {
+              tenantId: session.user.tenantId, itemId, warehouseId: effectiveWarehouseId, qty: stockQty,
+              batchNumber: b.batchNumber, expiryDate: b.expiryDate, manufacturingDate: b.manufacturingDate,
+              defaultBatchNumber: currentPurchase.purchaseNo, supplierId: currentPurchase.supplierId,
+              docType: 'purchase', docId: currentPurchase.id, lineId: item.id,
+            })
+          }
 
           // Serial number tracking: create serial numbers for serialized items
           const [itemRecord] = await tx.select({ trackSerialNumbers: itemsTable.trackSerialNumbers })
@@ -573,6 +625,36 @@ export async function PUT(
         }
       }
 
+      // H3: the part billed against GL-posted GRN stock clears Stock Received But Not Billed
+      let grnClearing: { srbnbAmount: number; priceVariance: number; cogsAdjustment: number } | undefined
+      if (currentPurchase.purchaseOrderId && fromGrnByLine.size > 0) {
+        const linesValue = purchaseItemsList.reduce((sum, item) => sum + parseFloat(item.quantity) * parseFloat(item.unitPrice), 0)
+        const plan = await planGrnClearing(tx, {
+          tenantId: session.user.tenantId,
+          purchaseOrderId: currentPurchase.purchaseOrderId,
+          excludePurchaseId: id,
+          grnRemaining: grnRemainingAll,
+          lines: purchaseItemsList.map(item => ({
+            lineId: item.id, itemId: item.itemId, qty: parseFloat(item.quantity), unitPrice: parseFloat(item.unitPrice),
+            fromGrn: fromGrnByLine.get(item.id) || 0,
+          })),
+          netFactor: linesValue > 0 ? (total - taxAmount) / linesValue : 1,
+          purchaseId: id,
+          purchaseNo: currentPurchase.purchaseNo,
+          supplierId: currentPurchase.supplierId,
+          userId: session.user.id,
+        })
+        for (let i = 0; i < purchaseItemsList.length; i++) {
+          const l = plan.lines[i]
+          if (l.srbnbQty > 0) {
+            await tx.update(purchaseItems)
+              .set({ srbnbQty: l.srbnbQty.toString(), srbnbAmount: l.srbnbAmount.toFixed(2) })
+              .where(eq(purchaseItems.id, purchaseItemsList[i].id))
+          }
+        }
+        if (plan.srbnbAmount !== 0) grnClearing = plan
+      }
+
       // Update purchase status to pending and set recalculated totals
       const [updated] = await tx.update(purchases)
         .set({
@@ -581,6 +663,9 @@ export async function PUT(
           taxAmount: taxAmount.toString(),
           taxBreakdown: purchaseTaxBreakdown,
           total: total.toString(),
+          matchStatus: match.status,
+          matchDetails: match,
+          matchedAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(purchases.id, id))
@@ -599,6 +684,7 @@ export async function PUT(
         amountPaid: 0,
         supplierId: currentPurchase.supplierId || null,
         costCenterId: currentPurchase.costCenterId || null,
+        grnClearing,
       })
 
       return { data: updated, tenantId: session.user.tenantId, userId: session.user.id, supplierId: currentPurchase.supplierId }
@@ -662,6 +748,28 @@ export async function PUT(
     if (currentPurchase.status !== 'draft') {
       return { error: NextResponse.json({ error: 'Only draft purchases can be edited' }, { status: 400 }) }
     }
+
+    // Referenced supplier / warehouse must exist in this tenant (RLS-scoped lookups)
+    if (supplierId !== undefined && supplierId !== currentPurchase.supplierId) {
+      if (currentPurchase.purchaseOrderId) {
+        return { error: NextResponse.json({ error: 'Supplier of an invoice linked to a purchase order cannot be changed' }, { status: 400 }) }
+      }
+      const [s] = await db.select({ id: suppliers.id }).from(suppliers).where(eq(suppliers.id, supplierId))
+      if (!s) return { error: NextResponse.json({ error: 'Supplier not found' }, { status: 404 }) }
+    }
+    if (warehouseId !== undefined && warehouseId !== currentPurchase.warehouseId) {
+      const [w] = await db.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.id, warehouseId))
+      if (!w) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
+    }
+    const nextSupplierId = supplierId !== undefined ? supplierId : currentPurchase.supplierId
+    const nextBillNo = supplierInvoiceNo !== undefined ? supplierInvoiceNo : currentPurchase.supplierInvoiceNo
+    const duplicate = await findDuplicateSupplierInvoice(db, {
+      tenantId: session.user.tenantId,
+      supplierId: nextSupplierId,
+      supplierInvoiceNo: nextBillNo,
+      excludePurchaseId: id,
+    })
+    if (duplicate) return { error: duplicateSupplierInvoiceResponse(nextBillNo!, duplicate) }
 
     const updateData: Record<string, unknown> = { updatedAt: new Date() }
     if (supplierId !== undefined) updateData.supplierId = supplierId
@@ -761,38 +869,6 @@ export async function DELETE(
         return { error: NextResponse.json({ error: 'Cannot delete purchase with payments. Cancel the purchase instead.' }, { status: 400 }) }
       }
 
-      // Reverse supplier balance with audit trail (only if submitted, not draft)
-      const total = parseFloat(currentPurchase.total)
-      if (currentPurchase.status !== 'draft' && currentPurchase.supplierId && total > 0) {
-        // Get current supplier balance BEFORE update
-        const [currentSupplier] = await tx
-          .select({ balance: suppliers.balance })
-          .from(suppliers)
-          .where(eq(suppliers.id, currentPurchase.supplierId))
-          .for('update')
-
-        const previousBalance = parseFloat(currentSupplier?.balance || '0')
-        const newBalance = Math.round((previousBalance - total) * 100) / 100
-
-        await tx.update(suppliers)
-          .set({ balance: newBalance.toString() })
-          .where(eq(suppliers.id, currentPurchase.supplierId))
-
-        // Create audit record
-        await tx.insert(supplierBalanceAudit).values({
-          tenantId: session.user.tenantId,
-          supplierId: currentPurchase.supplierId,
-          type: 'delete',
-          amount: (-total).toString(),
-          previousBalance: previousBalance.toString(),
-          newBalance: newBalance.toString(),
-          referenceType: 'purchase',
-          referenceId: currentPurchase.id,
-          notes: `Purchase ${currentPurchase.purchaseNo} deleted - balance reversed`,
-          createdBy: session.user.id,
-        })
-      }
-
       if (!currentPurchase.isReturn) {
         const [activeReturn] = await tx
           .select({ id: purchases.id, purchaseNo: purchases.purchaseNo })
@@ -807,11 +883,39 @@ export async function DELETE(
         }
       }
 
+      const landed = await activeLandedCostFor(tx, 'purchase', id)
+      if (landed) {
+        return { error: NextResponse.json({
+          error: `Cannot delete: landed cost voucher ${landed.voucherNo} is allocated to this purchase. Cancel the voucher first.`,
+          code: 'HAS_LANDED_COST',
+        }, { status: 400 }) }
+      }
+
+      // Reverse supplier balance with audit trail (only if submitted, not draft). Signed:
+      // a purchase return carries a negative total, so deleting it restores the payable.
+      const total = Math.round(parseFloat(currentPurchase.total) * 100) / 100
+      if (currentPurchase.status !== 'draft' && currentPurchase.supplierId && total !== 0) {
+        await adjustSupplierBalance(tx, {
+          tenantId: session.user.tenantId,
+          supplierId: currentPurchase.supplierId,
+          delta: -total,
+          type: 'delete',
+          referenceType: 'purchase',
+          referenceId: currentPurchase.id,
+          notes: `${currentPurchase.isReturn ? 'Purchase return' : 'Purchase'} ${currentPurchase.purchaseNo} deleted - balance reversed`,
+          userId: session.user.id,
+        })
+      }
+
       // Reverse exactly the stock movements recorded for this purchase (no clamping;
       // insufficient stock fails the delete with 400). The ledger rows — originals
       // and reversals — are kept as the audit trail.
       const recordedMovements = (await findMovements(tx, session.user.tenantId, 'purchase', id))
         .filter(m => m.qtyChange !== 0)
+
+      if (!currentPurchase.isReturn && currentPurchase.status !== 'draft') {
+        await reversePriceVariance(tx, { tenantId: session.user.tenantId, purchaseId: id, purchaseNo: currentPurchase.purchaseNo, userId: session.user.id })
+      }
 
       // D1: undo the cost effect (before the stock goes) and the PO received quantities
       if (!currentPurchase.isReturn && recordedMovements.some(m => m.qtyChange > 0)) {
@@ -836,6 +940,7 @@ export async function DELETE(
         source: currentPurchase.isReturn ? 'purchase_return' : 'purchase',
         costCenterId: currentPurchase.costCenterId || null,
       })
+      await reverseDocBatches(tx, session.user.tenantId, 'purchase', id)
 
       // Reverse GL entries for this purchase (non-blocking)
       if (currentPurchase.status !== 'draft') {

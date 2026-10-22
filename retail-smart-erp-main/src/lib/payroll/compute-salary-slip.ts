@@ -51,6 +51,10 @@ interface ComputeOptions {
   includeAdvanceRecovery?: boolean
 }
 
+function roundMoney(n: number): number {
+  return Math.sign(n) * Math.round(Math.abs(n) * 100 + 1e-9) / 100
+}
+
 export async function computeSalarySlip(
   db: TenantDb,
   options: ComputeOptions
@@ -190,8 +194,10 @@ export async function computeSalarySlip(
 
     // Pro-rate if depends on payment days AND ratio is not exactly 1 (full month)
     if (comp.dependsOnPaymentDays && proRateRatio !== 1) {
-      amount = Math.round(amount * proRateRatio * 100) / 100
+      amount = amount * proRateRatio
     }
+    // Every line is money: round to cents so the stored lines add up to the stored totals
+    amount = roundMoney(amount)
 
     context[comp.abbreviation] = amount
 
@@ -241,12 +247,17 @@ export async function computeSalarySlip(
 
     // Pro-rate if depends on payment days
     if (comp.dependsOnPaymentDays && proRateRatio < 1) {
-      amount = Math.round(amount * proRateRatio * 100) / 100
+      amount = amount * proRateRatio
     }
+    amount = roundMoney(amount)
 
     context[comp.abbreviation] = amount
 
-    if (!comp.doNotIncludeInTotal) {
+    // Employer-paid deductions (e.g. EPF 12% employer, ETF 3%) are a cost to the employer,
+    // not a deduction from the employee: they must not reduce net pay. (They are already
+    // excluded from totalDeductions; reducing net here made gross != net + deductions and the
+    // salary-slip GL posting unbalanced.)
+    if (!comp.doNotIncludeInTotal && !comp.isPayableByEmployer) {
       context.net -= amount
     }
 
@@ -292,6 +303,9 @@ export async function computeSalarySlip(
       const deductAmount = Math.min(installment, balance)
       advanceDeduction += deductAmount
     }
+    // Never recover more than the pay left after the other deductions (a short month must not
+    // produce a negative net pay); the rest is recovered from later slips.
+    advanceDeduction = roundMoney(Math.min(advanceDeduction, Math.max(0, context.net)))
   }
 
   context.net -= advanceDeduction

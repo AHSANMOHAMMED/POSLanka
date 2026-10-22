@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { salarySlips, salarySlipComponents, employeeProfiles } from '@/lib/db/schema'
-import { eq, and, sql, ilike } from 'drizzle-orm'
+import { eq, and, sql, ilike, ne } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { computeSalarySlip } from '@/lib/payroll/compute-salary-slip'
@@ -106,7 +106,7 @@ export async function POST(request: NextRequest) {
           eq(salarySlips.employeeProfileId, employeeProfileId),
           eq(salarySlips.payrollMonth, payrollMonth),
           eq(salarySlips.payrollYear, payrollYear),
-          // Only check non-cancelled slips
+          ne(salarySlips.status, 'cancelled'),
         ),
       })
 
@@ -117,21 +117,27 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      // Compute salary
-      const computed = await computeSalarySlip(db, {
-        employeeProfileId,
-        payrollMonth,
-        payrollYear,
-        totalWorkingDays,
-        paymentDays,
-        commissionAmount,
-        includeAdvanceRecovery: true,
-      })
+      // Compute salary (bad days / formula / structure problems are input errors, not 500s)
+      let computed: Awaited<ReturnType<typeof computeSalarySlip>>
+      try {
+        computed = await computeSalarySlip(db, {
+          employeeProfileId,
+          payrollMonth,
+          payrollYear,
+          totalWorkingDays,
+          paymentDays,
+          commissionAmount,
+          includeAdvanceRecovery: true,
+        })
+      } catch (computeError) {
+        return NextResponse.json({ error: computeError instanceof Error ? computeError.message : 'Could not compute salary' }, { status: 400 })
+      }
 
       // Wrap in transaction with advisory lock for atomic number generation
       const monthStr = String(payrollMonth).padStart(2, '0')
       const startDate = `${payrollYear}-${monthStr}-01`
-      const endDate = new Date(payrollYear, payrollMonth, 0).toISOString().split('T')[0]
+      // Last day of the month, computed in UTC (local-midnight → toISOString shifted it a day back east of UTC)
+      const endDate = `${payrollYear}-${monthStr}-${String(new Date(Date.UTC(payrollYear, payrollMonth, 0)).getUTCDate()).padStart(2, '0')}`
 
       const slip = await db.transaction(async (tx) => {
         const slipNo = await nextDocNo(tx, session.user.tenantId, 'salary_slip', { period: `${payrollYear}-${monthStr}` })

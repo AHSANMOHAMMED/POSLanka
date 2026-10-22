@@ -115,6 +115,18 @@ export async function PUT(
         return NextResponse.json({ error: 'A warehouse with this code already exists' }, { status: 400 })
       }
 
+      // The default warehouse receives opening stock, imports and POS fallbacks; an inactive
+      // default would silently stop those. (Checked before any default is moved below.)
+      const willBeActive = isActive ?? existing.isActive
+      const willBeDefault = isDefault ?? existing.isDefault
+      const deactivatingDefault = existing.isActive && !willBeActive && willBeDefault
+      const defaultingInactive = !existing.isDefault && isDefault === true && !willBeActive
+      if (deactivatingDefault || defaultingInactive) {
+        return NextResponse.json({
+          error: 'Cannot deactivate the default warehouse. Set another warehouse as default first.'
+        }, { status: 400 })
+      }
+
       // If setting as default, check if it can be unset as default
       if (isDefault === false && existing.isDefault) {
         // Don't allow unsetting the only default warehouse (RLS scopes)

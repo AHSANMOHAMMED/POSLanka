@@ -17,7 +17,7 @@ interface SessionValidatorProps {
 
 /**
  * Client-side session validator that redirects to login if session is invalid.
- * Makes an API call to verify the session is still valid in the database.
+ * Makes an API call (in the background) to verify the session is still valid in the database.
  * Also handles cross-tab logout detection via useAuthSync.
  */
 export function SessionValidator({
@@ -27,8 +27,8 @@ export function SessionValidator({
   tenantSlug,
 }: SessionValidatorProps) {
   const { data: session, status } = useSession()
-  const [isValidating, setIsValidating] = useState(true)
   const [isValid, setIsValid] = useState(true)
+  const userId = session?.user?.id
 
   // Cross-tab auth sync - redirect to /login if logged out from another tab
   useAuthSync({
@@ -41,10 +41,7 @@ export function SessionValidator({
     async function validateSession() {
       if (status === 'loading') return
 
-      if (status === 'unauthenticated') {
-        setIsValidating(false)
-        return
-      }
+      if (status === 'unauthenticated') return
 
       // Determine the correct login URL based on scope
       const loginUrl = scope === 'company' && tenantSlug
@@ -52,9 +49,8 @@ export function SessionValidator({
         : '/login'
 
       // If session loaded but user ID is empty, the session is invalid
-      if (status === 'authenticated' && session?.user && !session.user.id) {
+      if (status === 'authenticated' && session?.user && !userId) {
         setIsValid(false)
-        setIsValidating(false)
         broadcastAuthEvent('logout', scope)
         signOut({ callbackUrl: loginUrl, redirect: true })
         return
@@ -79,16 +75,19 @@ export function SessionValidator({
       } catch {
         // Network error - assume valid for now
         setIsValid(true)
-      } finally {
-        setIsValidating(false)
       }
     }
 
     validateSession()
-  }, [session, status, validateUrl, scope, tenantSlug])
+    // Keyed on the user id, not the session object: next-auth hands out a new object on every
+    // session refresh / tab focus, which re-ran this check (and its request) each time.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, status, validateUrl, scope, tenantSlug])
 
-  // Show nothing while validating
-  if (isValidating || !isValid) {
+  // The server layout already authenticated this request, so render immediately (server HTML
+  // included) and only blank the page once the background check finds the session invalid.
+  // Rendering nothing until the check returned left every page empty for a round trip.
+  if (!isValid) {
     return null
   }
 

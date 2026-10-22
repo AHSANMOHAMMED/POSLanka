@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { withAuthTenant } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
 import { sql } from 'drizzle-orm'
+import { getInventoryValuationReconciliation } from '@/lib/reports/inventory'
 
 export async function GET() {
   const result = await withAuthTenant(async (session, db) => {
@@ -249,6 +250,60 @@ export async function GET() {
       })
     } catch {
       checks.push({ name: 'Orphaned GL Entries', status: 'fail', message: 'Failed to check' })
+    }
+
+    // 8. H3: Inventory GL vs stock valuation (weighted-average cost × stock on hand)
+    try {
+      const rec = await getInventoryValuationReconciliation(db, tenantId)
+      const { stockValue, glBalance, difference, tolerance, reconciled, zeroCostItems } = rec.summary
+      checks.push({
+        name: 'Inventory GL vs Stock Valuation',
+        status: reconciled ? (zeroCostItems > 0 ? 'warn' : 'pass') : 'fail',
+        message: reconciled
+          ? `Stock account ${glBalance.toLocaleString()} matches stock valuation ${stockValue.toLocaleString()} (difference ${difference.toLocaleString()})${zeroCostItems > 0 ? `; ${zeroCostItems} item(s) in stock have no cost price` : ''}`
+          : `Stock account ${glBalance.toLocaleString()} vs stock valuation ${stockValue.toLocaleString()}: difference ${difference.toLocaleString()} (tolerance ${tolerance.toLocaleString()})`,
+        details: { stockValue, glBalance, difference, tolerance, zeroCostItems, warehouses: rec.warehouses, accounts: rec.accounts },
+      })
+    } catch {
+      checks.push({ name: 'Inventory GL vs Stock Valuation', status: 'fail', message: 'Failed to check' })
+    }
+
+    // 9. H3: Stock Received But Not Billed — SRBNB balance vs GRNs not yet invoiced
+    try {
+      const srbnbRes = await db.execute(sql`
+        WITH posted AS (
+          SELECT COALESCE(SUM(ROUND(ri.quantity_accepted * COALESCE(ri.unit_cost, 0), 2)), 0) AS v
+          FROM purchase_receipt_items ri JOIN purchase_receipts r ON r.id = ri.receipt_id
+          WHERE r.tenant_id = ${tenantId} AND r.gl_posted = true AND r.status <> 'cancelled' AND ri.item_id IS NOT NULL
+        ), cleared AS (
+          SELECT COALESCE(SUM(pi.srbnb_amount), 0) AS v
+          FROM purchase_items pi JOIN purchases p ON p.id = pi.purchase_id
+          WHERE p.tenant_id = ${tenantId} AND p.is_return = false AND p.status NOT IN ('draft', 'cancelled')
+        ), gl AS (
+          SELECT COALESCE(SUM(g.credit - g.debit), 0) AS v, MAX(s.default_srbnb_account_id::text) AS acc
+          FROM accounting_settings s LEFT JOIN gl_entries g ON g.account_id = s.default_srbnb_account_id AND g.tenant_id = s.tenant_id
+          WHERE s.tenant_id = ${tenantId}
+        )
+        SELECT posted.v - cleared.v AS open_grn, gl.v AS gl_balance, gl.acc FROM posted, cleared, gl
+      `)
+      const r = (srbnbRes as { rows?: Record<string, unknown>[] }).rows?.[0]
+      if (!r?.acc) {
+        checks.push({ name: 'Stock Received But Not Billed', status: 'warn', message: 'No Stock Received But Not Billed account configured: goods receipts do not post to the GL until invoiced' })
+      } else {
+        const openGrn = Math.round(Number(r.open_grn || 0) * 100) / 100
+        const gl = Math.round(Number(r.gl_balance || 0) * 100) / 100
+        const diff = Math.round((gl - openGrn) * 100) / 100
+        checks.push({
+          name: 'Stock Received But Not Billed',
+          status: Math.abs(diff) < 0.01 ? 'pass' : 'warn',
+          message: Math.abs(diff) < 0.01
+            ? `SRBNB balance ${gl.toLocaleString()} equals goods received not yet invoiced`
+            : `SRBNB balance ${gl.toLocaleString()} vs goods received not yet invoiced ${openGrn.toLocaleString()} (difference ${diff.toLocaleString()})`,
+          details: { glBalance: gl, openGoodsReceipts: openGrn, difference: diff },
+        })
+      }
+    } catch {
+      checks.push({ name: 'Stock Received But Not Billed', status: 'fail', message: 'Failed to check' })
     }
 
     // Summary

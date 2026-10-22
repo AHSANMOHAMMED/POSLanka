@@ -16,8 +16,8 @@
  * GL (D1): the new sale's receivable is settled per payment method — the applied refund offset
  * (offsetMethod) plus each collected split — so a card + cash difference posts to both accounts.
  */
-import { eq, inArray } from 'drizzle-orm'
-import { sales, saleItems, items, payments } from '@/lib/db/schema'
+import { and, eq, inArray } from 'drizzle-orm'
+import { sales, saleItems, items, payments, itemUoms } from '@/lib/db/schema'
 import { applyStockChanges, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 import { validateSerialAvailability, allocateSerials } from '@/lib/inventory/serial-numbers'
@@ -41,6 +41,8 @@ export interface ExchangeCartItem {
   batchId?: string | null
   /** Batch number from a GS1 scan, resolved to a batch of the item. */
   batchNumber?: string | null
+  /** H5: unit sold (item_uoms.uom); stock / batches / COGS move quantity × factor base units */
+  uom?: string | null
 }
 
 export interface ExchangeInput {
@@ -96,6 +98,12 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
   }
   const itemRows = ids.length ? await tx.select().from(items).where(inArray(items.id, ids)) : []
   const itemById = new Map(itemRows.map((i) => [i.id, i]))
+  // H5: unit conversions of the new lines
+  const uomRows = ids.length && input.newCartItems.some((c) => c.uom)
+    ? await tx.select({ itemId: itemUoms.itemId, uom: itemUoms.uom, factor: itemUoms.factor, sellingPrice: itemUoms.sellingPrice })
+      .from(itemUoms).where(and(inArray(itemUoms.itemId, ids), eq(itemUoms.isActive, true)))
+    : []
+  const uomOf = new Map(uomRows.map((u) => [`${u.itemId}|${u.uom.toLowerCase()}`, u]))
   const cart = input.newCartItems.map((c) => {
     const item = c.itemId ? itemById.get(c.itemId) : undefined
     if (!item) throw new SaleFlowError(400, 'ITEM_NOT_FOUND', 'Invalid items in cart')
@@ -112,9 +120,21 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
     if (item.trackSerialNumbers && serialIds.length > 0 && serialIds.length !== qty) {
       throw new SaleFlowError(400, 'SERIAL_MISMATCH', `"${item.name}" requires ${qty} serial number(s), but ${serialIds.length} provided`)
     }
+    let uom: string | null = (c.uom || '').trim().toLowerCase() || null
+    if (uom && uom === (item.unit || '').trim().toLowerCase()) uom = null
+    const conv = uom ? uomOf.get(`${item.id}|${uom}`) : undefined
+    if (uom && !conv) throw new SaleFlowError(400, 'UOM_NOT_FOUND', `"${item.name}" has no "${uom}" unit`)
+    const factor = conv ? Number(conv.factor) || 1 : 1
+    if (factor !== 1 && item.trackSerialNumbers) {
+      throw new SaleFlowError(400, 'SERIAL_UOM', `"${item.name}" is serial-tracked: sell it in its base unit`)
+    }
+    const listPrice = conv
+      ? (conv.sellingPrice != null ? Number(conv.sellingPrice) : roundCurrency(Number(item.sellingPrice) * factor))
+      : Number(item.sellingPrice)
     return {
       item, name: c.name || item.name, qty, unitPrice, discount, total: roundCurrency(unitPrice * qty - discount), serialIds,
       batchId: c.batchId || null, batchNumber: c.batchNumber || null,
+      uom, factor, baseQty: Math.round(qty * factor * 1000) / 1000, listPrice: roundCurrency(listPrice),
     }
   })
   const taxResult = await recalculateDocumentTax(tx, tenantId,
@@ -208,6 +228,9 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
       taxBreakdown: per?.taxBreakdown || null,
       total: String(c.total),
       serialNumberIds: c.serialIds.length ? c.serialIds : null,
+      listPrice: String(c.listPrice),
+      uom: c.uom,
+      uomFactor: String(c.factor),
     }).returning({ id: saleItems.id })
     saleLines.push({ id: row.id, itemId: c.item.id, itemName: c.name, quantity: c.qty, unitPrice: c.unitPrice, total: c.total, taxAmount: per?.taxAmount ?? 0, batches: [] })
     if (c.item.trackBatches) batchLines.push({ lineIndex: saleLines.length - 1, saleItemId: row.id, c })
@@ -221,7 +244,7 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
     }
     if (c.item.trackStock) {
       stockInputs.push({
-        tenantId, warehouseId, itemId: c.item.id, mode: 'delta', qty: -c.qty, type: 'out',
+        tenantId, warehouseId, itemId: c.item.id, mode: 'delta', qty: -c.baseQty, type: 'out',
         referenceType: 'sale', referenceId: sale.id, userId, source: 'pos',
         notes: `Exchange sale ${invoiceNo}`,
         costCenterId: sale.costCenterId,
@@ -234,7 +257,7 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
   // ---- 3b. batches for batch-tracked new lines (after the warehouse stock rows are locked)
   for (const b of batchLines) {
     const r = await allocateSaleLineBatches(tx, {
-      tenantId, warehouseId, itemId: b.c.item.id, qty: b.c.qty, saleItemId: b.saleItemId,
+      tenantId, warehouseId, itemId: b.c.item.id, qty: b.c.baseQty, saleItemId: b.saleItemId,
       preferredBatchId: b.c.batchId, preferredBatchNumber: b.c.batchNumber,
       allowExpired: settings.batches.allowExpiredSale, itemName: b.c.name,
     })
@@ -272,7 +295,7 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
   }
 
   // ---- 5. GL for the new sale (the return posted its own)
-  const cogs = roundCurrency(cart.reduce((s, c) => s + roundCurrency(Number(c.item.costPrice || 0) * c.qty), 0))
+  const cogs = roundCurrency(cart.reduce((s, c) => s + roundCurrency(Number(c.item.costPrice || 0) * c.baseQty), 0))
   await postSaleToGL(tx, tenantId, {
     saleId: sale.id,
     invoiceNumber: invoiceNo,

@@ -13,6 +13,8 @@ import { notify } from '@/lib/notifications/notify'
 import { getAlertSettings } from '@/lib/notifications/alert-settings'
 import { logError } from '@/lib/ai/error-logger'
 import { postPosShiftVarianceToGL } from '@/lib/accounting/auto-post'
+import { tenantToday } from '@/lib/accounting/gl'
+import { buildShiftReport, shiftCashMovementTotals, SHIFT_VARIANCE_REASON_LABELS } from '@/lib/pos/shift-report'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import type { PaymentMethod } from '@/lib/db/schema'
 import {
@@ -28,6 +30,9 @@ import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
+
+/** Payment methods that never sit in the cash drawer / card terminal batch */
+const NON_DRAWER_METHODS = new Set<string>(['credit', 'gift_card'])
 
 // POST close a shift with enhanced payment method validation and optimistic locking
 export async function POST(
@@ -55,7 +60,7 @@ export async function POST(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, closePosShiftSchema)
     if (!parsed.success) return parsed.response
-    const { actualAmounts, notes, version: _version } = parsed.data
+    const { actualAmounts, notes, varianceReason, varianceNote, version: _version } = parsed.data
 
     return await withTenantTransaction(session.user.tenantId, async (db) => {
       // Get the opening entry with optimistic locking check
@@ -173,8 +178,11 @@ export async function POST(
               salesByPaymentMethod[salePaymentMethod].totalReturns += Math.abs(saleAmount)
               salesByPaymentMethod[salePaymentMethod].netSales -= Math.abs(saleAmount)
             } else {
-              salesByPaymentMethod[salePaymentMethod].totalSales += saleAmount
-              salesByPaymentMethod[salePaymentMethod].netSales += saleAmount
+              // Only what was actually received: an unpaid (on-account / pending) sale put
+              // nothing in the drawer
+              const received = Math.max(0, parseFloat(sale.paidAmount || '0') || 0)
+              salesByPaymentMethod[salePaymentMethod].totalSales += received
+              salesByPaymentMethod[salePaymentMethod].netSales += received
             }
           }
           continue
@@ -198,6 +206,9 @@ export async function POST(
           }
         }
       }
+
+      // Voided sales are reported on the Z report but are not transactions of the drawer
+      const liveSaleCount = openingEntry.sales.filter(sale => sale.status !== 'void').length
 
       // Calculate totals
       let totalSales = 0
@@ -234,7 +245,7 @@ export async function POST(
           totalSales,
           totalReturns,
           netSales,
-          totalTransactions: openingEntry.sales.length,
+          totalTransactions: liveSaleCount,
         }
       )
 
@@ -245,15 +256,23 @@ export async function POST(
         }, { status: 400 })
       }
 
+      // H1: cash paid into / out of the drawer during the shift (posted movements only)
+      const movementTotals = await shiftCashMovementTotals(db, id)
+
       // Calculate expected amounts and variances for every method that was opened OR used in a sale
+      // (cash too when the drawer had paid-ins / paid-outs)
       const reconciliationMethods = Array.from(new Set<PaymentMethod>([
         ...openingPaymentMethods,
         ...(Object.keys(salesByPaymentMethod) as PaymentMethod[]),
+        ...(movementTotals.count > 0 ? ['cash' as PaymentMethod] : []),
       ]))
       const reconciliationValues = reconciliationMethods.map(method => {
         const openingAmount = openingBalanceMap[method] || 0
         const expectedAmount = calculateExpectedAmount(openingAmount, salesByPaymentMethod[method]?.totalSales || 0, salesByPaymentMethod[method]?.totalReturns || 0)
-        const actualAmount = actualAmountsMap[method] || 0
+          + (method === 'cash' ? movementTotals.net : 0)
+        // Store credit and gift cards are not tenders in the drawer: nothing to count, so they
+        // reconcile at the expected amount instead of posting a fake cash shortage.
+        const actualAmount = NON_DRAWER_METHODS.has(method) ? expectedAmount : (actualAmountsMap[method] || 0)
 
         return {
           tenantId: session.user.tenantId,
@@ -265,10 +284,34 @@ export async function POST(
         }
       })
 
-      // Calculate total variance
+      // Variance per counted tender and in total
+      const varianceByMethodList = reconciliationValues.map(item => ({
+        method: item.paymentMethod,
+        variance: Math.round((parseFloat(item.actualAmount) - parseFloat(item.expectedAmount)) * 100) / 100,
+      }))
       const totalVariance = reconciliationValues.reduce((sum, item) => {
         return sum + (parseFloat(item.actualAmount) - parseFloat(item.expectedAmount))
       }, 0)
+
+      // H1: a drawer that does not balance needs a structured reason (and a note for "other")
+      const hasVariance = varianceByMethodList.some(v => Math.abs(v.variance) >= 0.01)
+      if (hasVariance && !varianceReason) {
+        return NextResponse.json({
+          error: 'The counted amounts differ from the expected amounts. Select a variance reason to close the shift.',
+          code: 'VARIANCE_REASON_REQUIRED',
+          varianceByMethod: Object.fromEntries(varianceByMethodList.map(v => [v.method, v.variance])),
+          totalVariance: Math.round(totalVariance * 100) / 100,
+        }, { status: 400 })
+      }
+
+      // H1: Z-report details (tax, discounts, voids, returns, cash movements, ledger tie-out)
+      const cashRec = reconciliationValues.find(r => r.paymentMethod === 'cash')
+      const reportData = await buildShiftReport(db, session.user.tenantId, {
+        openingEntryId: id,
+        sales: openingEntry.sales,
+        openingCash: cashRec ? parseFloat(cashRec.openingAmount) : 0,
+        expectedCash: cashRec ? parseFloat(cashRec.expectedAmount) : 0,
+      })
 
       // Closing entry number CLOSE-YYYYMMDD-### from the per-tenant daily sequence
       const entryNumber = await nextDocNo(db, session.user.tenantId, 'pos_closing')
@@ -285,11 +328,14 @@ export async function POST(
         totalSales: String(totalSales),
         totalReturns: String(totalReturns),
         netSales: String(netSales),
-        totalTransactions: openingEntry.sales.length,
+        totalTransactions: liveSaleCount,
         status: 'submitted', // Use submitted instead of draft for completed closures
         submittedAt: new Date(),
         submittedBy: session.user.id,
         notes: notes || null,
+        varianceReason: hasVariance ? varianceReason || null : null,
+        varianceNote: hasVariance ? varianceNote || null : null,
+        reportData: reportData as unknown as Record<string, unknown>,
       }).returning()
 
       // Update reconciliation values with closing entry ID
@@ -303,13 +349,15 @@ export async function POST(
         await db.insert(posClosingReconciliation).values(finalReconciliationValues)
       }
 
-      // Post cash over/short to GL if there's a variance
-      if (totalVariance !== 0) {
+      // Post over/short to GL per tender: each method's difference against its own account
+      if (hasVariance) {
         await postPosShiftVarianceToGL(db, session.user.tenantId, {
           closingEntryId: closingEntry.id,
-          postingDate: new Date().toISOString().split('T')[0],
+          postingDate: await tenantToday(session.user.tenantId),
           totalVariance: Math.round(totalVariance * 100) / 100,
-          notes: `POS shift ${entryNumber}: cash ${totalVariance > 0 ? 'overage' : 'shortage'} of ${Math.abs(Math.round(totalVariance * 100) / 100)}`,
+          byMethod: varianceByMethodList,
+          costCenterId: openingEntry.posProfile?.costCenterId || null,
+          notes: `POS shift ${entryNumber}: ${SHIFT_VARIANCE_REASON_LABELS[varianceReason || 'other'] || varianceReason}`,
         })
       }
 
@@ -356,7 +404,21 @@ export async function POST(
       }))
 
       logAndBroadcast(session.user.tenantId, 'pos-shift', 'updated', id)
-      logAndBroadcast(session.user.tenantId, 'pos-closing', 'created', closingEntry.id)
+      logAndBroadcast(session.user.tenantId, 'pos-closing', 'created', closingEntry.id, {
+        userId: session.user.id,
+        activityAction: 'submit',
+        entityName: closingEntry.entryNumber,
+        description: `Closed shift ${openingEntry.entryNumber}${hasVariance ? ` with variance ${Math.round(totalVariance * 100) / 100} (${varianceReason})` : ''}`,
+        metadata: {
+          posOpeningEntryId: id,
+          posProfileId: openingEntry.posProfileId,
+          varianceByMethod: Object.fromEntries(varianceByMethodList.map(v => [v.method, v.variance])),
+          varianceReason: hasVariance ? varianceReason : null,
+          varianceNote: hasVariance ? varianceNote || null : null,
+          cashMovements: movementTotals,
+          ledgerTiesOut: reportData.ledger.tiesOut,
+        },
+      })
       const varianceThreshold = Math.max((await getAlertSettings(session.user.tenantId)).varianceThreshold, 0.01)
       if (Math.abs(totalVariance) >= varianceThreshold) {
         void notify(session.user.tenantId, 'shift_variance', {
@@ -376,9 +438,14 @@ export async function POST(
           totalSales,
           totalReturns,
           netSales,
-          totalTransactions: openingEntry.sales.length,
+          totalTransactions: liveSaleCount,
           totalVariance: Math.round(totalVariance * 100) / 100,
+          cashPaidIn: movementTotals.paidIn,
+          cashPaidOut: movementTotals.paidOut,
         },
+        varianceReason: hasVariance ? varianceReason : null,
+        varianceNote: hasVariance ? varianceNote || null : null,
+        zReport: reportData,
         paymentMethodBreakdown: {
           openingBalances: openingBalanceMap,
           salesByMethod: salesByPaymentMethod,

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   Modal,
   View,
@@ -16,12 +16,16 @@ import { apiGet, apiPost, isNetworkError } from '../lib/api'
 import { enqueueSale, isQueueablePayload } from '../lib/offlineQueue'
 import { adjustLocalStock, nextOfflineRef } from '../lib/localdb'
 import { calculateCartTax, roundCurrency, type TaxConfig } from '../lib/tax'
+import { cartPayable, cartSubtotal, lineTotal } from '../lib/cartMath'
+import { taxableLineTotals } from '../lib/cartPricing'
+import { allowedTenders, type TenderOption as TenderOptionT } from '../lib/tenderRules'
 import { shiftCounterName, shiftWarehouseName, type Shift } from '../lib/shift'
 import { getPrinterSettings, isPrintingEnabled, TRANSPORT_LABELS, type PrinterSettings } from '../lib/printer'
 import { receiptFromSale, type BusinessInfo } from '../lib/receipt'
 import type { ReceiptInput } from '../lib/escpos'
 import type { CartLine } from './CartDrawerModal'
 import type { Customer } from './CustomerPickerModal'
+import { SupervisorPinModal, type SupervisorApprovalRequest } from './SupervisorPinModal'
 
 export interface SaleResultData {
   invoiceNo: string
@@ -50,10 +54,16 @@ interface TenderModalProps {
   business?: BusinessInfo | null
   cashierName?: string | null
   onSaleComplete: (saleData: SaleResultData) => void
+  /** H5: cart-level promotion discount of the current quote (line promotions are on the lines) */
+  cartPromotionDiscount?: number
+  /** H5: coupon codes entered in the cart */
+  couponCodes?: string[]
+  /** H5: the server re-priced the cart (409 PRICE_CHANGED): the POS shows the new prices */
+  onPriceChanged?: (quote: unknown) => void
 }
 
 /** UI tender options mapped onto the server's payment method enum. */
-type TenderOption = 'cash' | 'card' | 'lankaqr' | 'credit'
+type TenderOption = TenderOptionT
 
 const TENDER_LABELS: Record<TenderOption, string> = {
   cash: 'CASH',
@@ -87,19 +97,25 @@ export function TenderModal({
   business,
   cashierName,
   onSaleComplete,
+  cartPromotionDiscount = 0,
+  couponCodes,
+  onPriceChanged,
 }: TenderModalProps) {
-  const subtotal = useMemo(() => roundCurrency(cart.reduce((sum, line) => sum + Number(line.sellingPrice) * line.quantity, 0)), [cart])
-  const taxResult = useMemo(
-    () =>
-      calculateCartTax(
-        cart.map((l) => ({ lineTotal: roundCurrency(Number(l.sellingPrice) * l.quantity), taxTemplateId: l.taxTemplateId })),
-        taxConfig,
-        customer?.taxExempt === true
-      ),
-    [cart, taxConfig, customer]
-  )
+  // Σ of rounded line totals — what POST /api/sales checks the subtotal against.
+  const subtotal = useMemo(() => cartSubtotal(cart), [cart])
+  // tax is charged on what the customer pays: lines net of their share of the cart promotions
+  const taxResult = useMemo(() => {
+    const taxable = taxableLineTotals(cart.map((l) => lineTotal(l)), cartPromotionDiscount)
+    return calculateCartTax(
+      cart.map((l, i) => ({ lineTotal: taxable[i], taxTemplateId: l.taxTemplateId })),
+      taxConfig,
+      customer?.taxExempt === true
+    )
+  }, [cart, taxConfig, customer, cartPromotionDiscount])
   const tax = taxResult.tax
-  const grossPayable = roundCurrency(taxResult.hasInclusiveTax ? subtotal : subtotal + tax)
+  // subtotal + exclusive tax: a cart mixing inclusive and exclusive templates still pays the
+  // exclusive part (inclusive tax is already inside the prices).
+  const grossPayable = cartPayable(roundCurrency(subtotal - cartPromotionDiscount), taxResult)
 
   // Loyalty program (conversion factor + tier redeem rate), same maths as the web POS
   type LoyaltyProgram = { conversionFactor?: string | number | null; tiers?: { tier: string; redeemRate?: string | number | null; isActive?: boolean }[] }
@@ -122,10 +138,15 @@ export function TenderModal({
   const [autoPrint, setAutoPrint] = useState(false)
   const [printer, setPrinter] = useState<PrinterSettings | null>(null)
   const [busy, setBusy] = useState(false)
+  // H1: supervisor approvals for this cart (credit limit override, …), sent with the sale
+  const approvalTokensRef = useRef<string[]>([])
+  const [approvalRequest, setApprovalRequest] = useState<SupervisorApprovalRequest | null>(null)
 
   // Reset the form each time the modal opens for a (possibly new) cart.
   useEffect(() => {
     if (visible) {
+      approvalTokensRef.current = []
+      setApprovalRequest(null)
       setTender('cash')
       setCashTendered(netPayable.toFixed(2))
       setReference('')
@@ -171,6 +192,7 @@ export function TenderModal({
   const numericTendered = parseFloat(cashTendered) || 0
   const changeDue = roundCurrency(numericTendered - netPayable)
   const isTenderSufficient = tender !== 'cash' || changeDue >= -0.009
+  const tenders = allowedTenders(shift.posProfile)
   const creditAllowed = !!customer && shift.posProfile?.allowCreditSale !== false
   if (!visible) return null
 
@@ -180,8 +202,12 @@ export function TenderModal({
       name: c.name,
       sku: c.sku || undefined,
       quantity: c.quantity,
-      unitPrice: Number(c.sellingPrice),
+      unitPrice: roundCurrency(Number(c.sellingPrice)),
       discount: 0,
+      // H5: unit sold and fixed prices (the server adds the promotions itself)
+      uom: c.uom || undefined,
+      priceLocked: c.priceLocked || undefined,
+      barcode: c.priceBarcode || undefined,
       taxRate: taxResult.perLine[idx]?.effectiveRate || undefined,
       taxAmount: taxResult.perLine[idx]?.totalTax || undefined,
       taxBreakdown: taxResult.perLine[idx]?.breakdown?.length ? taxResult.perLine[idx].breakdown : undefined,
@@ -236,6 +262,11 @@ export function TenderModal({
       warehouseId: shift.warehouseId,
       posOpeningEntryId: shift.id,
       loyaltyPointsRedeemed: customer && loyaltyPts > 0 && loyaltyRedeemValue > 0 ? loyaltyPts : undefined,
+      approvalTokens: approvalTokensRef.current.length > 0 ? [...approvalTokensRef.current] : undefined,
+      // H5: cart promotions are not part of `discount`; the device time prices an offline sale
+      promotionDiscount: cartPromotionDiscount > 0 ? cartPromotionDiscount : undefined,
+      couponCodes: couponCodes && couponCodes.length ? couponCodes : undefined,
+      soldAt: new Date().toISOString(),
     }
   }
 
@@ -266,7 +297,16 @@ export function TenderModal({
       const businessInfo: BusinessInfo = business || { name: 'POSLanka' }
       const splits = payload.paymentSplits as Array<{ method: string; amount: number; reference?: string }> | undefined
       const fallbackPayment = splits?.[0] || { method: String(payload.paymentMethod), amount: Number(payload.amountPaid) || netPayable }
-      const stockLines = cart.map((c) => ({ itemId: c.itemId || c.id, quantity: c.quantity }))
+      // local stock is in base units (a box line holds quantity × factor pieces)
+      const stockLines = cart.map((c) => ({ itemId: c.itemId || c.id, quantity: Math.round(c.quantity * (c.uomFactor || 1) * 1000) / 1000 }))
+      // Buyer particulars for TAX INVOICE printing (name, TIN / VAT number, address when known)
+      const buyer = customer
+        ? {
+            name: customer.name,
+            taxId: customer.taxId ?? null,
+            address: customer.address || [customer.addressLine1, customer.city].filter(Boolean).join(', ') || null,
+          }
+        : null
 
       // Saves the sale on the device with an OFF-<device>-<seq> receipt number (W6).
       const completeOffline = async () => {
@@ -289,9 +329,9 @@ export function TenderModal({
             taxAmount: tax,
             createdAt: new Date().toISOString(),
             taxBreakdown: taxResult.breakdown.length ? taxResult.breakdown.map((b) => ({ taxName: b.taxName, amount: b.amount })) : null,
-            items: cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: roundCurrency(Number(c.sellingPrice) * c.quantity), unit: c.unit })),
+            items: cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: lineTotal(c), unit: c.unit })),
           },
-          { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, change, fallbackPayment }
+          { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, customer: buyer, change, fallbackPayment }
         )
         onSaleComplete({
           invoiceNo: offlineRef,
@@ -326,9 +366,9 @@ export function TenderModal({
             taxBreakdown: taxResult.breakdown.length ? taxResult.breakdown.map((b) => ({ taxName: b.taxName, amount: b.amount })) : null,
             items: sale.items?.length
               ? sale.items
-              : cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: roundCurrency(Number(c.sellingPrice) * c.quantity), unit: c.unit })),
+              : cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: lineTotal(c), unit: c.unit })),
           },
-          { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, change, fallbackPayment }
+          { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, customer: buyer, change, fallbackPayment }
         )
         onSaleComplete({
           invoiceNo: sale.invoiceNo || 'Sale recorded',
@@ -348,6 +388,17 @@ export function TenderModal({
         return
       }
 
+      const body = res.data as unknown as { code?: string; scopes?: string[]; quote?: unknown } | null
+      if (res.status === 409 && body?.code === 'PRICE_CHANGED' && body.quote && onPriceChanged) {
+        onPriceChanged(body.quote)
+        Alert.alert('Prices Changed', 'Prices or promotions changed. Review the cart and take payment again.')
+        return
+      }
+      if (res.status === 403 && body?.code === 'APPROVAL_REQUIRED') {
+        // Over the credit limit / counter limits: a supervisor approves on this device, then retry
+        setApprovalRequest({ scopes: body.scopes || [], message: res.error, amount: netPayable, posOpeningEntryId: shift.id })
+        return
+      }
       Alert.alert('Checkout Failed', res.error)
     } finally {
       setBusy(false)
@@ -356,8 +407,8 @@ export function TenderModal({
 
   const methodCards: Array<{ id: TenderOption; emoji: string; title: string; sub: string; disabled?: boolean }> = [
     { id: 'cash', emoji: '💵', title: 'Cash', sub: 'Physical tender' },
-    { id: 'card', emoji: '💳', title: 'Card POS', sub: 'Visa / Master / LankaPay' },
-    { id: 'lankaqr', emoji: '📱', title: 'LankaQR', sub: 'Bank transfer with reference' },
+    { id: 'card', emoji: '💳', title: 'Card POS', sub: tenders.has('card') ? 'Visa / Master / LankaPay' : 'Not enabled on this counter', disabled: !tenders.has('card') },
+    { id: 'lankaqr', emoji: '📱', title: 'LankaQR', sub: tenders.has('lankaqr') ? 'Bank transfer with reference' : 'Not enabled on this counter', disabled: !tenders.has('lankaqr') },
     { id: 'credit', emoji: '🧾', title: 'Customer Credit', sub: customer ? `Bill to ${customer.name}` : 'Link a customer first', disabled: !creditAllowed },
   ]
 
@@ -568,6 +619,15 @@ export function TenderModal({
           </View>
         </ScrollView>
       </View>
+      <SupervisorPinModal
+        request={approvalRequest}
+        onCancel={() => setApprovalRequest(null)}
+        onApproved={(token) => {
+          approvalTokensRef.current = [...approvalTokensRef.current, token]
+          setApprovalRequest(null)
+          void handleCompleteSale()
+        }}
+      />
     </Modal>
   )
 }

@@ -11,6 +11,8 @@ import {
 export const salesListSchema = paginatedSearchSchema.extend({
   status: z.string().max(50).optional(),
   customerId: z.string().uuid().optional(),
+  /** Sales (and returns) of one POS shift */
+  posOpeningEntryId: z.string().uuid().optional(),
 })
 
 // Tax breakdown item schema (per-component tax detail)
@@ -42,6 +44,12 @@ const saleCartItemSchema = cartItemSchema.extend({
   notes: z.string().max(500).optional(),
   /** Returns: the original sale line being returned (W8). */
   originalSaleItemId: optionalUuid,
+  /** H5: unit sold (item_uoms.uom); quantity is in this unit, stock moves quantity × factor base units */
+  uom: z.string().trim().max(20).optional(),
+  /** H5: price fixed on the device (scale / GS1 label amount, barcode price override): no price list */
+  priceLocked: z.boolean().optional(),
+  /** H5: additional barcode the line was scanned with — its price override counts as the resolved price */
+  barcode: z.string().trim().max(100).optional(),
 })
 
 const paymentSplitSchema = z.object({
@@ -97,6 +105,21 @@ export const createSaleSchema = z.object({
   /** Returns: reason code (required for returns without an original invoice) */
   returnReason: z.string().trim().max(50).optional(),
   returnNotes: z.string().max(1000).optional(),
+  /**
+   * H1: supervisor approvals (POST /api/auth/verify-pin → approvalToken) for a discount above the
+   * counter's limit, a price below the catalog on a counter without rate changes, or a credit sale
+   * beyond the customer's credit limit. Without them such a sale is rejected (403 APPROVAL_REQUIRED).
+   */
+  approvalTokens: z.array(z.string().max(2000)).max(10).optional(),
+  /** H5: coupon codes entered at the till */
+  couponCodes: z.array(z.string().trim().max(50)).max(5).optional(),
+  /**
+   * H5: cart-level promotion discount the client applied (NOT part of `discount`, which is the
+   * manual cart discount). The server recomputes it; online a difference → 409 PRICE_CHANGED.
+   */
+  promotionDiscount: z.coerce.number().min(0).optional(),
+  /** H5: when an offline sale was rung up (prices / promotion schedules are evaluated then) */
+  soldAt: z.string().datetime().optional(),
 }).superRefine((data, ctx) => {
   if (!data.isReturn) {
     if (data.subtotal < 0) ctx.addIssue({ code: 'custom', path: ['subtotal'], message: 'Subtotal cannot be negative' })
@@ -146,7 +169,7 @@ export const createSalesOrderSchema = z.object({
 
 // PUT /api/sales/[id] - void a sale
 export const voidSaleSchema = z.object({
-  voidReason: z.string().max(1000).optional(),
+  voidReason: z.string().trim().min(1, 'A void reason is required').max(1000),
 })
 
 // POST /api/sales/[id]/payments
@@ -214,6 +237,8 @@ export const exchangeSaleSchema = z.object({
   clientSaleId: z.string().uuid().optional(),
   reason: z.string().trim().max(50).optional(),
   notes: z.string().max(1000).optional(),
+  /** H1: supervisor approvals for discounts / prices below catalog on the new items */
+  approvalTokens: z.array(z.string().max(2000)).max(10).optional(),
 })
 
 // POST /api/sales/[id]/remove-lines

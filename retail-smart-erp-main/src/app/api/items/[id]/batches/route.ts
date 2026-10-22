@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { itemBatches, warehouses, suppliers } from '@/lib/db/schema'
+import { items, itemBatches, warehouses, suppliers } from '@/lib/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -76,6 +76,17 @@ export async function POST(
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return { error: quotaError }
+
+    // The item (and warehouse) must belong to this tenant (RLS-scoped lookups)
+    const [item] = await tx.select({ id: items.id }).from(items).where(eq(items.id, id)).limit(1)
+    if (!item) return { error: NextResponse.json({ error: 'Item not found' }, { status: 404 }) }
+    if (body.warehouseId) {
+      const [wh] = await tx.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.id, body.warehouseId)).limit(1)
+      if (!wh) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
+    }
+    if (body.manufacturingDate && body.expiryDate && body.expiryDate < body.manufacturingDate) {
+      return { error: NextResponse.json({ error: 'Expiry date cannot be before the manufacturing date' }, { status: 400 }) }
+    }
 
     const [batch] = await tx.insert(itemBatches).values({
       tenantId: session.user.tenantId,

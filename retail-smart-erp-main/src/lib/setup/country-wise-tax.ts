@@ -196,6 +196,12 @@ export interface CountryTaxTemplate {
   taxRate: number
   accountName?: string
   isDefault?: boolean
+  /** VAT treatment (tax_templates.tax_category); defaults to 'standard'. */
+  taxCategory?: 'standard' | 'zero_rated' | 'exempt' | 'out_of_scope'
+  /** Display name of the seeded tax template (defaults to the map key). */
+  templateName?: string
+  /** Offered in setup / tax settings but never made the default template. */
+  optional?: boolean
 }
 
 export interface CountryTaxData {
@@ -726,18 +732,42 @@ export const countryWiseTax: CountryTaxData = {
       isDefault: true
     }
   },
+  // VAT 18% since 1 January 2024 (VAT (Amendment) Act No. 32 of 2023); NBT was abolished on
+  // 1 December 2019. SSCL (2.5% on turnover) is a levy borne by the business and usually not
+  // itemised on invoices, so it is offered but never the default.
   "Sri Lanka": {
     "Sri Lanka VAT": {
       taxName: "VAT",
-      taxRate: 15.00,
+      taxRate: 18.00,
       accountName: "VAT",
-      isDefault: true
+      isDefault: true,
+      taxCategory: "standard",
+      templateName: "VAT 18%"
     },
-    "Sri Lanka NBT": {
-      taxName: "NBT",
-      taxRate: 2.00,
-      accountName: "NBT",
-      isDefault: false
+    "Sri Lanka VAT Zero-rated": {
+      taxName: "VAT",
+      taxRate: 0,
+      accountName: "VAT",
+      isDefault: false,
+      taxCategory: "zero_rated",
+      templateName: "VAT 0% Zero-rated"
+    },
+    "Sri Lanka VAT Exempt": {
+      taxName: "VAT",
+      taxRate: 0,
+      accountName: "VAT",
+      isDefault: false,
+      taxCategory: "exempt",
+      templateName: "VAT Exempt"
+    },
+    "Sri Lanka SSCL": {
+      taxName: "SSCL",
+      taxRate: 2.50,
+      accountName: "SSCL",
+      isDefault: false,
+      taxCategory: "standard",
+      templateName: "SSCL 2.5%",
+      optional: true
     }
   },
   "Sweden": {
@@ -947,4 +977,26 @@ export function getTaxSuggestionForCountryCode(countryCode: string, businessType
   }
   
   return getTaxSuggestionForCountry(countryName, businessType)
+}
+
+/** Country name for an ISO 3166-1 alpha-2 code (undefined when unknown). */
+export function getCountryNameForCode(countryCode: string | null | undefined): string | undefined {
+  return countryCode ? countryCodeToName[countryCode.toUpperCase()] : undefined
+}
+
+/**
+ * Tax templates to seed for a country code, in display order (default first).
+ * `includeOptional` adds levies such as Sri Lanka SSCL that are available but not default.
+ */
+export function getCountryTaxTemplatesForCode(
+  countryCode: string,
+  includeOptional = false
+): Array<CountryTaxTemplate & { templateName: string }> {
+  const name = getCountryNameForCode(countryCode)
+  const data = name ? countryWiseTax[name] : undefined
+  if (!data) return []
+  return Object.entries(data)
+    .filter(([, t]) => includeOptional || !t.optional)
+    .map(([key, t]) => ({ ...t, templateName: t.templateName || key }))
+    .sort((a, b) => Number(!!b.isDefault) - Number(!!a.isDefault))
 }

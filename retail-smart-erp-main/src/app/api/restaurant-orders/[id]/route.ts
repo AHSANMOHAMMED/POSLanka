@@ -15,10 +15,14 @@ import { updateRestaurantOrderSchema } from '@/lib/validation/schemas/restaurant
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 import { applyStockChanges, notifyStockDecreased, type StockChangeInput, type StockChangeResult } from '@/lib/inventory/apply-stock-change'
+import { allowNegativeStockFor } from '@/lib/inventory/negative-stock-policy'
 import { withSavepoint, type DbTx } from '@/lib/inventory/db-types'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { allocateBatchesFEFO, allocateSaleLineBatches } from '@/lib/inventory/batches'
 import { getTenantSalesSettings } from '@/lib/sales/return-settings'
+import { billableOrderItems } from '@/lib/restaurant/order-totals'
+import { postSaleToGL } from '@/lib/accounting/auto-post'
+import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 
 // Status workflow: open -> closed -> completed OR cancelled
 const validStatusTransitions: Record<string, string[]> = {
@@ -164,7 +168,11 @@ export async function PUT(
 
         // Handle status change
         if (status && status !== currentOrder.status) {
-          const allowedTransitions = validStatusTransitions[currentOrder.status] || []
+          const allowedTransitions = [...(validStatusTransitions[currentOrder.status] || [])]
+          // POS checkout pays an order straight from 'open' (it never closes the bill first):
+          // the sale it created settles the order, so open -> completed is valid in that flow.
+          const posSettlement = status === 'completed' && currentOrder.status === 'open' && !!skipSaleCreation && !!providedSaleId
+          if (posSettlement) allowedTransitions.push('completed')
           if (!allowedTransitions.includes(status)) {
             throw new Error(`INVALID_TRANSITION:Cannot change status from '${currentOrder.status}' to '${status}'. Allowed: ${allowedTransitions.join(', ') || 'none (terminal state)'}`)
           }
@@ -199,10 +207,11 @@ export async function PUT(
 
           // When status = completed: create sale record and set table to available
           if (status === 'completed') {
-            // Get all order items
-            const orderItems = await tx.query.restaurantOrderItems.findMany({
+            // Get all billable order items (lines cancelled after reaching the kitchen are not
+            // charged and their ingredients are not consumed by the sale)
+            const orderItems = billableOrderItems(await tx.query.restaurantOrderItems.findMany({
               where: eq(restaurantOrderItems.orderId, id),
-            })
+            }))
 
             if (orderItems.length === 0) {
               throw new Error('CANNOT_COMPLETE_EMPTY_ORDER')
@@ -223,6 +232,12 @@ export async function PUT(
             // When skipSaleCreation is true (POS-driven flow), skip sale/payment creation
             // The POS page creates the sale via /api/sales and passes the saleId here
             if (skipSaleCreation && providedSaleId) {
+              // The POS sale must exist in this tenant, be live and belong to this order
+              const [posSale] = await tx.select({ id: sales.id, status: sales.status, restaurantOrderId: sales.restaurantOrderId })
+                .from(sales).where(eq(sales.id, providedSaleId))
+              if (!posSale || posSale.status === 'void' || (posSale.restaurantOrderId && posSale.restaurantOrderId !== id)) {
+                throw new Error('INVALID_SALE')
+              }
               updateData.saleId = providedSaleId
               updateData.subtotal = String(subtotal)
               updateData.taxAmount = String(taxAmount)
@@ -269,6 +284,10 @@ export async function PUT(
               const lineItemById = new Map(lineItemRows.map(r => [r.id, r]))
               const saleStockInputs: StockChangeInput[] = []
               const saleStockQty: number[] = []
+              // H3: a POS profile for this warehouse decides (allowNegativeStock=false blocks the
+              // completion with 400). Without a profile the food / drink was already served: the
+              // shortfall is recorded in sale.flags instead of leaving an unpayable check.
+              const saleAllowNegative = await allowNegativeStockFor(tx as unknown as DbTx, { tenantId: session.user.tenantId, warehouseId: saleWarehouseId, whenNoProfile: true })
               const saleBatchLines: Array<{ saleItemId: string; itemId: string; name: string; qty: number }> = []
 
               // Create sale items with per-item template tax
@@ -293,8 +312,8 @@ export async function PUT(
                   total: String(itemLineTotal),
                 }).returning({ id: saleItems.id })
 
-                // E1: stock-tracked lines leave stock like a POS sale. The food / drink was served:
-                // a shortfall is recorded in sale.flags, never blocks completing the order.
+                // E1: stock-tracked lines leave stock like a POS sale. A shortfall is recorded in
+                // sale.flags, unless the warehouse's POS profile forbids negative stock (400).
                 const lineItem = orderItem.itemId ? lineItemById.get(orderItem.itemId) : undefined
                 if (lineItem?.trackStock && saleWarehouseId && orderItem.quantity > 0) {
                   saleStockInputs.push({
@@ -310,7 +329,7 @@ export async function PUT(
                     userId,
                     source: 'restaurant',
                     idempotencyKey: `sale:${sale.id}:${saleLine.id}`,
-                    allowNegative: true,
+                    allowNegative: saleAllowNegative,
                   })
                   saleStockQty.push(orderItem.quantity)
                   if (lineItem.trackBatches) {
@@ -359,6 +378,32 @@ export async function PUT(
                 amount: String(total),
                 method: 'cash',
                 receivedBy: userId,
+              })
+
+              // Post the sale to the GL like a POS sale (cash received, revenue, tax, COGS);
+              // without it the order's revenue and cash never reach the ledger, and a later void
+              // has nothing to reverse.
+              const cogsRows = lineItemIds.length > 0
+                ? await tx.select({ id: itemsTable.id, costPrice: itemsTable.costPrice })
+                    .from(itemsTable).where(inArray(itemsTable.id, lineItemIds))
+                : []
+              const costById = new Map(cogsRows.map(r => [r.id, parseFloat(r.costPrice || '0') || 0]))
+              const totalCOGS = roundCurrency(orderItems.reduce((sum, oi) =>
+                sum + (oi.itemId ? roundCurrency((costById.get(oi.itemId) || 0) * oi.quantity) : 0), 0))
+              await postSaleToGL(tx, session.user.tenantId, {
+                saleId: sale.id,
+                invoiceNumber: invoiceNo,
+                saleDate: new Date().toISOString().split('T')[0],
+                subtotal,
+                tax: taxAmount,
+                discount: 0,
+                total,
+                amountPaid: total,
+                creditAmount: 0,
+                costOfGoodsSold: totalCOGS,
+                paymentMethod: 'cash',
+                customerId: currentOrder.customerId || null,
+                taxBreakdown: (saleTaxBreakdown as TaxBreakdownItem[] | null) || undefined,
               })
 
               // Update order with sale reference and final totals
@@ -426,6 +471,11 @@ export async function PUT(
               }
 
               if (deductions.size > 0) {
+                // H3: POS profile policy of the sale's shift / the warehouse; no profile → consumption
+                // may run negative (recipe quantities are estimates and the order was served)
+                const ingredientAllowNegative = await allowNegativeStockFor(tx as unknown as DbTx, {
+                  tenantId: session.user.tenantId, warehouseId: orderWarehouseId, saleId: linkedSaleId || null, whenNoProfile: true,
+                })
                 const inputs: StockChangeInput[] = []
                 for (const [ingredientId, d] of deductions) {
                   let warehouseId = orderWarehouseId
@@ -450,9 +500,9 @@ export async function PUT(
                     userId,
                     source: 'restaurant',
                     idempotencyKey: `restaurant-order:${id}:${ingredientId}`,
-                    // Consumption must never block completing the order; a negative
-                    // balance surfaces the discrepancy instead of hiding it.
-                    allowNegative: true,
+                    // Follows the POS profile: where negative stock is allowed the negative
+                    // balance surfaces the discrepancy; otherwise a shortage blocks completion.
+                    allowNegative: ingredientAllowNegative,
                   })
                 }
                 const ingredientRows = inputs.length > 0
@@ -497,8 +547,10 @@ export async function PUT(
                 }
               }
             } catch (stockError) {
+              // A shortage under a "no negative stock" policy blocks completing the order
+              if (stockError instanceof Error && stockError.message.startsWith('INSUFFICIENT_STOCK:')) throw stockError
               logError('api/restaurant-orders/[id]', stockError)
-              // Don't fail the order completion if stock deduction fails
+              // Don't fail the order completion if stock deduction fails for any other reason
             }
           }
         }
@@ -552,11 +604,23 @@ export async function PUT(
     if (message.startsWith('INVALID_TRANSITION:')) {
       return NextResponse.json({ error: message.replace('INVALID_TRANSITION:', '') }, { status: 400 })
     }
+    if (message.startsWith('INSUFFICIENT_STOCK:')) {
+      return NextResponse.json({
+        error: `Insufficient stock for ${message.slice('INSUFFICIENT_STOCK:'.length)}`,
+        code: 'INSUFFICIENT_STOCK',
+      }, { status: 400 })
+    }
     if (message === 'INVALID_TIP') {
       return NextResponse.json({ error: 'Tip amount must be a non-negative number' }, { status: 400 })
     }
     if (message === 'CANCELLATION_REASON_REQUIRED') {
       return NextResponse.json({ error: 'Cancellation reason is required' }, { status: 400 })
+    }
+    if (message === 'INVALID_SALE') {
+      return NextResponse.json({ error: 'The sale does not exist, is void, or belongs to another order' }, { status: 400 })
+    }
+    if (message.startsWith('GL_ACCOUNTS_MISSING') || /fiscal year/i.test(message)) {
+      return NextResponse.json({ error: message.replace(/^GL_ACCOUNTS_MISSING:\s*/, '') }, { status: 400 })
     }
     if (message === 'CANNOT_COMPLETE_EMPTY_ORDER') {
       return NextResponse.json({ error: 'Cannot complete an order with no items' }, { status: 400 })

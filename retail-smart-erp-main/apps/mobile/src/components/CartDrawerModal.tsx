@@ -1,5 +1,6 @@
 import React from 'react'
 import {
+  TextInput,
   Modal,
   View,
   Text,
@@ -8,6 +9,7 @@ import {
   FlatList,
 } from 'react-native'
 import { THEME, formatLKR } from '../lib/theme'
+import { cartSubtotal, lineTotal } from '../lib/cartMath'
 
 export interface CartLine {
   /** Cart line key. Equals the item id except for scale-weighed lines (`<itemId>#<n>`). */
@@ -23,6 +25,16 @@ export interface CartLine {
   taxTemplateId?: string | null
   trackStock?: boolean
   availableStock?: number | null
+  /** H5: unit sold, price lock, promotions / price list (see src/lib/cartPricing.ts) */
+  uom?: string | null
+  uomFactor?: number
+  priceLocked?: boolean
+  /** additional barcode with a price override this line was scanned with (sale line `barcode`) */
+  priceBarcode?: string
+  promotionDiscount?: number
+  promotionLabels?: string[]
+  priceListName?: string | null
+  catalogPrice?: number
 }
 
 interface CartDrawerModalProps {
@@ -36,11 +48,17 @@ interface CartDrawerModalProps {
   onProceedToTender: () => void
   /** Restaurant businesses: print a kitchen ticket with the unsent / changed lines. */
   onSendToKitchen?: () => void
+  /** H5: coupon code (sent as couponCodes; promotions re-quoted on change) and bill promotions */
+  couponCode?: string
+  onCouponChange?: (code: string) => void
+  cartPromotions?: Array<{ promotionId: string; label: string; amount: number }>
   /** Document tax computed by the parent (tax templates). */
   tax: number
   taxLabel?: string
   /** True when the tax is already included in item prices. */
   taxInclusive?: boolean
+  /** Amount payable (subtotal + exclusive tax) computed by the parent with the cart maths. */
+  totalPayable?: number
 }
 
 export function CartDrawerModal({
@@ -53,17 +71,18 @@ export function CartDrawerModal({
   onHoldCart,
   onProceedToTender,
   onSendToKitchen,
+  couponCode,
+  onCouponChange,
+  cartPromotions,
   tax,
   taxLabel = 'Tax',
   taxInclusive = false,
+  totalPayable: totalPayableProp,
 }: CartDrawerModalProps) {
   if (!visible) return null
 
-  const subtotal = cart.reduce(
-    (sum, line) => sum + Number(line.sellingPrice) * line.quantity,
-    0
-  )
-  const totalPayable = taxInclusive ? subtotal : subtotal + tax
+  const subtotal = cartSubtotal(cart)
+  const totalPayable = totalPayableProp ?? (taxInclusive ? subtotal : subtotal + tax)
 
   return (
     <Modal visible={visible} animationType="slide" transparent={true} onRequestClose={onClose}>
@@ -99,7 +118,7 @@ export function CartDrawerModal({
               style={styles.list}
               contentContainerStyle={{ paddingBottom: 16 }}
               renderItem={({ item }) => {
-                const lineTotal = Number(item.sellingPrice) * item.quantity
+                const itemTotal = lineTotal(item)
                 return (
                   <View style={styles.cartRow}>
                     <View style={styles.itemInfo}>
@@ -110,8 +129,14 @@ export function CartDrawerModal({
                         {item.barcode ? `Barcode: ${item.barcode}` : item.sku ? `SKU: ${item.sku}` : 'Standard Item'}
                       </Text>
                       <Text style={styles.unitPrice}>
-                        {formatLKR(item.sellingPrice)} each
+                        {formatLKR(item.sellingPrice)} {item.uom ? `per ${item.uom}` : 'each'}
+                        {item.priceListName ? ` · ${item.priceListName}` : ''}
                       </Text>
+                      {!!item.promotionDiscount && item.promotionDiscount > 0 && (
+                        <Text style={[styles.unitPrice, { color: '#15803d' }]}>
+                          {(item.promotionLabels || []).join(', ')} −{formatLKR(item.promotionDiscount)}
+                        </Text>
+                      )}
                     </View>
 
                     {/* Quantity Stepper & Line Total */}
@@ -135,7 +160,7 @@ export function CartDrawerModal({
                       </View>
 
                       <View style={styles.priceRow}>
-                        <Text style={styles.lineTotal}>{formatLKR(lineTotal)}</Text>
+                        <Text style={styles.lineTotal}>{formatLKR(itemTotal)}</Text>
                         <Pressable
                           style={styles.trashBtn}
                           onPress={() => onRemoveItem(item.id)}
@@ -157,6 +182,26 @@ export function CartDrawerModal({
                 <Text style={styles.summaryLabel}>Subtotal</Text>
                 <Text style={styles.summaryVal}>{formatLKR(subtotal)}</Text>
               </View>
+              {(cartPromotions || []).map((p) => (
+                <View key={p.promotionId} style={styles.summaryRow}>
+                  <Text style={[styles.summaryLabel, { color: '#15803d' }]}>{p.label}</Text>
+                  <Text style={[styles.summaryVal, { color: '#15803d' }]}>−{formatLKR(p.amount)}</Text>
+                </View>
+              ))}
+              {onCouponChange && (
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Coupon</Text>
+                  <TextInput
+                    key={`coupon-${couponCode || ''}`}
+                    defaultValue={couponCode || ''}
+                    placeholder="Code"
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    onEndEditing={(e) => onCouponChange(e.nativeEvent.text.trim().toUpperCase())}
+                    style={{ minWidth: 120, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4, textAlign: 'right' }}
+                  />
+                </View>
+              )}
               <View style={styles.summaryRow}>
                 <Text style={styles.summaryLabel}>{taxLabel}{taxInclusive ? ' (included)' : ''}</Text>
                 <Text style={styles.summaryVal}>{formatLKR(tax)}</Text>

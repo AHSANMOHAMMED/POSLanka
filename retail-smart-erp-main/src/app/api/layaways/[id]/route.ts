@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { parseCurrency, roundCurrency } from '@/lib/utils/currency'
 import { reverseGLEntries } from '@/lib/accounting/gl'
+import { getTenantTimezone, localParts } from '@/lib/notifications/alert-settings'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateLayawaySchema } from '@/lib/validation/schemas/layaways'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -188,12 +189,9 @@ export async function PUT(
         }
       }
 
-      // Reverse GL entries for layaway payments (Dr Cash, Cr Advance were posted)
-      try {
-        await reverseGLEntries(tx, session.user.tenantId, 'layaway_payment', id)
-      } catch {
-        // No GL entries to reverse is fine — may not have been posted
-      }
+      // No GL entry: the paid amount moves from the layaway deposit into the customer's store
+      // credit, and both live in Customer Advance (party = customer). The cash received stays in
+      // the drawer, so the original Dr Cash / Cr Advance entries must not be reversed.
 
       const [updated] = await tx.update(layaways)
         .set({
@@ -322,6 +320,11 @@ export async function DELETE(
         }, { status: 400 })
       }
     }
+
+    // The deposit was posted Dr Cash / Cr Customer Advance. Deleting the layaway erases the
+    // deposit record, so it must also leave the books (deposit handed back / entered in error).
+    await reverseGLEntries(tx, session.user.tenantId, 'layaway_payment', id,
+      localParts(new Date(), await getTenantTimezone(session.user.tenantId)).date)
 
     // Delete payments
     await tx.delete(layawayPayments)

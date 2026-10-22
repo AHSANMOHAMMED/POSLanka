@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { supplierQuotations, supplierQuotationItems, purchaseOrders, purchaseOrderItems } from '@/lib/db/schema'
+import { supplierQuotations, supplierQuotationItems, purchaseOrders, purchaseOrderItems, warehouses } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -40,6 +40,12 @@ export async function POST(
     if (quotation.status !== 'received') {
       return { error: NextResponse.json({ error: 'Only received quotations can be converted to PO' }, { status: 400 }) }
     }
+
+    // Validate warehouse (RLS-scoped: a warehouse of another tenant is not found)
+    const [warehouse] = await tx.select({ id: warehouses.id })
+      .from(warehouses)
+      .where(eq(warehouses.id, body.warehouseId))
+    if (!warehouse) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
 
     const qItems = await tx.select()
       .from(supplierQuotationItems)

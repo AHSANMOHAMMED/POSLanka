@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { dealerPayments } from '@/lib/db/schema'
+import { dealerPayments, dealers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -36,7 +36,7 @@ export async function GET(
           sale: true,
           journalEntry: true,
           createdByUser: SAFE_USER,
-          confirmedByUser: true,
+          confirmedByUser: SAFE_USER,
         },
       })
 
@@ -74,9 +74,9 @@ export async function PUT(
     const body = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
-      const existing = await db.query.dealerPayments.findFirst({
-        where: eq(dealerPayments.id, id),
-      })
+      // Lock the payment row: a pending payment has already moved the dealer balance, so a
+      // cancel or a direction change must adjust that balance exactly once.
+      const [existing] = await db.select().from(dealerPayments).where(eq(dealerPayments.id, id)).for('update')
 
       if (!existing) {
         return NextResponse.json({ error: 'Payment not found' }, { status: 404 })
@@ -101,10 +101,34 @@ export async function PUT(
       if (body.paymentDate !== undefined) updateData.paymentDate = body.paymentDate
       if (body.dueDate !== undefined) updateData.dueDate = body.dueDate
       if (body.notes !== undefined) updateData.notes = body.notes
-      if (body.cancellationReason !== undefined) {
+      const cancelling = body.cancellationReason !== undefined
+      if (cancelling) {
         updateData.cancellationReason = body.cancellationReason
         updateData.status = 'cancelled'
         updateData.cancelledAt = new Date()
+      }
+
+      // Balance effect of a payment: inbound (dealer -> company) lowers the dealer balance,
+      // outbound (company -> dealer) raises it. It was applied when the payment was created.
+      const amount = parseFloat(existing.amount || '0')
+      const effect = (direction: string) => (direction === 'inbound' ? -amount : amount)
+      const oldEffect = effect(existing.direction)
+      const newEffect = cancelling ? 0 : effect(body.direction ?? existing.direction)
+      const delta = Math.round((newEffect - oldEffect) * 100) / 100
+      if (delta !== 0) {
+        const [dealer] = await db.select().from(dealers).where(eq(dealers.id, existing.dealerId)).for('update')
+        if (dealer) {
+          const before = parseFloat(dealer.currentBalance || '0')
+          const after = Math.round((before + delta) * 100) / 100
+          await db.update(dealers)
+            .set({ currentBalance: String(after), updatedAt: new Date() })
+            .where(eq(dealers.id, existing.dealerId))
+          if (!cancelling) {
+            // keep the payment's own before/after snapshot consistent with its new direction
+            const snapBefore = parseFloat(existing.balanceBefore || '0')
+            updateData.balanceAfter = String(Math.round((snapBefore + newEffect) * 100) / 100)
+          }
+        }
       }
 
       const [updated] = await db.update(dealerPayments)

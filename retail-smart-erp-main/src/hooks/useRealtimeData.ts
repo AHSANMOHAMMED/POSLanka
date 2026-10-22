@@ -59,7 +59,9 @@ export function useRealtimeData(
   }, [refreshOnMount, enabled])
 
   // Update realtime status based on connection
+  const wasConnectedRef = useRef(false)
   useEffect(() => {
+    if (isConnected) wasConnectedRef.current = true
     setIsRealtime(enabled && isConnected)
   }, [enabled, isConnected])
 
@@ -112,8 +114,10 @@ export function useRealtimeData(
     const interval = pollingInterval ?? 15000
     if (interval <= 0) return
 
-    // Stagger initial poll to avoid thundering herd
-    const initialDelay = Math.random() * 3000
+    // Stagger the first poll to avoid a thundering herd. At page load the socket simply hasn't
+    // connected yet and the mount fetch just ran, so wait a full interval; polling 0-3 s later
+    // fetched every list on the page twice. After a real disconnect, catch up quickly.
+    const initialDelay = (wasConnectedRef.current ? 0 : interval) + Math.random() * 3000
     let timer: ReturnType<typeof setTimeout> | null = null
     let intervalId: ReturnType<typeof setInterval> | null = null
     let visible = !document.hidden

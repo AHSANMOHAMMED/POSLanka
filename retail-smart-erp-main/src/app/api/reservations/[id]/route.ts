@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { reservations } from '@/lib/db/schema'
+import { reservations, restaurantTables } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateReservationSchema, deleteReservationSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { findTableReservationConflict } from '@/lib/restaurant/reservation-conflicts'
 
 // Valid status transitions
 const validStatusTransitions: Record<string, string[]> = {
@@ -115,6 +116,25 @@ export async function PUT(
           }
         }
 
+        // Re-check the table when the booking moves (table, date, time, duration) or comes back
+        const nextTableId = tableId !== undefined ? (tableId || null) : current.tableId
+        const nextStatus = status || current.status
+        const slotChanged = tableId !== undefined || reservationDate !== undefined
+          || reservationTime !== undefined || estimatedDuration !== undefined
+        if (nextTableId && slotChanged && ['pending', 'confirmed', 'seated'].includes(nextStatus)) {
+          const [table] = await tx.select({ id: restaurantTables.id })
+            .from(restaurantTables).where(eq(restaurantTables.id, nextTableId)).for('update')
+          if (!table) throw new Error('TABLE_NOT_FOUND')
+          const conflict = await findTableReservationConflict(tx, {
+            tableId: nextTableId,
+            reservationDate: reservationDate ?? String(current.reservationDate),
+            reservationTime: reservationTime ?? String(current.reservationTime),
+            estimatedDuration: estimatedDuration ?? current.estimatedDuration ?? 60,
+            excludeId: id,
+          })
+          if (conflict) throw new Error(`DOUBLE_BOOKED:This table is already reserved at ${conflict.reservationTime.slice(0, 5)}. Choose another table or time.`)
+        }
+
         // Build update data
         const updateData: Record<string, unknown> = {
           updatedAt: new Date(),
@@ -186,6 +206,12 @@ export async function PUT(
     }
     if (message === 'CANCELLATION_REASON_REQUIRED') {
       return NextResponse.json({ error: 'Cancellation reason is required' }, { status: 400 })
+    }
+    if (message === 'TABLE_NOT_FOUND') {
+      return NextResponse.json({ error: 'Table not found' }, { status: 404 })
+    }
+    if (message.startsWith('DOUBLE_BOOKED:')) {
+      return NextResponse.json({ error: message.replace('DOUBLE_BOOKED:', ''), code: 'TABLE_DOUBLE_BOOKED' }, { status: 409 })
     }
 
     return NextResponse.json({ error: 'Failed to update reservation' }, { status: 500 })

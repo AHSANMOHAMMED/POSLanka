@@ -114,3 +114,28 @@ Final verification: fresh database 0000–0145, 22 suites / 1,947 checks, API 10
 - Not exercised on physical hardware: a real Android phone, Bluetooth/USB/network thermal printers, cash drawers, USB/Bluetooth scanners, weighing scales. These need an EAS build (`apps/mobile/README.md`) and an on-site test.
 - Push needs `npx eas init` (EAS project id) before notifications are delivered.
 - Web WebUSB on Windows may need the WinUSB driver (Zadig); otherwise use the Print Agent in `tools/print-agent`.
+
+## Round 8 — ERP/POS production gap audit (2026-10-22)
+Audited against a "POS is the capture layer, ERP is the system of record" checklist; every gap found was implemented. Migrations 0157–0161 (and 0151–0156, which were missing from the journal and never ran).
+
+| Area | What changed |
+|---|---|
+| Cash control (0157) | Paid-in / paid-out / bank drop during a shift with reasons, supervisor approval and GL; one open shift per user and per counter (unique indexes); sales tied to the cashier's open shift; per-method variance posted to each method's account with a required reason; full Z-report (tax, discounts, voids, returns, cash movements, GL tie-out); voids after close refund from the voider's open shift without touching the closed Z |
+| Server-side approvals | `verify-pin` issues single-use signed tokens; discount limits, price cuts below the resolved price and credit-limit overrides are enforced in `POST /api/sales` and exchanges; approver, list price, terminal and before/after values recorded |
+| Sri Lanka tax (0158) | VAT 18% (NBT removed), zero-rated / exempt / out-of-scope categories, optional SSCL 2.5%, one-click fix for tenants on the old 15%; TAX INVOICE / CREDIT NOTE with supplier and buyer VAT numbers and per-line VAT (web, PDF, mobile 58/80 mm); per-invoice output and input VAT schedules with CSV and GL reconciliation; credit and debit notes with GL; e-invoice outbox + cron ready for IRD RAMIS (transmitter disabled until the API is published) |
+| Procure-to-pay (0159) | GRN posts to Stock Received But Not Billed; invoice clears it with price variance; 3-way match (warn/block, tolerances); landed cost vouchers; reorder with on-order, reserved and max stock, draft POs from suggestions and optional daily auto-reorder; adjustment reason codes with optional GL mapping; inventory-GL vs valuation audit check and report |
+| Platform (0160) | Web offline queue never drops sales (dead-letter list, backoff, OFF- receipt numbers, offline receipt printing); owner tenant backup ZIP and server pg_dump/restore scripts; API keys + `/api/v1` (items, stock, customers, idempotent sales) — see `docs/API.md`; cash variance and open shifts on the dashboard; cost prices and purchasing data hidden from cashiers; password hashes no longer leaked by 15 relation includes |
+| Pricing & catalog (0161) | Price lists (customer group / customer / counter, tiers, dates), promotions (BOGO, buy X get Y, bundle, min spend, schedules, coupons, usage limits) applied by the server, online and offline on web and mobile; multiple barcodes per item; units of measure with conversions (stock always in base units); product type; promotion report |
+
+Verification on a brand-new database: migrations 0000–0161 apply and re-run as a no-op, isolation and drift checks OK, 40 suites all passing (new: h1 71, h2 79, h3 58, h4 86, h5 105), web and mobile typecheck 0 errors, lint 0, production build OK.
+
+Still open: hardware tests from earlier rounds; IRD e-invoicing transmitter (waiting for the published API spec); mobile return lines don't display the unit; the offline web receipt is typechecked but not yet browser-tested.
+
+### Round 8b — page load speed (2026-10-22)
+Measured in a real browser (22 page loads): **dev** 1,550 → 529 API requests, page settled 2–6 s → 0.6–1.2 s; **production** 841 → 438 requests, 0.6–0.85 s → 0.3–0.46 s, sidebar clicks 0.1–0.2 s.
+- The whole app rendered nothing until a session check round-trip finished (`SessionValidator`); it now renders immediately (the server layout already authenticated the request) and checks in the background.
+- Module access, feature flags and the shell widgets (banners, chat, alerts, inbox, company switcher) share one request per page via `src/lib/client/shared-fetch.ts`; low-priority widgets load after the page's own data.
+- `useRealtimeData` no longer polls 0–3 s after mount while the WebSocket is still connecting (it fetched every list twice).
+- Instant click feedback: top progress bar (`NavigationProgress`) and a `loading.tsx` skeleton for company pages.
+- Dev: `server.ts` loads `.env.local` (it only read `.env` before and exited with "DATABASE_URL is required"); the main modules are pre-compiled in the background (`src/lib/dev/warmup.ts`, capped at 3.5 GB — compiling every route pushed `next dev` past 9 GB and the OS killed it). `npm run preview` runs the app locally in production mode.
+- The onboarding checklist linked to a non-existent `/settings/users` page (now `/settings/staff`).

@@ -4,7 +4,9 @@ import { requirePermission } from '@/lib/auth/roles'
 import { paymentEntries, paymentEntryReferences, paymentEntryDeductions, accountingSettings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { postPaymentEntryToGL, updateInvoiceOutstanding, createPaymentLedgerEntries } from '@/lib/accounting/payment-entry'
+import { postPaymentEntryToGL, updateInvoiceOutstanding, createPaymentLedgerEntries, validateInvoiceAllocations, PaymentAllocationError } from '@/lib/accounting/payment-entry'
+import { GLValidationError } from '@/lib/accounting/gl'
+import { adjustSupplierBalance } from '@/lib/purchasing/supplier-balance'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { authWithCompany } from '@/lib/auth'
 import { validateParams } from '@/lib/validation/helpers'
@@ -24,7 +26,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const quotaError = await requireQuota(preSession.user.tenantId, 'essential')
   if (quotaError) return quotaError
 
-  const result = await withAuthTenantTransaction(async (session, tx) => {
+  let result: Response | null
+  try {
+  result = await withAuthTenantTransaction(async (session, tx) => {
     const tenantId = session.user.tenantId
 
     // Fetch entry
@@ -79,12 +83,31 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       })),
     }
 
+    // 0. The invoices may have been paid, voided or returned since this draft was made
+    await validateInvoiceAllocations(tx, { partyType: entry.partyType, partyId: entry.partyId }, data.references)
+
     // 1. Create GL entries
     await postPaymentEntryToGL(tx, data)
 
     // 2. Update invoice outstanding amounts
     if (references.length > 0) {
       await updateInvoiceOutstanding(tx, data.references)
+    }
+
+    // 2b. Supplier running balance (what we owe): money paid to a supplier reduces it — the
+    // whole payment, allocated or held as an advance — exactly like a bill payment does.
+    if (entry.partyType === 'supplier' && entry.partyId && entry.paymentType !== 'internal_transfer') {
+      const amount = entry.paymentType === 'pay' ? Number(entry.paidAmount) : -Number(entry.receivedAmount)
+      await adjustSupplierBalance(tx, {
+        tenantId,
+        supplierId: entry.partyId,
+        delta: -amount,
+        type: 'payment',
+        referenceType: 'payment_entry',
+        referenceId: entry.id,
+        notes: `Payment entry ${entry.entryNumber}`,
+        userId: session.user.id,
+      })
     }
 
     // 3. Create payment ledger entries
@@ -120,6 +143,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     return NextResponse.json(updated)
   })
+  } catch (error) {
+    if (error instanceof PaymentAllocationError || error instanceof GLValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
+    throw error
+  }
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   return result

@@ -163,6 +163,13 @@ export async function POST(request: NextRequest) {
 
   const { customerId, customerName, vehicleId, vehiclePlate, vehicleDescription, warehouseId, expectedDeliveryDate, deliveryAddress, notes, items } = parsed.data
 
+  // A line discount is an amount; it can never exceed the line value (negative line totals)
+  for (const item of items || []) {
+    if ((item.discount || 0) > item.quantity * item.unitPrice + 0.001) {
+      return NextResponse.json({ error: `Discount on ${item.itemName || 'an item'} exceeds the line amount` }, { status: 400 })
+    }
+  }
+
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'createSales')
     if (permError) return { error: permError }

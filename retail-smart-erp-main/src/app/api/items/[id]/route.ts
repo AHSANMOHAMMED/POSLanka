@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { canViewCostPrices, redactItemCost } from '@/lib/auth/field-access'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { items, saleItems, workOrderParts, heldSales, layawayItems, purchaseItems, purchaseOrderItems, stockMovements, warehouseStock, itemCostHistory, users, itemTombstones } from '@/lib/db/schema'
 import { eq, and, sql, ne, inArray } from 'drizzle-orm'
@@ -67,13 +68,21 @@ export async function GET(
         : []
       const userById = new Map(userRows.map((u) => [u.id, u]))
 
-      return NextResponse.json({
+      const body = {
         ...item,
         createdBy: item.createdBy ? (userById.get(item.createdBy) ?? { id: item.createdBy, name: null }) : null,
         updatedBy: item.updatedBy ? (userById.get(item.updatedBy) ?? { id: item.updatedBy, name: null }) : null,
         currentStock: stockData?.totalStock || '0',
         minStock: stockData?.maxMinStock || '0',
-      })
+      }
+      // H4: no cost prices / supplier details for POS-only roles
+      if (!canViewCostPrices(session)) {
+        return NextResponse.json({
+          ...redactItemCost(body),
+          supplier: item.supplier ? { id: item.supplier.id, name: item.supplier.name } : null,
+        })
+      }
+      return NextResponse.json(body)
     })
   } catch (error) {
     logError('api/items/[id]', error)
@@ -97,7 +106,7 @@ export async function PUT(
     const parsed = await validateBody(request, updateItemSchema)
     if (!parsed.success) return parsed.response
     const {
-      name, itemCode, sku, barcode, categoryId, costPrice, sellingPrice, unit, isActive, trackStock, trackSerialNumbers, expectedUpdatedAt, expectedVersion,
+      name, itemCode, sku, barcode, categoryId, costPrice, sellingPrice, unit, isActive, trackStock, trackBatches, trackSerialNumbers, expectedUpdatedAt, expectedVersion,
       // Auto parts fields
       oemPartNumber, alternatePartNumbers, brand, condition,
       supplierId, supplierPartNumber, leadTimeDays, weight, dimensions, warrantyMonths, imageUrl, supersededBy,
@@ -109,6 +118,8 @@ export async function PUT(
       isGiftCard,
       // Tax template
       taxTemplateId,
+      // H5 product type
+      productType,
     } = parsed.data
 
     const tenantId = session!.user.tenantId
@@ -193,7 +204,11 @@ export async function PUT(
             sellingPrice: String(sellingPrice),
             unit: unit || 'pcs',
             isActive: isActive !== undefined ? isActive : true,
-            trackStock: trackStock !== undefined ? trackStock : true,
+            // H5: product type decides stock tracking; otherwise keep the current flag unless sent
+            // (the DB trigger keeps product_type / track_stock consistent either way)
+            productType: productType ?? undefined,
+            trackStock: productType ? productType === 'stockable' : (trackStock !== undefined ? trackStock : undefined),
+            trackBatches: trackBatches !== undefined ? trackBatches : undefined,
             trackSerialNumbers: trackSerialNumbers !== undefined ? trackSerialNumbers : undefined,
             // Auto parts fields
             oemPartNumber: oemPartNumber || null,

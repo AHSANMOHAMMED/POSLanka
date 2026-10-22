@@ -4,7 +4,11 @@ import { withTenant } from '@/lib/db'
 import { appointments, workOrders, insuranceEstimates, warehouseStock, items } from '@/lib/db/schema'
 import { eq, and, or, sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { tenantToday } from '@/lib/accounting/gl'
 
+// H4 (RBAC review): intentionally available to every signed-in role — it returns operational
+// counts only (appointments, work orders, estimates, low-stock items), no amounts. Money on the
+// dashboard comes from /api/workspace/* and is gated per block (lib/workspace/metrics canViewBlock).
 export async function GET() {
   try {
     const session = await authWithCompany()
@@ -13,7 +17,8 @@ export async function GET() {
     }
 
     const businessType = session.user.businessType || 'retail'
-    const today = new Date().toISOString().split('T')[0]
+    // Local business day (Asia/Colombo by default), not the UTC date
+    const today = await tenantToday(session.user.tenantId)
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {

@@ -57,5 +57,31 @@ check(!invoiceCodeFor({ invoiceNo: 'Sale recorded', qrPayload: 'Sale recorded', 
 const legacy = buildReceipt({ ...base, invoiceCode: undefined, qrPayload: 'INV-1', headerLines: undefined, footerLines: undefined, header: 'Old header' }, { paperWidth: 58 })
 check(idx(legacy, [0x1d, 0x6b, 73]) < 0 && idx(legacy, ascii('Old header')) >= 0, 'legacy input: QR only, header text')
 
+// H2: tax invoice (VAT-registered seller, VAT charged) — title, buyer, per-line VAT, excl./incl. totals
+const taxInv: ReceiptInput = {
+  ...base,
+  invoiceCode: 'none',
+  logo: null,
+  customer: { name: 'Lanka Hardware' },
+  lines: [{ name: 'Chair', qty: 1, unitPrice: 1000, total: 1000, vatRate: 18, vatAmount: 180 }],
+  subtotal: 1000,
+  taxLines: [{ name: 'VAT 18%', amount: 180 }],
+  total: 1180,
+  taxInvoice: {
+    kind: 'tax_invoice', supplierVatNo: '1234-7000', originalInvoiceNo: null,
+    buyer: { name: 'Lanka Hardware', vatNo: '114999888-7000', address: '5 Kandy Rd' },
+    totalExclVat: 1000, totalVat: 180, totalInclVat: 1180,
+  },
+}
+for (const w of [58, 80] as const) {
+  const t = buildReceipt(taxInv, { paperWidth: w })
+  for (const s2 of ['TAX INVOICE', 'Invoice No', 'Buyer VAT No', '114999888-7000', '5 Kandy Rd', 'VAT 18%', '180.00', 'Total excl. VAT', 'Total incl. VAT'])
+    check(idx(t, ascii(s2)) >= 0, `${w}mm tax invoice contains ${s2}`)
+  check(idx(t, ascii('SALES RECEIPT')) < 0, `${w}mm tax invoice is not titled SALES RECEIPT`)
+}
+const cn = buildReceipt({ ...taxInv, isReturn: true, total: -1180, taxInvoice: { ...taxInv.taxInvoice!, kind: 'credit_note', originalInvoiceNo: 'INV-000777' } }, { paperWidth: 58 })
+check(idx(cn, ascii('CREDIT NOTE')) >= 0 && idx(cn, ascii('INV-000777')) >= 0, 'VAT return prints CREDIT NOTE against the original invoice')
+check(idx(b, ascii('SALES RECEIPT')) >= 0 && idx(b, ascii('Total excl. VAT')) < 0, 'ordinary receipt unchanged (no tax invoice block)')
+
 console.log(`  ${pass} passed, ${fail} failed`)
 if (fail) process.exit(1)

@@ -184,6 +184,15 @@ export async function PUT(
 
       // Update payout and commissions in transaction
       const result = await db.transaction(async (tx) => {
+        // Re-read under lock: two concurrent "mark paid" requests both passed the status check
+        // above and each posted the cash payout to the GL.
+        const [locked] = await tx.select({ status: commissionPayouts.status }).from(commissionPayouts)
+          .where(eq(commissionPayouts.id, id))
+          .for('update')
+        if (!locked || locked.status !== existingPayout.status) {
+          throw new Error('PAYOUT_STATUS_CHANGED')
+        }
+
         const [updated] = await tx.update(commissionPayouts)
           .set(updateData)
           .where(eq(commissionPayouts.id, id))
@@ -222,6 +231,9 @@ export async function PUT(
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
+    if (message === 'PAYOUT_STATUS_CHANGED') {
+      return NextResponse.json({ error: 'This payout was changed by someone else. Refresh and try again.' }, { status: 409 })
+    }
     if (message === 'USER_NOT_FOUND') {
       return NextResponse.json({ error: 'User not found for this tenant. Please log out and log in again.' }, { status: 400 })
     }

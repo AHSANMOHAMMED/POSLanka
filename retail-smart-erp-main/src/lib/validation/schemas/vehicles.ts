@@ -469,6 +469,9 @@ export const updateVehicleSaleDetailSchema = z.object({
   warrantyMileage: z.coerce.number().int().min(0).nullish(),
   warrantyPrice: z.coerce.number().min(0).nullish(),
   commissionAmount: z.coerce.number().min(0).nullish(),
+  // Cancel the sale: voids the invoice and puts the vehicle back into stock
+  status: z.literal('cancelled').optional(),
+  cancellationReason: z.string().trim().max(1000).nullish(),
 })
 
 // ==================== VEHICLE TYPES ====================

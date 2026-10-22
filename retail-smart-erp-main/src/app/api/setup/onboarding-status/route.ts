@@ -35,7 +35,7 @@ export async function GET() {
         key: 'staff',
         label: 'Invite cashiers',
         done: (userCount?.count || 0) > 1,
-        href: `/c/${slug}/settings/users`,
+        href: `/c/${slug}/settings/staff`,
       },
       {
         key: 'item',

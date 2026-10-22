@@ -9,8 +9,11 @@ interface SupervisorAuthModalProps {
   onClose: () => void
   onAuthorize: (pin: string, reason: string) => Promise<boolean> | boolean
   title?: string
-  actionType?: 'price_override' | 'void_item' | 'cart_void' | 'drawer_open' | 'custom_discount' | 'quick_add_item'
+  actionType?: 'price_override' | 'void_item' | 'cart_void' | 'drawer_open' | 'custom_discount' | 'quick_add_item' | 'sale_approval' | 'cash_movement' | 'cash_movement_void'
   contextDetails?: {
+    /** Why the server asked for approval (e.g. the APPROVAL_REQUIRED message) */
+    message?: string
+    amount?: number
     itemName?: string
     originalPrice?: number
     requestedPrice?: number
@@ -122,6 +125,9 @@ export function SupervisorAuthModal({
                 {actionType === 'drawer_open' && 'Manual Cash Drawer Release'}
                 {actionType === 'custom_discount' && 'High-Threshold Discount Approval'}
                 {actionType === 'quick_add_item' && 'Unlisted Item Creation Approval'}
+                {actionType === 'sale_approval' && 'Sale Approval (discount / price / credit limit)'}
+                {actionType === 'cash_movement' && 'Cash Paid In / Paid Out'}
+                {actionType === 'cash_movement_void' && 'Void Cash Movement'}
               </span>
               {contextDetails?.ticketNumber && (
                 <span className="text-slate-500 font-mono">
@@ -135,6 +141,9 @@ export function SupervisorAuthModal({
                 Item: {contextDetails.itemName}
               </div>
             )}
+            {contextDetails?.message && (
+              <div className="text-sm text-slate-700 dark:text-slate-300">{contextDetails.message}</div>
+            )}
 
             <div className="flex flex-wrap items-center gap-4 text-xs font-mono text-slate-600 dark:text-slate-400 pt-1 border-t border-slate-200 dark:border-slate-700">
               {contextDetails?.originalPrice !== undefined && (
@@ -144,6 +153,9 @@ export function SupervisorAuthModal({
                 <span className="text-emerald-600 dark:text-emerald-400 font-bold">
                   Proposed: LKR {contextDetails.requestedPrice.toFixed(2)}
                 </span>
+              )}
+              {contextDetails?.amount !== undefined && (
+                <span className="font-bold">Amount: LKR {contextDetails.amount.toFixed(2)}</span>
               )}
               {contextDetails?.discountPercent !== undefined && (
                 <span className="text-amber-600 dark:text-amber-400 font-bold">

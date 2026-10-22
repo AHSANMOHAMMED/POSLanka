@@ -32,6 +32,15 @@ function getDashboardBlocks(businessType?: string): WorkspaceBlock[] {
     )
   }
 
+  // H4: cash control row — open shifts, today's revenue and counted-vs-expected cash variance.
+  // Revenue / variance cards are hidden for roles without report access (lib/workspace/metrics canViewBlock).
+  numberCards.push(
+    { id: 'nc5', type: 'number_card', colSpan: 3, data: { label: 'Open Shifts', metricKey: 'open_shifts', color: 'emerald', href: '/pos/daily-summary', icon: 'Clock' } },
+    { id: 'nc6', type: 'number_card', colSpan: 3, data: { label: "Today's Revenue", metricKey: 'today_sales_total', color: 'blue', href: '/sales', icon: 'DollarSign', prefix: 'Rs' } },
+    { id: 'nc7', type: 'number_card', colSpan: 3, data: { label: "Today's Cash Variance", metricKey: 'today_cash_variance', color: 'amber', href: '/pos/daily-summary', icon: 'Scale', prefix: 'Rs' } },
+    { id: 'nc8', type: 'number_card', colSpan: 3, data: { label: 'Cash Variance (7 days)', metricKey: 'week_cash_variance', color: 'purple', href: '/pos/daily-summary', icon: 'Scale', prefix: 'Rs' } },
+  )
+
   const shortcuts: WorkspaceBlock[] = [{
     id: 's1', type: 'shortcut', colSpan: 12, data: {
       shortcuts: [
@@ -71,7 +80,14 @@ function getDashboardBlocks(businessType?: string): WorkspaceBlock[] {
       ? [{ id: 'ql2', type: 'quick_list', colSpan: 6, data: { title: 'Recent Work Orders', listKey: 'recent_work_orders', limit: 5, href: '/work-orders' } } as WorkspaceBlock]
       : [{ id: 'ql2', type: 'quick_list', colSpan: 6, data: { title: 'Recent Customers', listKey: 'recent_customers', limit: 5, href: '/customers' } } as WorkspaceBlock]
     ),
+    // H4: shift variance, top products and low stock on the default dashboard
+    { id: 'ql3', type: 'quick_list', colSpan: 6, data: { title: 'Shift Cash Variance', listKey: 'recent_shift_variance', limit: 5, href: '/pos/daily-summary' } },
+    { id: 'ql4', type: 'quick_list', colSpan: 6, data: { title: 'Low Stock Items', listKey: 'low_stock_items', limit: 5, href: '/items?filter=low-stock' } },
   ]
+
+  if (!isServiceCapableBt) {
+    charts.push({ id: 'ch3', type: 'chart', colSpan: 12, data: { title: 'Top Products (This Month)', chartKey: 'top_selling_items', chartType: 'bar', color: 'emerald' } })
+  }
 
   return [...numberCards, ...shortcuts, ...charts, ...quickLists]
 }
@@ -270,6 +286,8 @@ function getReportsBlocks(businessType?: string): WorkspaceBlock[] {
       { label: 'Purchase by Supplier', href: '/accounting/reports/purchase-by-supplier' },
       { label: 'Item Profitability', href: '/accounting/reports/item-profitability' },
       { label: 'Shrinkage Report', href: '/accounting/reports/shrinkage-report' },
+      { label: 'Adjustments by Reason', href: '/reports/adjustments-by-reason' },
+      { label: 'Inventory Valuation vs GL', href: '/reports/inventory-valuation' },
       { label: 'Margin Analysis', href: '/accounting/reports/margin-analysis' },
     ] } },
     { id: 'c4', type: 'card', colSpan: 6, data: { title: 'Other', links: [
@@ -462,6 +480,8 @@ export const DEFAULT_WORKSPACES: Record<string, WorkspaceConfig> = {
         { label: 'Staff', href: '/settings/staff', icon: 'Users' },
         { label: 'Notifications', href: '/settings/notifications', icon: 'Bell' },
         { label: 'File Manager', href: '/settings/files', icon: 'FolderTree' },
+        { label: 'API Keys', href: '/settings/api-keys', icon: 'Lock' },
+        { label: 'Backup', href: '/settings/backup', icon: 'ShieldCheck' },
       ] } },
       { id: 'sc1', type: 'settings_content', colSpan: 12, data: { section: 'business_type' } },
       { id: 'sc2', type: 'settings_content', colSpan: 12, data: { section: 'service_config' } },

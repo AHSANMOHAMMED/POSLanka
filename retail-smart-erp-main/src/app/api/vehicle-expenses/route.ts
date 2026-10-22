@@ -75,6 +75,13 @@ export async function POST(request: NextRequest) {
     const body = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // The vehicle must be one of this tenant's (FK checks are not subject to RLS)
+      const vehicle = await db.query.vehicleInventory.findFirst({
+        where: eq(vehicleInventory.id, body.vehicleInventoryId),
+        columns: { id: true },
+      })
+      if (!vehicle) return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 })
+
       const [expense] = await db.insert(vehicleExpenses).values({
         tenantId: session.user.tenantId,
         vehicleInventoryId: body.vehicleInventoryId,

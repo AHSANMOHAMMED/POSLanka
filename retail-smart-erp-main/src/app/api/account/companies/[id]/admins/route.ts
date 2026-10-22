@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { accountAuth as auth } from '@/lib/auth/account-auth'
 import { db } from '@/lib/db'
+import { requireUserSeat } from '@/lib/billing/user-limit'
 import { tenants, users } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { sql } from 'drizzle-orm'
@@ -111,6 +112,9 @@ export async function POST(
     if (existing) {
       return NextResponse.json({ error: 'A user with this email already exists in this company' }, { status: 400 })
     }
+
+    const seatError = await requireUserSeat(companyId)
+    if (seatError) return seatError
 
     const passwordHash = await bcrypt.hash(password, 12)
 

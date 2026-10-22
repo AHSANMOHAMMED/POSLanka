@@ -5,6 +5,7 @@ import { eq, and, ilike, sql, desc, asc, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchaseRequisitionsListSchema, createPurchaseRequisitionSchema } from '@/lib/validation/schemas/purchases'
@@ -17,6 +18,9 @@ export async function GET(request: NextRequest) {
     const { page, pageSize, search, all, status, sortBy, sortOrder: sortOrderParam } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
+      const permError = requireAnyPermission(session, [...PURCHASING_VIEW_PERMISSIONS, 'createRequisitions', 'approveRequisitions'])
+      if (permError) return { error: permError }
+
       const conditions: ReturnType<typeof eq>[] = []
 
       if (search) {
@@ -102,6 +106,7 @@ export async function GET(request: NextRequest) {
     })
 
     if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if ('error' in result) return result.error
     return NextResponse.json(result)
   } catch (error) {
     console.error('Error fetching purchase requisitions:', error)

@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { kitchenOrders, kitchenOrderItems } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq, ne } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -143,9 +143,10 @@ export async function PUT(
 
         // If setting status to ready, served, or cancelled, update all items to match
         if (status === 'ready' || status === 'served' || status === 'cancelled') {
+          // Lines already cancelled stay cancelled (they are not billed and were not served)
           await tx.update(kitchenOrderItems)
             .set({ status: status as 'pending' | 'preparing' | 'ready' | 'served' | 'cancelled' })
-            .where(eq(kitchenOrderItems.kitchenOrderId, id))
+            .where(and(eq(kitchenOrderItems.kitchenOrderId, id), ne(kitchenOrderItems.status, 'cancelled')))
         }
 
         // Broadcast changes

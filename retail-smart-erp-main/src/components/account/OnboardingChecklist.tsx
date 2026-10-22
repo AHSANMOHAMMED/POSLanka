@@ -29,7 +29,7 @@ export function OnboardingChecklist({ companySlug }: { companySlug: string }) {
               key: 'staff',
               label: 'Invite cashiers',
               done: false,
-              href: `/c/${companySlug}/settings/users`,
+              href: `/c/${companySlug}/settings/staff`,
             },
             {
               key: 'item',

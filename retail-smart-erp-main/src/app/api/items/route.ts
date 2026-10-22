@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { canViewCostPrices, redactItemCost } from '@/lib/auth/field-access'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { items, users, workOrderParts, workOrders, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, warehouses, stockMovements } from '@/lib/db/schema'
 import { eq, and, sql, or, ilike, inArray, lte, isNotNull } from 'drizzle-orm'
@@ -44,7 +45,11 @@ export async function GET(request: NextRequest) {
             ilike(items.oemPartNumber, `%${escaped}%`),
             ilike(items.supplierPartNumber, `%${escaped}%`),
             ilike(items.pluCode, `%${escaped}%`),
-            sql`${items.alternatePartNumbers}::text ILIKE ${'%' + escaped + '%'}`
+            sql`${items.alternatePartNumbers}::text ILIKE ${'%' + escaped + '%'}`,
+            // H5: additional barcodes / unit barcodes (prefix match)
+            // (uncorrelated IN: an unqualified "id" here must mean items.id in both the count and the list query)
+            sql`${items.id} IN (SELECT ib.item_id FROM item_barcodes ib WHERE ib.barcode ILIKE ${escaped + '%'})`,
+            sql`${items.id} IN (SELECT iu.item_id FROM item_uoms iu WHERE iu.barcode ILIKE ${escaped + '%'})`
           )
         )
       }
@@ -248,11 +253,12 @@ export async function GET(request: NextRequest) {
       }
 
       for (const held of heldSalesData) {
-        const cartItems = held.cartItems as Array<{ itemId: string; quantity: number }>
+        const cartItems = held.cartItems as Array<{ itemId: string; quantity: number; uomFactor?: number }>
         if (Array.isArray(cartItems)) {
           for (const item of cartItems) {
             if (item.itemId) {
-              reservedMap.set(item.itemId, (reservedMap.get(item.itemId) || 0) + (item.quantity || 0))
+              // H5: held lines sold in another unit reserve quantity × factor base units
+              reservedMap.set(item.itemId, (reservedMap.get(item.itemId) || 0) + (item.quantity || 0) * (Number(item.uomFactor) || 1))
             }
           }
         }
@@ -323,13 +329,21 @@ export async function GET(request: NextRequest) {
         }
       })
 
+      // H4: POS-only roles (cashier, waiter, ...) look items up but must not see cost prices
+      const visibleItems = canViewCostPrices(session)
+        ? itemsWithReserved
+        : itemsWithReserved.map((item) => ({
+            ...redactItemCost(item),
+            supplier: item.supplier ? { id: item.supplier.id, name: item.supplier.name } : null,
+          }))
+
       // Return paginated response (or just array for backward compatibility with all=true)
       if (all) {
-        return NextResponse.json(itemsWithReserved)
+        return NextResponse.json(visibleItems)
       }
 
       return NextResponse.json({
-        data: itemsWithReserved,
+        data: visibleItems,
         pagination: {
           page,
           pageSize,
@@ -369,6 +383,8 @@ export async function POST(request: NextRequest) {
       isGiftCard,
       // Tax template
       taxTemplateId,
+      // H5 product type
+      productType,
     } = parsed.data
 
     const tenantId = session!.user.tenantId
@@ -386,6 +402,10 @@ export async function POST(request: NextRequest) {
           where: and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),
         })
         defaultWarehouseId = defaultWarehouse?.id ?? null
+        // Opening stock must land somewhere: never accept a quantity and silently drop it
+        if (!defaultWarehouseId && initialStock !== 0) {
+          throw new Error('NO_DEFAULT_WAREHOUSE')
+        }
       }
 
       const { item } = await createItem(tx, {
@@ -401,7 +421,9 @@ export async function POST(request: NextRequest) {
           costPrice: costPrice ? String(costPrice) : '0',
           sellingPrice: String(sellingPrice),
           unit: unit || 'pcs',
-          trackStock: trackStock !== undefined ? trackStock : true,
+          // H5: product type decides stock tracking (DB trigger keeps the two consistent)
+          productType: productType ?? (trackStock === false ? (isGiftCard ? 'consumable' : 'service') : 'stockable'),
+          trackStock: productType ? productType === 'stockable' : (trackStock !== undefined ? trackStock : true),
           trackBatches: trackBatches || false,
           trackSerialNumbers: trackSerialNumbers || false,
           isActive: true,
@@ -457,6 +479,12 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const mapped = toApiError(error)
     if (mapped) return mapped
+    if (error instanceof Error && error.message === 'NO_DEFAULT_WAREHOUSE') {
+      return NextResponse.json({
+        error: 'Opening stock needs an active default warehouse. Set a default warehouse or create the item without opening stock.',
+        code: 'NO_DEFAULT_WAREHOUSE',
+      }, { status: 400 })
+    }
     logError('api/items', error)
     return NextResponse.json({ error: 'Failed to create item' }, { status: 500 })
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant, TenantDb } from '@/lib/db'
-import { insuranceEstimates, insuranceEstimateItems, workOrders, workOrderParts, items, heldSales, warehouseStock, stockTransfers, stockTransferItems } from '@/lib/db/schema'
+import { insuranceEstimates, insuranceEstimateItems, workOrders, items } from '@/lib/db/schema'
+import { getAvailableStock } from '@/lib/dealership/work-orders'
 import { eq, and, sql, max } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -11,130 +12,18 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addEstimateItemSchema, updateEstimateItemSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 
-// Helper function to get available stock for a specific warehouse
-async function getAvailableStock(db: TenantDb, itemId: string, warehouseId: string | null, excludeEstimateId?: string): Promise<number> {
-  const item = await db.query.items.findFirst({
-    where: eq(items.id, itemId),
-  })
-
-  if (!item) return 0
-
-  let totalReserved = 0
-
-  // 1. Reserved from draft work orders in the SAME warehouse
-  const workOrderReservedWhere = warehouseId
-    ? and(
-        eq(workOrderParts.itemId, itemId),
-        eq(workOrders.status, 'draft'),
-        eq(workOrders.warehouseId, warehouseId)
-      )
-    : and(
-        eq(workOrderParts.itemId, itemId),
-        eq(workOrders.status, 'draft')
-      )
-
-  const reservedFromWorkOrders = await db
-    .select({
-      reservedQty: sql<string>`COALESCE(SUM(CAST(${workOrderParts.quantity} AS DECIMAL)), 0)`,
-    })
-    .from(workOrderParts)
-    .innerJoin(workOrders, eq(workOrderParts.workOrderId, workOrders.id))
-    .where(workOrderReservedWhere)
-  totalReserved += parseFloat(reservedFromWorkOrders[0]?.reservedQty || '0')
-
-  // 2. Reserved from non-expired held sales in the SAME warehouse
-  const heldSalesWhere = warehouseId
-    ? and(
-        eq(heldSales.warehouseId, warehouseId),
-        sql`${heldSales.expiresAt} > NOW()`
-      )
-    : sql`${heldSales.expiresAt} > NOW()`
-
-  const heldSalesData = await db.query.heldSales.findMany({
-    where: heldSalesWhere,
-  })
-  for (const held of heldSalesData) {
-    const cartItems = held.cartItems as Array<{ itemId: string; quantity: number }>
-    if (Array.isArray(cartItems)) {
-      for (const cartItem of cartItems) {
-        if (cartItem.itemId === itemId) {
-          totalReserved += cartItem.quantity || 0
-        }
-      }
-    }
-  }
-
-  // 3. Reserved from estimates with holdStock enabled
-  const estimatesReservedWhere = warehouseId
-    ? and(
-        eq(insuranceEstimateItems.itemId, itemId),
-        eq(insuranceEstimates.holdStock, true),
-        eq(insuranceEstimates.warehouseId, warehouseId),
-        sql`${insuranceEstimates.status} NOT IN ('cancelled', 'work_order_created')`,
-        sql`${insuranceEstimateItems.itemId} IS NOT NULL`,
-        excludeEstimateId ? sql`${insuranceEstimates.id} != ${excludeEstimateId}` : sql`1=1`
-      )
-    : and(
-        eq(insuranceEstimateItems.itemId, itemId),
-        eq(insuranceEstimates.holdStock, true),
-        sql`${insuranceEstimates.status} NOT IN ('cancelled', 'work_order_created')`,
-        sql`${insuranceEstimateItems.itemId} IS NOT NULL`,
-        excludeEstimateId ? sql`${insuranceEstimates.id} != ${excludeEstimateId}` : sql`1=1`
-      )
-
-  const reservedFromEstimates = await db
-    .select({
-      reservedQty: sql<string>`COALESCE(SUM(CAST(${insuranceEstimateItems.quantity} AS DECIMAL)), 0)`,
-    })
+// Quantity of an inventory item already on this estimate (optionally excluding one line).
+// getAvailableStock() excludes the whole estimate's reservation, so callers add this back.
+async function estimateItemQty(db: TenantDb, estimateId: string, itemId: string, excludeLineId?: string): Promise<number> {
+  const [row] = await db
+    .select({ qty: sql<string>`COALESCE(SUM(CAST(${insuranceEstimateItems.quantity} AS DECIMAL)), 0)` })
     .from(insuranceEstimateItems)
-    .innerJoin(insuranceEstimates, eq(insuranceEstimateItems.estimateId, insuranceEstimates.id))
-    .where(estimatesReservedWhere)
-  totalReserved += parseFloat(reservedFromEstimates[0]?.reservedQty || '0')
-
-  // 4. Reserved from outbound stock transfers
-  if (warehouseId) {
-    const reservedFromTransfers = await db
-      .select({
-        reservedQty: sql<string>`COALESCE(SUM(CAST(${stockTransferItems.quantity} AS DECIMAL)), 0)`,
-      })
-      .from(stockTransferItems)
-      .innerJoin(stockTransfers, eq(stockTransferItems.transferId, stockTransfers.id))
-      .where(
-        and(
-          eq(stockTransferItems.itemId, itemId),
-          eq(stockTransfers.fromWarehouseId, warehouseId),
-          sql`${stockTransfers.status} IN ('approved', 'in_transit')`
-        )
-      )
-    totalReserved += parseFloat(reservedFromTransfers[0]?.reservedQty || '0')
-  }
-
-  // Get stock from specific warehouse
-  let current = 0
-  if (warehouseId) {
-    const [stockData] = await db
-      .select({
-        totalStock: sql<string>`COALESCE(${warehouseStock.currentStock}, '0')`,
-      })
-      .from(warehouseStock)
-      .where(
-        and(
-          eq(warehouseStock.warehouseId, warehouseId),
-          eq(warehouseStock.itemId, itemId)
-        )
-      )
-    current = parseFloat(stockData?.totalStock || '0')
-  } else {
-    const [stockData] = await db
-      .select({
-        totalStock: sql<string>`COALESCE(SUM(CAST(${warehouseStock.currentStock} AS DECIMAL)), 0)`,
-      })
-      .from(warehouseStock)
-      .where(eq(warehouseStock.itemId, itemId))
-    current = parseFloat(stockData?.totalStock || '0')
-  }
-
-  return Math.max(0, current - totalReserved)
+    .where(and(
+      eq(insuranceEstimateItems.estimateId, estimateId),
+      eq(insuranceEstimateItems.itemId, itemId),
+      excludeLineId ? sql`${insuranceEstimateItems.id} != ${excludeLineId}` : sql`1=1`,
+    ))
+  return parseFloat(row?.qty || '0')
 }
 
 // Helper function to recalculate estimate totals using tax template system
@@ -265,8 +154,11 @@ export async function POST(
       })
       if (item && item.trackStock) {
         const parsedQty = parseFloat(quantity!)
-        // Issue #53: Always exclude current estimate's reservations to avoid double-counting
-        const availableStock = await getAvailableStock(db, itemId, estimate.warehouseId, estimateId)
+        // Issue #53: availability excludes this estimate's reservations; lines of the same
+        // item already on this estimate are added back so they are not double-booked.
+        const availableStock = Math.max(0,
+          await getAvailableStock(db, itemId, estimate.warehouseId, { excludeEstimateId: estimateId })
+          - await estimateItemQty(db, estimateId, itemId))
         if (parsedQty > availableStock) {
           if (estimate.holdStock) {
             return { error: NextResponse.json({
@@ -425,10 +317,10 @@ export async function PUT(
         })
         if (partItem && partItem.trackStock) {
           const newQty = parseFloat(quantity)
-          const currentQty = parseFloat(currentItem.quantity || '0')
-          // Issue #53: Exclude current estimate's reservations to avoid double-counting
-        const availableStock = await getAvailableStock(db, currentItem.itemId, estimate.warehouseId, estimateId)
-          const adjustedAvailable = availableStock + currentQty
+          // Issue #53: availability already excludes this estimate's reservations (including
+          // this line's current quantity), so only the estimate's other lines are subtracted.
+          const availableStock = await getAvailableStock(db, currentItem.itemId, estimate.warehouseId, { excludeEstimateId: estimateId })
+          const adjustedAvailable = Math.max(0, availableStock - await estimateItemQty(db, estimateId, currentItem.itemId, currentItem.id))
           if (newQty > adjustedAvailable) {
             return { error: NextResponse.json({
               error: `Insufficient stock. Available: ${adjustedAvailable.toFixed(0)}`,

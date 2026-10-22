@@ -12,6 +12,7 @@ import { customerCreditSchema } from '@/lib/validation/schemas/customers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { postCustomerCreditToGL } from '@/lib/accounting/auto-post'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { roundCurrency } from '@/lib/utils/currency'
 
 // GET credit history for a customer
 export async function GET(
@@ -112,20 +113,26 @@ export async function POST(
           throw new Error('Customer not found')
         }
 
-        const currentBalance = parseFloat(customer.balance)
+        const currentBalance = roundCurrency(parseFloat(customer.balance) || 0)
+        const absAmount = roundCurrency(Math.abs(transactionAmount))
 
-        // Calculate new balance based on type (using locked row's balance)
+        // Calculate new balance based on type (using locked row's balance), rounded to cents so
+        // repeated top-ups never drift (0.1 + 0.2 != 0.3)
         let newBalance: number
         if (type === 'add' || type === 'refund' || type === 'overpayment') {
-          newBalance = currentBalance + Math.abs(transactionAmount)
+          newBalance = roundCurrency(currentBalance + absAmount)
         } else if (type === 'use') {
-          if (Math.abs(transactionAmount) > currentBalance) {
+          if (absAmount > currentBalance + 0.001) {
             throw new Error('Insufficient credit balance')
           }
-          newBalance = currentBalance - Math.abs(transactionAmount)
+          newBalance = roundCurrency(currentBalance - absAmount)
         } else {
-          // type === 'adjustment'
-          newBalance = currentBalance + transactionAmount // Can be positive or negative
+          // type === 'adjustment': can be positive or negative, but store credit never goes
+          // below zero (a negative balance would be spendable "debt" at the POS)
+          newBalance = roundCurrency(currentBalance + roundCurrency(transactionAmount))
+          if (newBalance < 0) {
+            throw new Error('Insufficient credit balance')
+          }
         }
 
         // Update customer balance
@@ -141,7 +148,7 @@ export async function POST(
           tenantId: session!.user.tenantId,
           customerId,
           type,
-          amount: String(Math.abs(transactionAmount)),
+          amount: String(absAmount),
           balanceAfter: String(newBalance),
           referenceType,
           referenceId: referenceId || null,
@@ -155,7 +162,7 @@ export async function POST(
             transactionId: transaction.id,
             customerId,
             type: type as 'add' | 'refund' | 'overpayment' | 'use' | 'adjustment',
-            amount: transactionAmount,
+            amount: roundCurrency(transactionAmount),
             notes: notes || undefined,
           })
         } catch (glErr) {

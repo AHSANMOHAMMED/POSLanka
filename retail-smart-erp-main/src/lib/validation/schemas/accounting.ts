@@ -702,6 +702,10 @@ export const updateAccountingSettingsSchema = z.object({
   defaultCashOverShortAccountId: optionalUuid,
   defaultTaxTemplateId: optionalUuid,
   defaultPurchaseTaxTemplateId: optionalUuid,
+  // H3: Stock Received But Not Billed, purchase price variance, per-reason stock adjustment accounts
+  defaultSrbnbAccountId: optionalUuid,
+  defaultPriceVarianceAccountId: optionalUuid,
+  stockAdjustmentReasonAccounts: z.record(z.string().max(30), z.string().uuid()).nullable().optional(),
 })
 
 // ==================== REPORTS ====================

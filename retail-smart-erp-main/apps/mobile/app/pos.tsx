@@ -44,6 +44,9 @@ import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
 import { loadBusinessInfo, type BusinessInfo } from '../src/lib/receipt'
 import { AlertsBell } from '../src/components/AlertsBell'
 import { useKitchenTickets } from '../src/lib/kitchenPrint'
+import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCartItems, lineTotal, scanToLine } from '../src/lib/cartMath'
+import { getLocalItem } from '../src/lib/localdb'
+import { applyCartQuote, offlineCartQuote, quoteKey, quoteRequestLines, taxableLineTotals, type CartQuote } from '../src/lib/cartPricing'
 
 interface Item {
   id: string
@@ -87,6 +90,8 @@ interface ScanInfo {
   quantity?: number | string | null
   /** Price per unit embedded in the barcode. */
   unitPrice?: number | string | null
+  /** Amount payable printed on a price-embedded label (= line total). */
+  lineTotal?: number | string | null
   batchNo?: string | null
   expiryDate?: string | null
   gtin?: string | null
@@ -137,6 +142,9 @@ export default function PosScreen() {
 
   // Cart / sale
   const [cart, setCart] = useState<CartLine[]>([])
+  // H5: cart-level promotions of the current quote (line promotions live on the cart lines)
+  const [cartPromotions, setCartPromotions] = useState<CartQuote['cartPromotions']>([])
+  const [couponCode, setCouponCode] = useState('')
   const [clientSaleId, setClientSaleId] = useState<string | null>(null)
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [taxConfig, setTaxConfig] = useState<TaxConfig>(EMPTY_TAX_CONFIG)
@@ -362,7 +370,7 @@ export default function PosScreen() {
    * barcodes) and `opts.weighed` marks a scale line: weighed lines of the same
    * item merge only when their unit price matches, otherwise a new line is added.
    */
-  function addToCart(item: Item, qty = 1, opts: { unitPrice?: number; weighed?: boolean } = {}) {
+  function addToCart(item: Item, qty = 1, opts: { unitPrice?: number; weighed?: boolean; noMerge?: boolean; uom?: string | null; uomFactor?: number; priceLocked?: boolean; priceBarcode?: string } = {}) {
     if (!shift) {
       Alert.alert('No Open Shift', 'Open a shift before selling.')
       return
@@ -371,8 +379,16 @@ export default function PosScreen() {
     const available = stockOf(item)
     const price = opts.unitPrice !== undefined && opts.unitPrice !== null && !isNaN(Number(opts.unitPrice)) ? String(opts.unitPrice) : String(item.sellingPrice)
     const sameItem = cart.filter((p) => (p.itemId || p.id) === item.id)
-    const existing = opts.weighed ? sameItem.find((p) => p.sellingPrice === price) : sameItem.find((p) => p.id === item.id) || sameItem[0]
-    const totalForItem = sameItem.reduce((s, p) => s + p.quantity, 0) + qty
+    const uom = opts.uom || null
+    const factor = opts.uomFactor || 1
+    const sameUnit = sameItem.filter((p) => (p.uom || null) === uom)
+    const existing = opts.noMerge
+      ? undefined
+      : opts.weighed
+        ? sameUnit.find((p) => p.sellingPrice === price)
+        : sameUnit.find((p) => p.id === item.id) || sameUnit.find((p) => !p.priceLocked)
+    // stock is in base units: a box line holds quantity × factor pieces
+    const totalForItem = sameItem.reduce((s, p) => s + p.quantity * (p.uomFactor || 1), 0) + qty * factor
     if (available !== null && item.trackStock !== false && totalForItem > available) {
       Alert.alert('Insufficient Stock', `Only ${available} ${item.unit || 'units'} of ${item.name} available at this branch.`)
       return
@@ -380,7 +396,10 @@ export default function PosScreen() {
     if (existing) {
       setCart((prev) => prev.map((p) => (p.id === existing.id ? { ...p, quantity: Math.round((p.quantity + qty) * 1000) / 1000 } : p)))
     } else {
-      const lineId = opts.weighed && sameItem.length ? `${item.id}#${sameItem.length + 1}` : item.id
+      // Unique line key: `<itemId>#n` for further lines of the same item (never reuse a key that
+      // is still in the cart, e.g. after the first line was removed).
+      let lineId = item.id
+      for (let n = sameItem.length + 1; cart.some((p) => p.id === lineId); n++) lineId = `${item.id}#${n}`
       setCart((prev) => [
         ...prev,
         {
@@ -391,10 +410,14 @@ export default function PosScreen() {
           barcode: item.barcode,
           sellingPrice: price,
           quantity: qty,
-          unit: item.unit || (opts.weighed ? 'kg' : undefined),
+          unit: uom || item.unit || (opts.weighed ? 'kg' : undefined),
           taxTemplateId: item.taxTemplateId ?? null,
           trackStock: item.trackStock,
           availableStock: available,
+          // H5: unit line (box / pack barcode) and fixed prices (scale label, barcode price override)
+          ...(uom ? { uom, uomFactor: factor } : {}),
+          ...(opts.priceLocked || opts.weighed ? { priceLocked: true } : {}),
+          ...(opts.priceBarcode ? { priceBarcode: opts.priceBarcode } : {}),
         },
       ])
     }
@@ -416,18 +439,22 @@ export default function PosScreen() {
       setReturnQuery(trimmed)
       return
     }
-    const addScanned = (item: Item, scan?: ScanInfo | null) => {
-      const scanQty = scan?.quantity !== undefined && scan?.quantity !== null ? Number(scan.quantity) : NaN
-      const scanPrice = scan?.unitPrice !== undefined && scan?.unitPrice !== null ? Number(scan.unitPrice) : NaN
-      if (!isNaN(scanQty) && scanQty > 0) {
-        // Weighing-scale barcode: quantity is the weight (kg); price may be embedded too.
-        addToCart(item, Math.round(scanQty * 1000) / 1000, { weighed: true, unitPrice: !isNaN(scanPrice) && scanPrice > 0 ? scanPrice : undefined })
-      } else if (!isNaN(scanPrice) && scanPrice > 0) {
-        // Price-embedded barcode without weight: one unit at the embedded price.
-        addToCart(item, 1, { weighed: true, unitPrice: scanPrice })
-      } else {
-        addToCart(item)
+    const addScanned = (item: Item, scan?: ScanInfo | null, unit?: { uom?: string | null; uomFactor?: number; packQty?: number; uomPrice?: number; priceOverride?: number | null; matchedBarcode?: string | null } | null) => {
+      // H5: additional / unit barcode (box of 12, pack of 6 …): packQty of that unit at its price
+      if (unit && ((unit.uom && (unit.uomFactor || 1) !== 1) || (unit.packQty || 1) !== 1 || unit.priceOverride != null)) {
+        addToCart(item, unit.packQty || 1, {
+          unitPrice: unit.uomPrice, uom: unit.uom || null, uomFactor: unit.uomFactor || 1,
+          priceLocked: unit.priceOverride != null, noMerge: unit.priceOverride != null,
+          priceBarcode: unit.priceOverride != null ? unit.matchedBarcode || undefined : undefined,
+        })
+        setQuery('')
+        setDebouncedQuery('')
+        return
       }
+      // Weighing-scale / GS1 labels: weight → quantity; a printed amount is the line total.
+      const line = scanToLine(scan)
+      if (line.weighed) addToCart(item, line.quantity, { weighed: true, unitPrice: line.unitPrice, noMerge: line.fixedAmount })
+      else addToCart(item)
       setQuery('')
       setDebouncedQuery('')
     }
@@ -436,7 +463,9 @@ export default function PosScreen() {
     if (localReady) {
       const local = await findByCode(trimmed, scaleConfigRef.current).catch(() => null)
       if (local) {
-        addScanned(local.item as Item, { quantity: local.quantity ?? null, unitPrice: local.unitPrice ?? null })
+        const isUnitCode = local.matchedBy === 'item_barcode' || local.matchedBy === 'uom_barcode'
+        addScanned(local.item as Item, isUnitCode ? null : { symbology: local.scan.symbology, quantity: local.quantity ?? null, unitPrice: local.unitPrice ?? null, lineTotal: local.lineTotal ?? null },
+          isUnitCode ? { uom: local.uom, uomFactor: local.uomFactor, packQty: local.packQty, uomPrice: local.uomPrice, priceOverride: local.priceOverride ?? null, matchedBarcode: local.matchedBarcode } : null)
         return
       }
     }
@@ -448,10 +477,12 @@ export default function PosScreen() {
 
     // 2. Server lookup (new items not yet synced to the device)
     setLookupBusy(true)
-    const res = await apiGet<Item & { scan?: ScanInfo | null }>(`/api/items/barcode-lookup${qs({ barcode: trimmed, warehouseId: shift.warehouseId })}`)
+    const res = await apiGet<Item & { scan?: ScanInfo | null; uom?: string | null; uomFactor?: number; packQty?: number; uomPrice?: number; priceOverride?: number | null; matchedBarcode?: string | null }>(`/api/items/barcode-lookup${qs({ barcode: trimmed, warehouseId: shift.warehouseId })}`)
     setLookupBusy(false)
     if (res.ok && res.data?.id) {
-      addScanned(res.data, res.data.scan)
+      const d = res.data
+      const isUnitCode = (d.scan as { matchedBy?: string } | null | undefined)?.matchedBy === 'item_barcode' || (d.scan as { matchedBy?: string } | null | undefined)?.matchedBy === 'uom_barcode'
+      addScanned(d, isUnitCode ? null : d.scan, isUnitCode ? d : null)
       if (localReady) runCatalogSync()
       return
     }
@@ -490,6 +521,7 @@ export default function PosScreen() {
 
   function clearCart() {
     setCart([])
+    setCouponCode('')
     setCustomer(null)
   }
 
@@ -498,13 +530,8 @@ export default function PosScreen() {
     setHoldBusy(true)
     try {
       const res = await apiPost<HeldSale>('/api/held-sales', {
-        cartItems: cart.map((c) => ({
-          itemId: c.id,
-          name: c.name,
-          quantity: c.quantity,
-          unitPrice: Number(c.sellingPrice),
-          total: Number(c.sellingPrice) * c.quantity,
-        })),
+        // itemId is the catalog id (scale lines use `<itemId>#n` as their line key)
+        cartItems: heldCartItems(cart),
         subtotal: cartSubtotal,
         warehouseId: shift.warehouseId,
         customerId: customer?.id,
@@ -515,6 +542,7 @@ export default function PosScreen() {
         return
       }
       setCart([])
+      setCouponCode('')
       setCustomer(null)
       setCartDrawerVisible(false)
       triggerToast(`Held as ${res.data?.holdNumber || 'ticket'}`)
@@ -523,33 +551,66 @@ export default function PosScreen() {
     }
   }
 
-  function resumeHeld(held: HeldSale) {
-    setCart(
-      (held.cartItems || []).map((c) => ({
-        id: c.itemId,
-        name: c.name,
-        sellingPrice: String(c.unitPrice),
-        quantity: Number(c.quantity) || 1,
-      }))
-    )
+  async function resumeHeld(held: HeldSale) {
+    // Restore tax template / stock / unit from the local catalog so the resumed sale is taxed
+    // like the original cart (held tickets only store id, name, qty and price).
+    const info = new Map<string, Awaited<ReturnType<typeof getLocalItem>>>()
+    for (const c of held.cartItems || []) {
+      if (c.itemId && !info.has(c.itemId)) info.set(c.itemId, await getLocalItem(c.itemId).catch(() => null))
+    }
+    setCart(cartFromHeld(held.cartItems || [], (id) => info.get(id) || null))
     if (held.customer) setCustomer({ id: held.customer.id, name: held.customer.name, phone: held.customer.phone })
     setHeldVisible(false)
     triggerToast(`Resumed ${held.holdNumber || 'held ticket'}`)
   }
 
+  // ------------------------------------------------------------------ pricing (H5)
+  // Price lists + promotions: server quote online, the shared engine on the cached bundle offline.
+  const couponCodes = couponCode ? [couponCode] : []
+  const pricingKey = cart.length ? quoteKey(cart, customer?.id, couponCodes) : ''
+  useEffect(() => {
+    if (!pricingKey) { setCartPromotions([]); return }
+    let cancelled = false
+    const t = setTimeout(async () => {
+      let quote: CartQuote | null = null
+      if (queueState.online && !shiftOffline) {
+        const res = await apiPost<CartQuote>('/api/price-quote', {
+          customerId: customer?.id || undefined,
+          posProfileId: shift?.posProfileId || undefined,
+          couponCodes,
+          lines: quoteRequestLines(cart),
+        })
+        if (res.ok && res.data) quote = res.data
+      }
+      if (!quote) {
+        const bundle = await getBundle().catch(() => null)
+        quote = offlineCartQuote(cart, bundle?.pricing, { customerId: customer?.id, posProfileId: shift?.posProfileId, couponCodes })
+      }
+      if (cancelled || !quote) return
+      applyQuote(quote)
+    }, 300)
+    return () => { cancelled = true; clearTimeout(t) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pricingKey, queueState.online])
+
+  function applyQuote(quote: CartQuote) {
+    setCart((prev) => applyCartQuote(prev, quote))
+    setCartPromotions(quote.cartPromotions || [])
+  }
+  const cartPromotionDiscount = Math.round(cartPromotions.reduce((s, p) => s + p.amount, 0) * 100) / 100
+
   // ------------------------------------------------------------------ totals
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0)
-  const cartSubtotal = cart.reduce((sum, line) => sum + Number(line.sellingPrice) * line.quantity, 0)
-  const cartTax = useMemo(
-    () =>
-      calculateCartTax(
-        cart.map((l) => ({ lineTotal: Number(l.sellingPrice) * l.quantity, taxTemplateId: l.taxTemplateId })),
-        taxConfig,
-        customer?.taxExempt === true
-      ),
-    [cart, taxConfig, customer]
-  )
-  const cartTotalPayable = cartTax.hasInclusiveTax ? cartSubtotal : cartSubtotal + cartTax.tax
+  const cartSubtotal = computeCartSubtotal(cart)
+  const cartTax = useMemo(() => {
+    const taxable = taxableLineTotals(cart.map((l) => lineTotal(l)), cartPromotionDiscount)
+    return calculateCartTax(
+      cart.map((l, i) => ({ lineTotal: taxable[i], taxTemplateId: l.taxTemplateId })),
+      taxConfig,
+      customer?.taxExempt === true
+    )
+  }, [cart, taxConfig, customer, cartPromotionDiscount])
+  const cartTotalPayable = cartPayable(Math.round((cartSubtotal - cartPromotionDiscount) * 100) / 100, cartTax)
   const taxLabel = cartTax.breakdown.length === 1 ? cartTax.breakdown[0].taxName : 'Tax'
 
   const canApprove = hasPermission(user, 'approveRequisitions') || hasPermission(user, 'approveAdvances')
@@ -926,6 +987,10 @@ export default function PosScreen() {
         }}
         onSendToKitchen={kitchen.enabled ? () => void kitchen.send(cart, 'manual') : undefined}
         tax={cartTax.tax}
+        totalPayable={cartTotalPayable}
+        couponCode={couponCode}
+        onCouponChange={setCouponCode}
+        cartPromotions={cartPromotions}
         taxLabel={taxLabel}
         taxInclusive={cartTax.hasInclusiveTax}
       />
@@ -939,6 +1004,9 @@ export default function PosScreen() {
           customer={customer}
           clientSaleId={clientSaleId}
           taxConfig={taxConfig}
+          cartPromotionDiscount={cartPromotionDiscount}
+          couponCodes={couponCodes}
+          onPriceChanged={(quote) => { applyQuote(quote as CartQuote); setTenderVisible(false) }}
           online={queueState.online}
           business={business}
           cashierName={user?.name}
@@ -946,6 +1014,7 @@ export default function PosScreen() {
             void kitchen.send(cart, 'sale')
             setTenderVisible(false)
             setCart([])
+            setCouponCode('')
             setCustomer(null)
             setSaleResult(data)
             // stock shown in the grid reflects the sale (local catalog was adjusted)

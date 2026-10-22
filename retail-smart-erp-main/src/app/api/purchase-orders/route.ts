@@ -6,6 +6,7 @@ import { eq, and, ilike, sql, desc, asc, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { logError } from '@/lib/ai/error-logger'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
@@ -22,6 +23,9 @@ export async function GET(request: NextRequest) {
     const { page, pageSize, search, all, status, supplierId: filterSupplierId, warehouseId: filterWarehouseId, sortBy, sortOrder: sortOrderParam } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
+      const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+      if (permError) return { error: permError }
+
       const feature = await requireTenantFeature(session.user.tenantId, 'purchase')
       if (!feature.ok) {
         return { disabled: true as const }
@@ -155,6 +159,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    if ('error' in result) return result.error
     if ('disabled' in result && result.disabled) {
       return NextResponse.json({ error: 'Purchase module disabled' }, { status: 403 })
     }

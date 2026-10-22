@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db as rawDb, withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { purchases, purchasePayments, suppliers, users, supplierBalanceAudit, paymentEntryReferences, paymentEntries, journalEntryItems, journalEntries } from '@/lib/db/schema'
 import { eq, desc, and, isNotNull } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -22,6 +23,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
+    if (permError) return { error: permError }
+
     // Verify purchase exists (RLS filters by tenant)
     const [purchase] = await db
       .select({ id: purchases.id })

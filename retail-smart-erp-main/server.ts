@@ -1,13 +1,14 @@
 // Custom Next.js server with WebSocket support
 // Must run before any other Next code so globalThis.AsyncLocalStorage is set
 import 'next/dist/server/node-environment'
-import 'dotenv/config'
+import './server-env'
 import { createServer, IncomingMessage, ServerResponse } from 'http'
 import type { Socket } from 'net'
 import next from 'next'
 import { wsManager } from './src/lib/websocket/server'
 import type { EntityType } from './src/lib/websocket/events'
 import { logError } from './src/lib/ai/error-logger'
+import { startDevWarmup } from './src/lib/dev/warmup'
 
 // Validate and set default environment variables for Railway
 if (!process.env.NEXTAUTH_URL && process.env.RAILWAY_PUBLIC_URL) {
@@ -353,6 +354,7 @@ app.prepare().then(() => {
   server.listen(port, hostname, () => {
     console.log(`> Ready on http://${hostname}:${port}`)
     console.log(`> WebSocket server running on ws://${hostname}:${port}/ws`)
+    if (dev) startDevWarmup(port)
   })
 }).catch((err) => {
   console.error('Failed to prepare Next.js app:', err)

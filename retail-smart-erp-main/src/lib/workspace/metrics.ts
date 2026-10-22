@@ -6,8 +6,61 @@ import {
   appointments, workOrders, insuranceEstimates, warehouseStock,
   items, customers, suppliers, purchaseOrders, sales,
   vehicles, warehouses, payments, saleItems, stockMovements,
+  posOpeningEntries, posClosingEntries, posClosingReconciliation, users,
 } from '@/lib/db/schema'
 import { eq, and, or, sql, desc } from 'drizzle-orm'
+import { hasPermission, type Permission } from '@/lib/auth/roles'
+
+// ==================== ACCESS ====================
+
+/**
+ * H4: blocks that show money (revenue, cash variance, stock value, document totals) need one of
+ * these permissions; counts and operational lists stay visible to every signed-in role.
+ */
+const FINANCIAL_PERMISSIONS: Permission[] = ['viewReports', 'manageSales', 'viewAccounting']
+const STOCK_VALUE_PERMISSIONS: Permission[] = ['viewReports', 'viewAccounting', 'manageInventory']
+const PURCHASE_PERMISSIONS: Permission[] = ['managePurchases', 'viewReports', 'viewAccounting']
+
+const BLOCK_PERMISSIONS: Record<string, Permission[]> = {
+  // number cards
+  today_sales_total: FINANCIAL_PERMISSIONS,
+  month_sales_total: FINANCIAL_PERMISSIONS,
+  today_cash_variance: FINANCIAL_PERMISSIONS,
+  week_cash_variance: FINANCIAL_PERMISSIONS,
+  // charts
+  sales_last_7_days: FINANCIAL_PERMISSIONS,
+  sales_by_payment_method: FINANCIAL_PERMISSIONS,
+  monthly_revenue: FINANCIAL_PERMISSIONS,
+  stock_value_by_warehouse: STOCK_VALUE_PERMISSIONS,
+  // quick lists
+  recent_sales: FINANCIAL_PERMISSIONS,
+  recent_shift_variance: FINANCIAL_PERMISSIONS,
+  recent_purchase_orders: PURCHASE_PERMISSIONS,
+}
+
+type AccessSession = { user: { role: string; tenantId: string; customRoleId?: string | null } }
+
+/** Whether this user may see the metric / chart / list `key`. */
+export function canViewBlock(session: AccessSession, key: string): boolean {
+  const perms = BLOCK_PERMISSIONS[key]
+  if (!perms) return true
+  const { role, tenantId, customRoleId } = session.user
+  return perms.some((p) => hasPermission(role, p, tenantId, customRoleId))
+}
+
+/** Drop blocks this user may not see (number cards, charts, quick lists keyed by a restricted key). */
+export function filterBlocksForSession<T extends { type: string; data?: unknown }>(blocks: T[], session: AccessSession): T[] {
+  return blocks.filter((b) => {
+    const d = (b.data || {}) as { metricKey?: string; chartKey?: string; listKey?: string }
+    const key = b.type === 'number_card' ? d.metricKey : b.type === 'chart' ? d.chartKey : b.type === 'quick_list' ? d.listKey : undefined
+    return !key || canViewBlock(session, key)
+  })
+}
+
+/** Local business day for timestamps stored in UTC (Sri Lanka default, like tenantToday()). */
+const LOCAL_TZ = 'Asia/Colombo'
+const localDay = (col: unknown) => sql`(${col} AT TIME ZONE 'UTC' AT TIME ZONE ${LOCAL_TZ})::date`
+const localToday = sql`(now() AT TIME ZONE ${LOCAL_TZ})::date`
 
 // ==================== NUMBER CARD METRICS ====================
 
@@ -154,6 +207,43 @@ const METRICS: Record<string, MetricFn> = {
       .select({ count: sql<number>`COUNT(*)` })
       .from(vehicles)
     return Number(result?.count || 0)
+  },
+
+  // H4: shifts currently open (any counter)
+  open_shifts: async (db) => {
+    const [result] = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(posOpeningEntries)
+      .where(eq(posOpeningEntries.status, 'open'))
+    return Number(result?.count || 0)
+  },
+
+  // H4: counted − expected cash over shifts closed (submitted) today; negative = cash short
+  today_cash_variance: async (db) => {
+    const [result] = await db
+      .select({ total: sql<number>`COALESCE(SUM(CAST(${posClosingReconciliation.actualAmount} AS DECIMAL) - CAST(${posClosingReconciliation.expectedAmount} AS DECIMAL)), 0)` })
+      .from(posClosingReconciliation)
+      .innerJoin(posClosingEntries, eq(posClosingEntries.id, posClosingReconciliation.closingEntryId))
+      .where(and(
+        eq(posClosingEntries.status, 'submitted'),
+        eq(posClosingReconciliation.paymentMethod, 'cash'),
+        sql`${localDay(posClosingEntries.closingTime)} = ${localToday}`,
+      ))
+    return Number(result?.total || 0)
+  },
+
+  // H4: same over the last 7 local days
+  week_cash_variance: async (db) => {
+    const [result] = await db
+      .select({ total: sql<number>`COALESCE(SUM(CAST(${posClosingReconciliation.actualAmount} AS DECIMAL) - CAST(${posClosingReconciliation.expectedAmount} AS DECIMAL)), 0)` })
+      .from(posClosingReconciliation)
+      .innerJoin(posClosingEntries, eq(posClosingEntries.id, posClosingReconciliation.closingEntryId))
+      .where(and(
+        eq(posClosingEntries.status, 'submitted'),
+        eq(posClosingReconciliation.paymentMethod, 'cash'),
+        sql`${localDay(posClosingEntries.closingTime)} > ${localToday} - 7`,
+      ))
+    return Number(result?.total || 0)
   },
 
   total_warehouses: async (db) => {
@@ -588,6 +678,46 @@ const QUICK_LISTS: Record<string, QuickListFn> = {
         { key: 'serviceName', label: 'Service', type: 'text' },
         { key: 'scheduledDate', label: 'Date', type: 'date' },
         { key: 'status', label: 'Status', type: 'status' },
+      ],
+      rows: rows as unknown as Record<string, unknown>[],
+      totalCount: Number(countResult?.count || 0),
+    }
+  },
+
+  // H4: latest closed shifts with their cash variance (counted − expected)
+  recent_shift_variance: async (db, limit) => {
+    const rows = await db
+      .select({
+        id: posClosingEntries.id,
+        entryNumber: posClosingEntries.entryNumber,
+        cashierName: users.fullName,
+        closingTime: posClosingEntries.closingTime,
+        expected: sql<string>`COALESCE(SUM(CAST(${posClosingReconciliation.expectedAmount} AS DECIMAL)) FILTER (WHERE ${posClosingReconciliation.paymentMethod} = 'cash'), 0)`,
+        counted: sql<string>`COALESCE(SUM(CAST(${posClosingReconciliation.actualAmount} AS DECIMAL)) FILTER (WHERE ${posClosingReconciliation.paymentMethod} = 'cash'), 0)`,
+        variance: sql<string>`COALESCE(SUM(CAST(${posClosingReconciliation.actualAmount} AS DECIMAL) - CAST(${posClosingReconciliation.expectedAmount} AS DECIMAL)) FILTER (WHERE ${posClosingReconciliation.paymentMethod} = 'cash'), 0)`,
+      })
+      .from(posClosingEntries)
+      .leftJoin(posClosingReconciliation, eq(posClosingReconciliation.closingEntryId, posClosingEntries.id))
+      .leftJoin(users, eq(users.id, posClosingEntries.userId))
+      .where(eq(posClosingEntries.status, 'submitted'))
+      .groupBy(posClosingEntries.id, users.fullName)
+      .orderBy(desc(posClosingEntries.closingTime))
+      .limit(limit)
+
+    const [countResult] = await db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(posClosingEntries)
+      .where(eq(posClosingEntries.status, 'submitted'))
+
+    return {
+      title: 'Shift Cash Variance',
+      columns: [
+        { key: 'entryNumber', label: 'Closing #', type: 'text' },
+        { key: 'cashierName', label: 'Cashier', type: 'text' },
+        { key: 'closingTime', label: 'Closed', type: 'date' },
+        { key: 'expected', label: 'Expected', type: 'currency' },
+        { key: 'counted', label: 'Counted', type: 'currency' },
+        { key: 'variance', label: 'Variance', type: 'currency' },
       ],
       rows: rows as unknown as Record<string, unknown>[],
       totalCount: Number(countResult?.count || 0),

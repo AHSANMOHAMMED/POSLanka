@@ -8,6 +8,7 @@ import { validatePasswordStrength } from '@/lib/utils/validation'
 import { validateBody } from '@/lib/validation'
 import { acceptInviteSchema } from '@/lib/validation/schemas/auth'
 import { addUserWarehouses, replaceUserPosProfiles } from '@/lib/users/create-staff'
+import { getUserLimit } from '@/lib/billing/user-limit'
 
 type InviteAssignment = {
   tenantId: string
@@ -37,6 +38,31 @@ async function applyInviteAssignments(
     const live = await tx.select({ id: posProfiles.id }).from(posProfiles)
       .where(and(eq(posProfiles.tenantId, assignment.tenantId), inArray(posProfiles.id, ppIds)))
     await replaceUserPosProfiles(tx, assignment.tenantId, userId, live.map(p => p.id))
+  }
+}
+
+class InviteError extends Error {
+  constructor(message: string, public status: number) { super(message) }
+}
+
+/** Mark the invite accepted only if it is still pending and unexpired; otherwise abort. */
+async function claimInvite(tx: Parameters<typeof addUserWarehouses>[0], inviteId: string) {
+  const claimed = await tx.update(staffInvites)
+    .set({ acceptedAt: new Date() })
+    .where(and(
+      eq(staffInvites.id, inviteId),
+      isNull(staffInvites.acceptedAt),
+      gt(staffInvites.expiresAt, new Date()),
+    ))
+    .returning({ id: staffInvites.id })
+  if (claimed.length === 0) throw new InviteError('This invite has already been used or has expired', 400)
+}
+
+/** Plan seat limit for the company the invite adds the user to. */
+async function assertSeat(tenantId: string) {
+  const { maxUsers, activeUsers } = await getUserLimit(tenantId)
+  if (maxUsers !== null && activeUsers + 1 > maxUsers) {
+    throw new InviteError('This company has reached its plan user limit. Ask the owner to upgrade the plan.', 402)
   }
 }
 
@@ -110,6 +136,8 @@ export async function POST(
     if (existingAccount) {
       // Existing account flow: create user + accountTenants (original behavior)
       await db.transaction(async (tx) => {
+        // Claim the invite atomically: a double-click / two tabs must not both create users
+        await claimInvite(tx, invite.id)
         for (const assignment of assignments) {
           // Set tenant context for RLS
           await tx.execute(sql`SELECT set_config('app.tenant_id', ${assignment.tenantId}, true)`)
@@ -124,6 +152,7 @@ export async function POST(
 
           if (existingUser) {
             if (!existingUser.isActive) {
+              await assertSeat(assignment.tenantId)
               await tx.update(users)
                 .set({
                   isActive: true,
@@ -132,6 +161,7 @@ export async function POST(
                 .where(eq(users.id, existingUser.id))
             }
           } else {
+            await assertSeat(assignment.tenantId)
             const [created] = await tx.insert(users).values({
               tenantId: assignment.tenantId,
               accountId: existingAccount.id,
@@ -196,6 +226,8 @@ export async function POST(
       const passwordHash = await bcrypt.hash(password, 12)
 
       await db.transaction(async (tx) => {
+        // Claim the invite atomically: a double-click / two tabs must not both create users
+        await claimInvite(tx, invite.id)
         for (const assignment of assignments) {
           // Set tenant context for RLS
           await tx.execute(sql`SELECT set_config('app.tenant_id', ${assignment.tenantId}, true)`)
@@ -210,6 +242,7 @@ export async function POST(
 
           if (existingUser) {
             if (!existingUser.isActive) {
+              await assertSeat(assignment.tenantId)
               await tx.update(users)
                 .set({
                   isActive: true,
@@ -221,6 +254,7 @@ export async function POST(
             }
           } else {
             // Create user directly — no account, no accountTenants
+            await assertSeat(assignment.tenantId)
             const [created] = await tx.insert(users).values({
               tenantId: assignment.tenantId,
               accountId: null,
@@ -264,6 +298,9 @@ export async function POST(
       companies: tenantDetails,
     })
   } catch (error) {
+    if (error instanceof InviteError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     logError('api/invites/[token]/accept', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

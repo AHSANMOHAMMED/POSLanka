@@ -146,6 +146,7 @@ export const supplierQuotationStatusEnum = pgEnum('supplier_quotation_status', [
 export const costChangeSourceEnum = pgEnum('cost_change_source', [
   'purchase', 'purchase_cancellation', 'manual_adjustment', 'purchase_return',
   'stock_intake', 'import', // W3 (drizzle/0133)
+  'landed_cost', 'landed_cost_cancellation', 'price_variance', // H3 (drizzle/0159)
 ])
 
 // ==================== HR & PAYROLL ENUMS ====================
@@ -302,6 +303,9 @@ export const tenants = pgTable('tenants', {
   // AI opt-in (per-tenant consent required for third-party AI features)
   aiEnabled: boolean('ai_enabled').notNull().default(false),
   aiConsentAcceptedAt: timestamp('ai_consent_accepted_at'),
+  // H2 e-invoicing (IRD RAMIS) outbox switch (drizzle/0158): documents from einvoiceEnabledAt on are queued
+  einvoiceEnabled: boolean('einvoice_enabled').notNull().default(false),
+  einvoiceEnabledAt: timestamp('einvoice_enabled_at'),
   // Multi-company support
   primaryOwnerId: uuid('primary_owner_id'), // References accounts.id (nullable for migration)
   // Setup wizard
@@ -823,6 +827,8 @@ export const warehouseStock = pgTable('warehouse_stock', {
   reservedStock: decimal('reserved_stock', { precision: 12, scale: 3 }).notNull().default('0'),
   minStock: decimal('min_stock', { precision: 12, scale: 3 }).notNull().default('0'),
   reorderQty: decimal('reorder_qty', { precision: 12, scale: 3 }),
+  // H3 (0159): order-up-to level for reorder suggestions (null = use reorderQty / minStock)
+  maxStock: decimal('max_stock', { precision: 12, scale: 3 }),
   binLocation: varchar('bin_location', { length: 50 }), // Shelf A-3, Rack B-2
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
   // Unique constraint on (warehouseId, itemId) handled at DB level
@@ -867,6 +873,8 @@ export const stockTransferItems = pgTable('stock_transfer_items', {
   totalCost: decimal('total_cost', { precision: 10, scale: 2 }).default('0'),
   notes: text('notes'),
   serialNumberIds: jsonb('serial_number_ids').$type<string[]>(),
+  // Batches picked (FEFO) at ship time; put into the destination on receive, back on cancel (0151)
+  batchAllocations: jsonb('batch_allocations').$type<Array<{ batchId: string; batchNumber: string; expiryDate: string | null; quantity: number }>>(),
 })
 
 // ==================== POS PROFILES & SHIFT MANAGEMENT ====================
@@ -973,7 +981,11 @@ export const posOpeningEntries = pgTable('pos_opening_entries', {
   cancelledAt: timestamp('cancelled_at'),
   cancelledBy: uuid('cancelled_by').references(() => users.id),
   createdAt: timestamp('created_at').defaultNow().notNull(),
-})
+}, (t) => [
+  // 0157: one open shift per user and per POS profile (counter / drawer)
+  uniqueIndex('pos_opening_entries_one_open_per_user').on(t.tenantId, t.userId).where(sql`status = 'open'`),
+  uniqueIndex('pos_opening_entries_one_open_per_profile').on(t.tenantId, t.posProfileId).where(sql`status = 'open'`),
+])
 
 // Opening Entry Payment Balances (cash in drawer at start)
 export const posOpeningBalances = pgTable('pos_opening_balances', {
@@ -1011,6 +1023,11 @@ export const posClosingEntries = pgTable('pos_closing_entries', {
   cancellationReason: text('cancellation_reason'),
   cancelledAt: timestamp('cancelled_at'),
   cancelledBy: uuid('cancelled_by').references(() => users.id),
+  // H1 (0157): structured reason when the counted drawer differs from expected
+  varianceReason: varchar('variance_reason', { length: 50 }),
+  varianceNote: text('variance_note'),
+  // H1 (0157): Z-report snapshot (tax, discounts, voids, returns, cash movements, ledger tie-out)
+  reportData: jsonb('report_data').$type<Record<string, unknown>>(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -1025,6 +1042,42 @@ export const posClosingReconciliation = pgTable('pos_closing_reconciliation', {
   actualAmount: decimal('actual_amount', { precision: 15, scale: 2 }).notNull().default('0'),
   // Note: difference is calculated client-side as (actualAmount - expectedAmount)
 })
+
+// H1 (0157): cash paid into / out of the drawer during an open shift
+export const posCashMovements = pgTable('pos_cash_movements', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  movementNo: varchar('movement_no', { length: 30 }).notNull(),
+  openingEntryId: uuid('opening_entry_id').notNull().references(() => posOpeningEntries.id),
+  posProfileId: uuid('pos_profile_id').references(() => posProfiles.id),
+  type: varchar('type', { length: 20 }).notNull(), // 'paid_in' | 'paid_out'
+  category: varchar('category', { length: 30 }).notNull(), // petty_expense | supplier_payment | bank_drop | float_top_up | other
+  amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+  accountId: uuid('account_id').references(() => chartOfAccounts.id),
+  note: text('note'),
+  status: varchar('status', { length: 20 }).notNull().default('posted'), // 'posted' | 'voided'
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  approvedBy: uuid('approved_by').references(() => users.id),
+  voidedAt: timestamp('voided_at'),
+  voidedBy: uuid('voided_by').references(() => users.id),
+  voidReason: text('void_reason'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}) // index pos_cash_movements_shift_idx (tenant_id, opening_entry_id) in drizzle/0157
+
+// H1 (0157): single-use ledger of supervisor approval tokens (see src/lib/auth/approval-token.ts)
+export const posApprovalUses = pgTable('pos_approval_uses', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  nonce: varchar('nonce', { length: 64 }).notNull(),
+  scopes: text('scopes').notNull(),
+  approverId: uuid('approver_id').notNull().references(() => users.id),
+  usedBy: uuid('used_by').references(() => users.id),
+  entityType: varchar('entity_type', { length: 50 }).notNull(),
+  entityId: uuid('entity_id'),
+  usedAt: timestamp('used_at').defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex('pos_approval_uses_nonce_uq').on(t.tenantId, t.nonce),
+])
 
 // Loyalty Program Configuration
 export const loyaltyPrograms = pgTable('loyalty_programs', {
@@ -1467,7 +1520,10 @@ export const dealerAllocations = pgTable('dealer_allocations', {
   notes: text('notes'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
-})
+}, (t) => [
+  // 0156: one active allocation per vehicle
+  uniqueIndex('dealer_allocations_one_active_per_vehicle').on(t.tenantId, t.vehicleInventoryId).where(sql`status = 'allocated'`),
+])
 
 // Vehicle expenses (preparation, transport, registration, etc.)
 export const vehicleExpenses = pgTable('vehicle_expenses', {
@@ -1657,6 +1713,8 @@ export const items = pgTable('items', {
   // Flags
   isGiftCard: boolean('is_gift_card').notNull().default(false),
   isActive: boolean('is_active').notNull().default(true),
+  // H5: 'stockable' | 'consumable' | 'service'; DB trigger keeps stockable ⇔ trackStock (drizzle/0161)
+  productType: varchar('product_type', { length: 20 }).notNull().default('stockable').$type<ProductType>(),
 
   // Product variants (parent SKU + size/color attributes)
   parentItemId: uuid('parent_item_id'),
@@ -1693,6 +1751,8 @@ export const stockMovements = pgTable('stock_movements', {
   signSource: varchar('sign_source', { length: 20 }),
   source: varchar('source', { length: 20 }),
   idempotencyKey: varchar('idempotency_key', { length: 150 }),
+  // H3 (0159): adjustment reason code (shrinkage, damage, theft, expiry, count_correction, ...)
+  reasonCode: varchar('reason_code', { length: 30 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -2162,10 +2222,16 @@ export const sales = pgTable('sales', {
   notes: text('notes'),
   voidReason: text('void_reason'),
   voidedAt: timestamp('voided_at'),
+  // H1 (0157): who voided the sale; supervisor who approved a discount / price / credit override
+  voidedBy: uuid('voided_by').references(() => users.id),
+  approvedBy: uuid('approved_by').references(() => users.id),
   restaurantOrderId: uuid('restaurant_order_id'), // References restaurant_orders.id (no FK to avoid circular dep)
   salesOrderId: uuid('sales_order_id'), // References sales_orders.id (no FK to avoid circular dep, added after table defined)
   createdBy: uuid('created_by').references(() => users.id),
   costCenterId: uuid('cost_center_id').references(() => costCenters.id),
+  // H5: cart-level promotion discount (included in discountAmount) and the coupon redeemed
+  promotionDiscount: decimal('promotion_discount', { precision: 12, scale: 2 }).notNull().default('0'),
+  couponCode: varchar('coupon_code', { length: 50 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -2190,6 +2256,16 @@ export const saleItems = pgTable('sale_items', {
   returnedQuantity: decimal('returned_quantity', { precision: 12, scale: 3 }).notNull().default('0'),
   // W8: on return lines, the original sale line being returned (FK in drizzle/0137)
   originalSaleItemId: uuid('original_sale_item_id'),
+  // H5 pricing (drizzle/0161, docs/INTEGRATION_PRICING.md): price list that set unit_price, promotions
+  // applied to this line, and the unit sold (quantity is in `uom`; stock moves quantity × uomFactor base units).
+  // list_price (also added by 0157) = catalog price of the unit sold at sale time.
+  priceListId: uuid('price_list_id'),
+  listPrice: decimal('list_price', { precision: 12, scale: 2 }),
+  promotionId: uuid('promotion_id'),
+  promotionDiscount: decimal('promotion_discount', { precision: 12, scale: 2 }).notNull().default('0'),
+  promotions: jsonb('promotions').$type<Array<{ promotionId: string; label: string; amount: number; cart?: boolean }>>(), // cart: share of a cart promotion
+  uom: varchar('uom', { length: 20 }),
+  uomFactor: decimal('uom_factor', { precision: 14, scale: 6 }).notNull().default('1'),
 })
 
 export const payments = pgTable('payments', {
@@ -2430,6 +2506,12 @@ export const wasteLog = pgTable('waste_log', {
   costAmount: decimal('cost_amount', { precision: 12, scale: 2 }),
   recordedBy: uuid('recorded_by').references(() => users.id),
   recordedAt: timestamp('recorded_at').defaultNow().notNull(),
+  // 0151: waste reduces stock in this warehouse (ledger movement + batches it came from)
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  stockMovementId: uuid('stock_movement_id'),
+  batchAllocations: jsonb('batch_allocations').$type<Array<{ batchId: string; batchNumber: string; expiryDate: string | null; quantity: number }>>(),
+  // H3 (0159): structured reason code (reason stays the free-text label)
+  reasonCode: varchar('reason_code', { length: 30 }),
 })
 
 export const reservations = pgTable('reservations', {
@@ -2818,6 +2900,16 @@ export const payrollRuns = pgTable('payroll_runs', {
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
 
+// Advance recoveries taken by a submitted salary slip (drizzle/0153) — reversed on slip cancel
+export const salarySlipAdvanceRecoveries = pgTable('salary_slip_advance_recoveries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  salarySlipId: uuid('salary_slip_id').notNull(),
+  employeeAdvanceId: uuid('employee_advance_id').notNull(),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
 // Employee advances
 export const employeeAdvances = pgTable('employee_advances', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -2983,6 +3075,10 @@ export const purchases = pgTable('purchases', {
   cancelledAt: timestamp('cancelled_at'),
   createdBy: uuid('created_by').references(() => users.id),
   costCenterId: uuid('cost_center_id').references(() => costCenters.id),
+  // H3 (0159): 3-way match result (matched | warning | blocked | not_applicable) + per-line details
+  matchStatus: varchar('match_status', { length: 20 }),
+  matchDetails: jsonb('match_details'),
+  matchedAt: timestamp('matched_at'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
@@ -3005,6 +3101,10 @@ export const purchaseItems = pgTable('purchase_items', {
   // purchase_order_items.received_quantity (null = legacy row, unknown)
   purchaseOrderItemId: uuid('purchase_order_item_id'),
   poReceivedQty: decimal('po_received_qty', { precision: 12, scale: 3 }),
+  // H3 (0159): quantity / value of this line billed against GRN stock that was already posted to
+  // Stock Received But Not Billed (the invoice debits SRBNB for it instead of Stock)
+  srbnbQty: decimal('srbnb_qty', { precision: 12, scale: 3 }).notNull().default('0'),
+  srbnbAmount: decimal('srbnb_amount', { precision: 15, scale: 2 }).notNull().default('0'),
 })
 
 // ==================== PURCHASE ORDERS ====================
@@ -3136,6 +3236,9 @@ export const purchaseReceipts = pgTable('purchase_receipts', {
   receivedBy: uuid('received_by').references(() => users.id),
   cancellationReason: text('cancellation_reason'),
   cancelledAt: timestamp('cancelled_at'),
+  // H3 (0159): true when this GRN posted Dr Stock / Cr SRBNB (its invoice then clears SRBNB);
+  // false for older GRNs, whose invoice posts the stock as before
+  glPosted: boolean('gl_posted').notNull().default(false),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
@@ -3152,6 +3255,61 @@ export const purchaseReceiptItems = pgTable('purchase_receipt_items', {
   quantityRejected: decimal('quantity_rejected', { precision: 12, scale: 3 }).notNull().default('0'),
   rejectionReason: text('rejection_reason'),
   notes: text('notes'),
+  // H3 (0159): unit cost the GRN valued the line at (PO price) for the SRBNB posting
+  unitCost: decimal('unit_cost', { precision: 12, scale: 2 }),
+})
+
+// ==================== LANDED COST VOUCHERS (H3, 0159) ====================
+// Freight / duty / insurance / clearing charges allocated onto the lines of one or more GRNs or
+// purchase invoices (by value or quantity). The share of stock still on hand raises the item's
+// weighted-average cost (Dr Stock); the rest is expensed (Dr COGS). Cr AP (supplier) or an account.
+
+export const landedCostVouchers = pgTable('landed_cost_vouchers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  voucherNo: varchar('voucher_no', { length: 50 }).notNull(),
+  postingDate: date('posting_date').notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('draft'), // draft | submitted | cancelled
+  allocationMethod: varchar('allocation_method', { length: 20 }).notNull().default('value'), // value | quantity
+  totalCharges: decimal('total_charges', { precision: 15, scale: 2 }).notNull().default('0'),
+  absorbedAmount: decimal('absorbed_amount', { precision: 15, scale: 2 }).notNull().default('0'),
+  expensedAmount: decimal('expensed_amount', { precision: 15, scale: 2 }).notNull().default('0'),
+  notes: text('notes'),
+  createdBy: uuid('created_by').references(() => users.id),
+  submittedAt: timestamp('submitted_at'),
+  cancelledAt: timestamp('cancelled_at'),
+  cancellationReason: text('cancellation_reason'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const landedCostCharges = pgTable('landed_cost_charges', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  voucherId: uuid('voucher_id').notNull().references(() => landedCostVouchers.id, { onDelete: 'cascade' }),
+  chargeType: varchar('charge_type', { length: 20 }).notNull(), // freight | duty | insurance | clearing | other
+  description: varchar('description', { length: 255 }),
+  amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+  supplierId: uuid('supplier_id').references(() => suppliers.id),
+  creditAccountId: uuid('credit_account_id').references(() => chartOfAccounts.id),
+})
+
+export const landedCostItems = pgTable('landed_cost_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  voucherId: uuid('voucher_id').notNull().references(() => landedCostVouchers.id, { onDelete: 'cascade' }),
+  sourceType: varchar('source_type', { length: 20 }).notNull(), // grn | purchase
+  sourceId: uuid('source_id').notNull(),
+  sourceNo: varchar('source_no', { length: 50 }),
+  itemId: uuid('item_id').notNull().references(() => items.id),
+  itemName: varchar('item_name', { length: 255 }),
+  quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull(),
+  baseValue: decimal('base_value', { precision: 15, scale: 2 }).notNull(),
+  allocatedAmount: decimal('allocated_amount', { precision: 15, scale: 2 }).notNull().default('0'),
+  absorbedAmount: decimal('absorbed_amount', { precision: 15, scale: 2 }).notNull().default('0'),
+  expensedAmount: decimal('expensed_amount', { precision: 15, scale: 2 }).notNull().default('0'),
+  costBefore: decimal('cost_before', { precision: 12, scale: 2 }),
+  costAfter: decimal('cost_after', { precision: 12, scale: 2 }),
 })
 
 // ==================== STOCK TAKES (PHYSICAL INVENTORY COUNT) ====================
@@ -3200,6 +3358,8 @@ export const stockTakeItems = pgTable('stock_take_items', {
   systemQtyAtCount: decimal('system_qty_at_count', { precision: 12, scale: 3 }),
   appliedMovementId: uuid('applied_movement_id'),
   appliedAt: timestamp('applied_at'),
+  // H3 (0159): reason code for the variance (default count_correction)
+  reasonCode: varchar('reason_code', { length: 30 }),
 })
 
 // ==================== ITEM BATCHES (LOT/BATCH TRACKING) ====================
@@ -3278,6 +3438,8 @@ export const purchaseRequisitions = pgTable('purchase_requisitions', {
   rejectionReason: text('rejection_reason'),
   cancellationReason: text('cancellation_reason'),
   cancelledAt: timestamp('cancelled_at'),
+  // H3 (0159): 'reorder' (from reorder suggestions) | 'reorder_auto' (daily auto-reorder cron) | null (manual)
+  source: varchar('source', { length: 30 }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
@@ -4810,6 +4972,11 @@ export const accountingSettings = pgTable('accounting_settings', {
   // Default tax templates (sales + purchase)
   defaultTaxTemplateId: uuid('default_tax_template_id').references(() => taxTemplates.id, { onDelete: 'set null' }),
   defaultPurchaseTaxTemplateId: uuid('default_purchase_tax_template_id').references(() => taxTemplates.id, { onDelete: 'set null' }),
+  // H3 (0159): Stock Received But Not Billed (GRN credit / invoice debit), purchase price variance
+  // (invoice vs GRN price; null = into stock cost), per-reason stock adjustment accounts
+  defaultSrbnbAccountId: uuid('default_srbnb_account_id').references(() => chartOfAccounts.id, { onDelete: 'set null' }),
+  defaultPriceVarianceAccountId: uuid('default_price_variance_account_id').references(() => chartOfAccounts.id, { onDelete: 'set null' }),
+  stockAdjustmentReasonAccounts: jsonb('stock_adjustment_reason_accounts').$type<Record<string, string>>(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
@@ -5034,6 +5201,8 @@ export const taxTemplates = pgTable('tax_templates', {
   tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
   name: varchar('name', { length: 255 }).notNull(),
   isActive: boolean('is_active').notNull().default(true),
+  // H2 (drizzle/0158): VAT treatment of the supplies taxed with this template — see src/lib/utils/tax-category.ts
+  taxCategory: varchar('tax_category', { length: 20 }).$type<'standard' | 'zero_rated' | 'exempt' | 'out_of_scope'>().notNull().default('standard'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
@@ -5887,6 +6056,13 @@ export const creditNotes = pgTable('credit_notes', {
   subtotal: decimal('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
   tax: decimal('tax', { precision: 12, scale: 2 }).notNull().default('0'),
   total: decimal('total', { precision: 12, scale: 2 }).notNull().default('0'),
+  // H2 (drizzle/0158): GL posting + VAT detail
+  postingDate: date('posting_date'),
+  taxBreakdown: jsonb('tax_breakdown'),
+  settlement: varchar('settlement', { length: 20 }).$type<'receivable' | 'refund'>().notNull().default('receivable'),
+  refundMethod: varchar('refund_method', { length: 30 }),
+  glPosted: boolean('gl_posted').notNull().default(false),
+  cancelledAt: timestamp('cancelled_at'),
   createdBy: uuid('created_by'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -5900,9 +6076,71 @@ export const creditNoteItems = pgTable('credit_note_items', {
   itemName: varchar('item_name', { length: 255 }).notNull(),
   quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull().default('1'),
   unitPrice: decimal('unit_price', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxTemplateId: uuid('tax_template_id').references(() => taxTemplates.id, { onDelete: 'set null' }),
+  taxRate: decimal('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+  tax: decimal('tax', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxBreakdown: jsonb('tax_breakdown'),
+  total: decimal('total', { precision: 12, scale: 2 }).notNull().default('0'), // line value excl. VAT
+})
+
+// H2 (drizzle/0158): customer debit notes — extra charge against an invoice (Dr AR, Cr revenue + output VAT)
+export const debitNotes = pgTable('debit_notes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  debitNoteNo: varchar('debit_note_no', { length: 50 }).notNull(),
+  saleId: uuid('sale_id').references(() => sales.id),
+  customerId: uuid('customer_id').references(() => customers.id),
+  customerName: varchar('customer_name', { length: 255 }),
+  status: varchar('status', { length: 20 }).$type<'draft' | 'issued' | 'cancelled'>().notNull().default('issued'),
+  reason: text('reason'),
+  postingDate: date('posting_date'),
+  subtotal: decimal('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
   tax: decimal('tax', { precision: 12, scale: 2 }).notNull().default('0'),
   total: decimal('total', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxBreakdown: jsonb('tax_breakdown'),
+  glPosted: boolean('gl_posted').notNull().default(false),
+  createdBy: uuid('created_by'),
+  cancelledAt: timestamp('cancelled_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (t) => [uniqueIndex('debit_notes_tenant_no_uq').on(t.tenantId, t.debitNoteNo)])
+
+export const debitNoteItems = pgTable('debit_note_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  debitNoteId: uuid('debit_note_id').notNull().references(() => debitNotes.id, { onDelete: 'cascade' }),
+  itemId: uuid('item_id').references(() => items.id),
+  itemName: varchar('item_name', { length: 255 }).notNull(),
+  quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull().default('1'),
+  unitPrice: decimal('unit_price', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxTemplateId: uuid('tax_template_id').references(() => taxTemplates.id, { onDelete: 'set null' }),
+  taxRate: decimal('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+  tax: decimal('tax', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxBreakdown: jsonb('tax_breakdown'),
+  total: decimal('total', { precision: 12, scale: 2 }).notNull().default('0'), // line value excl. VAT
 })
+
+// H2 (drizzle/0158): e-invoice (IRD RAMIS) outbox — one row per fiscal document, see src/lib/einvoice
+export const einvoiceOutbox = pgTable('einvoice_outbox', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  documentType: varchar('document_type', { length: 20 }).$type<'invoice' | 'credit_note' | 'debit_note'>().notNull(),
+  sourceType: varchar('source_type', { length: 20 }).$type<'sale' | 'sale_return' | 'credit_note' | 'debit_note'>().notNull(),
+  documentId: uuid('document_id').notNull(),
+  documentNo: varchar('document_no', { length: 60 }).notNull(),
+  documentDate: date('document_date').notNull(),
+  status: varchar('status', { length: 20 }).$type<'pending' | 'sent' | 'failed' | 'acknowledged'>().notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: timestamp('next_attempt_at').defaultNow().notNull(),
+  lastError: text('last_error'),
+  payload: jsonb('payload').notNull(),
+  irn: varchar('irn', { length: 100 }),
+  response: jsonb('response'),
+  sentAt: timestamp('sent_at'),
+  acknowledgedAt: timestamp('acknowledged_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (t) => [uniqueIndex('einvoice_outbox_doc_uq').on(t.tenantId, t.sourceType, t.documentId)])
 
 export const quotationsRelations = relations(quotations, ({ one, many }) => ({
   tenant: one(tenants, { fields: [quotations.tenantId], references: [tenants.id] }),
@@ -5925,6 +6163,18 @@ export const creditNotesRelations = relations(creditNotes, ({ one, many }) => ({
 export const creditNoteItemsRelations = relations(creditNoteItems, ({ one }) => ({
   creditNote: one(creditNotes, { fields: [creditNoteItems.creditNoteId], references: [creditNotes.id] }),
   item: one(items, { fields: [creditNoteItems.itemId], references: [items.id] }),
+}))
+
+export const debitNotesRelations = relations(debitNotes, ({ one, many }) => ({
+  tenant: one(tenants, { fields: [debitNotes.tenantId], references: [tenants.id] }),
+  sale: one(sales, { fields: [debitNotes.saleId], references: [sales.id] }),
+  customer: one(customers, { fields: [debitNotes.customerId], references: [customers.id] }),
+  items: many(debitNoteItems),
+}))
+
+export const debitNoteItemsRelations = relations(debitNoteItems, ({ one }) => ({
+  debitNote: one(debitNotes, { fields: [debitNoteItems.debitNoteId], references: [debitNotes.id] }),
+  item: one(items, { fields: [debitNoteItems.itemId], references: [items.id] }),
 }))
 
 // ===== W2 inventory core =====
@@ -6151,3 +6401,154 @@ export const saleItemBatches = pgTable('sale_item_batches', {
   allocOrder: integer('alloc_order').notNull().default(0),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
+
+// H4: tenant API keys for /api/v1 (migration 0160). Only the sha256 of the secret is stored.
+export const apiKeys = pgTable('api_keys', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 100 }).notNull(),
+  keyPrefix: varchar('key_prefix', { length: 32 }).notNull(),
+  keyHash: varchar('key_hash', { length: 64 }).notNull(),
+  scopes: jsonb('scopes').$type<string[]>().notNull().default([]),
+  createdBy: uuid('created_by').notNull().references(() => users.id),
+  lastUsedAt: timestamp('last_used_at'),
+  lastUsedIp: varchar('last_used_ip', { length: 64 }),
+  expiresAt: timestamp('expires_at'),
+  revokedAt: timestamp('revoked_at'),
+  revokedBy: uuid('revoked_by').references(() => users.id),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex('api_keys_prefix_uidx').on(table.keyPrefix),
+])
+
+// ===== H5 pricing & catalog =====
+// Units of measure, per-item conversions, extra barcodes, price lists and promotions
+// (drizzle/0161_pricing_catalog.sql). Pricing maths: src/lib/pricing/engine.ts.
+export type ProductType = 'stockable' | 'consumable' | 'service'
+
+export const units = pgTable('units', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  code: varchar('code', { length: 20 }).notNull(),
+  name: varchar('name', { length: 50 }).notNull(),
+  allowFraction: boolean('allow_fraction').notNull().default(false),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// Conversions: 1 `uom` = factor × the item's base unit (items.unit). Stock is always kept in base units.
+export const itemUoms = pgTable('item_uoms', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  itemId: uuid('item_id').notNull().references(() => items.id, { onDelete: 'cascade' }),
+  uom: varchar('uom', { length: 20 }).notNull(),
+  factor: decimal('factor', { precision: 14, scale: 6 }).notNull(),
+  barcode: varchar('barcode', { length: 100 }),
+  sellingPrice: decimal('selling_price', { precision: 12, scale: 2 }),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+// Additional barcodes (unique per tenant across items.barcode / item_barcodes / item_uoms, DB trigger)
+export const itemBarcodes = pgTable('item_barcodes', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  itemId: uuid('item_id').notNull().references(() => items.id, { onDelete: 'cascade' }),
+  barcode: varchar('barcode', { length: 100 }).notNull(),
+  uom: varchar('uom', { length: 20 }),
+  packQty: decimal('pack_qty', { precision: 12, scale: 3 }).notNull().default('1'),
+  priceOverride: decimal('price_override', { precision: 12, scale: 2 }),
+  label: varchar('label', { length: 100 }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const priceLists = pgTable('price_lists', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 100 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull().default('LKR'),
+  priority: integer('priority').notNull().default(0),
+  isActive: boolean('is_active').notNull().default(true),
+  validFrom: date('valid_from'),
+  validTo: date('valid_to'),
+  appliesTo: varchar('applies_to', { length: 20 }).notNull().default('all').$type<'all' | 'customer_group' | 'customers' | 'pos_profiles'>(),
+  customerTypes: text('customer_types').array().notNull().default(sql`'{}'::text[]`),
+  customerIds: uuid('customer_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  posProfileIds: uuid('pos_profile_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  notes: text('notes'),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const priceListItems = pgTable('price_list_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  priceListId: uuid('price_list_id').notNull().references(() => priceLists.id, { onDelete: 'cascade' }),
+  itemId: uuid('item_id').notNull().references(() => items.id, { onDelete: 'cascade' }),
+  uom: varchar('uom', { length: 20 }),
+  minQty: decimal('min_qty', { precision: 12, scale: 3 }).notNull().default('0'),
+  price: decimal('price', { precision: 12, scale: 2 }),
+  discountPercent: decimal('discount_percent', { precision: 5, scale: 2 }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const promotions = pgTable('promotions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 150 }).notNull(),
+  description: text('description'),
+  type: varchar('type', { length: 20 }).notNull().$type<'percent_off' | 'fixed_off' | 'buy_x_get_y' | 'bundle_price' | 'min_spend'>(),
+  applyTo: varchar('apply_to', { length: 20 }).notNull().default('items').$type<'items' | 'categories' | 'cart'>(),
+  discountType: varchar('discount_type', { length: 10 }).notNull().default('percent').$type<'percent' | 'fixed'>(),
+  value: decimal('value', { precision: 12, scale: 2 }).notNull().default('0'),
+  itemIds: uuid('item_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  categoryIds: uuid('category_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  buyQty: decimal('buy_qty', { precision: 12, scale: 3 }),
+  getQty: decimal('get_qty', { precision: 12, scale: 3 }),
+  getItemIds: uuid('get_item_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  getDiscountPercent: decimal('get_discount_percent', { precision: 5, scale: 2 }).notNull().default('100'),
+  bundleItems: jsonb('bundle_items').$type<Array<{ itemId: string; qty: number }>>().notNull().default([]),
+  bundlePrice: decimal('bundle_price', { precision: 12, scale: 2 }),
+  minSpend: decimal('min_spend', { precision: 12, scale: 2 }),
+  startsOn: date('starts_on'),
+  endsOn: date('ends_on'),
+  daysOfWeek: integer('days_of_week').array().notNull().default(sql`'{}'::smallint[]`), // smallint[] in SQL
+  timeFrom: time('time_from'),
+  timeTo: time('time_to'),
+  posProfileIds: uuid('pos_profile_ids').array().notNull().default(sql`'{}'::uuid[]`),
+  customerTypes: text('customer_types').array().notNull().default(sql`'{}'::text[]`),
+  priority: integer('priority').notNull().default(0),
+  stackable: boolean('stackable').notNull().default(false),
+  couponCode: varchar('coupon_code', { length: 50 }),
+  usageLimit: integer('usage_limit'),
+  perCustomerLimit: integer('per_customer_limit'),
+  usageCount: integer('usage_count').notNull().default(0),
+  isActive: boolean('is_active').notNull().default(true),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+// One row per (sale, promotion) actually granted — drives usage / per-customer limits.
+export const promotionRedemptions = pgTable('promotion_redemptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  promotionId: uuid('promotion_id').notNull().references(() => promotions.id, { onDelete: 'cascade' }),
+  saleId: uuid('sale_id').notNull().references(() => sales.id, { onDelete: 'cascade' }),
+  customerId: uuid('customer_id'),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  voidedAt: timestamp('voided_at'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const priceListsRelations = relations(priceLists, ({ many }) => ({
+  items: many(priceListItems),
+}))
+
+export const priceListItemsRelations = relations(priceListItems, ({ one }) => ({
+  priceList: one(priceLists, { fields: [priceListItems.priceListId], references: [priceLists.id] }),
+  item: one(items, { fields: [priceListItems.itemId], references: [items.id] }),
+}))

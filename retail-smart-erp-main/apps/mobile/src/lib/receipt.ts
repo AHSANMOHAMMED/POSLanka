@@ -6,7 +6,7 @@
 // overridden per counter by the shift's POS profile.
 import * as FileSystem from 'expo-file-system'
 import { apiGet, getUser } from './api'
-import type { InvoiceCodeType, ReceiptInput, ReceiptLine, ReceiptLogo, ReceiptPayment, ZReportInput } from './escpos'
+import type { InvoiceCodeType, ReceiptInput, ReceiptLine, ReceiptLogo, ReceiptPayment, ReceiptTaxInvoice, ZReportInput } from './escpos'
 import { getPrinterSettings } from './printer'
 import { shiftCounterName, type Shift } from './shift'
 
@@ -207,7 +207,12 @@ function num(v: unknown): number {
 export interface SaleResponseLike {
   id?: string
   invoiceNo: string
-  items?: Array<{ itemName?: string; name?: string; quantity: string | number; unitPrice: string | number; total?: string | number; unit?: string | null }>
+  items?: Array<{
+    itemName?: string; name?: string; quantity: string | number; unitPrice: string | number; total?: string | number; unit?: string | null; taxAmount?: string | number; taxRate?: string | number
+    /** H5: unit sold and promotions applied (cart: share of a bill promotion) */
+    uom?: string | null
+    promotions?: Array<{ label: string; amount: string | number; cart?: boolean }> | null
+  }>
   payments?: Array<{ method?: string; paymentMethod?: string; amount: string | number; reference?: string | null }>
   paymentMethod?: string | null
   subtotal?: string | number
@@ -215,14 +220,20 @@ export interface SaleResponseLike {
   discount?: string | number
   taxAmount?: string | number
   tax?: string | number
-  taxBreakdown?: Array<{ taxName?: string; name?: string; amount: string | number }> | null
+  taxBreakdown?: Array<{ taxName?: string; name?: string; amount: string | number; rate?: string | number }> | null
   total: string | number
   paidAmount?: string | number
   createdAt?: string
   isReturn?: boolean
   customerName?: string | null
-  customer?: { name?: string } | null
+  customer?: { name?: string; taxId?: string | null; address?: string | null } | null
+  /** Return: original invoice number (when the response carries it). */
+  originalInvoiceNo?: string | null
 }
+
+/** @deprecated use ReceiptTaxInvoice from ./escpos (kept for callers importing it from here). */
+export type MobileTaxInvoice = ReceiptTaxInvoice
+export type MobileReceiptInput = ReceiptInput
 
 export interface ReceiptContext {
   business: BusinessInfo
@@ -233,16 +244,39 @@ export interface ReceiptContext {
   change?: number
   /** Fallback payment when the response has no `payments` (e.g. offline). */
   fallbackPayment?: { method: string; amount: number; reference?: string | null }
+  /** Attached customer's buyer details (tax invoices: name, TIN / VAT number, address). */
+  customer?: { name?: string | null; taxId?: string | null; address?: string | null } | null
+  /** Return: number of the invoice being credited. */
+  originalInvoiceNo?: string | null
 }
 
-export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): ReceiptInput {
+const fmtRate = (r: number) => (Number.isInteger(r) ? String(r) : String(Math.round(r * 100) / 100))
+
+/**
+ * VAT rate of a line: the stored rate, else derived from its VAT and value (server-computed lines
+ * store tax_rate 0). Picks the exclusive or inclusive reading that gives a whole-number rate.
+ */
+function lineVatRate(rate: number, vat: number, value: number): number {
+  if (rate > 0) return rate
+  if (!(vat > 0) || !(value > 0)) return 0
+  const excl = (vat / value) * 100
+  const incl = value > vat ? (vat / (value - vat)) * 100 : excl
+  const near = (r: number) => Math.abs(r - Math.round(r)) < 0.05
+  const r = near(excl) ? excl : near(incl) ? incl : excl
+  return near(r) ? Math.round(r) : Math.round(r * 100) / 100
+}
+
+export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): MobileReceiptInput {
   const lines: ReceiptLine[] = (sale.items || []).map((i) => {
     const qty = num(i.quantity)
     const unitPrice = num(i.unitPrice)
+    // H5: line promotions print with the item name (the line total is already net of them)
+    const promo = (i.promotions || []).filter((p) => !p.cart && num(p.amount) > 0)
+    const name = i.itemName || i.name || 'Item'
     return {
-      name: i.itemName || i.name || 'Item',
+      name: promo.length ? `${name} (${promo.map((p) => `${p.label} -${num(p.amount).toFixed(2)}`).join(', ')})` : name,
       qty,
-      unit: i.unit || null,
+      unit: i.uom || i.unit || null,
       unitPrice,
       total: i.total !== undefined ? num(i.total) : qty * unitPrice,
     }
@@ -259,23 +293,54 @@ export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): Re
   const taxAmount = num(sale.taxAmount ?? sale.tax)
   const taxLines =
     Array.isArray(sale.taxBreakdown) && sale.taxBreakdown.length
-      ? sale.taxBreakdown.map((t) => ({ name: t.taxName || t.name || 'Tax', amount: num(t.amount) }))
+      ? sale.taxBreakdown.map((t) => {
+          const name = t.taxName || t.name || 'Tax'
+          return { name: t.rate != null && num(t.rate) ? `${name} ${fmtRate(num(t.rate))}%` : name, amount: num(t.amount) }
+        })
       : taxAmount
         ? [{ name: 'Tax', amount: taxAmount }]
         : []
 
   const settings = resolveReceiptSettings(ctx.business, ctx.shift)
   const b = ctx.business
-  const customerName = ctx.customerName || sale.customerName || sale.customer?.name
+  const customerName = ctx.customerName || sale.customerName || sale.customer?.name || ctx.customer?.name || null
+  const isReturn = Boolean(sale.isReturn) || num(sale.total) < 0
+  const total = num(sale.total)
+
+  // Tax invoice (VAT Act): VAT-registered seller + VAT on the document. Statutory particulars
+  // print regardless of the receipt toggles (escpos.ts / printer.ts render taxInvoice).
+  const supplierVatNo = (b.taxId || '').trim()
+  let taxInvoice: ReceiptTaxInvoice | null = null
+  if (supplierVatNo && Math.abs(taxAmount) >= 0.005) {
+    const buyerVat = (ctx.customer?.taxId || sale.customer?.taxId || '').trim() || null
+    const buyerAddress = (ctx.customer?.address || sale.customer?.address || '').trim() || null
+    taxInvoice = {
+      kind: isReturn ? 'credit_note' : 'tax_invoice',
+      supplierVatNo,
+      buyer: customerName ? { name: customerName, vatNo: buyerVat, address: buyerAddress } : null,
+      originalInvoiceNo: ctx.originalInvoiceNo || sale.originalInvoiceNo || null,
+      totalExclVat: Math.round((total - taxAmount) * 100) / 100,
+      totalVat: taxAmount,
+      totalInclVat: total,
+    }
+    ;(sale.items || []).forEach((i, idx) => {
+      const vat = num(i.taxAmount)
+      if (!lines[idx] || !vat) return
+      lines[idx].vatAmount = vat
+      lines[idx].vatRate = lineVatRate(num(i.taxRate), Math.abs(vat), Math.abs(lines[idx].total))
+    })
+  }
+  const customer: ReceiptInput['customer'] = settings.showCustomer && customerName ? { name: customerName } : null
+
   return {
     business: {
       name: b.name,
       legalName: settings.showLegalName ? b.legalName || null : null,
-      address: settings.showAddress ? b.address || null : null,
+      address: settings.showAddress || taxInvoice ? b.address || null : null,
       phone: settings.showPhone ? b.phone || null : null,
       email: settings.showEmail ? b.email || null : null,
       website: settings.showWebsite ? b.website || null : null,
-      taxId: settings.showTaxId ? b.taxId || null : null,
+      taxId: settings.showTaxId || taxInvoice ? b.taxId || null : null,
       brn: settings.showBrn ? b.brn || null : null,
     },
     headerLines: settings.headerLines,
@@ -286,19 +351,20 @@ export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): Re
     dateTime: sale.createdAt || new Date(),
     cashier: settings.showCashier ? ctx.cashier || null : null,
     counter: settings.showCounter ? shiftCounterName(ctx.shift) || null : null,
-    customer: settings.showCustomer && customerName ? { name: customerName } : null,
+    customer,
     lines,
     subtotal: num(sale.subtotal),
     discount: num(sale.discountAmount ?? sale.discount),
     taxLines,
-    total: num(sale.total),
+    total,
     payments,
     change: ctx.change && ctx.change > 0 ? ctx.change : undefined,
-    isReturn: Boolean(sale.isReturn) || num(sale.total) < 0,
+    isReturn,
     // The barcode / QR carries the invoice number (INV-, RTN- or offline OFF- refs) so a
     // later return can be started by scanning the slip.
     qrPayload: sale.invoiceNo || null,
     invoiceCode: settings.invoiceCode,
+    taxInvoice,
   }
 }
 
@@ -313,6 +379,9 @@ export interface ShiftCloseLike {
     difference?: number
   }>
   summary?: { totalSales: number; totalReturns: number; netSales: number; totalTransactions: number; totalVariance: number }
+  /** H1: Z-report detail and the variance reason given at close */
+  zReport?: ZReportInput['details']
+  varianceReason?: string | null
 }
 
 export function zReportFromClose(result: ShiftCloseLike, ctx: { business: BusinessInfo; shift?: Shift | null; cashier?: string | null; notes?: string | null }): ZReportInput {
@@ -340,6 +409,8 @@ export function zReportFromClose(result: ShiftCloseLike, ctx: { business: Busine
     closedAt: result.closingEntry?.closingTime || new Date(),
     summary,
     tenders,
+    details: result.zReport || null,
+    varianceReason: result.varianceReason || null,
     notes: ctx.notes || null,
   }
 }

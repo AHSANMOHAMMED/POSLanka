@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateKitchenOrderItemSchema } from '@/lib/validation/schemas/restaurant'
 import { z } from 'zod'
+import { recalculateOrderTotals } from '@/lib/restaurant/order-totals'
 
 // Helper function to update kitchen order status based on item statuses
 async function updateKitchenOrderStatus(
@@ -25,11 +26,12 @@ async function updateKitchenOrderStatus(
     return
   }
 
-  // Check item statuses
-  const allServed = items.every(
+  // Check item statuses (cancelled lines are ignored unless every line is cancelled)
+  const live = items.filter((item: { status: string }) => item.status !== 'cancelled')
+  const allServed = live.length > 0 && live.every(
     (item: { status: string }) => item.status === 'served'
   )
-  const allReady = items.every(
+  const allReady = live.length > 0 && live.every(
     (item: { status: string }) => item.status === 'ready' || item.status === 'served'
   )
   const allCancelled = items.every(
@@ -134,9 +136,15 @@ export async function PUT(
           .returning()
 
         // Also update the corresponding restaurant order item status
-        await tx.update(restaurantOrderItems)
+        const [roItem] = await tx.update(restaurantOrderItems)
           .set({ status })
           .where(eq(restaurantOrderItems.id, currentItem.restaurantOrderItemId))
+          .returning({ orderId: restaurantOrderItems.orderId })
+
+        // A line cancelled in the kitchen is no longer billed: refresh the order totals
+        if (status === 'cancelled' && roItem?.orderId) {
+          await recalculateOrderTotals(tx, roItem.orderId, session.user.tenantId)
+        }
 
         // Update kitchen order overall status based on all items
         const newKitchenOrderStatus = await updateKitchenOrderStatus(tx, kitchenOrderId)

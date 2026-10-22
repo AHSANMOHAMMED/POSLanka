@@ -5,6 +5,7 @@ import { customers } from '@/lib/db/schema'
 import { eq, or, ilike, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { requirePermission } from '@/lib/auth/roles'
+import { hasAnyPermission, CUSTOMER_LOOKUP_PERMISSIONS } from '@/lib/auth/field-access'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -17,6 +18,11 @@ export async function GET(request: NextRequest) {
     const session = await authWithCompany()
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    // H4: POS / service / reporting roles look customers up; others (e.g. HR, stock) may not
+    if (!hasAnyPermission(session, CUSTOMER_LOOKUP_PERMISSIONS)) {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
     }
 
     const parsed = validateSearchParams(request, customersListSchema)

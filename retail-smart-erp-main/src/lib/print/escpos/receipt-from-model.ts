@@ -1,7 +1,7 @@
 /**
  * ESC/POS renderer for the shared receipt model (W7). Pure (no DOM).
  */
-import type { ReceiptModel } from '../receipt-model'
+import { formatRate, type ReceiptModel } from '../receipt-model'
 import {
   builderFor,
   formatMoney,
@@ -72,6 +72,7 @@ export function buildReceiptEscPosFromModel(model: ReceiptModel, opts: ReceiptMo
     if (model.showItemSku && l.sku) b.paragraph(`  ${l.sku}`)
     b.row(`  ${l.qtyText}${l.unit ? ` ${l.unit}` : ''} x ${m(l.unitPrice)}`, m(l.total))
     if (l.discount > 0) b.row('  Discount', `-${m(l.discount)}`)
+    if (model.taxInvoice && l.vatAmount) b.row(`  VAT ${formatRate(l.vatRate)}%`, m(l.vatAmount))
     for (const n of l.notes) b.paragraph(`  ${n}`)
   }
   b.hr()
@@ -81,6 +82,12 @@ export function buildReceiptEscPosFromModel(model: ReceiptModel, opts: ReceiptMo
   b.bold(true).size(2, 2)
   b.row('TOTAL', `${cur}${m(model.total)}`)
   b.size(1, 1).bold(false)
+  if (model.taxInvoice) {
+    b.hr('-')
+    b.row('Total excl. VAT', m(model.taxInvoice.totalExclVat))
+    b.row('VAT', m(model.taxInvoice.totalVat))
+    b.row('Total incl. VAT', m(model.taxInvoice.totalInclVat))
+  }
   b.hr()
 
   for (const p of model.payments) b.row(p.label, m(p.amount))

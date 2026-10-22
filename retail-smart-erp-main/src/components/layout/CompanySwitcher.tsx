@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import { Building2, ChevronDown, Check, Settings } from 'lucide-react'
+import { sharedJson } from '@/lib/client/shared-fetch'
 
 interface Company {
   id: string
@@ -38,15 +39,10 @@ export function CompanySwitcher({ currentSlug }: CompanySwitcherProps) {
     fetchedRef.current = true
 
     try {
-      const res = await fetch('/api/my-companies')
-      if (res.ok) {
-        const data = await res.json()
-        setCompanies(data)
-      } else {
-        // Allow retry on next mount, but don't retry on every render
-        fetchedRef.current = false
-      }
+      const data = await sharedJson<typeof companies>('/api/my-companies', { maxAgeMs: 60_000 })
+      setCompanies(data)
     } catch {
+      // Allow retry on next mount, but don't retry on every render
       fetchedRef.current = false
     }
   }, [session?.user?.accountId])

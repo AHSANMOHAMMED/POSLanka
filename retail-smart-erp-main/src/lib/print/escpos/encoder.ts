@@ -689,6 +689,33 @@ export interface ZReportMethod {
   variance?: number | null
 }
 
+/**
+ * H1: Z-report detail captured at shift close (pos_closing_entries.report_data, built by
+ * src/lib/pos/shift-report.ts): tax summary, discounts, voids, returns, cash paid in / out and
+ * the tie-out of the drawer cash against the cash ledger account.
+ */
+export interface ZReportDetails {
+  tax?: { total: number; sales: number; returns: number; byName?: Array<{ taxName: string; rate: number | null; amount: number }> }
+  discounts?: { total: number; cart: number; line: number; count: number }
+  voids?: { count: number; total: number; items?: Array<{ invoiceNo: string; total: number; reason: string | null }> }
+  returns?: { count: number; total: number; items?: Array<{ invoiceNo: string; total: number; method: string | null; reason: string | null }> }
+  cashMovements?: {
+    paidIn: number; paidOut: number; net: number; count: number; voidedCount?: number
+    items?: Array<{ movementNo: string; type: string; category: string; amount: number; note: string | null; status: string }>
+  }
+  approvals?: { count: number }
+  ledger?: { posted: boolean; ledgerCash: number; expectedCashMovement: number; difference: number; tiesOut: boolean }
+}
+
+const Z_CATEGORY_LABELS: Record<string, string> = {
+  petty_expense: 'Petty expense',
+  supplier_payment: 'Supplier payment',
+  bank_drop: 'Bank drop',
+  float_top_up: 'Float top-up',
+  void_refund: 'Void refund',
+  other: 'Other',
+}
+
 export interface ZReportInput {
   business: ReceiptBusiness
   title?: string
@@ -705,6 +732,10 @@ export interface ZReportInput {
     totalVariance?: number | null
   }
   methods: ZReportMethod[]
+  /** H1: tax, discounts, voids, returns, cash movements, ledger tie-out */
+  details?: ZReportDetails | null
+  /** H1: reason given for a drawer variance */
+  varianceReason?: string | null
   notes?: string | null
   currency?: string | null
   /**
@@ -803,6 +834,61 @@ export function buildZReportEscPos(input: ZReportInput, opts: ZReportBuildOption
     b.bold(true)
     b.row('Total variance', money(input.summary.totalVariance, dec))
     b.bold(false)
+    if (input.varianceReason) b.row('Reason', input.varianceReason)
+  }
+  const d = input.details
+  if (d) {
+    if (d.cashMovements && (d.cashMovements.count > 0 || (d.cashMovements.voidedCount || 0) > 0)) {
+      b.hr()
+      b.styledLine('CASH PAID IN / OUT', { bold: true })
+      for (const m of (d.cashMovements.items || []).filter((x) => x.status === 'posted')) {
+        const label = `${m.type === 'paid_out' ? 'Out' : 'In'} ${Z_CATEGORY_LABELS[m.category] || m.category}`
+        b.row(label, `${m.type === 'paid_out' ? '-' : ''}${money(m.amount, dec)}`)
+      }
+      b.row('Paid in', money(d.cashMovements.paidIn, dec))
+      b.row('Paid out', `-${money(d.cashMovements.paidOut, dec)}`)
+      if (d.cashMovements.voidedCount) b.row('Voided movements', String(d.cashMovements.voidedCount))
+    }
+    if (d.tax) {
+      b.hr()
+      b.styledLine('TAX SUMMARY', { bold: true })
+      for (const t of d.tax.byName || []) {
+        b.row(`${t.taxName}${t.rate != null ? ` ${t.rate}%` : ''}`, money(t.amount, dec))
+      }
+      b.row('Tax on sales', money(d.tax.sales, dec))
+      if (d.tax.returns) b.row('Tax on returns', `-${money(d.tax.returns, dec)}`)
+      b.bold(true)
+      b.row('Net tax', money(d.tax.total, dec))
+      b.bold(false)
+    }
+    if (d.discounts || d.voids || d.returns) {
+      b.hr()
+      b.styledLine('ADJUSTMENTS', { bold: true })
+      if (d.discounts) b.row(`Discounts (${d.discounts.count})`, `-${money(d.discounts.total, dec)}`)
+      if (d.voids) b.row(`Voids (${d.voids.count})`, money(d.voids.total, dec))
+      for (const v of (d.voids?.items || []).slice(0, 20)) {
+        b.row(`  ${v.invoiceNo}`, money(v.total, dec))
+        if (v.reason) b.paragraph(`    ${v.reason}`)
+      }
+      if (d.returns) b.row(`Returns (${d.returns.count})`, `-${money(d.returns.total, dec)}`)
+      for (const r of (d.returns?.items || []).slice(0, 20)) {
+        b.row(`  ${r.invoiceNo}${r.method ? ` ${methodLabel(r.method)}` : ''}`, `-${money(r.total, dec)}`)
+      }
+      if (d.approvals?.count) b.row('Supervisor approvals', String(d.approvals.count))
+    }
+    if (d.ledger) {
+      b.hr()
+      b.styledLine('LEDGER TIE-OUT', { bold: true })
+      if (!d.ledger.posted) {
+        b.paragraph('Not posted to the ledger')
+      } else {
+        b.row('Drawer cash movement', money(d.ledger.expectedCashMovement, dec))
+        b.row('Cash ledger', money(d.ledger.ledgerCash, dec))
+        b.bold(true)
+        b.row(d.ledger.tiesOut ? 'Ties out' : 'DIFFERENCE', d.ledger.tiesOut ? 'OK' : money(d.ledger.difference, dec))
+        b.bold(false)
+      }
+    }
   }
   if (input.notes) {
     b.hr()

@@ -7,6 +7,7 @@ import { eq, sql, desc } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { postGiftCardBreakageToGL } from '@/lib/accounting/auto-post'
+import { isExpiredOn, netBreakageByAccount, reverseOutstandingBreakage, tenantTodayDate } from '@/lib/gift-cards/lifecycle'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateGiftCardSchema } from '@/lib/validation/schemas/gift-cards'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -115,6 +116,21 @@ export async function PUT(
           throw new Error('NOT_FOUND')
         }
 
+        const tenantId = session!.user.tenantId
+        const balance = parseFloat(currentCard.currentBalance) || 0
+        const today = await tenantTodayDate(tenantId)
+        const effectiveExpiry = expiryDate !== undefined ? (expiryDate || null) : currentCard.expiryDate
+        const TERMINAL = ['blocked', 'expired']
+
+        // Status changes must describe the card truthfully: a card with money on it is not
+        // "used", an activated card cannot go back to "inactive", and a card past its expiry
+        // date cannot be made active (extend the expiry date in the same request instead).
+        if (status !== undefined && status !== currentCard.status) {
+          if (status === 'used' && balance > 0.005) throw new Error('USED_WITH_BALANCE')
+          if (status === 'inactive') throw new Error('CANNOT_DEACTIVATE')
+          if (status === 'active' && isExpiredOn(effectiveExpiry, today)) throw new Error('EXPIRED_CARD')
+        }
+
         // Build update data
         const updateData: Partial<typeof giftCards.$inferInsert> = {}
 
@@ -135,20 +151,25 @@ export async function PUT(
           .where(eq(giftCards.id, id))
           .returning()
 
-        // If blocking/expiring a card with remaining balance, recognize breakage revenue
-        if (status && (status === 'blocked' || status === 'expired')) {
-          const remainingBalance = parseFloat(currentCard.currentBalance)
-          if (remainingBalance > 0) {
-            try {
-              await postGiftCardBreakageToGL(tx, session!.user.tenantId, {
+        const wasTerminal = TERMINAL.includes(currentCard.status)
+        const isTerminal = TERMINAL.includes(updated.status)
+        try {
+          if (!wasTerminal && isTerminal && balance > 0) {
+            // Recognise breakage once, when the card leaves circulation with money on it
+            const outstanding = await netBreakageByAccount(tx, tenantId, id)
+            if (outstanding.size === 0) {
+              await postGiftCardBreakageToGL(tx, tenantId, {
                 giftCardId: id,
                 cardNumber: currentCard.cardNumber,
-                remainingBalance,
+                remainingBalance: balance,
               })
-            } catch (glError) {
-              logError('api/gift-cards/[id]', glError)
             }
+          } else if (wasTerminal && !isTerminal) {
+            // Card back in circulation: its balance is a liability again
+            await reverseOutstandingBreakage(tx, tenantId, id, currentCard.cardNumber)
           }
+        } catch (glError) {
+          logError('api/gift-cards/[id]', glError)
         }
 
         return updated
@@ -168,6 +189,15 @@ export async function PUT(
     }
     if (message === 'INVALID_STATUS') {
       return NextResponse.json({ error: 'Invalid status value' }, { status: 400 })
+    }
+    if (message === 'USED_WITH_BALANCE') {
+      return NextResponse.json({ error: 'A gift card with a remaining balance cannot be marked as used' }, { status: 400 })
+    }
+    if (message === 'CANNOT_DEACTIVATE') {
+      return NextResponse.json({ error: 'An activated gift card cannot be set back to inactive. Block it instead.' }, { status: 400 })
+    }
+    if (message === 'EXPIRED_CARD') {
+      return NextResponse.json({ error: 'This gift card is past its expiry date. Extend the expiry date to reactivate it.' }, { status: 400 })
     }
 
     return NextResponse.json({ error: 'Failed to update gift card' }, { status: 500 })

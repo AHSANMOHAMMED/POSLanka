@@ -11,6 +11,7 @@ import { FormInput, FormLabel, FormSelect, FormTextarea } from '@/components/ui/
 import { toast } from '@/components/ui/toast'
 import { PageLoading } from '@/components/ui/loading-spinner'
 import { formatCurrency } from '@/lib/utils/currency'
+import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, wasteReasonCode } from '@/lib/inventory/adjustment-reasons'
 import { EmptyState, Button } from '@/components/ui'
 import { ExportDialog } from '@/components/import-export/ExportDialog'
 
@@ -46,6 +47,8 @@ interface WasteFormData {
   quantity: string
   unit: string
   reason: string
+  /** H3: structured reason code ('' = derived from the reason) */
+  reasonCode: string
   notes: string
 }
 
@@ -73,6 +76,7 @@ const INITIAL_FORM_DATA: WasteFormData = {
   quantity: '',
   unit: 'piece',
   reason: 'Expired',
+  reasonCode: '',
   notes: '',
 }
 
@@ -269,12 +273,15 @@ export default function WasteLogPage() {
           quantity: parseFloat(formData.quantity),
           unit: formData.unit,
           reason: formData.reason,
+          reasonCode: formData.reasonCode || wasteReasonCode(formData.reason),
           notes: formData.notes.trim() || null,
         }),
       })
 
       if (res.ok) {
+        const saved = await res.clone().json().catch(() => ({}))
         toast.success('Waste entry logged')
+        if (saved.warning) toast.warning(saved.warning)
         handleCloseLog()
         refresh()
         fetchSummary()
@@ -633,6 +640,19 @@ export default function WasteLogPage() {
             >
               {WASTE_REASONS.map(reason => (
                 <option key={reason} value={reason}>{reason}</option>
+              ))}
+            </FormSelect>
+          </div>
+
+          <div>
+            <FormLabel optional>Reason code</FormLabel>
+            <FormSelect
+              value={formData.reasonCode}
+              onChange={(e) => setFormData(prev => ({ ...prev, reasonCode: e.target.value }))}
+            >
+              <option value="">Automatic ({ADJUSTMENT_REASON_LABELS[wasteReasonCode(formData.reason)]})</option>
+              {ADJUSTMENT_REASON_CODES.map(c => (
+                <option key={c} value={c}>{ADJUSTMENT_REASON_LABELS[c]}</option>
               ))}
             </FormSelect>
           </div>

@@ -19,6 +19,10 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    // Settings screen only — exposes SMTP host/user
+    const permError = requirePermission(session, 'manageSettings')
+    if (permError) return permError
+
     return await withTenant(session.user.tenantId, async (db) => {
       const [settings] = await db
         .select()

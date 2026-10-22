@@ -7,6 +7,10 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSalesOrderSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
+
+/** Stock problem while confirming: thrown so the whole transaction (earlier reservations) rolls back. */
+class SalesOrderStockError extends Error {}
 
 // Valid status transitions
 const validTransitions: Record<string, string[]> = {
@@ -144,7 +148,15 @@ export async function PUT(
     changesSummary,
   } = parsed.data
 
-  const result = await withAuthTenantTransaction(async (session, tx) => {
+  for (const item of items || []) {
+    if ((item.discount || 0) > item.quantity * item.unitPrice + 0.001) {
+      return NextResponse.json({ error: `Discount on ${item.itemName || 'an item'} exceeds the line amount` }, { status: 400 })
+    }
+  }
+
+  let result
+  try {
+  result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'manageSales')
     if (permError) return { error: permError }
 
@@ -268,9 +280,8 @@ export async function PUT(
           if (stock) {
             const available = parseFloat(stock.currentStock) - parseFloat(stock.reservedStock)
             if (available < qty) {
-              return { error: NextResponse.json({
-                error: `Insufficient stock for ${item.itemName}. Available: ${available}, Required: ${qty}`
-              }, { status: 400 }) }
+              // Throw (not return) so reservations already added for earlier lines roll back
+              throw new SalesOrderStockError(`Insufficient stock for ${item.itemName}. Available: ${available}, Required: ${qty}`)
             }
 
             await tx.update(warehouseStock)
@@ -280,9 +291,7 @@ export async function PUT(
               })
               .where(eq(warehouseStock.id, stock.id))
           } else {
-            return { error: NextResponse.json({
-              error: `No stock found for ${item.itemName} in selected warehouse`
-            }, { status: 400 }) }
+            throw new SalesOrderStockError(`No stock found for ${item.itemName} in selected warehouse`)
           }
         }
 
@@ -292,8 +301,11 @@ export async function PUT(
       if (status === 'cancelled') {
         updateData.cancellationReason = cancellationReason || null
         updateData.cancelledAt = new Date()
+      }
 
-        // Release reserved stock (only unfulfilled portion)
+      // Cancelling, or manually closing as fulfilled, ends the order: release the reservation
+      // still held for the unfulfilled quantity (otherwise that stock stays blocked forever).
+      if (status === 'cancelled' || status === 'fulfilled') {
         if (currentOrder.status === 'confirmed' || currentOrder.status === 'partially_fulfilled') {
           const orderItems = await tx
             .select()
@@ -371,10 +383,23 @@ export async function PUT(
         totalDiscount = Math.round(totalDiscount * 100) / 100
         totalTax = Math.round(totalTax * 100) / 100
 
-        updateData.subtotal = subtotal.toString()
-        updateData.discountAmount = totalDiscount.toString()
-        updateData.taxAmount = totalTax.toString()
-        updateData.total = (Math.round((subtotal - totalDiscount + totalTax) * 100) / 100).toString()
+        // Same tax rules as creating the order: template tax when a template applies
+        const taxResult = await recalculateDocumentTax(tx, session.user.tenantId,
+          items.map(item => ({ itemId: item.itemId || null, lineTotal: item.quantity * item.unitPrice })),
+          { type: 'sales' })
+        if (taxResult.taxBreakdown && taxResult.taxBreakdown.length > 0) {
+          updateData.subtotal = taxResult.subtotal.toString()
+          updateData.discountAmount = totalDiscount.toString()
+          updateData.taxAmount = taxResult.totalTax.toString()
+          updateData.taxBreakdown = taxResult.taxBreakdown
+          updateData.total = (Math.round((taxResult.subtotal - totalDiscount + taxResult.totalTax) * 100) / 100).toString()
+        } else {
+          updateData.subtotal = subtotal.toString()
+          updateData.discountAmount = totalDiscount.toString()
+          updateData.taxAmount = totalTax.toString()
+          updateData.taxBreakdown = null
+          updateData.total = (Math.round((subtotal - totalDiscount + totalTax) * 100) / 100).toString()
+        }
       } else {
         updateData.subtotal = '0'
         updateData.discountAmount = '0'
@@ -430,6 +455,12 @@ export async function PUT(
 
     return { data: updated }
   })
+  } catch (err) {
+    if (err instanceof SalesOrderStockError) {
+      return NextResponse.json({ error: err.message }, { status: 400 })
+    }
+    throw err
+  }
 
   if (!result) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

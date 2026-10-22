@@ -11,7 +11,6 @@ const MODULE_FEATURE_MAP: Record<string, FeatureFlag> = {
 /** Map sidebar href fragments to feature flags */
 const HREF_FEATURE_MAP: Array<{ match: string; flag: FeatureFlag }> = [
   { match: '/quotations', flag: 'quotation' },
-  { match: '/credit-notes', flag: 'quotation' },
   { match: '/settings/loyalty', flag: 'loyalty' },
   { match: '/stock-transfers', flag: 'multi_warehouse' },
 ]

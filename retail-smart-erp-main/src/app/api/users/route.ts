@@ -5,11 +5,12 @@ import { withTenant } from '@/lib/db'
 import { db } from '@/lib/db'
 import { users, userWarehouses, warehouses, accounts, staffInvites, tenants, posProfiles, posProfileUsers } from '@/lib/db/schema'
 import { eq, and, inArray, isNull, gt } from 'drizzle-orm'
-import { requirePermission, canModifyUser } from '@/lib/auth/roles'
+import { requirePermission, canModifyUser, rolePermissionsNotHeld } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
+import { requireUserSeat } from '@/lib/billing/user-limit'
 import { validateBody } from '@/lib/validation'
 import { createUserBodySchema } from '@/lib/validation/schemas/users'
 import { createStaffUser, resolveStaffAssignments, addUserWarehouses, replaceUserPosProfiles, StaffError } from '@/lib/users/create-staff'
@@ -161,8 +162,19 @@ export async function POST(request: NextRequest) {
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return quotaError
 
+    // Plan seat limit (pricing tier max_users)
+    const seatError = await requireUserSeat(session.user.tenantId)
+    if (seatError) return seatError
+
     const parsed = await validateBody(request, createUserBodySchema)
     if (!parsed.success) return parsed.response
+
+    // No privilege escalation through a new account: the role may not carry permissions
+    // the creator does not have (e.g. a manager creating a system_manager to reach settings).
+    const notHeld = rolePermissionsNotHeld(session.user.role, parsed.data.role, session.user.tenantId, session.user.customRoleId)
+    if (notHeld.length > 0) {
+      return NextResponse.json({ error: 'You cannot create users with this role', missingPermissions: notHeld }, { status: 403 })
+    }
 
     if (parsed.data.mode === 'create') {
       const body = parsed.data

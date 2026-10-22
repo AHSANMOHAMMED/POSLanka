@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db as rawDb, withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
 import {
-  purchases, purchaseItems, suppliers, supplierBalanceAudit, items as itemsTable, itemSerialNumbers,
+  purchases, purchaseItems, items as itemsTable, itemSerialNumbers,
 } from '@/lib/db/schema'
 import { eq, and, inArray, ne } from 'drizzle-orm'
 import { applyStockChanges, notifyStockDecreased, type StockChangeInput } from '@/lib/inventory/apply-stock-change'
@@ -23,6 +23,8 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createPurchaseReturnSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { adjustSupplierBalance } from '@/lib/purchasing/supplier-balance'
+import { takeOutOfBatches } from '@/lib/purchasing/batch-receipt'
 
 export async function POST(
   request: NextRequest,
@@ -65,6 +67,9 @@ export async function POST(
 
       if (originalPurchase.status === 'draft' || originalPurchase.status === 'cancelled') {
         return { error: NextResponse.json({ error: 'Cannot return items from a draft or cancelled purchase' }, { status: 400 }) }
+      }
+      if (originalPurchase.isReturn) {
+        return { error: NextResponse.json({ error: 'Cannot return items from a purchase return' }, { status: 400 }) }
       }
 
       // Get original purchase items
@@ -200,7 +205,28 @@ export async function POST(
         itemId: item.itemId,
         lineTotal: roundCurrency(returnQty * parseFloat(item.unitPrice)),
       }))
-      const taxResult = await recalculateDocumentTax(tx, session.user.tenantId, returnLineItems, { type: 'purchase' })
+      // Tax follows the original document: a purchase taxed through templates (tax_breakdown
+      // stored) is re-taxed through templates; a purchase with manual line tax returns the same
+      // share of each line's tax (returnQty / purchasedQty) — the supplier refunds the VAT
+      // that was actually charged, not whatever the current template would compute.
+      const originalUsedTemplates = Array.isArray(originalPurchase.taxBreakdown) && originalPurchase.taxBreakdown.length > 0
+      let taxResult: Awaited<ReturnType<typeof recalculateDocumentTax>>
+      if (originalUsedTemplates) {
+        taxResult = await recalculateDocumentTax(tx, session.user.tenantId, returnLineItems, { type: 'purchase' })
+      } else {
+        const perItemTax = validatedItems.map(({ item, returnQty }, idx) => {
+          const origQty = parseFloat(item.quantity)
+          const taxAmount = origQty > 0 ? roundCurrency(parseFloat(item.tax || '0') * (returnQty / origQty)) : 0
+          const base = returnLineItems[idx].lineTotal
+          return { itemId: item.itemId, taxRate: 0, taxAmount, taxBreakdown: null, baseAmount: base, totalAmount: roundCurrency(base + taxAmount) }
+        })
+        const subtotal = roundCurrency(returnLineItems.reduce((a, l) => a + l.lineTotal, 0))
+        const totalTax = roundCurrency(perItemTax.reduce((a, l) => a + l.taxAmount, 0))
+        taxResult = {
+          subtotal, totalTax, taxBreakdown: null, exclusiveTax: totalTax,
+          total: roundCurrency(subtotal + totalTax), perItemTax,
+        }
+      }
 
       const returnSubtotal = taxResult.subtotal
       const returnTax = taxResult.totalTax
@@ -287,6 +313,18 @@ export async function POST(
       const stockResults = await applyStockChanges(tx, stockInputs)
       const stockChanges: StockChangeRecord[] = stockResults.map((result, i) => ({ result, input: stockInputs[i] }))
 
+      // Batch-tracked items: out of the batches the original invoice filled first, then FEFO
+      if (originalPurchase.warehouseId) {
+        for (const { item, returnQty } of validatedItems) {
+          if (!item.itemId) continue
+          await takeOutOfBatches(tx, {
+            tenantId: session.user.tenantId, itemId: item.itemId, warehouseId: originalPurchase.warehouseId, qty: returnQty,
+            preferDocType: 'purchase', preferDocId: originalPurchase.id,
+            docType: 'purchase', docId: returnPurchase.id, lineId: item.id, itemName: item.itemName,
+          })
+        }
+      }
+
       // Serials go back to the supplier: status 'returned', audit trail on the return
       for (const { serialNumberIds } of validatedItems) {
         if (serialNumberIds.length === 0) continue
@@ -303,30 +341,15 @@ export async function POST(
 
       // Reverse supplier balance
       if (originalPurchase.supplierId && returnTotal > 0) {
-        const [currentSupplier] = await tx
-          .select({ balance: suppliers.balance })
-          .from(suppliers)
-          .where(eq(suppliers.id, originalPurchase.supplierId))
-          .for('update')
-
-        const previousBalance = parseFloat(currentSupplier?.balance || '0')
-        const newBalance = Math.round((previousBalance - returnTotal) * 100) / 100
-
-        await tx.update(suppliers)
-          .set({ balance: newBalance.toString() })
-          .where(eq(suppliers.id, originalPurchase.supplierId))
-
-        await tx.insert(supplierBalanceAudit).values({
+        await adjustSupplierBalance(tx, {
           tenantId: session.user.tenantId,
           supplierId: originalPurchase.supplierId,
+          delta: -returnTotal,
           type: 'return',
-          amount: (-returnTotal).toString(),
-          previousBalance: previousBalance.toString(),
-          newBalance: newBalance.toString(),
           referenceType: 'purchase',
           referenceId: returnPurchase.id,
           notes: `Purchase return ${returnPurchaseNo} against ${originalPurchase.purchaseNo}`,
-          createdBy: session.user.id,
+          userId: session.user.id,
         })
       }
 

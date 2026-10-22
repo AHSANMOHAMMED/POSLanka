@@ -1,7 +1,7 @@
 // Auto-posting functions for sales, purchases, and payments
 // Called from existing API routes to create GL entries automatically
 
-import { createGLEntries, reverseGLEntries, type GLEntryInput } from './gl'
+import { createGLEntries, reverseGLEntries, tenantToday, type GLEntryInput } from './gl'
 import { accountingSettings, modesOfPayment } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { roundCurrency } from '@/lib/utils/currency'
@@ -27,6 +27,9 @@ interface AccountingConfig {
   defaultWipAccountId: string | null
   defaultGiftCardLiabilityAccountId: string | null
   defaultCashOverShortAccountId: string | null
+  defaultSrbnbAccountId: string | null
+  defaultPriceVarianceAccountId: string | null
+  stockAdjustmentReasonAccounts: Record<string, string> | null
   autoPostSales: boolean
   autoPostPurchases: boolean
   currentFiscalYearId: string | null
@@ -62,6 +65,9 @@ async function getAccountingConfig(
     defaultWipAccountId: settings.defaultWipAccountId || null,
     defaultGiftCardLiabilityAccountId: settings.defaultGiftCardLiabilityAccountId || null,
     defaultCashOverShortAccountId: settings.defaultCashOverShortAccountId || null,
+    defaultSrbnbAccountId: settings.defaultSrbnbAccountId || null,
+    defaultPriceVarianceAccountId: settings.defaultPriceVarianceAccountId || null,
+    stockAdjustmentReasonAccounts: (settings.stockAdjustmentReasonAccounts as Record<string, string> | null) || null,
     autoPostSales: settings.autoPostSales,
     autoPostPurchases: settings.autoPostPurchases,
     currentFiscalYearId: settings.currentFiscalYearId,
@@ -427,6 +433,142 @@ interface PurchasePostingData {
   costCenterId?: string | null
   taxBreakdown?: TaxBreakdownItem[]
   isReturn?: boolean
+  /**
+   * H3 — invoice billed against GRN stock already posted Dr Stock / Cr SRBNB (see
+   * src/lib/purchasing/srbnb.ts). srbnbAmount is debited to Stock Received But Not Billed instead
+   * of Stock; the invoice-vs-GRN price difference goes to the price variance account
+   * (priceVariance) and/or, for goods no longer on hand, to COGS (cogsAdjustment). Both signed
+   * (+ = invoice dearer). The remainder of the net cost is debited to Stock as before.
+   */
+  grnClearing?: {
+    srbnbAmount: number
+    priceVariance?: number
+    cogsAdjustment?: number
+  }
+}
+
+/** Sign-aware GL line: positive → debit, negative → credit (zero → nothing). */
+function signedEntry(entries: GLEntryInput[], accountId: string, amount: number, base: Omit<GLEntryInput, 'accountId' | 'debit' | 'credit'>) {
+  const a = roundCurrency(amount)
+  if (a === 0) return
+  entries.push({ ...base, accountId, ...(a > 0 ? { debit: a } : { credit: -a }) })
+}
+
+/**
+ * H3 — the accounts the purchasing flows need to decide how they post: whether GRNs post to
+ * Stock Received But Not Billed, and whether a price variance account is configured.
+ */
+export async function getPurchasePostingAccounts(tx: DbOrTx, tenantId: string): Promise<{
+  enabled: boolean
+  stockAccountId: string | null
+  srbnbAccountId: string | null
+  priceVarianceAccountId: string | null
+  cogsAccountId: string | null
+  grnPostsToGL: boolean
+}> {
+  const config = await getAccountingConfig(tx, tenantId)
+  const enabled = !!config && config.autoPostPurchases && !!config.currentFiscalYearId
+  return {
+    enabled,
+    stockAccountId: config?.defaultStockAccountId || null,
+    srbnbAccountId: config?.defaultSrbnbAccountId || null,
+    priceVarianceAccountId: config?.defaultPriceVarianceAccountId || null,
+    cogsAccountId: config?.defaultCOGSAccountId || null,
+    grnPostsToGL: enabled && !!config?.defaultStockAccountId && !!config?.defaultSrbnbAccountId,
+  }
+}
+
+/**
+ * H3 — Goods receipt (GRN with stock update): the goods are in the warehouse before the
+ * supplier's bill arrives, so the ledger must carry them too.
+ *   Dr Stock / Inventory                 [received value at PO price]
+ *   Cr Stock Received But Not Billed     [same]
+ * Returns null (nothing posted) when purchase auto-posting is off or the Stock / SRBNB accounts
+ * are not configured — the GRN is then marked gl_posted=false and its invoice posts the stock.
+ * Cancelling the GRN reverses voucher ('purchase_receipt', receiptId).
+ */
+export async function postGoodsReceiptToGL(
+  tx: DbOrTx,
+  tenantId: string,
+  data: { receiptId: string; receiptNo: string; postingDate: string; value: number; supplierId?: string | null; costCenterId?: string | null }
+): Promise<string[] | null> {
+  const config = await getAccountingConfig(tx, tenantId)
+  if (!config || !config.autoPostPurchases || !config.currentFiscalYearId) return null
+  if (!config.defaultStockAccountId || !config.defaultSrbnbAccountId) return null
+  const value = roundCurrency(data.value)
+  if (value <= 0) return null
+  const costCenterId = data.costCenterId || config.defaultCostCenterId || null
+  return createGLEntries(tx, {
+    tenantId,
+    postingDate: data.postingDate,
+    voucherType: 'purchase_receipt',
+    voucherId: data.receiptId,
+    voucherNumber: data.receiptNo,
+    fiscalYearId: config.currentFiscalYearId,
+    entries: [
+      { accountId: config.defaultStockAccountId, debit: value, costCenterId, remarks: `Goods received: ${data.receiptNo}` },
+      {
+        // no party: supplier ledgers / aged payables read party-tagged GL rows
+        accountId: config.defaultSrbnbAccountId, credit: value, costCenterId,
+        remarks: `Stock received but not billed: ${data.receiptNo}`,
+      },
+    ],
+  })
+}
+
+/**
+ * H3 — Landed cost voucher.
+ *   Dr Stock / Inventory     [absorbed: share of goods still on hand]
+ *   Dr COGS                  [expensed: share of goods already sold / gone]
+ *   Cr Accounts Payable      [per charge with a supplier]  /  Cr <charge account>
+ * Cancelling reverses voucher ('landed_cost', voucherId).
+ */
+export async function postLandedCostToGL(
+  tx: DbOrTx,
+  tenantId: string,
+  data: {
+    voucherId: string
+    voucherNo: string
+    postingDate: string
+    absorbed: number
+    expensed: number
+    credits: { amount: number; supplierId?: string | null; accountId?: string | null; remarks: string }[]
+  }
+): Promise<string[] | null> {
+  const config = await getAccountingConfig(tx, tenantId)
+  if (!config || !config.autoPostPurchases) return null
+  if (!config.currentFiscalYearId) {
+    throw new Error('No active fiscal year configured. Please set a current fiscal year in Accounting Settings.')
+  }
+  const absorbed = roundCurrency(data.absorbed)
+  const expensed = roundCurrency(data.expensed)
+  if (absorbed + expensed === 0) return null
+  const missing = [
+    absorbed !== 0 && !config.defaultStockAccountId && 'Stock/Inventory',
+    expensed !== 0 && !config.defaultCOGSAccountId && 'Cost of Goods Sold',
+    data.credits.some(c => c.supplierId && !c.accountId) && !config.defaultPayableAccountId && 'Accounts Payable',
+  ].filter(Boolean).join(', ')
+  if (missing) {
+    throw new Error(`GL_ACCOUNTS_MISSING: Cannot post landed cost — missing ${missing} account(s). Configure in Settings → Accounting.`)
+  }
+  const costCenterId = config.defaultCostCenterId || null
+  const entries: GLEntryInput[] = []
+  signedEntry(entries, config.defaultStockAccountId!, absorbed, { costCenterId, remarks: `Landed cost on stock: ${data.voucherNo}` })
+  signedEntry(entries, config.defaultCOGSAccountId!, expensed, { costCenterId, remarks: `Landed cost on goods already sold: ${data.voucherNo}` })
+  for (const c of data.credits) {
+    const accountId = c.accountId || config.defaultPayableAccountId!
+    const party = !c.accountId && c.supplierId ? { partyType: 'supplier' as const, partyId: c.supplierId } : {}
+    signedEntry(entries, accountId, -c.amount, { costCenterId, remarks: c.remarks, ...party })
+  }
+  return createGLEntries(tx, {
+    tenantId,
+    postingDate: data.postingDate,
+    voucherType: 'landed_cost',
+    voucherId: data.voucherId,
+    voucherNumber: data.voucherNo,
+    fiscalYearId: config.currentFiscalYearId,
+    entries,
+  })
 }
 
 /**
@@ -522,12 +664,36 @@ export async function postPurchaseToGL(
   } else {
     // Normal purchase
     // Dr Stock/Inventory (asset account for purchased goods)
-    entries.push({
-      accountId: purchaseDebitAccountId,
-      debit: adjustedNetCost,
-      costCenterId,
-      remarks: 'Purchase - inventory received',
-    })
+    if (data.grnClearing && data.grnClearing.srbnbAmount !== 0) {
+      // H3: part of the goods was already put on the ledger by its GRN (Cr SRBNB): clear it,
+      // book the price difference, and debit Stock only with what the GRNs did not cover.
+      const srbnb = roundCurrency(data.grnClearing.srbnbAmount)
+      const variance = roundCurrency(data.grnClearing.priceVariance || 0)
+      const cogs = roundCurrency(data.grnClearing.cogsAdjustment || 0)
+      if (!config.defaultSrbnbAccountId) {
+        throw new Error('GL_ACCOUNTS_MISSING: Cannot post purchase — missing Stock Received But Not Billed account. Configure in Settings → Accounting.')
+      }
+      if (variance !== 0 && !config.defaultPriceVarianceAccountId) {
+        throw new Error('GL_ACCOUNTS_MISSING: Cannot post purchase — missing Purchase Price Variance account. Configure in Settings → Accounting.')
+      }
+      if (cogs !== 0 && !config.defaultCOGSAccountId) {
+        throw new Error('GL_ACCOUNTS_MISSING: Cannot post purchase — missing Cost of Goods Sold account. Configure in Settings → Accounting.')
+      }
+      signedEntry(entries, config.defaultSrbnbAccountId, srbnb, {
+        costCenterId,
+        remarks: 'Purchase - received goods billed (SRBNB cleared)',
+      })
+      if (variance !== 0) signedEntry(entries, config.defaultPriceVarianceAccountId!, variance, { costCenterId, remarks: 'Purchase price variance (invoice vs GRN)' })
+      if (cogs !== 0) signedEntry(entries, config.defaultCOGSAccountId!, cogs, { costCenterId, remarks: 'Purchase price difference on goods already sold' })
+      signedEntry(entries, purchaseDebitAccountId, adjustedNetCost - srbnb - variance - cogs, { costCenterId, remarks: 'Purchase - inventory received' })
+    } else {
+      entries.push({
+        accountId: purchaseDebitAccountId,
+        debit: adjustedNetCost,
+        costCenterId,
+        remarks: 'Purchase - inventory received',
+      })
+    }
 
     // Dr Tax (input) — per-account entries
     for (const taxEntry of taxEntries) {
@@ -710,6 +876,8 @@ interface StockAdjustmentPostingData {
   costPrice: number          // item.costPrice (unit cost)
   costCenterId?: string | null
   notes?: string
+  /** H3: reason code; accounting_settings.stock_adjustment_reason_accounts[reason] overrides the adjustment account */
+  reasonCode?: string | null
 }
 
 /**
@@ -743,7 +911,8 @@ export async function postStockAdjustmentToGL(
   if (value === 0) return null // no GL entry for zero value
 
   const stockAccountId = config.defaultStockAccountId
-  const adjustmentAccountId = config.defaultStockAdjustmentAccountId
+  const reasonAccountId = data.reasonCode ? config.stockAdjustmentReasonAccounts?.[data.reasonCode] : null
+  const adjustmentAccountId = reasonAccountId || config.defaultStockAdjustmentAccountId
 
   if (!stockAccountId || !adjustmentAccountId) {
     const missing = [
@@ -787,7 +956,7 @@ export async function postStockAdjustmentToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'stock_adjustment',
     voucherId: data.adjustmentId,
     fiscalYearId: config.currentFiscalYearId,
@@ -893,7 +1062,7 @@ export async function postWorkOrderPartsToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'work_order_part',
     voucherId: data.workOrderId,
     voucherNumber: data.workOrderNo,
@@ -960,7 +1129,7 @@ export async function postWorkOrderInvoiceWipToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'work_order_invoice',
     voucherId: data.workOrderId,
     voucherNumber: data.workOrderNo,
@@ -974,7 +1143,8 @@ export async function postWorkOrderInvoiceWipToGL(
 interface StockTransferPostingData {
   transferId: string
   transferNo?: string
-  items: { itemName: string; quantity: number; costPrice: number }[]
+  /** quantity = shipped; receivedQuantity (when known) < quantity → the shortfall is written off */
+  items: { itemName: string; quantity: number; costPrice: number; receivedQuantity?: number | null }[]
   costCenterId?: string | null
 }
 
@@ -1017,10 +1187,25 @@ export async function postStockTransferToGL(
 
   if (totalValue === 0) return null
 
+  // Goods shipped but not received (lost/damaged in transit) leave inventory for good: write the
+  // shortfall off to the stock adjustment account, otherwise the GL keeps valuing stock that no
+  // warehouse holds any more.
+  let shortfallValue = 0
+  for (const item of data.items) {
+    if (item.receivedQuantity === null || item.receivedQuantity === undefined) continue
+    const short = Math.abs(item.quantity) - Math.max(0, Number(item.receivedQuantity) || 0)
+    if (short > 0) shortfallValue += short * item.costPrice
+  }
+  shortfallValue = roundCurrency(shortfallValue)
+  if (shortfallValue > 0 && !config.defaultStockAdjustmentAccountId) {
+    throw new Error('GL_ACCOUNTS_MISSING: Cannot post stock transfer shortfall — missing Stock Adjustment account. Configure in Settings → Accounting.')
+  }
+  const receivedValue = roundCurrency(totalValue - shortfallValue)
+
   const entries: GLEntryInput[] = [
     {
       accountId: stockAccountId,
-      debit: totalValue,
+      debit: receivedValue,
       costCenterId,
       remarks: `Stock transfer received: ${data.transferNo || data.transferId}`,
     },
@@ -1031,10 +1216,18 @@ export async function postStockTransferToGL(
       remarks: `Stock transfer sent: ${data.transferNo || data.transferId}`,
     },
   ]
+  if (shortfallValue > 0) {
+    entries.push({
+      accountId: config.defaultStockAdjustmentAccountId!,
+      debit: shortfallValue,
+      costCenterId,
+      remarks: `Stock transfer shortfall written off: ${data.transferNo || data.transferId}`,
+    })
+  }
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'stock_transfer',
     voucherId: data.transferId,
     voucherNumber: data.transferNo,
@@ -1199,7 +1392,7 @@ export async function postGiftCardReloadToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'gift_card_reload',
     voucherId: data.transactionId,
     fiscalYearId: config.currentFiscalYearId,
@@ -1338,7 +1531,7 @@ export async function postCustomerCreditToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'customer_credit',
     voucherId: data.transactionId,
     fiscalYearId: config.currentFiscalYearId,
@@ -1399,7 +1592,7 @@ export async function postGiftCardRedemptionToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'gift_card_redemption',
     voucherId: data.transactionId,
     fiscalYearId: config.currentFiscalYearId,
@@ -1478,13 +1671,21 @@ interface PosShiftVarianceData {
   closingEntryId: string
   postingDate: string
   totalVariance: number // positive = over, negative = short
+  /**
+   * H1: variance per counted tender (actual − expected). When present, each method's difference
+   * is posted against that method's own account (Modes of Payment: cash drawer, card clearing,
+   * bank / LankaQR) instead of putting everything on Cash.
+   */
+  byMethod?: Array<{ method: string; variance: number }>
+  costCenterId?: string | null
   notes?: string
 }
 
 /**
- * Post GL entry for POS shift cash variance (over/short).
- * - Short (variance < 0): Dr Cash Over/Short (expense) / Cr Cash
- * - Over  (variance > 0): Dr Cash / Cr Cash Over/Short (income)
+ * Post GL entry for POS shift variance (over/short), one pair of lines per tender.
+ * - Short (variance < 0): Dr Cash Over/Short (expense) / Cr tender account
+ * - Over  (variance > 0): Dr tender account / Cr Cash Over/Short (income)
+ * Tender account = Modes of Payment account of the method (cash → Cash, card/bank → Bank).
  * Requires: autoPostSales + defaultCashOverShortAccountId + defaultCashAccountId
  */
 export async function postPosShiftVarianceToGL(
@@ -1492,7 +1693,12 @@ export async function postPosShiftVarianceToGL(
   tenantId: string,
   data: PosShiftVarianceData
 ) {
-  if (data.totalVariance === 0) return null
+  const lines = (data.byMethod && data.byMethod.length > 0
+    ? data.byMethod
+    : [{ method: 'cash', variance: data.totalVariance }])
+    .map((l) => ({ method: l.method, variance: roundCurrency(l.variance) }))
+    .filter((l) => l.variance !== 0)
+  if (lines.length === 0) return null
 
   const config = await getAccountingConfig(tx, tenantId)
   if (!config) return null
@@ -1510,43 +1716,26 @@ export async function postPosShiftVarianceToGL(
     throw new Error(`GL_ACCOUNTS_MISSING: Cannot post shift variance — missing ${missing} account(s). Configure in Settings → Accounting.`)
   }
 
-  const costCenterId = config.defaultCostCenterId || undefined
-  const absVariance = roundCurrency(Math.abs(data.totalVariance))
-
+  const costCenterId = data.costCenterId || config.defaultCostCenterId || undefined
   const entries: GLEntryInput[] = []
 
-  if (data.totalVariance < 0) {
-    // Cash SHORT: expense increased, cash decreased
-    entries.push(
-      {
-        accountId: config.defaultCashOverShortAccountId,
-        debit: absVariance,
-        costCenterId,
-        remarks: data.notes || 'POS shift cash shortage',
-      },
-      {
-        accountId: config.defaultCashAccountId,
-        credit: absVariance,
-        costCenterId,
-        remarks: data.notes || 'POS shift cash shortage',
-      }
-    )
-  } else {
-    // Cash OVER: cash increased, income/contra increased
-    entries.push(
-      {
-        accountId: config.defaultCashAccountId,
-        debit: absVariance,
-        costCenterId,
-        remarks: data.notes || 'POS shift cash overage',
-      },
-      {
-        accountId: config.defaultCashOverShortAccountId,
-        credit: absVariance,
-        costCenterId,
-        remarks: data.notes || 'POS shift cash overage',
-      }
-    )
+  for (const line of lines) {
+    const tenderAccount = await resolveReceiptAccount(tx, tenantId, config, line.method)
+    const amount = Math.abs(line.variance)
+    const remarks = `${data.notes || 'POS shift variance'} (${line.method} ${line.variance < 0 ? 'short' : 'over'})`
+    if (line.variance < 0) {
+      // SHORT: expense increased, tender account decreased
+      entries.push(
+        { accountId: config.defaultCashOverShortAccountId, debit: amount, costCenterId, remarks },
+        { accountId: tenderAccount, credit: amount, costCenterId, remarks },
+      )
+    } else {
+      // OVER: tender account increased, over/short income
+      entries.push(
+        { accountId: tenderAccount, debit: amount, costCenterId, remarks },
+        { accountId: config.defaultCashOverShortAccountId, credit: amount, costCenterId, remarks },
+      )
+    }
   }
 
   return createGLEntries(tx, {
@@ -1555,6 +1744,92 @@ export async function postPosShiftVarianceToGL(
     voucherType: 'pos_shift_closing',
     voucherId: data.closingEntryId,
     voucherNumber: `POS-CLOSE-${data.closingEntryId.slice(0, 8)}`,
+    fiscalYearId: config.currentFiscalYearId,
+    entries,
+  })
+}
+
+/** H1: GL account a POS tender posts to (Modes of Payment, then defaults); null without accounting. */
+export async function resolvePosTenderAccount(tx: DbOrTx, tenantId: string, method: string): Promise<string | null> {
+  const config = await getAccountingConfig(tx, tenantId)
+  if (!config || !config.defaultCashAccountId) return null
+  return resolveReceiptAccount(tx, tenantId, config, method)
+}
+
+// ─── POS Cash Movements (paid in / paid out) ────────────────────
+
+interface PosCashMovementPostingData {
+  movementId: string
+  movementNo: string
+  postingDate: string
+  type: 'paid_in' | 'paid_out'
+  /** petty_expense | supplier_payment | bank_drop | float_top_up | other */
+  category: string
+  amount: number
+  /** Account chosen by the cashier / supervisor (else the category default) */
+  accountId?: string | null
+  costCenterId?: string | null
+  notes?: string
+}
+
+/**
+ * Posts a drawer cash movement:
+ *   paid out: Dr chosen / default account (expense, payable, bank for a bank drop) / Cr Cash
+ *   paid in:  Dr Cash / Cr chosen / default account (bank for a float top-up, income otherwise)
+ * Voucher type 'pos_cash_movement' (reversed with reverseGLEntries on void).
+ */
+export async function postPosCashMovementToGL(
+  tx: DbOrTx,
+  tenantId: string,
+  data: PosCashMovementPostingData
+) {
+  const amount = roundCurrency(data.amount)
+  if (!(amount > 0)) return null
+  const [settings] = await tx.select().from(accountingSettings).where(eq(accountingSettings.tenantId, tenantId)).limit(1)
+  const config = await getAccountingConfig(tx, tenantId)
+  if (!config || !settings) return null
+  if (!config.autoPostSales) return null
+  if (!config.currentFiscalYearId) {
+    throw new Error('No active fiscal year configured. Please set a current fiscal year in Accounting Settings.')
+  }
+  if (!config.defaultCashAccountId) {
+    throw new Error('GL_ACCOUNTS_MISSING: Cannot post cash movement — missing Cash account. Configure in Settings → Accounting.')
+  }
+  const cashAccount = await resolveReceiptAccount(tx, tenantId, config, 'cash')
+
+  const defaults: Record<string, string | null> = data.type === 'paid_out'
+    ? {
+        petty_expense: settings.defaultExpenseAccountId,
+        supplier_payment: settings.defaultPayableAccountId,
+        bank_drop: settings.defaultBankAccountId,
+        other: settings.defaultExpenseAccountId,
+      }
+    : {
+        float_top_up: settings.defaultBankAccountId,
+        other: settings.defaultIncomeAccountId,
+      }
+  const counterAccount = data.accountId || defaults[data.category] || null
+  if (!counterAccount) {
+    throw new Error(`GL_ACCOUNTS_MISSING: Cannot post cash ${data.type === 'paid_out' ? 'paid-out' : 'paid-in'} (${data.category}) — choose an account or configure the default account in Settings → Accounting.`)
+  }
+  const costCenterId = data.costCenterId || config.defaultCostCenterId || undefined
+  const remarks = data.notes || `POS cash ${data.type === 'paid_out' ? 'paid out' : 'paid in'} (${data.category})`
+  const entries: GLEntryInput[] = data.type === 'paid_out'
+    ? [
+        { accountId: counterAccount, debit: amount, costCenterId, remarks },
+        { accountId: cashAccount, credit: amount, costCenterId, remarks },
+      ]
+    : [
+        { accountId: cashAccount, debit: amount, costCenterId, remarks },
+        { accountId: counterAccount, credit: amount, costCenterId, remarks },
+      ]
+
+  return createGLEntries(tx, {
+    tenantId,
+    postingDate: data.postingDate,
+    voucherType: 'pos_cash_movement',
+    voucherId: data.movementId,
+    voucherNumber: data.movementNo,
     fiscalYearId: config.currentFiscalYearId,
     entries,
   })
@@ -1694,7 +1969,7 @@ export async function postLayawayForfeitToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'layaway_forfeit',
     voucherId: data.layawayId,
     voucherNumber: data.layawayNo,
@@ -1770,7 +2045,7 @@ export async function postCommissionPayoutToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'commission_payout',
     voucherId: data.payoutId,
     voucherNumber: data.payoutNo,
@@ -1828,7 +2103,7 @@ export async function postGiftCardBreakageToGL(
 
   return createGLEntries(tx, {
     tenantId,
-    postingDate: new Date().toISOString().split('T')[0],
+    postingDate: await tenantToday(tenantId),
     voucherType: 'gift_card_breakage',
     voucherId: data.giftCardId,
     voucherNumber: data.cardNumber,

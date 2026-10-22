@@ -82,6 +82,11 @@ export const {
             throw new Error('Invalid email or password')
           }
 
+          // Suspended by the platform admin (sys-control → users → deactivate)
+          if (account.isActive === false) {
+            throw new Error('Account is deactivated')
+          }
+
           // Clear rate limit on successful login
           await clearRateLimit(email, LOGIN_RATE_LIMIT.category)
 
@@ -170,6 +175,7 @@ export const {
           })
 
           if (existingAccount) {
+            if (existingAccount.isActive === false) return false
             if (!existingAccount.googleId) {
               await db.update(accounts)
                 .set({
@@ -255,9 +261,9 @@ export const {
         try {
           const account = await db.query.accounts.findFirst({
             where: eq(accounts.id, token.accountId as string),
-            columns: { id: true, avatarUrl: true, passwordChangedAt: true },
+            columns: { id: true, avatarUrl: true, passwordChangedAt: true, isActive: true },
           })
-          if (!account) {
+          if (!account || account.isActive === false) {
             token.invalid = true
             return token
           }

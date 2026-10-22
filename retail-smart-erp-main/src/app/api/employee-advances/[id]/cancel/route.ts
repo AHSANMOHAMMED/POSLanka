@@ -36,9 +36,9 @@ export async function POST(
     const { cancellationReason } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
-      const advance = await db.query.employeeAdvances.findFirst({
-        where: eq(employeeAdvances.id, id),
-      })
+      const [advance] = await db.select().from(employeeAdvances)
+        .where(eq(employeeAdvances.id, id))
+        .for('update')
 
       if (!advance) {
         return NextResponse.json({ error: 'Employee advance not found' }, { status: 404 })
@@ -48,8 +48,16 @@ export async function POST(
         return NextResponse.json({ error: 'Advance cannot be cancelled in current status' }, { status: 400 })
       }
 
+      // Part of it was already recovered through submitted salary slips: reversing the whole
+      // disbursement would refund that part twice (the slips already credited the advance).
+      if (advance.status === 'partially_recovered' || Number(advance.recoveredAmount) > 0) {
+        return NextResponse.json({
+          error: 'This advance has already been partly recovered through payroll and cannot be cancelled. Cancel those salary slips first.',
+        }, { status: 400 })
+      }
+
       // Reverse GL entries if advance was disbursed (GL posted during disbursement)
-      if (advance.status === 'disbursed' || advance.status === 'partially_recovered') {
+      if (advance.status === 'disbursed') {
         try {
           await reverseGLEntries(db, session.user.tenantId, 'employee_advance', advance.id)
         } catch (glError) {

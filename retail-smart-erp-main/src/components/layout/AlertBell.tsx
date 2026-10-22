@@ -5,6 +5,7 @@ import { Bell, AlertTriangle, Sparkles, AlertCircle, Lightbulb, X, ExternalLink 
 import { useRealtimeData } from '@/hooks'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import Link from 'next/link'
+import { sharedJson } from '@/lib/client/shared-fetch'
 
 interface AIAlert {
   id: string
@@ -43,17 +44,16 @@ export function AlertBell() {
 
   const fetchAlerts = useCallback(async () => {
     try {
-      const res = await fetch('/api/ai/alerts?all=true&unread=false')
-      if (res.ok) {
-        const data = await res.json()
-        const alertList = (Array.isArray(data) ? data : data.data || [])
-          // Filter out system audit findings from the bell
-          .filter((a: AIAlert) => !a.metadata || !a.metadata.auditId)
-        setAlerts(alertList.slice(0, 10))
-        // Count unread
-        const unread = alertList.filter((a: AIAlert) => !a.readAt).length
-        setUnreadCount(typeof data.unreadCount === 'number' ? Math.min(data.unreadCount, alertList.length) : unread)
-      }
+      // Joins a request already in flight (several mounts at page load); never serves stale data
+      const data = await sharedJson<AIAlert[] | { data?: AIAlert[]; unreadCount?: number }>('/api/ai/alerts?all=true&unread=false', { maxAgeMs: 0 })
+      const alertList = (Array.isArray(data) ? data : data.data || [])
+        // Filter out system audit findings from the bell
+        .filter((a: AIAlert) => !a.metadata || !a.metadata.auditId)
+      setAlerts(alertList.slice(0, 10))
+      // Count unread
+      const unread = alertList.filter((a: AIAlert) => !a.readAt).length
+      const serverUnread = Array.isArray(data) ? undefined : data.unreadCount
+      setUnreadCount(typeof serverUnread === 'number' ? Math.min(serverUnread, alertList.length) : unread)
     } catch {
       // Silently fail
     }

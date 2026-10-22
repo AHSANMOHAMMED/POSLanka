@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { BellRing, CheckCheck, Settings2 } from 'lucide-react'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { sharedJson } from '@/lib/client/shared-fetch'
 
 interface InboxItem {
   id: string
@@ -54,9 +55,8 @@ export function InboxBell() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/notifications?pageSize=15')
-      if (!res.ok) return
-      const json = await res.json()
+      // Joins a request already in flight; never serves stale data
+      const json = await sharedJson<{ data?: InboxItem[]; unreadCount?: number }>('/api/notifications?pageSize=15', { maxAgeMs: 0 })
       setItems(Array.isArray(json.data) ? json.data : [])
       setUnread(typeof json.unreadCount === 'number' ? json.unreadCount : 0)
     } catch {

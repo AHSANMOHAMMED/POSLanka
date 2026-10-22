@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { tenants, subscriptions, lockoutEvents, accountNotifications } from '@/lib/db/schema'
-import { eq, and, lt, isNull, isNotNull, sql, or } from 'drizzle-orm'
+import { inArray, eq, and, lt, isNull, isNotNull, sql, or } from 'drizzle-orm'
 import { cascadeDeleteTenant } from '@/lib/billing/delete-tenant'
 import { logError } from '@/lib/ai/error-logger'
 
@@ -95,7 +95,10 @@ export async function POST(request: NextRequest) {
       .from(subscriptions)
       .innerJoin(tenants, eq(tenants.id, subscriptions.tenantId))
       .where(and(
-        eq(subscriptions.status, 'active'),
+        // Step 3 below moves lapsed subscriptions to past_due on the first run after the
+        // period ends, so they must still be locked here once the grace period is over —
+        // matching only 'active' meant an unpaid subscription stayed usable forever.
+        inArray(subscriptions.status, ['active', 'past_due']),
         lt(subscriptions.currentPeriodEnd, threeDaysAgo),
         eq(tenants.status, 'active'),
       ))

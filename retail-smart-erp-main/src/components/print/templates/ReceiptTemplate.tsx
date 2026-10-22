@@ -37,7 +37,13 @@ interface SaleData {
     name: string
     phone: string | null
     email: string | null
+    /** Buyer TIN / VAT number */
+    taxId?: string | null
+    address?: string | null
   } | null
+  isReturn?: boolean
+  /** Return: the invoice it credits */
+  originalInvoiceNo?: string | null
   items: SaleItem[]
   payments: Payment[]
   cashier: {
@@ -72,6 +78,9 @@ export function ReceiptTemplate({
 }: ReceiptTemplateProps) {
   const currency = currencyCode || 'LKR'
   const isThermal = settings.paperSize.startsWith('thermal')
+  // VAT-registered seller + VAT on the document → Sri Lanka tax invoice / credit note
+  const isTaxInvoice = !!taxId && Math.abs(parseFloat(sale.taxAmount || '0')) >= 0.005
+  const docTitle = isTaxInvoice ? (sale.isReturn ? 'CREDIT NOTE' : 'TAX INVOICE') : 'SALES RECEIPT'
 
   const formatCurrency = (value: string | null) => {
     if (!value) return '-'
@@ -112,7 +121,8 @@ export function ReceiptTemplate({
             <p className="font-bold text-sm">{businessName}</p>
             {businessAddress && <p className="text-xs">{businessAddress}</p>}
             {businessPhone && <p className="text-xs">{businessPhone}</p>}
-            {taxId && <p className="text-xs">Tax ID: {taxId}</p>}
+            {taxId && <p className="text-xs">{isTaxInvoice ? 'VAT Reg No' : 'Tax ID'}: {taxId}</p>}
+            {isTaxInvoice && <p className="font-bold text-xs mt-1">{docTitle}</p>}
           </div>
         )}
 
@@ -132,6 +142,18 @@ export function ReceiptTemplate({
             <div className="flex justify-between">
               <span>Cashier:</span>
               <span>{sale.cashier.name}</span>
+            </div>
+          )}
+          {isTaxInvoice && sale.originalInvoiceNo && (
+            <div className="flex justify-between">
+              <span>Against Invoice:</span>
+              <span>{sale.originalInvoiceNo}</span>
+            </div>
+          )}
+          {isTaxInvoice && sale.customer?.taxId && (
+            <div className="flex justify-between">
+              <span>Buyer VAT No:</span>
+              <span>{sale.customer.taxId}</span>
             </div>
           )}
           {sale.customer && (
@@ -178,7 +200,7 @@ export function ReceiptTemplate({
             </div>
           )}
           <div className="flex justify-between">
-            <span>Tax:</span>
+            <span>{isTaxInvoice ? 'VAT' : 'Tax'}:</span>
             <span>{formatCurrency(sale.taxAmount)}</span>
           </div>
           <div className="flex justify-between font-bold text-sm mt-1 pt-1 border-t">
@@ -235,14 +257,15 @@ export function ReceiptTemplate({
             {businessPhone && businessEmail && <span> | </span>}
             {businessEmail && <span>{businessEmail}</span>}
           </div>
-          {taxId && <p className="text-sm text-gray-600">Tax ID: {taxId}</p>}
+          {taxId && <p className="text-sm text-gray-600">{isTaxInvoice ? 'VAT Reg No' : 'Tax ID'}: {taxId}</p>}
         </div>
       )}
 
       {/* Document Title */}
       <div className="text-center mb-4">
-        <h2 className="text-xl font-bold">SALES RECEIPT</h2>
+        <h2 className="text-xl font-bold">{docTitle}</h2>
         <p className="text-lg font-semibold">{sale.saleNo}</p>
+        {isTaxInvoice && sale.originalInvoiceNo && <p className="text-sm text-gray-600">Against invoice {sale.originalInvoiceNo}</p>}
         <p className="text-sm text-gray-600">{formatDateTime(sale.createdAt)}</p>
       </div>
 
@@ -253,6 +276,8 @@ export function ReceiptTemplate({
             <>
               <p className="text-gray-600">Customer:</p>
               <p className="font-medium">{sale.customer.name}</p>
+              {isTaxInvoice && sale.customer.address && <p>{sale.customer.address}</p>}
+              {isTaxInvoice && sale.customer.taxId && <p>VAT No: {sale.customer.taxId}</p>}
               {sale.customer.phone && <p>{sale.customer.phone}</p>}
             </>
           )}
@@ -309,7 +334,7 @@ export function ReceiptTemplate({
             </div>
           )}
           <div className="flex justify-between text-sm mb-1">
-            <span className="text-gray-600">Tax:</span>
+            <span className="text-gray-600">{isTaxInvoice ? 'VAT' : 'Tax'}:</span>
             <span>{formatCurrency(sale.taxAmount)}</span>
           </div>
           <div className="flex justify-between font-bold text-lg border-t pt-2">

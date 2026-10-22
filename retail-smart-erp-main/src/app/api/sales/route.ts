@@ -2,11 +2,11 @@ import crypto from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { db as rawDb, withTenant } from '@/lib/db'
-import { sales, saleItems, items, payments, customers, customerCreditTransactions, workOrders, workOrderParts, insuranceEstimates, insuranceEstimateItems, vehicles, warehouseStock, warehouses, loyaltyPrograms, loyaltyTiers, loyaltyTransactions, heldSales, salesOrders, posProfiles, posOpeningEntries, giftCards, giftCardTransactions } from '@/lib/db/schema'
+import { sales, saleItems, items, payments, customers, customerCreditTransactions, workOrders, workOrderParts, insuranceEstimates, insuranceEstimateItems, vehicles, warehouseStock, warehouses, loyaltyPrograms, loyaltyTiers, loyaltyTransactions, heldSales, salesOrders, giftCards, giftCardTransactions, tenants } from '@/lib/db/schema'
 import { eq, and, desc, sql, or, ilike, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
-import { requirePermission } from '@/lib/auth/roles'
+import { hasPermission, requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { notifyReturnAlerts } from '@/lib/notifications/sales-alerts'
 import { roundCurrency, compareCurrency, parseCurrency } from '@/lib/utils/currency'
@@ -35,6 +35,10 @@ import { SAFE_USER } from '@/lib/db/safe-columns'
 import { allocateSaleLineBatches, batchErrorInfo } from '@/lib/inventory/batches'
 import { isQuarantineCode } from '@/lib/inventory/quarantine'
 import { getTenantSalesSettings } from '@/lib/sales/return-settings'
+import { ApprovalError, consumeApprovals, coverScopes, verifyApprovalTokens, type ApprovalScope } from '@/lib/auth/approval-token'
+import { assignedPosProfiles, checkSaleShift, customerOutstanding, evaluateSaleControls, SHIFT_ISSUE_MESSAGES } from '@/lib/pos/sale-controls'
+import { priceSaleCart, recordPromotionRedemptions, PromotionExhaustedError, type SalePricing } from '@/lib/pricing/sale-pricing'
+import { PricingLineError } from '@/lib/pricing/load-context'
 
 // GET all sales for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -47,7 +51,7 @@ export async function GET(request: NextRequest) {
     const parsed = validateSearchParams(request, salesListSchema)
     if (!parsed.success) return parsed.response
 
-    const { search, status, customerId, page, pageSize, all } = parsed.data
+    const { search, status, customerId, posOpeningEntryId: shiftFilter, page, pageSize, all } = parsed.data
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -57,6 +61,11 @@ export async function GET(request: NextRequest) {
       // Filter by customer
       if (customerId) {
         conditions.push(eq(sales.customerId, customerId))
+      }
+
+      // Filter by POS shift
+      if (shiftFilter) {
+        conditions.push(eq(sales.posOpeningEntryId, shiftFilter))
       }
 
       // Filter by status
@@ -97,6 +106,10 @@ export async function GET(request: NextRequest) {
               item: true,
             },
           },
+          // tenders per sale (split / store credit / refunds out), e.g. for an exact shift summary
+          payments: {
+            columns: { id: true, amount: true, method: true, reference: true, createdAt: true, voidedAt: true },
+          },
         },
         orderBy: [desc(sales.createdAt)],
         limit,
@@ -122,6 +135,9 @@ export async function GET(request: NextRequest) {
               with: {
                 item: true,
               },
+            },
+            payments: {
+              columns: { id: true, amount: true, method: true, reference: true, createdAt: true, voidedAt: true },
             },
           },
         })
@@ -249,7 +265,7 @@ export async function POST(request: NextRequest) {
     const parsed = await validateBody(request, createSaleSchema)
     if (!parsed.success) return parsed.response
 
-    const { clientSaleId, customerId, vehicleId, customerName, vehiclePlate, vehicleDescription, cartItems, paymentMethod, paymentSplits, subtotal, discount, discountType, discountReason, tax, taxRate: _bodyTaxRate, taxInclusive: _bodyTaxInclusive, taxBreakdown: bodyTaxBreakdown, total, amountPaid, creditAmount, addOverpaymentToCredit, isReturn, warehouseId: providedWarehouseId, posOpeningEntryId, loyaltyPointsRedeemed, costCenterId: providedCostCenterId, workOrderId, restaurantOrderId, tipAmount: _tipAmount, giftCardId, offlineRef } = parsed.data
+    const { clientSaleId, customerId, vehicleId, customerName, vehiclePlate, vehicleDescription, cartItems, paymentMethod, paymentSplits, subtotal, discount, discountType, discountReason, tax, taxRate: _bodyTaxRate, taxInclusive: bodyTaxInclusive, taxBreakdown: bodyTaxBreakdown, total, amountPaid, creditAmount, addOverpaymentToCredit, isReturn, warehouseId: providedWarehouseId, posOpeningEntryId, loyaltyPointsRedeemed, costCenterId: providedCostCenterId, workOrderId, restaurantOrderId, tipAmount, giftCardId, offlineRef, approvalTokens, couponCodes, promotionDiscount: clientPromotionDiscount, soldAt } = parsed.data
 
     // Check permission: createSales for regular sales, processReturns for returns
     if (isReturn) {
@@ -340,6 +356,31 @@ export async function POST(request: NextRequest) {
           return NextResponse.json(existingOffline, { status: 200 })
         }
       }
+
+      // H1: a POS sale belongs to an open shift of the selling cashier. Supervisors (manageSales)
+      // may ring up on any open shift. Cashiers assigned to a POS counter must sell on a shift
+      // (work-order invoices are billed from the workshop, not the till). An offline sale is a
+      // done deal: accepted and flagged for review instead.
+      const isSupervisor = hasPermission(session.user.role, 'manageSales', session.user.tenantId, session.user.customRoleId)
+      const sellerIds = [...new Set([userId, session.user.id])]
+      const shiftCheck = await checkSaleShift(db, { posOpeningEntryId, userIds: sellerIds, canUseAnyShift: isSupervisor })
+      let saleShiftId: string | null = shiftCheck.shift?.id || null
+      if (shiftCheck.issue) {
+        if (!isOfflineSale) {
+          return NextResponse.json({ error: SHIFT_ISSUE_MESSAGES[shiftCheck.issue], code: shiftCheck.issue }, { status: shiftCheck.issue === 'SHIFT_NOT_YOURS' ? 403 : 400 })
+        }
+        saleFlags.shiftIssue = { code: shiftCheck.issue, posOpeningEntryId: posOpeningEntryId || null }
+        if (shiftCheck.issue === 'SHIFT_NOT_FOUND') saleShiftId = null
+      }
+      const assignedProfiles = shiftCheck.shift ? [] : await assignedPosProfiles(db, sellerIds)
+      if (!posOpeningEntryId && !isSupervisor && !workOrderId && assignedProfiles.length > 0) {
+        if (!isOfflineSale) {
+          return NextResponse.json({ error: SHIFT_ISSUE_MESSAGES.SHIFT_REQUIRED, code: 'SHIFT_REQUIRED' }, { status: 400 })
+        }
+        saleFlags.shiftIssue = { code: 'SHIFT_REQUIRED', posOpeningEntryId: null }
+      }
+      // The counter whose rules (discount limit, rate changes, negative stock) govern this sale
+      const governingProfile = shiftCheck.profile || assignedProfiles[0] || null
 
       // Get warehouse ID - use provided or default warehouse (RLS scopes the query)
       let warehouseId = providedWarehouseId
@@ -439,8 +480,42 @@ export async function POST(request: NextRequest) {
           })
         : []
 
-    if (tenantItems.length !== itemIds.length) {
+    // The same item may legitimately sit on several lines (separate batch lines, a line at an
+    // edited price), so compare against the distinct ids the query can return.
+    if (tenantItems.length !== new Set(itemIds).size || cartItems.some((c) => !c.itemId)) {
       return NextResponse.json({ error: 'Invalid items in cart' }, { status: 400 })
+    }
+
+    // H5: server-side pricing — catalog / unit base prices, price lists for this customer and
+    // counter, promotions (src/lib/pricing/sale-pricing.ts). Work orders and restaurant orders keep
+    // their own prices (units still apply).
+    let pricing: SalePricing
+    try {
+      pricing = await priceSaleCart(db, session.user.tenantId, {
+        cartItems,
+        customerId: customerId || null,
+        posProfileId: shiftCheck.shift?.posProfileId || governingProfile?.id || null,
+        couponCodes,
+        at: isOfflineSale && soldAt ? new Date(soldAt) : undefined,
+        applyRules: !workOrderId && !restaurantOrderId,
+      })
+    } catch (e) {
+      if (e instanceof PricingLineError) {
+        return NextResponse.json({
+          error: e.code === 'UOM_NOT_FOUND' ? `Item has no "${e.uom}" unit` : 'Invalid items in cart', code: e.code,
+        }, { status: 400 })
+      }
+      throw e
+    }
+    const priceChanged = () => NextResponse.json({
+      error: 'Prices or promotions changed. Review the cart and try again.',
+      code: 'PRICE_CHANGED',
+      quote: pricing.quote,
+    }, { status: 409 })
+    // The client sent the plain catalog price where a price list applies (it did not know the list)
+    if (pricing.staleLines.length > 0) {
+      if (!isOfflineSale) return priceChanged()
+      saleFlags.priceDifferences ||= []
     }
 
     // Build cart items for processing
@@ -455,17 +530,42 @@ export async function POST(request: NextRequest) {
       serialNumberIds?: string[]
       batchId?: string | null
       batchNumber?: string | null
+      /** index of the source line in cartItems (per-line tax data) */
+      sourceIndex: number
+      /** H1: catalog price at the time of sale (audit of price overrides) */
+      listPrice: number
+      isWeighable: boolean
+      /** H5: price list / catalog price for this customer, unit and quantity (rate-change control) */
+      resolvedPrice: number
+      /** H5: manual line discount (discount = manual + promotionDiscount) */
+      manualDiscount: number
+      promotionDiscount: number
+      promotions: Array<{ promotionId: string; label: string; amount: number }>
+      cartPromotionShare: number
+      priceListId: string | null
+      uom: string | null
+      uomFactor: number
+      /** quantity × uomFactor: what stock, batches and COGS move */
+      baseQuantity: number
     }
 
     const expandedCartItems: ExpandedCartItem[] = []
 
-    for (const cartItem of cartItems) {
+    for (const [sourceIndex, cartItem] of cartItems.entries()) {
       const item = tenantItems.find(i => i.id === cartItem.itemId)
       if (!item) continue
 
-      const unitPrice = roundCurrency(cartItem.unitPrice)
+      const pl = pricing.lines[sourceIndex]
+      const unitPrice = roundCurrency(pl.unitPrice)
       const quantity = cartItem.quantity
-      const itemDiscount = roundCurrency(cartItem.discount || 0)
+      const manualDiscount = roundCurrency(cartItem.discount || 0)
+      const itemDiscount = roundCurrency(manualDiscount + pl.promotionDiscount)
+
+      // A sale line takes goods out; taking goods back is a return (processReturns, priced from
+      // the original invoice) or an exchange — never a negative line on a normal sale.
+      if (!(quantity > 0)) {
+        return NextResponse.json({ error: `Quantity must be greater than zero for "${cartItem.name}"` }, { status: 400 })
+      }
 
       // Issue #20: Validate negative prices (only for non-returns)
       if (unitPrice < 0) {
@@ -478,6 +578,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: `Discount exceeds item total for "${cartItem.name}"` }, { status: 400 })
       }
 
+      // Serial numbers are counted per base unit
+      if (pl.uomFactor !== 1 && item.trackSerialNumbers) {
+        return NextResponse.json({ error: `"${cartItem.name}" is serial-tracked: sell it in its base unit` }, { status: 400 })
+      }
+
       const itemTotal = roundCurrency(unitPrice * quantity - itemDiscount)
       expandedCartItems.push({
         itemId: cartItem.itemId || '',
@@ -486,25 +591,82 @@ export async function POST(request: NextRequest) {
         unitPrice: unitPrice,
         discount: itemDiscount,
         total: itemTotal,
-        costPrice: item ? roundCurrency(parseFloat(item.costPrice)) : 0,
+        // cost of ONE unit sold (a box of 12 costs 12 × the per-piece cost)
+        costPrice: item ? roundCurrency(parseFloat(item.costPrice) * pl.uomFactor) : 0,
         serialNumberIds: cartItem.serialNumberIds || undefined,
         batchId: cartItem.batchId || null,
         batchNumber: cartItem.batchNumber || null,
+        sourceIndex,
+        listPrice: roundCurrency(pl.basePrice),
+        isWeighable: !!item.isWeighable,
+        resolvedPrice: roundCurrency(pl.resolvedPrice),
+        manualDiscount,
+        promotionDiscount: pl.promotionDiscount,
+        promotions: pl.promotions.map(({ promotionId, label, amount }) => ({ promotionId, label, amount })),
+        cartPromotionShare: pl.cartDiscountShare,
+        priceListId: pl.priceListId,
+        uom: pl.uom,
+        uomFactor: pl.uomFactor,
+        baseQuantity: Math.round(quantity * pl.uomFactor * 1000) / 1000,
       })
 
       // W6: offline sale sold at a (cached) price that differs from today's catalog price
       if (isOfflineSale) {
-        const catalog = roundCurrency(parseFloat(item.sellingPrice) || 0)
+        const catalog = roundCurrency(pl.resolvedPrice)
         if (compareCurrency(unitPrice, catalog) !== 0) {
           (saleFlags.priceDifferences ||= []).push({ itemId: item.id, name: item.name, sold: unitPrice, catalog })
         }
       }
     }
+    if (saleFlags.priceDifferences && saleFlags.priceDifferences.length === 0) delete saleFlags.priceDifferences
+
+    // H5: promotions are recomputed. A client that priced with other promotions (or none) gets
+    // 409 PRICE_CHANGED with the server quote; an offline sale is a done deal: the device's line
+    // totals and promotion amount stand, the difference is flagged.
+    let promotionCartDiscount = pricing.cartPromotionDiscount
+    let appliedPromotions = pricing.appliedPromotions
+    if (pricing.active) {
+      const serverSubtotal = roundCurrency(expandedCartItems.reduce((sum, ci) => sum + ci.total, 0))
+      const clientPromo = roundCurrency(clientPromotionDiscount || 0)
+      const linesDiffer = Math.abs(serverSubtotal - subtotal) > 0.05
+      const cartDiffers = Math.abs(clientPromo - promotionCartDiscount) > 0.01
+      if (linesDiffer || cartDiffers) {
+        if (!isOfflineSale) return priceChanged()
+        saleFlags.promotionDifference = {
+          serverSubtotal, clientSubtotal: subtotal, serverPromotionDiscount: promotionCartDiscount, clientPromotionDiscount: clientPromo,
+        }
+        if (linesDiffer) {
+          // device prices without (these) promotions: drop the server's line promotions
+          for (const ci of expandedCartItems) {
+            ci.discount = ci.manualDiscount
+            ci.promotionDiscount = 0
+            ci.promotions = []
+            ci.total = roundCurrency(ci.unitPrice * ci.quantity - ci.discount)
+          }
+          appliedPromotions = []
+        }
+        promotionCartDiscount = clientPromo
+        if (cartDiffers) appliedPromotions = appliedPromotions.filter((a) => expandedCartItems.some((ci) => ci.promotions.some((p) => p.promotionId === a.promotionId)))
+      }
+    } else if ((clientPromotionDiscount || 0) > 0.004) {
+      // a "promotion" the server does not know of is not a promotion
+      if (!isOfflineSale) return priceChanged()
+      promotionCartDiscount = roundCurrency(clientPromotionDiscount || 0)
+      saleFlags.promotionDifference = { serverPromotionDiscount: 0, clientPromotionDiscount: promotionCartDiscount }
+    }
+    const usedCoupon = (couponCodes || []).map((c) => c.trim().toUpperCase()).find(Boolean) || null
+    // the server's cart promotions stand (offline devices may have applied a different amount)
+    const cartPromotionsUsed = pricing.cartPromotions.length > 0 && compareCurrency(promotionCartDiscount, pricing.cartPromotionDiscount) === 0
+    const manualCartDiscount = roundCurrency(discount || 0)
 
     const finalSubtotal = subtotal
-    const finalDiscount = discount || 0
+    // sales.discount_amount = manual cart discount + cart promotions (H5)
+    const finalDiscount = roundCurrency(manualCartDiscount + promotionCartDiscount)
     const finalTax = tax || 0
     const finalTotal = total
+
+    // Value of the loyalty points redeemed on this sale (server-computed, see below)
+    let loyaltyRedeemValue = 0
 
     // Server-side tax recalculation result (populated when client doesn't send taxBreakdown)
     let serverTaxResult: Awaited<ReturnType<typeof recalculateDocumentTax>> | null = null
@@ -522,6 +684,29 @@ export async function POST(request: NextRequest) {
       if (finalDiscount > calculatedSubtotal) {
         return NextResponse.json({ error: 'Discount cannot exceed subtotal' }, { status: 400 })
       }
+      // Tax is charged on what the customer pays: each line net of its share of the cart discount
+      // (same rule as the POS cart and returns.ts computeSalePricing).
+      const discountRatio = calculatedSubtotal > 0 ? Math.max(0, 1 - finalDiscount / calculatedSubtotal) : 1
+      const taxableLines = expandedCartItems.map(ci => ({
+        itemId: ci.itemId || null,
+        lineTotal: roundCurrency(ci.total * discountRatio),
+      }))
+
+      // Part of the tax that is added on top of the prices (inclusive tax is already in them).
+      // Without a breakdown (flat-rate clients) the body flag, else the tenant setting, decides.
+      let exclusiveTax = finalTax
+      if (finalTax > 0 && !(bodyTaxBreakdown && bodyTaxBreakdown.length > 0)) {
+        let inclusive = bodyTaxInclusive
+        if (inclusive === undefined) {
+          const t = await db.query.tenants.findFirst({ where: eq(tenants.id, session.user.tenantId), columns: { taxInclusive: true } })
+          inclusive = !!t?.taxInclusive
+        }
+        if (inclusive) exclusiveTax = 0
+      }
+      // Tax-exempt customers pay no tax: the server recalculation must not add any
+      const taxExemptCustomer = customerId
+        ? !!(await db.query.customers.findFirst({ where: eq(customers.id, customerId), columns: { taxExempt: true } }))?.taxExempt
+        : false
 
       // Server-side tax validation and recalculation
       // If client sends taxBreakdown (modern POS), validate it.
@@ -535,11 +720,11 @@ export async function POST(request: NextRequest) {
             error: 'Tax breakdown total does not match tax amount. Please refresh and try again.',
           }, { status: 400 })
         }
+        exclusiveTax = roundCurrency(bodyTaxBreakdown.filter(b => !b.includedInPrice).reduce((s, b) => s + b.amount, 0))
         if (isOfflineSale) {
           // Computed on the device from cached templates: accept it, record any difference
           // against today's templates (≤ 1.00 = rounding; more = templates changed meanwhile).
-          const check = await recalculateDocumentTax(db, session.user.tenantId,
-            expandedCartItems.map(ci => ({ itemId: ci.itemId || null, lineTotal: ci.total })), { type: 'sales' })
+          const check = await recalculateDocumentTax(db, session.user.tenantId, taxableLines, { type: 'sales', taxExempt: taxExemptCustomer })
           const difference = roundCurrency(finalTax - check.totalTax)
           if (Math.abs(difference) >= 0.01) {
             saleFlags.taxDifference = { client: finalTax, server: check.totalTax, difference, withinTolerance: Math.abs(difference) <= 1.0 }
@@ -547,12 +732,11 @@ export async function POST(request: NextRequest) {
         }
       } else {
         // No client breakdown: compute server-side using tax templates
-        const saleLineItems = expandedCartItems.map(ci => ({
-          itemId: ci.itemId || null,
-          lineTotal: ci.total,
-        }))
-        serverTaxResult = await recalculateDocumentTax(db, session.user.tenantId, saleLineItems, { type: 'sales' })
+        serverTaxResult = await recalculateDocumentTax(db, session.user.tenantId, taxableLines, { type: 'sales', taxExempt: taxExemptCustomer })
         if (serverTaxResult.taxBreakdown && serverTaxResult.taxBreakdown.length > 0) {
+          exclusiveTax = serverTaxResult.totalTax > 0
+            ? roundCurrency(finalTax * (serverTaxResult.exclusiveTax / serverTaxResult.totalTax))
+            : 0
           // Validate server-computed tax vs client tax (allow small rounding diff)
           if (isOfflineSale && Math.abs(serverTaxResult.totalTax - finalTax) >= 0.01) {
             // Offline sale without a breakdown (older app): the tax the customer paid stands;
@@ -567,7 +751,62 @@ export async function POST(request: NextRequest) {
           }
         }
       }
+
+      // Loyalty points redeemed are a payment-like reduction of the amount due; their value comes
+      // from the active programme and the customer's tier (same formula as the POS).
+      if (loyaltyPointsRedeemed && loyaltyPointsRedeemed > 0) {
+        if (!customerId) {
+          return NextResponse.json({ error: 'Select a customer to redeem loyalty points' }, { status: 400 })
+        }
+        const program = await db.query.loyaltyPrograms.findFirst({ where: eq(loyaltyPrograms.status, 'active') })
+        if (!program) {
+          return NextResponse.json({ error: 'No active loyalty programme to redeem points from', code: 'LOYALTY_INACTIVE' }, { status: 400 })
+        }
+        const redeemer = await db.query.customers.findFirst({ where: eq(customers.id, customerId) })
+        const tier = redeemer
+          ? await db.query.loyaltyTiers.findFirst({
+              where: and(eq(loyaltyTiers.tier, redeemer.loyaltyTier || 'bronze'), eq(loyaltyTiers.isActive, true)),
+            })
+          : undefined
+        const redeemRate = tier ? (parseFloat(tier.redeemRate) || 0) : 1
+        loyaltyRedeemValue = roundCurrency(loyaltyPointsRedeemed * (parseFloat(program.conversionFactor) || 0) * redeemRate)
+      }
+
+      // The total is what the GL posts and what the payments settle: it must follow from the
+      // validated lines — subtotal − cart discount + tax added on top − loyalty redeemed + tip.
+      const expectedTotal = roundCurrency(Math.max(0, finalSubtotal - finalDiscount + exclusiveTax - loyaltyRedeemValue + (tipAmount || 0)))
+      const totalDifference = roundCurrency(finalTotal - expectedTotal)
+      if (Math.abs(totalDifference) > 0.05) {
+        if (!isOfflineSale) {
+          return NextResponse.json({
+            error: 'Sale total does not match the items, discount and tax. Please refresh and try again.',
+            code: 'TOTAL_MISMATCH',
+            expectedTotal,
+          }, { status: 400 })
+        }
+        // Offline: the customer already paid this total — record it for review
+        saleFlags.totalDifference = { client: finalTotal, server: expectedTotal, difference: totalDifference }
+      }
     }
+
+      // H1: counter rules — discount limit / discounts disabled, price below catalog without rate
+      // changes. Needs a supervisor approval token (verify-pin) unless the seller is a supervisor.
+      const controls = evaluateSaleControls(governingProfile, {
+        lines: expandedCartItems.map((ci) => ({
+          // H5: promotions are not cashier discounts, and the rate check compares with the price
+          // the price list gives this customer / unit / quantity (not the bare catalog price)
+          name: ci.name, quantity: ci.quantity, unitPrice: ci.unitPrice, discount: ci.manualDiscount,
+          catalogPrice: ci.resolvedPrice, isWeighable: ci.isWeighable,
+        })),
+        cartDiscount: manualCartDiscount,
+      })
+      const neededScopes: ApprovalScope[] = []
+      if (controls.needsDiscountApproval) neededScopes.push('discount')
+      if (controls.needsPriceApproval) neededScopes.push('price_change')
+      // H8: posProfiles.allowNegativeStock lets this counter sell beyond recorded stock (flagged);
+      // validateStockOnSave = false skips the early snapshot check (the locked check still runs).
+      const allowNegativeStock = isOfflineSale || !!governingProfile?.allowNegativeStock
+      const skipStockPreCheck = governingProfile?.validateStockOnSave === false
 
       // PRE-TRANSACTION STOCK CHECK (for early validation and user feedback)
       // Note: This check uses a snapshot of reserved quantities and may be slightly stale.
@@ -625,11 +864,11 @@ export async function POST(request: NextRequest) {
 
     // Add held sales reservations (parse JSONB cart items)
     for (const held of heldSalesData) {
-      const cartItems = held.cartItems as Array<{ itemId: string; quantity: number }>
+      const cartItems = held.cartItems as Array<{ itemId: string; quantity: number; uomFactor?: number }>
       if (Array.isArray(cartItems)) {
         for (const item of cartItems) {
           if (item.itemId) {
-            reservedMap.set(item.itemId, (reservedMap.get(item.itemId) || 0) + (item.quantity || 0))
+            reservedMap.set(item.itemId, (reservedMap.get(item.itemId) || 0) + (item.quantity || 0) * (Number(item.uomFactor) || 1))
           }
         }
       }
@@ -643,7 +882,7 @@ export async function POST(request: NextRequest) {
       }
 
       const insufficientStockItems: string[] = []
-      for (const cartItem of expandedCartItems) {
+      for (const cartItem of (skipStockPreCheck ? [] : expandedCartItems)) {
         const item = await db.query.items.findFirst({
           where: eq(items.id, cartItem.itemId),
         })
@@ -658,13 +897,13 @@ export async function POST(request: NextRequest) {
           const currentStock = stock ? parseFloat(stock.currentStock) : 0
           const reserved = reservedMap.get(item.id) || 0
           const availableStock = currentStock - reserved
-          if (availableStock < cartItem.quantity) {
-            insufficientStockItems.push(`${cartItem.name} (need: ${cartItem.quantity}, available: ${availableStock})`)
+          if (availableStock < cartItem.baseQuantity) {
+            insufficientStockItems.push(`${cartItem.name} (need: ${cartItem.baseQuantity}, available: ${availableStock})`)
           }
         }
       }
 
-      if (insufficientStockItems.length > 0 && !isOfflineSale) {
+      if (insufficientStockItems.length > 0 && !allowNegativeStock) {
         return NextResponse.json({
           error: `Insufficient stock for: ${insufficientStockItems.join(', ')}`,
           insufficientStockItems,
@@ -673,19 +912,46 @@ export async function POST(request: NextRequest) {
 
       // Calculate payment amounts using final totals
       const totalAmount = finalTotal
+      // Split tender: a 'credit' split is the part left on the customer's account (no money
+      // received, no payment row); every other split is money received.
+      const saleSplits = Array.isArray(paymentSplits) && paymentSplits.length > 0 ? paymentSplits : null
+      const onAccountSplit = saleSplits
+        ? roundCurrency(saleSplits.filter(sp => sp.method === 'credit').reduce((sum, sp) => sum + sp.amount, 0))
+        : 0
       // Credit payment method means "sell on credit" — no money received now
-      const cashCardAmount = paymentMethod === 'credit' ? 0 : (amountPaid || 0)
+      const cashCardAmount = saleSplits
+        ? roundCurrency(saleSplits.filter(sp => sp.method !== 'credit').reduce((sum, sp) => sum + sp.amount, 0))
+        : (paymentMethod === 'credit' ? 0 : (amountPaid || 0))
       const creditUsed = creditAmount || 0
       const totalPaid = cashCardAmount + creditUsed
+      // Overpayment can only be kept as store credit when there is a customer to hold it
+      const keepOverpayment = !!addOverpaymentToCredit && !!customerId
       const overpayment = Math.max(0, totalPaid - totalAmount)
       const actualPaidAmount = Math.min(totalPaid, totalAmount)
+      // What the cash/card tender leaves in the drawer: change handed back is not revenue,
+      // unless the overpayment was deliberately kept as customer credit.
+      const cashCardRecorded = keepOverpayment
+        ? cashCardAmount
+        : Math.max(0, Math.min(cashCardAmount, actualPaidAmount - creditUsed))
 
       // Credit sales require a customer (need to know who owes the money)
-      if (paymentMethod === 'credit' && !customerId) {
+      if ((paymentMethod === 'credit' || onAccountSplit > 0) && !customerId) {
         return NextResponse.json({ error: 'A customer must be selected for credit sales' }, { status: 400 })
+      }
+      // Store credit belongs to a customer, and can settle at most the sale total
+      if (creditUsed > 0 && !customerId) {
+        return NextResponse.json({ error: 'Select a customer to pay with store credit' }, { status: 400 })
+      }
+      if (compareCurrency(creditUsed, totalAmount) > 0) {
+        return NextResponse.json({ error: 'Store credit used cannot exceed the sale total' }, { status: 400 })
+      }
+      // Split tenders are exact amounts (no change is given on a split)
+      if (saleSplits && compareCurrency(roundCurrency(cashCardAmount + onAccountSplit + creditUsed), totalAmount) > 0) {
+        return NextResponse.json({ error: 'Split payments exceed the amount due', code: 'SPLIT_OVERPAYMENT' }, { status: 400 })
       }
 
       // If using customer credit balance, verify customer has enough balance (RLS scopes)
+      // (re-checked under a row lock inside the transaction)
       if (creditUsed > 0 && customerId) {
         const customer = await db.query.customers.findFirst({
           where: eq(customers.id, customerId),
@@ -695,20 +961,69 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // H7: on-account / pay-later part of this sale against the customer's credit limit
+      // (credit_limit > 0; 0 / empty = unlimited, same as dealers)
+      let creditCheck: { limit: number; outstanding: number; newCredit: number } | null = null
+      const newCredit = roundCurrency(Math.max(0, totalAmount - actualPaidAmount))
+      if (customerId && newCredit > 0.004) {
+        const customer = await db.query.customers.findFirst({ where: eq(customers.id, customerId), columns: { creditLimit: true } })
+        const limit = parseCurrency(customer?.creditLimit)
+        if (limit > 0) {
+          const outstanding = await customerOutstanding(db, customerId)
+          creditCheck = { limit, outstanding, newCredit }
+          if (compareCurrency(roundCurrency(outstanding + newCredit), limit) > 0) neededScopes.push('credit_override')
+        }
+      }
+
+      // H2: supervisor approval for whatever the rules flagged (single-use tokens, spent in the
+      // sale's transaction). Offline sales cannot carry a fresh token: accepted and flagged.
+      let saleApprovals: ReturnType<typeof coverScopes>['used'] = []
+      let approvedBy: string | null = null
+      if (neededScopes.length > 0) {
+        if (isSupervisor) {
+          approvedBy = userId
+        } else {
+          const cover = coverScopes(neededScopes, verifyApprovalTokens(approvalTokens, { tenantId: session.user.tenantId, requesterId: session.user.id }))
+          if (cover.missing.length > 0) {
+            if (!isOfflineSale) {
+              const messages: Record<string, string> = {
+                discount: governingProfile?.allowDiscountChange === false
+                  ? 'Discounts on this counter need supervisor approval'
+                  : `Discount of ${controls.discountPercent}% is above this counter's limit of ${parseFloat(String(governingProfile?.maxDiscountPercent ?? '100'))}%`,
+                price_change: `Price below the catalog price needs supervisor approval (${controls.priceOverrides.map((o) => o.name).slice(0, 3).join(', ')})`,
+                credit_override: creditCheck
+                  ? `Credit limit exceeded: owes ${creditCheck.outstanding.toFixed(2)} + ${creditCheck.newCredit.toFixed(2)} on this sale, limit ${creditCheck.limit.toFixed(2)}`
+                  : 'Credit limit exceeded',
+              }
+              return NextResponse.json({
+                error: cover.missing.map((m) => messages[m]).join('. '),
+                code: 'APPROVAL_REQUIRED',
+                scopes: cover.missing,
+                discountPercent: controls.discountPercent,
+                maxDiscountPercent: governingProfile ? parseFloat(String(governingProfile.maxDiscountPercent)) : null,
+                priceOverrides: controls.priceOverrides,
+                credit: creditCheck,
+              }, { status: 403 })
+            }
+            saleFlags.approvalMissing = { scopes: cover.missing, discountPercent: controls.discountPercent, priceOverrides: controls.priceOverrides, credit: creditCheck }
+          }
+          saleApprovals = cover.used
+          approvedBy = cover.used[0]?.approverId || null
+        }
+        saleFlags.approvals = {
+          scopes: neededScopes,
+          approvedBy,
+          nonces: saleApprovals.map((a) => a.nonce),
+          discountPercent: controls.discountPercent,
+          priceOverrides: controls.priceOverrides,
+          credit: creditCheck,
+        }
+      }
+
       // Resolve cost center from POS profile (GL account now resolved from Modes of Payment in auto-post)
       let costCenterId = providedCostCenterId || null
-      if (posOpeningEntryId) {
-        const openingEntry = await db.query.posOpeningEntries.findFirst({
-          where: eq(posOpeningEntries.id, posOpeningEntryId),
-        })
-        if (openingEntry) {
-          const posProfile = await db.query.posProfiles.findFirst({
-            where: eq(posProfiles.id, openingEntry.posProfileId),
-          })
-          if (posProfile && !costCenterId && posProfile.costCenterId) {
-            costCenterId = posProfile.costCenterId
-          }
-        }
+      if (!costCenterId && shiftCheck.profile?.costCenterId) {
+        costCenterId = shiftCheck.profile.costCenterId
       }
 
       // Stock ledger results of this sale (low-stock listeners are notified after commit)
@@ -724,6 +1039,13 @@ export async function POST(request: NextRequest) {
         const pendingInvoiceNo = `PND-${crypto.randomUUID()}`
         let invoiceNo = pendingInvoiceNo
 
+        // Lock the customer row FIRST. Inserting the sale (FK customer_id) takes a KEY SHARE lock
+        // on it; two concurrent sales of one customer that each held that and then asked for
+        // FOR UPDATE (store credit / loyalty below) deadlocked, and one failed with 409.
+        if (customerId) {
+          await tx.select({ id: customers.id }).from(customers).where(eq(customers.id, customerId)).for('update')
+        }
+
       // Create sale
       const saleResult = await tx.insert(sales).values({
         tenantId: session.user.tenantId,
@@ -733,7 +1055,8 @@ export async function POST(request: NextRequest) {
         customerId: customerId || null,
         vehicleId: vehicleId || null,
         warehouseId: warehouseId,
-        posOpeningEntryId: posOpeningEntryId || null,
+        posOpeningEntryId: saleShiftId,
+        approvedBy,
         // Denormalized fields for historical accuracy
         customerName: resolvedCustomerName || null,
         vehiclePlate: resolvedVehiclePlate || null,
@@ -755,17 +1078,36 @@ export async function POST(request: NextRequest) {
         costCenterId: costCenterId || null,
         workOrderId: workOrderId || null,
         restaurantOrderId: restaurantOrderId || null,
+        promotionDiscount: String(promotionCartDiscount),
+        couponCode: usedCoupon && appliedPromotions.length > 0 ? usedCoupon : null,
       }).returning()
       const newSale = (saleResult as typeof sales.$inferSelect[])[0]
+
+      // H5: promotion usage (limits are re-checked under lock; offline sales always count)
+      if (appliedPromotions.length > 0) {
+        await recordPromotionRedemptions(tx, {
+          tenantId: session.user.tenantId, saleId: newSale.id, customerId: customerId || null,
+          applied: appliedPromotions, strict: !isOfflineSale,
+        })
+      }
+
+      // Spend the supervisor approvals (a reused token rolls the sale back)
+      if (saleApprovals.length > 0) {
+        await consumeApprovals(tx, {
+          tenantId: session.user.tenantId, usedBy: userId, entityType: 'sale', entityId: newSale.id,
+          approvals: saleApprovals, scopesFor: (a) => neededScopes.filter((sc) => a.scopes.includes(sc)),
+        })
+      }
 
       // Split tender (multiple payment methods) or single payment.
       // E1: every payment row written here is mirrored in `recordedPayments` — the GL settles the
       // receivable with one debit per method from exactly these rows.
       const recordedPayments: Array<{ method: string; amount: number }> = []
-      const splits = Array.isArray(paymentSplits) ? paymentSplits : null
-      if (splits && splits.length > 0) {
+      const splits = saleSplits
+      if (splits) {
         for (const split of splits) {
-          if (split.amount > 0) {
+          // 'credit' split = left on the customer's account: receivable stays open, no payment row
+          if (split.amount > 0 && split.method !== 'credit') {
             await tx.insert(payments).values({
               tenantId: session.user.tenantId,
               saleId: newSale.id,
@@ -788,12 +1130,7 @@ export async function POST(request: NextRequest) {
           })
         }
       } else {
-        // Create payment record for cash/card payment.
-        // Record what actually stays in the drawer: change handed back is not revenue,
-        // unless the overpayment was deliberately kept as customer credit.
-        const cashCardRecorded = addOverpaymentToCredit
-          ? cashCardAmount
-          : Math.max(0, Math.min(cashCardAmount, actualPaidAmount - creditUsed))
+        // Create payment record for cash/card payment (what actually stays in the drawer)
         if (cashCardRecorded > 0) {
           await tx.insert(payments).values({
             tenantId: session.user.tenantId,
@@ -818,11 +1155,12 @@ export async function POST(request: NextRequest) {
       }
 
       // Gift card redemption: atomically deduct from card within same transaction.
-      // Split tender: only the gift-card split is drawn from the card.
-      const giftCardRedeemAmount = splits && splits.length > 0
+      // Split tender: only the gift-card split is drawn from the card; single tender: only what
+      // the sale keeps (never the tendered amount beyond the total).
+      const giftCardRedeemAmount = splits
         ? roundCurrency(splits.filter(sp => sp.method === 'gift_card').reduce((sum, sp) => sum + sp.amount, 0))
-        : (paymentMethod === 'gift_card' ? cashCardAmount : 0)
-      if (splits && splits.length > 0 && giftCardRedeemAmount > 0 && !giftCardId) {
+        : (paymentMethod === 'gift_card' ? roundCurrency(cashCardRecorded) : 0)
+      if (giftCardRedeemAmount > 0 && !giftCardId) {
         throw new Error('GIFT_CARD_NOT_FOUND')
       }
       if (giftCardId && giftCardRedeemAmount > 0) {
@@ -874,17 +1212,24 @@ export async function POST(request: NextRequest) {
       }
 
         // Handle customer credit transactions (RLS scopes inside transaction)
-        if (customerId) {
-          const customer = await tx.query.customers.findFirst({
-            where: eq(customers.id, customerId),
-          })
+        if (customerId && (creditUsed > 0 || (overpayment > 0 && keepOverpayment))) {
+          // Row lock: concurrent sales spending the same store credit serialise here and each one
+          // re-checks the balance the other left (the pre-check above is only a snapshot).
+          const [customer] = await tx
+            .select()
+            .from(customers)
+            .where(eq(customers.id, customerId))
+            .for('update')
 
         if (customer) {
           let newBalance = parseFloat(customer.balance)
 
           // Deduct credit if used
           if (creditUsed > 0) {
-            newBalance -= creditUsed
+            if (compareCurrency(newBalance, creditUsed) < 0) {
+              throw new Error('INSUFFICIENT_CREDIT')
+            }
+            newBalance = roundCurrency(newBalance - creditUsed)
             await tx.insert(customerCreditTransactions).values({
               tenantId: session.user.tenantId,
               customerId,
@@ -899,8 +1244,8 @@ export async function POST(request: NextRequest) {
           }
 
           // Add overpayment as credit (only if customer requested)
-          if (overpayment > 0 && addOverpaymentToCredit) {
-            newBalance += overpayment
+          if (overpayment > 0 && keepOverpayment) {
+            newBalance = roundCurrency(newBalance + overpayment)
             await tx.insert(customerCreditTransactions).values({
               tenantId: session.user.tenantId,
               customerId,
@@ -915,7 +1260,7 @@ export async function POST(request: NextRequest) {
           }
 
           // Update customer balance if changed
-          if (creditUsed > 0 || (overpayment > 0 && addOverpaymentToCredit)) {
+          if (creditUsed > 0 || (overpayment > 0 && keepOverpayment)) {
             await tx.update(customers)
               .set({
                 balance: String(newBalance),
@@ -938,19 +1283,23 @@ export async function POST(request: NextRequest) {
           const lockedItem = tenantItems.find(i => i.id === cartItem.itemId)
 
         // Calculate per-item tax: use client-provided per-item data or server-computed template data
-        const clientCartItem = cartItems.find(ci => ci.itemId === cartItem.itemId)
-        const itemTaxRate = clientCartItem?.taxRate ?? 0
+        // (by line position: the same item may appear on several lines)
+        const clientCartItem = cartItems[cartItem.sourceIndex]
+        let itemTaxRate = clientCartItem?.taxRate ?? 0
         let itemTaxAmount = clientCartItem?.taxAmount ?? 0
-        const itemTaxTemplateId = clientCartItem?.taxTemplateId ?? null
+        let itemTaxTemplateId = clientCartItem?.taxTemplateId ?? null
         let itemTaxBreakdown = clientCartItem?.taxBreakdown ?? null
 
         // If client didn't provide per-item tax, use server-computed template results
         if (!clientCartItem?.taxAmount && serverTaxResult) {
-          const expandedIdx = expandedCartItems.findIndex(ci => ci.itemId === cartItem.itemId)
+          const expandedIdx = expandedCartItems.indexOf(cartItem)
           const perItem = expandedIdx >= 0 ? serverTaxResult.perItemTax[expandedIdx] : null
           if (perItem) {
             itemTaxAmount = perItem.taxAmount
             itemTaxBreakdown = perItem.taxBreakdown || null
+            // Server-resolved template and effective rate (not 0 / null as the client left them)
+            if (!clientCartItem?.taxRate) itemTaxRate = perItem.taxRate
+            if (!itemTaxTemplateId) itemTaxTemplateId = perItem.taxTemplateId ?? null
           }
         }
 
@@ -962,6 +1311,7 @@ export async function POST(request: NextRequest) {
           itemName: cartItem.name,
           quantity: String(cartItem.quantity),
           unitPrice: String(cartItem.unitPrice),
+          listPrice: String(cartItem.listPrice),
           discount: String(cartItem.discount || 0),
           taxRate: String(itemTaxRate),
           taxAmount: String(itemTaxAmount),
@@ -969,6 +1319,20 @@ export async function POST(request: NextRequest) {
           taxBreakdown: itemTaxBreakdown,
           total: String(cartItem.total),
           serialNumberIds: cartItem.serialNumberIds?.length ? cartItem.serialNumberIds : null,
+          // H5: price list, promotions and unit of this line
+          priceListId: cartItem.priceListId,
+          promotionId: cartItem.promotions[0]?.promotionId ?? null,
+          promotionDiscount: String(cartItem.promotionDiscount),
+          // line promotions + this line's share of the cart promotions (receipts / reports)
+          promotions: (() => {
+            const all: Array<{ promotionId: string; label: string; amount: number; cart?: boolean }> = [...cartItem.promotions]
+            if (cartPromotionsUsed && cartItem.cartPromotionShare > 0) {
+              all.push({ promotionId: pricing.cartPromotions[0].promotionId, label: pricing.cartPromotions.map((c) => c.label).join(' + '), amount: cartItem.cartPromotionShare, cart: true })
+            }
+            return all.length ? all : null
+          })(),
+          uom: cartItem.uom,
+          uomFactor: String(cartItem.uomFactor),
         }).returning({ id: saleItems.id })
 
           if (lockedItem?.trackBatches && cartItem.quantity > 0) {
@@ -999,7 +1363,7 @@ export async function POST(request: NextRequest) {
               warehouseId,
               itemId: cartItem.itemId,
               mode: 'delta',
-              qty: -cartItem.quantity,
+              qty: -cartItem.baseQuantity,
               type: 'out',
               referenceType: 'sale',
               referenceId: newSale.id,
@@ -1007,10 +1371,11 @@ export async function POST(request: NextRequest) {
               source: 'pos',
               costCenterId: costCenterId || null,
               idempotencyKey: `sale:${newSale.id}:${saleItemRow.id}`,
-              // W6: goods already left the shop during the outage; record the shortfall instead
-              allowNegative: isOfflineSale,
+              // W6: goods already left the shop during the outage; record the shortfall instead.
+              // H8: a counter that allows negative stock sells beyond the recorded stock too.
+              allowNegative: allowNegativeStock,
             })
-            stockLineQty.push(cartItem.quantity)
+            stockLineQty.push(cartItem.baseQuantity)
           }
         }
 
@@ -1074,6 +1439,11 @@ export async function POST(request: NextRequest) {
 
               // 1. Process redemption FIRST (before earning to prevent inflation)
               if (loyaltyPointsRedeemed && loyaltyPointsRedeemed > 0) {
+                // The points' value was taken off the total: the customer must really have them
+                // (offline sales are done deals — redeem what is left)
+                if (loyaltyPointsRedeemed > currentPoints && !isOfflineSale) {
+                  throw new Error('INSUFFICIENT_LOYALTY_POINTS')
+                }
                 const pointsToRedeem = Math.min(loyaltyPointsRedeemed, currentPoints)
                 if (pointsToRedeem > 0) {
                   currentPoints -= pointsToRedeem
@@ -1142,7 +1512,7 @@ export async function POST(request: NextRequest) {
           const reserved = reservedMap.get(stockInputs[i].itemId) || 0
           const availableStock = Math.round((r.before - reserved) * 1000) / 1000
           if (stockLineQty[i] > 0 && availableStock < stockLineQty[i]) {
-            if (!isOfflineSale) {
+            if (!allowNegativeStock) {
               throw new Error(`INSUFFICIENT_STOCK:${r.itemName} (need: ${stockLineQty[i]}, have: ${availableStock})`)
             }
             shortfalls.push({ itemId: stockInputs[i].itemId, name: r.itemName, quantity: stockLineQty[i], available: availableStock })
@@ -1151,6 +1521,7 @@ export async function POST(request: NextRequest) {
         saleStockChanges = stockResults.map((result, i) => ({ result, input: stockInputs[i] }))
         if (shortfalls.length > 0) {
           saleFlags.stockShortfall = shortfalls
+          if (!isOfflineSale) saleFlags.negativeStockAllowed = true
         }
 
         // D1: batch allocation (cashier's batch / scanned batch number first, else FEFO).
@@ -1164,16 +1535,16 @@ export async function POST(request: NextRequest) {
               tenantId: session.user.tenantId,
               warehouseId,
               itemId: b.cartItem.itemId,
-              qty: b.cartItem.quantity,
+              qty: b.cartItem.baseQuantity,
               saleItemId: b.saleItemId,
               preferredBatchId: b.cartItem.batchId,
               preferredBatchNumber: b.cartItem.batchNumber,
               allowExpired: salesSettings.batches.allowExpiredSale,
-              allowShortfall: isOfflineSale,
+              allowShortfall: allowNegativeStock,
               itemName: b.cartItem.name,
             })
             if (r.shortfall > 0) {
-              batchShortfalls.push({ itemId: b.cartItem.itemId, name: b.cartItem.name, quantity: b.cartItem.quantity, allocated: r.allocated })
+              batchShortfalls.push({ itemId: b.cartItem.itemId, name: b.cartItem.name, quantity: b.cartItem.baseQuantity, allocated: r.allocated })
             }
           }
           if (batchShortfalls.length > 0) saleFlags.batchShortfall = batchShortfalls
@@ -1277,6 +1648,21 @@ export async function POST(request: NextRequest) {
         userId,
         entityName: result.invoiceNo,
         description: generateActivityDescription('create', 'sale', result.invoiceNo),
+        metadata: {
+          posOpeningEntryId: saleShiftId,
+          posProfileId: shiftCheck.shift?.posProfileId || governingProfile?.id || null,
+          total: finalTotal,
+          discount: finalDiscount,
+          discountPercent: controls.discountPercent,
+          approvedBy,
+          approvals: neededScopes,
+          priceOverrides: expandedCartItems
+            .filter((ci) => compareCurrency(ci.unitPrice, ci.resolvedPrice) !== 0)
+            .map((ci) => ({ itemId: ci.itemId, name: ci.name, before: ci.resolvedPrice, after: ci.unitPrice })),
+          credit: creditCheck,
+          offline: isOfflineSale || undefined,
+          flags: Object.keys(saleFlags).length > 0 ? saleFlags : undefined,
+        },
       })
       // WS-3: Broadcast specific item stock updates (not 'all')
       const affectedItemIds = [...new Set(expandedCartItems.map(i => i.itemId))]
@@ -1364,7 +1750,7 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      if (isOfflineSale && (saleFlags.priceDifferences?.length || saleFlags.taxDifference || saleFlags.stockShortfall?.length || saleFlags.batchShortfall?.length)) {
+      if (isOfflineSale && (saleFlags.priceDifferences?.length || saleFlags.taxDifference || saleFlags.stockShortfall?.length || saleFlags.batchShortfall?.length || saleFlags.approvalMissing || saleFlags.shiftIssue)) {
         offlineNotice = { saleId: result.id, invoiceNo: result.invoiceNo }
       }
 
@@ -1382,6 +1768,10 @@ export async function POST(request: NextRequest) {
       if (saleFlags.taxDifference) parts.push(`tax differs by ${saleFlags.taxDifference.difference.toFixed(2)}`)
       if (saleFlags.stockShortfall?.length) parts.push(`${saleFlags.stockShortfall.length} item(s) sold beyond recorded stock`)
       if (saleFlags.batchShortfall?.length) parts.push(`${saleFlags.batchShortfall.length} item(s) sold beyond recorded batch quantity`)
+      const missing = saleFlags.approvalMissing as { scopes?: string[] } | undefined
+      if (missing?.scopes?.length) parts.push(`no supervisor approval for ${missing.scopes.join(', ')}`)
+      const shiftIssue = saleFlags.shiftIssue as { code?: string } | undefined
+      if (shiftIssue?.code) parts.push(`shift problem: ${shiftIssue.code}`)
       void notify(session.user.tenantId, 'offline_price_difference', {
         title: `Offline sale ${offlineRef} (${notice.invoiceNo}) needs review`,
         body: parts.join(' · ') || 'Offline sale differs from the current catalog',
@@ -1432,6 +1822,15 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (error instanceof ApprovalError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: 403 })
+    }
+    if (error instanceof PromotionExhaustedError) {
+      return NextResponse.json({
+        error: 'A promotion in this cart has just reached its usage limit. Review the cart and try again.',
+        code: 'PROMOTION_EXHAUSTED', promotionId: error.promotionId,
+      }, { status: 409 })
+    }
     logError('api/sales', error, { method: 'POST', path: '/api/sales' })
     const message = error instanceof Error ? error.message : ''
 
@@ -1467,6 +1866,12 @@ export async function POST(request: NextRequest) {
     }
     if (message === 'GIFT_CARD_INSUFFICIENT_BALANCE') {
       return NextResponse.json({ error: 'Insufficient gift card balance' }, { status: 400 })
+    }
+    if (message === 'INSUFFICIENT_CREDIT') {
+      return NextResponse.json({ error: 'Insufficient customer credit balance' }, { status: 400 })
+    }
+    if (message === 'INSUFFICIENT_LOYALTY_POINTS') {
+      return NextResponse.json({ error: 'Customer does not have enough loyalty points', code: 'INSUFFICIENT_LOYALTY_POINTS' }, { status: 400 })
     }
 
     const apiError = toApiError(error)
@@ -1518,13 +1923,19 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
         warehouseId = fallback?.id || null
       }
 
+      // H1: a refund paid from a drawer must be on an open shift of the cashier (offline: flagged by the queue)
+      const shiftCheck = await checkSaleShift(db, {
+        posOpeningEntryId: body.posOpeningEntryId,
+        userIds: [...new Set([userId, session.user.id])],
+        canUseAnyShift: hasPermission(session.user.role, 'manageSales', tenantId, session.user.customRoleId),
+      })
+      if (shiftCheck.issue && !body.offlineRef) {
+        return NextResponse.json({ error: SHIFT_ISSUE_MESSAGES[shiftCheck.issue], code: shiftCheck.issue }, { status: shiftCheck.issue === 'SHIFT_NOT_YOURS' ? 403 : 400 })
+      }
+
       let costCenterId = body.costCenterId || null
-      if (!costCenterId && body.posOpeningEntryId) {
-        const openingEntry = await db.query.posOpeningEntries.findFirst({ where: eq(posOpeningEntries.id, body.posOpeningEntryId) })
-        if (openingEntry) {
-          const profile = await db.query.posProfiles.findFirst({ where: eq(posProfiles.id, openingEntry.posProfileId) })
-          costCenterId = profile?.costCenterId || null
-        }
+      if (!costCenterId && shiftCheck.profile) {
+        costCenterId = shiftCheck.profile.costCenterId || null
       }
 
       const result = await db.transaction(async (tx) => createReturnInTx(tx, { tenantId, userId }, {
@@ -1542,7 +1953,7 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
         clientRefundAmount: body.refundAmount ?? null,
         customerId: body.customerId || null,
         warehouseId,
-        posOpeningEntryId: body.posOpeningEntryId || null,
+        posOpeningEntryId: shiftCheck.issue === 'SHIFT_NOT_FOUND' ? null : body.posOpeningEntryId || null,
         costCenterId,
         clientSaleId: body.clientSaleId || null,
         offlineRef: body.offlineRef || null,
@@ -1555,6 +1966,18 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
         userId,
         entityName: ret.invoiceNo,
         description: `Processed return ${ret.invoiceNo}${result.originalSale ? ` against ${result.originalSale.invoiceNo}` : ' (no receipt)'}`,
+        metadata: {
+          posOpeningEntryId: shiftCheck.shift?.id || null,
+          posProfileId: shiftCheck.shift?.posProfileId || null,
+          originalSaleId: result.originalSale?.id || null,
+          refundTotal: result.refundTotal,
+          refundPaidOut: result.refundPaidOut,
+          refundMethod: result.refundMethod,
+          reason: body.returnReason || null,
+          lines: result.lines,
+          before: result.originalSale ? { status: result.originalSale.status } : undefined,
+          after: { returnStatus: result.returnStatus },
+        },
       })
       if (result.originalSale) logAndBroadcast(tenantId, 'sale', 'updated', result.originalSale.id)
       for (const itemId of result.affectedItemIds) logAndBroadcast(tenantId, 'item', 'updated', itemId)

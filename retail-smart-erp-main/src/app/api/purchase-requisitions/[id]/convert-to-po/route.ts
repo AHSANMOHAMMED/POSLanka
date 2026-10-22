@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenantTransaction } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { purchaseRequisitions, purchaseRequisitionItems, purchaseOrders, purchaseOrderItems, suppliers } from '@/lib/db/schema'
+import { purchaseRequisitions, purchaseRequisitionItems, purchaseOrders, purchaseOrderItems, suppliers, warehouses } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -47,6 +47,13 @@ export async function POST(
 
     if (!supplier) return { error: NextResponse.json({ error: 'Supplier not found' }, { status: 404 }) }
 
+    // Validate warehouse (RLS-scoped: a warehouse of another tenant is not found)
+    const [warehouse] = await tx.select({ id: warehouses.id })
+      .from(warehouses)
+      .where(eq(warehouses.id, body.warehouseId))
+
+    if (!warehouse) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
+
     // Get items to convert
     const reqItems = await tx.select()
       .from(purchaseRequisitionItems)
@@ -57,7 +64,7 @@ export async function POST(
       if (body.itemIds?.length) {
         if (!body.itemIds.includes(item.id)) return false
       }
-      const remaining = parseFloat(item.quantity) - parseFloat(item.orderedQuantity)
+      const remaining = Math.round((parseFloat(item.quantity) - parseFloat(item.orderedQuantity)) * 1000) / 1000
       return remaining > 0
     })
 
@@ -82,9 +89,9 @@ export async function POST(
 
     // Create PO items from requisition items
     const poItems = itemsToConvert.map(item => {
-      const remaining = parseFloat(item.quantity) - parseFloat(item.orderedQuantity)
+      const remaining = Math.round((parseFloat(item.quantity) - parseFloat(item.orderedQuantity)) * 1000) / 1000
       const unitPrice = parseFloat(item.estimatedUnitPrice)
-      const itemTotal = remaining * unitPrice
+      const itemTotal = Math.round(remaining * unitPrice * 100) / 100
       subtotal += itemTotal
 
       return {
@@ -112,7 +119,7 @@ export async function POST(
 
     // Update ordered quantities on requisition items
     for (const item of itemsToConvert) {
-      const remaining = parseFloat(item.quantity) - parseFloat(item.orderedQuantity)
+      const remaining = Math.round((parseFloat(item.quantity) - parseFloat(item.orderedQuantity)) * 1000) / 1000
       await tx.update(purchaseRequisitionItems)
         .set({
           orderedQuantity: (parseFloat(item.orderedQuantity) + remaining).toFixed(3),

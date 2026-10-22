@@ -25,6 +25,7 @@ interface ProductGridProps {
   posWarehouseName: string | null
   onOpenShift: () => void
   onCloseShift: () => void
+  onCashMovement?: () => void
   onOpenReturnLookup: () => void
   cartHasItems: boolean
   onReturnModeConfirm: () => void
@@ -126,6 +127,7 @@ export function ProductGrid({
   posWarehouseName,
   onOpenShift,
   onCloseShift,
+  onCashMovement,
   onOpenReturnLookup,
   cartHasItems,
   onReturnModeConfirm,
@@ -177,6 +179,7 @@ export function ProductGrid({
               hasOpenShift={!!activeShift}
               onOpenShift={onOpenShift}
               onCloseShift={onCloseShift}
+              onCashMovement={onCashMovement}
               compact
             />
           )}

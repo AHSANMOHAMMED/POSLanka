@@ -151,6 +151,9 @@ export async function PUT(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
+    const permError = requirePermission(session, 'manageWorkOrders')
+    if (permError) return permError
+
     const paramsParsed = validateParams(await params, z.object({ id: z.string().uuid(), inspectionId: z.string().uuid() }))
     if (!paramsParsed.success) return paramsParsed.response
     const { id: workOrderId, inspectionId } = paramsParsed.data
@@ -225,6 +228,9 @@ export async function DELETE(
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+
+    const permError = requirePermission(session, 'manageWorkOrders')
+    if (permError) return permError
 
     const paramsParsed = validateParams(await params, z.object({ id: z.string().uuid(), inspectionId: z.string().uuid() }))
     if (!paramsParsed.success) return paramsParsed.response

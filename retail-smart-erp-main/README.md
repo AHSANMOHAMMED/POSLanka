@@ -108,7 +108,9 @@ For full production deployment instructions on **Railway**, **VPS/Docker**, or *
 ## 📜 Available Scripts
 
 ```bash
-npm run dev              # Start dev server with WebSocket support
+npm run dev              # Start dev server with WebSocket support (pre-compiles the main modules in the background; DEV_WARMUP=off to skip)
+npm run preview          # Build, then run locally in production mode — every click is instant (no compiling on first visit)
+npm run preview:run      # Run the last build in production mode
 npm run build            # Production build
 npm run start            # Run production server
 npm run lint             # ESLint code style checks

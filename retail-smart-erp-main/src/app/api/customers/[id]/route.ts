@@ -196,6 +196,20 @@ export async function DELETE(
       // Check for dependencies before deletion (RLS scopes all queries)
       const dependencies: string[] = []
 
+      // Store credit is money the shop owes the customer (Customer Advance in the GL): deleting
+      // the customer would orphan that liability.
+      const existingCustomer = await db.query.customers.findFirst({
+        where: eq(customers.id, id),
+        columns: { id: true, balance: true },
+      })
+      if (!existingCustomer) {
+        return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+      }
+      const creditBalance = parseFloat(existingCustomer.balance || '0') || 0
+      if (Math.abs(creditBalance) >= 0.01) {
+        dependencies.push(`a store credit balance of ${creditBalance.toFixed(2)}`)
+      }
+
       // Check for active work orders (draft status)
       const [activeWorkOrders] = await db
         .select({ count: sql<number>`count(*)::int` })
@@ -223,8 +237,7 @@ export async function DELETE(
         .from(layaways)
         .where(and(
           eq(layaways.customerId, id),
-          ne(layaways.status, 'completed'),
-          ne(layaways.status, 'cancelled')
+          inArray(layaways.status, ['active', 'fully_paid'])
         ))
       if (activeLayaways?.count > 0) {
         dependencies.push(`${activeLayaways.count} active layaway(s)`)
@@ -259,9 +272,25 @@ export async function DELETE(
         }, { status: 400 })
       }
 
-      const [deleted] = await db.delete(customers)
-        .where(eq(customers.id, id))
-        .returning()
+      // Any other history (quotations, credit / loyalty transactions, gift cards, reservations...)
+      // still references the customer: answer with a clear 400 instead of a 500 FK error.
+      let deleted: typeof customers.$inferSelect | undefined
+      try {
+        await db.execute(sql`SAVEPOINT customer_delete`)
+        ;[deleted] = await db.delete(customers)
+          .where(eq(customers.id, id))
+          .returning()
+        await db.execute(sql`RELEASE SAVEPOINT customer_delete`)
+      } catch (err) {
+        const code = (err as { code?: string; cause?: { code?: string } })?.code ?? (err as { cause?: { code?: string } })?.cause?.code
+        if (code === '23503') {
+          await db.execute(sql`ROLLBACK TO SAVEPOINT customer_delete`)
+          return NextResponse.json({
+            error: 'Cannot delete customer: other records (quotations, credit, loyalty, gift card or reservation history) still reference this customer.',
+          }, { status: 400 })
+        }
+        throw err
+      }
 
       if (!deleted) {
         return NextResponse.json({ error: 'Customer not found' }, { status: 404 })

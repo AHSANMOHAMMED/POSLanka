@@ -138,6 +138,9 @@ export async function POST(request: NextRequest) {
       if (!vehicle.isActive) {
         return NextResponse.json({ error: 'Vehicle is not active' }, { status: 400 })
       }
+      if (vehicle.status === 'sold') {
+        return NextResponse.json({ error: 'Vehicle has already been sold' }, { status: 400 })
+      }
 
       // Validate customer if provided
       if (customerId) {

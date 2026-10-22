@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuthTenantTransaction } from '@/lib/db'
+import { db as rawDb, withAuthTenantTransaction } from '@/lib/db'
 import { salesOrders, salesOrderItems, sales, saleItems, items as itemsTable, warehouseStock } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { eq, sql, inArray } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
 import { roundCurrency } from '@/lib/utils/currency'
@@ -17,6 +17,9 @@ import { applyStockChange, notifyStockDecreased, type StockChangeInput, type Sto
 import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
 import { allocateSaleLineBatches } from '@/lib/inventory/batches'
 import { getTenantSalesSettings } from '@/lib/sales/return-settings'
+import { postSaleToGL } from '@/lib/accounting/auto-post'
+import { requireAccountingConfig } from '@/lib/accounting/validate-config'
+import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 
 // POST create sales invoice from sales order
 export async function POST(
@@ -40,6 +43,11 @@ export async function POST(
 
   const quotaError = await requireQuota(preSession.user.tenantId, 'essential')
   if (quotaError) return quotaError
+
+  // The invoice is posted to the GL below (receivable, revenue, tax, COGS): fail early with a
+  // clear message when the accounts it needs are not configured.
+  const acctError = await requireAccountingConfig(rawDb, preSession.user.tenantId, 'sale')
+  if (acctError) return acctError
 
   result = await withAuthTenantTransaction(async (session, tx) => {
     // Permission check
@@ -270,6 +278,38 @@ export async function POST(
       }
     }
 
+    // Post the invoice to the GL like any other sale: Dr Receivable / Cr Revenue + Tax, and
+    // COGS. It is created unpaid (pending) — payments taken later via /api/sales/[id]/payments
+    // credit the receivable, which previously had never been debited (revenue was never booked
+    // and AR went negative on payment).
+    const costIds = [...new Set(invoiceItems.map(i => i.itemId).filter((x): x is string => !!x))]
+    const costRows = costIds.length > 0
+      ? await tx.select({ id: itemsTable.id, costPrice: itemsTable.costPrice, isGiftCard: itemsTable.isGiftCard })
+          .from(itemsTable).where(inArray(itemsTable.id, costIds))
+      : []
+    const costById = new Map(costRows.map(r => [r.id, r]))
+    const totalCOGS = roundCurrency(invoiceItems.reduce((sum, i) => {
+      const c = i.itemId ? costById.get(i.itemId) : undefined
+      if (!c || c.isGiftCard) return sum
+      return sum + roundCurrency((parseFloat(c.costPrice || '0') || 0) * i.fulfillQty)
+    }, 0))
+    await postSaleToGL(tx, session.user.tenantId, {
+      saleId: newSale.id,
+      invoiceNumber: invoiceNo,
+      saleDate: new Date().toISOString().split('T')[0],
+      subtotal,
+      tax: totalTax,
+      discount: totalDiscount,
+      total,
+      amountPaid: 0,
+      creditAmount: 0,
+      costOfGoodsSold: totalCOGS,
+      paymentMethod: 'credit',
+      customerId: order.customerId || null,
+      costCenterId: costCenterId || null,
+      taxBreakdown: (invoiceTaxBreakdown as TaxBreakdownItem[] | null) || undefined,
+    })
+
     // Update fulfilled quantities cumulatively on SO items
     for (const item of invoiceItems) {
       const previouslyFulfilled = parseFloat(
@@ -321,6 +361,9 @@ export async function POST(
     }
     const stockError = stockErrorResponse(error)
     if (stockError) return stockError
+    if (message.startsWith('GL_ACCOUNTS_MISSING') || /fiscal year/i.test(message)) {
+      return NextResponse.json({ error: message.replace(/^GL_ACCOUNTS_MISSING:\s*/, '') }, { status: 400 })
+    }
     logError('api/sales-orders/[id]/create-invoice', error)
     return NextResponse.json({ error: 'Failed to create invoice' }, { status: 500 })
   }

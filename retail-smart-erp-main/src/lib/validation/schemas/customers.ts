@@ -76,7 +76,8 @@ export const updateCustomerSchema = createCustomerSchema.merge(optimisticLockSch
 // POST /api/customers/[id]/credit
 const creditTransactionTypeValues = ['add', 'refund', 'overpayment', 'use', 'adjustment'] as const
 export const customerCreditSchema = z.object({
-  amount: z.coerce.number().refine(v => v !== 0, 'Amount cannot be zero'),
+  amount: z.coerce.number().refine(v => Math.abs(v) >= 0.01, 'Amount cannot be zero')
+    .refine(v => Math.abs(v) <= 100_000_000, 'Amount is too large'),
   type: z.enum(creditTransactionTypeValues).default('add'),
   notes: z.string().max(5000).nullish(),
   referenceType: z.string().max(100).default('manual'),

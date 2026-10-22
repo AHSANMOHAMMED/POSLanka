@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { accountAuth as auth } from '@/lib/auth/account-auth'
-import { db } from '@/lib/db'
+import { db, withTenant } from '@/lib/db'
+import { requireUserSeat } from '@/lib/billing/user-limit'
 import { tenants, users } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { sql } from 'drizzle-orm'
@@ -51,10 +52,25 @@ export async function PUT(
     if (fullName !== undefined) updateData.fullName = fullName.trim()
     if (role !== undefined) updateData.role = role
     if (isActive !== undefined) updateData.isActive = isActive
-    if (password) updateData.passwordHash = await bcrypt.hash(password, 12)
+    if (password) {
+      updateData.passwordHash = await bcrypt.hash(password, 12)
+      updateData.passwordChangedAt = new Date() // revoke that user's existing sessions
+    }
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ error: 'No fields to update' }, { status: 400 })
+    }
+    updateData.updatedAt = new Date()
+
+    if (isActive === true) {
+      const seatError = await requireUserSeat(companyId)
+      if (seatError) {
+        // Re-activating an already-active user does not take a new seat
+        const target = await withTenant(companyId, (tdb) => tdb.query.users.findFirst({
+          where: eq(users.id, userId), columns: { isActive: true },
+        }))
+        if (!target?.isActive) return seatError
+      }
     }
 
     const [updated] = await db.transaction(async (tx) => {

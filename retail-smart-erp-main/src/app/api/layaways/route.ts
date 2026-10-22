@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/auth/roles'
+import { hasAnyPermission, LAYAWAY_VIEW_PERMISSIONS } from '@/lib/auth/field-access'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
-import { layaways, layawayItems, layawayPayments, customers, users } from '@/lib/db/schema'
-import { eq, and, ilike, sql, desc, or } from 'drizzle-orm'
+import { layaways, layawayItems, layawayPayments, customers, users, items as itemsTable } from '@/lib/db/schema'
+import { eq, and, ilike, sql, desc, or, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { postLayawayPaymentToGL } from '@/lib/accounting/auto-post'
@@ -17,6 +18,9 @@ import { nextDocNo } from '@/lib/documents/numbering'
 // Minimum deposit percentage required (10% of total)
 const MIN_DEPOSIT_PERCENTAGE = 0.10
 
+/** Validation failure detected inside the transaction (rolls it back, answered with 400). */
+class LayawayInputError extends Error {}
+
 // GET all layaways for the tenant (with pagination)
 export async function GET(request: NextRequest) {
   try {
@@ -26,6 +30,9 @@ export async function GET(request: NextRequest) {
     const { all, page, pageSize, search, status, customerId } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
+      // H4: layaways are taken and paid at the POS; other roles need sales / report access
+      if (!hasAnyPermission(session, LAYAWAY_VIEW_PERMISSIONS)) return { forbidden: true as const }
+
       // Build where conditions - RLS handles tenant filtering
       const conditions: ReturnType<typeof eq>[] = []
 
@@ -131,6 +138,9 @@ export async function GET(request: NextRequest) {
     if (!result) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    if ('forbidden' in result) {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+    }
 
     // Return array directly for 'all' mode, or paginated response
     if ('isAll' in result && result.isAll) {
@@ -201,6 +211,16 @@ export async function POST(request: NextRequest) {
         return { error: NextResponse.json({ error: 'Customer not found' }, { status: 404 }) }
       }
 
+      // Item ids must be this tenant's items (RLS-scoped lookup); completion turns them into
+      // stock movements and sale lines.
+      const itemIds = [...new Set(items.map(i => i.itemId).filter((x): x is string => !!x))]
+      if (itemIds.length > 0) {
+        const found = await tx.select({ id: itemsTable.id }).from(itemsTable).where(inArray(itemsTable.id, itemIds))
+        if (found.length !== itemIds.length) {
+          return { error: NextResponse.json({ error: 'One or more items were not found' }, { status: 400 }) }
+        }
+      }
+
       // Generate layaway number with lock
       const layawayNo = await nextDocNo(tx, session.user.tenantId, 'layaway')
 
@@ -248,6 +268,15 @@ export async function POST(request: NextRequest) {
         // Template configured — update with computed values
         const newTotal = roundCurrency(taxResult.subtotal + taxResult.totalTax)
         const newBalanceDue = roundCurrency(newTotal - deposit)
+        // The deposit was validated against the client-side total; re-check it against the
+        // template total so a layaway can never start over-paid (negative balance due).
+        if (deposit > newTotal + 0.001) {
+          throw new LayawayInputError(`Deposit cannot exceed total amount (${newTotal.toFixed(2)})`)
+        }
+        const newMinDeposit = roundCurrency(newTotal * MIN_DEPOSIT_PERCENTAGE)
+        if (deposit < newMinDeposit) {
+          throw new LayawayInputError(`Minimum deposit required is ${newMinDeposit.toFixed(2)} (${(MIN_DEPOSIT_PERCENTAGE * 100).toFixed(0)}% of total)`)
+        }
         await tx.update(layaways)
           .set({
             subtotal: taxResult.subtotal.toString(),
@@ -299,6 +328,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(result.data)
   } catch (error) {
+    if (error instanceof LayawayInputError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
     logError('api/layaways', error)
     console.error('POST /api/layaways error:', error)
     return NextResponse.json(

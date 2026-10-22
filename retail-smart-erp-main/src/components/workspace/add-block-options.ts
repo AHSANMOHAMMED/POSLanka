@@ -17,6 +17,9 @@ export function getMetricKeys(): string[] {
     'pending_purchase_orders',
     'total_vehicles',
     'total_warehouses',
+    'open_shifts',
+    'today_cash_variance',
+    'week_cash_variance',
   ]
 }
 
@@ -41,5 +44,6 @@ export function getQuickListKeys(): string[] {
     'recent_estimates',
     'recent_appointments',
     'low_stock_items',
+    'recent_shift_variance',
   ]
 }

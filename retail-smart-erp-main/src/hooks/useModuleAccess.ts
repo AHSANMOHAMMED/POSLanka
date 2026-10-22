@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { sharedJson } from '@/lib/client/shared-fetch'
 
 export interface ModuleAccessEntry {
   moduleKey: string
@@ -23,18 +24,14 @@ export function useModuleAccess() {
     let cancelled = false
     async function load() {
       try {
-        const res = await fetch('/api/module-access')
-        if (res.ok) {
-          const data = await res.json()
-          if (!cancelled) {
-            setEntries(Array.isArray(data) ? data : data.data || [])
-            setLoadError(false)
-          }
-        } else {
-          if (!cancelled) setLoadError(true)
+        // Shared by every component using this hook (sidebar, navbar, pages) — one request per minute
+        const data = await sharedJson<ModuleAccessEntry[] | { data?: ModuleAccessEntry[] }>('/api/module-access', { maxAgeMs: 60_000 })
+        if (!cancelled) {
+          setEntries(Array.isArray(data) ? data : data.data || [])
+          setLoadError(false)
         }
       } catch {
-        // Network error — mark as failed so isModuleEnabled can fail-closed
+        // HTTP or network error — mark as failed so isModuleEnabled can fail-closed
         if (!cancelled) setLoadError(true)
       } finally {
         if (!cancelled) setLoaded(true)

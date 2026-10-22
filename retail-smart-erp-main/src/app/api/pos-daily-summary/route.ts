@@ -3,11 +3,12 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { posClosingEntries } from '@/lib/db/schema'
-import { and, gte, lte } from 'drizzle-orm'
+import { and, gte, lte, ne } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { posDailySummarySchema } from '@/lib/validation/schemas/pos'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import type { ShiftReportData } from '@/lib/pos/shift-report'
 
 // GET daily summary - aggregate all shifts for a given date
 export async function GET(request: NextRequest) {
@@ -34,6 +35,8 @@ export async function GET(request: NextRequest) {
         where: and(
           gte(posClosingEntries.closingTime, dayStart),
           lte(posClosingEntries.closingTime, dayEnd),
+          // a cancelled closing was re-done (the shift reopened and closed again): count it once
+          ne(posClosingEntries.status, 'cancelled'),
         ),
         with: {
           openingEntry: {
@@ -53,6 +56,13 @@ export async function GET(request: NextRequest) {
       let totalReturns = 0
       let netSales = 0
       let totalTransactions = 0
+
+      // H1: Z-report totals across the day's shifts (closings before H1 carry no report data)
+      const day = {
+        tax: 0, discounts: 0, voidsCount: 0, voidsTotal: 0, returnsCount: 0, returnsTotal: 0,
+        cashPaidIn: 0, cashPaidOut: 0, approvals: 0, ledgerTiesOut: true, shiftsWithReport: 0,
+      }
+      const r2 = (n: number) => Math.round(n * 100) / 100
 
       // Payment method breakdown
       const paymentMethodTotals: Record<string, {
@@ -102,9 +112,27 @@ export async function GET(request: NextRequest) {
           }
         })
 
+        const report = (entry.reportData || null) as ShiftReportData | null
+        if (report) {
+          day.shiftsWithReport++
+          day.tax += report.tax?.total || 0
+          day.discounts += report.discounts?.total || 0
+          day.voidsCount += report.voids?.count || 0
+          day.voidsTotal += report.voids?.total || 0
+          day.returnsCount += report.returns?.count || 0
+          day.returnsTotal += report.returns?.total || 0
+          day.cashPaidIn += report.cashMovements?.paidIn || 0
+          day.cashPaidOut += report.cashMovements?.paidOut || 0
+          day.approvals += report.approvals?.count || 0
+          if (report.ledger && !report.ledger.tiesOut) day.ledgerTiesOut = false
+        }
+
         return {
           id: entry.id,
           entryNumber: entry.entryNumber,
+          varianceReason: entry.varianceReason,
+          varianceNote: entry.varianceNote,
+          report,
           posProfile: entry.posProfile ? { id: entry.posProfile.id, name: entry.posProfile.name } : null,
           user: entry.user ? { id: entry.user.id, name: entry.user.fullName } : null,
           openingTime: entry.openingTime,
@@ -132,6 +160,17 @@ export async function GET(request: NextRequest) {
           netSales,
           totalTransactions,
           totalVariance,
+          taxTotal: r2(day.tax),
+          discountTotal: r2(day.discounts),
+          voidsCount: day.voidsCount,
+          voidsTotal: r2(day.voidsTotal),
+          returnsCount: day.returnsCount,
+          returnsTotal: r2(day.returnsTotal),
+          cashPaidIn: r2(day.cashPaidIn),
+          cashPaidOut: r2(day.cashPaidOut),
+          approvals: day.approvals,
+          ledgerTiesOut: day.ledgerTiesOut,
+          shiftsWithReport: day.shiftsWithReport,
         },
         paymentMethodBreakdown: Object.entries(paymentMethodTotals).map(([method, totals]) => ({
           paymentMethod: method,

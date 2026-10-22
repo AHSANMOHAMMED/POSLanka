@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { workOrders, workOrderParts, appointments, insuranceEstimateItems, insuranceEstimates, vehicleInspections, sales, payments, customers, vehicles, customerCreditTransactions, warehouseStock, workOrderAssignmentHistory, users, heldSales, stockTransfers, stockTransferItems } from '@/lib/db/schema'
+import { workOrders, workOrderParts, saleItems, appointments, insuranceEstimateItems, insuranceEstimates, vehicleInspections, sales, payments, customers, vehicles, customerCreditTransactions, warehouseStock, workOrderAssignmentHistory, users, heldSales, stockTransfers, stockTransferItems } from '@/lib/db/schema'
 import { eq, and, sql, desc, inArray } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { deleteWorkOrderInspectionFiles, deleteFilesByDocument } from '@/lib/utils/file-cleanup'
@@ -15,6 +15,8 @@ import { updateWorkOrderSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { findMovements, reverseMovements } from '@/lib/purchasing/stock-cost'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { restoreSaleLineBatches } from '@/lib/inventory/batches'
+import { allocateSerials } from '@/lib/inventory/serial-numbers'
 
 // Issue #24: Expanded workflow with intermediate states
 const validStatusTransitions: Record<string, string[]> = {
@@ -288,6 +290,12 @@ export async function PUT(
         }
       }
 
+      // Cancelling an invoiced work order voids its invoice and payments: that needs the same
+      // permission as voiding a sale (technicians can manage work orders but not void money).
+      if (status === 'cancelled' && currentWorkOrder.status === 'invoiced' && requirePermission(session, 'voidSales')) {
+        throw new Error('VOID_PERMISSION')
+      }
+
       // Validate warehouse change
       if (warehouseId !== undefined && warehouseId !== currentWorkOrder.warehouseId) {
         // Only allow warehouse change when in draft status
@@ -417,6 +425,7 @@ export async function PUT(
       // When work order is cancelled, clear links from appointments and estimate items
       // This allows users to re-convert from the same appointment/estimate
       if (status === 'cancelled') {
+        let invoiceAlreadyVoided = false
         // If cancelling an invoiced work order, void the sale and reverse credit transactions
         if (currentWorkOrder.status === 'invoiced') {
           // Find the associated sale
@@ -427,7 +436,22 @@ export async function PUT(
             ),
           })
 
-          if (sale) {
+          // Already voided from the sales screen: stock, batches, serials, payments, credit and
+          // GL were all reversed there. Doing it again here restored the parts a second time.
+          if (sale && sale.status === 'void') {
+            invoiceAlreadyVoided = true
+          } else if (sale) {
+            // Items already returned against this invoice were put back into stock by the
+            // return; reversing the full invoice movement would restore them twice.
+            const [openReturn] = await tx
+              .select({ id: sales.id })
+              .from(sales)
+              .where(and(eq(sales.returnAgainst, sale.id), eq(sales.isReturn, true), sql`${sales.status} != 'void'`))
+              .limit(1)
+            if (openReturn) {
+              throw new Error('HAS_RETURNS')
+            }
+
             // Reverse GL entries for the sale (all voucher types)
             await postVoidToGL(tx, session.user.tenantId, 'sale', sale.id)
             await postVoidToGL(tx, session.user.tenantId, 'gift_card_sale', sale.id)
@@ -519,7 +543,7 @@ export async function PUT(
         // W3: Restore stock for parts ONLY when cancelling an INVOICED work order
         // Draft work orders only reserve stock (not deducted from currentStock)
         // Stock is only deducted when invoiced, so we only restore when cancelling invoiced orders
-        if (currentWorkOrder.status === 'invoiced') {
+        if (currentWorkOrder.status === 'invoiced' && !invoiceAlreadyVoided) {
           const parts = await tx.query.workOrderParts.findMany({
             where: eq(workOrderParts.workOrderId, id),
             with: {
@@ -546,6 +570,36 @@ export async function PUT(
             costCenterId: currentWorkOrder.costCenterId || null,
             keyPrefix: 'wo-cancel',
           })
+
+          // Batch-tracked parts go back into the batches they were drawn from, and serial
+          // numbers sold on the invoice become available again (as a sale void does).
+          if (currentWorkOrder.saleId) {
+            const invoiceLines = await tx.query.saleItems.findMany({
+              where: eq(saleItems.saleId, currentWorkOrder.saleId),
+            })
+            for (const line of invoiceLines) {
+              if (currentWorkOrder.warehouseId && parseFloat(line.quantity) > 0) {
+                await restoreSaleLineBatches(tx, {
+                  tenantId: session.user.tenantId,
+                  saleItemId: line.id,
+                  qty: parseFloat(line.quantity),
+                  toWarehouseId: currentWorkOrder.warehouseId,
+                })
+              }
+              const serialIds = (line.serialNumberIds as string[] | null) || []
+              if (serialIds.length) {
+                await allocateSerials(tx, {
+                  tenantId: session.user.tenantId,
+                  serialNumberIds: serialIds,
+                  newStatus: 'available',
+                  referenceType: 'work_order_cancelled',
+                  referenceId: id,
+                  changedBy: userId,
+                  notes: `Serials restored from cancelled Work Order ${currentWorkOrder.orderNo}`,
+                })
+              }
+            }
+          }
         }
 
         // Reverse WIP GL entries (work_order_part and work_order_invoice vouchers)
@@ -759,6 +813,12 @@ export async function PUT(
     }
     if (message.startsWith('INVALID_TRANSITION:')) {
       return NextResponse.json({ error: message.replace('INVALID_TRANSITION:', '') }, { status: 400 })
+    }
+    if (message === 'VOID_PERMISSION') {
+      return NextResponse.json({ error: 'Cancelling an invoiced work order voids its invoice and requires the Void Sales permission' }, { status: 403 })
+    }
+    if (message === 'HAS_RETURNS') {
+      return NextResponse.json({ error: 'This invoice has returns against it. Void the return(s) first, or return the remaining parts instead of cancelling.' }, { status: 400 })
     }
     if (message.startsWith('WAREHOUSE_CHANGE_NOT_ALLOWED:')) {
       return NextResponse.json({ error: message.replace('WAREHOUSE_CHANGE_NOT_ALLOWED:', '') }, { status: 400 })

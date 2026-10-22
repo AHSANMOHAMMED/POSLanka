@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
+import { accountAuth } from '@/lib/auth/account-auth'
 import { db } from '@/lib/db'
 import { accounts, subscriptions, payhereTransactions, pricingTiers, pendingCompanies } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { quotePlanChange } from '@/lib/billing/plan-change'
+import { getSubscriptionPrice } from '@/lib/billing/pricing'
 import { generateOrderId, generateCheckoutParams, isPayhereConfigured } from '@/lib/payhere'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
@@ -15,8 +18,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Payment gateway not configured' }, { status: 503 })
     }
 
-    const session = await auth()
-    if (!session?.user?.accountId) {
+    // The billing pages live in the account portal (account-session cookie); fall back to a
+    // company session that carries an accountId (portal → company transfer).
+    let accountId: string | null | undefined
+    try { accountId = (await accountAuth())?.user?.accountId } catch { accountId = null }
+    if (!accountId) {
+      const companySession = await auth()
+      accountId = companySession?.user?.accountId
+    }
+    if (!accountId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -26,77 +36,93 @@ export async function POST(request: NextRequest) {
       subscriptionId,
       pendingCompanyId,
       tierId,
-      billingCycle,
+      billingCycle: requestedCycle,
       newTierId,             // For upgrades: the tier to apply after payment
-      walletCreditApplied,   // For upgrades: amount already deducted from wallet
-      amount: overrideAmount, // For upgrades: prorated amount (overrides tier price)
+      // `walletCreditApplied` and `amount` from the client are ignored — both are computed below
     } = parsed.data
 
     // Get account details
     const account = await db.query.accounts.findFirst({
-      where: eq(accounts.id, session.user.accountId),
+      where: eq(accounts.id, accountId),
     })
     if (!account) {
       return NextResponse.json({ error: 'Account not found' }, { status: 404 })
     }
 
-    // Get pricing tier
-    const tier = await db.query.pricingTiers.findFirst({
-      where: eq(pricingTiers.id, tierId),
-    })
-    if (!tier) {
-      return NextResponse.json({ error: 'Pricing tier not found' }, { status: 404 })
+    // ---- Server-side pricing -------------------------------------------------------
+    // Never trust the client for WHAT is bought or HOW MUCH it costs: the tier comes from the
+    // pending company / subscription, and upgrade amounts are re-quoted here. (Previously the
+    // body's `tierId` and `amount` were used, so a renewal or upgrade could be bought for
+    // 1 LKR, or a premium pending company paid at the cheapest tier's price.)
+    let billingCycle: 'monthly' | 'yearly' = requestedCycle
+    let tier: typeof pricingTiers.$inferSelect | undefined
+    let price: number
+    let walletCredit = 0
+    let upgradeTierId: string | null = null
+
+    if (pendingCompanyId && subscriptionId) {
+      return NextResponse.json({ error: 'Provide either subscriptionId or pendingCompanyId' }, { status: 400 })
     }
 
-    // Verify ownership of pendingCompanyId (must belong to this account)
     if (pendingCompanyId) {
+      // Verify ownership of pendingCompanyId (must belong to this account)
       const pending = await db.query.pendingCompanies.findFirst({
         where: eq(pendingCompanies.id, pendingCompanyId),
-        columns: { accountId: true, status: true },
+        columns: { accountId: true, status: true, tierId: true, billingCycle: true },
       })
-      if (!pending || pending.accountId !== session.user.accountId) {
+      if (!pending || pending.accountId !== accountId) {
         return NextResponse.json({ error: 'Pending company not found' }, { status: 404 })
       }
       if (pending.status !== 'pending_payment') {
         return NextResponse.json({ error: 'Pending company is not awaiting payment' }, { status: 400 })
       }
-    }
-
-    // For existing subscriptions, verify ownership and use the locked-in (grandfathered) price
-    let subscribedPrice: number | null = null
-    if (subscriptionId) {
+      billingCycle = pending.billingCycle === 'yearly' ? 'yearly' : 'monthly'
+      tier = await db.query.pricingTiers.findFirst({ where: eq(pricingTiers.id, pending.tierId) })
+      if (!tier) return NextResponse.json({ error: 'Pricing tier not found' }, { status: 404 })
+      price = billingCycle === 'yearly' ? Number(tier.priceYearly) : Number(tier.priceMonthly)
+    } else if (subscriptionId) {
+      // For existing subscriptions, verify ownership and use the locked-in (grandfathered) price
       const sub = await db.query.subscriptions.findFirst({
         where: eq(subscriptions.id, subscriptionId),
+        with: { tier: true },
       })
-      if (!sub || sub.billingAccountId !== session.user.accountId) {
+      if (!sub || sub.billingAccountId !== accountId) {
         return NextResponse.json({ error: 'Subscription not found' }, { status: 404 })
       }
-      subscribedPrice = billingCycle === 'yearly'
-        ? (sub.subscribedPriceYearly ? Number(sub.subscribedPriceYearly) : null)
-        : (sub.subscribedPriceMonthly ? Number(sub.subscribedPriceMonthly) : null)
-    }
+      if (!sub.tier) return NextResponse.json({ error: 'Pricing tier not found' }, { status: 404 })
 
-    // Determine expected price: grandfathered price for renewals, tier price for new
-    const expectedPrice = subscribedPrice ?? (billingCycle === 'yearly'
-      ? Number(tier.priceYearly)
-      : Number(tier.priceMonthly))
-
-    // Use override amount for prorated upgrades, but validate it
-    let price: number
-    if (overrideAmount) {
-      const overrideValue = Number(overrideAmount)
-      // Override amount must be positive and cannot exceed the full tier price
-      // (prorated amounts should be less than or equal to the full price)
-      const maxPrice = billingCycle === 'yearly' ? Number(tier.priceYearly) : Number(tier.priceMonthly)
-      if (isNaN(overrideValue) || overrideValue <= 0 || overrideValue > maxPrice) {
-        return NextResponse.json({ error: 'Invalid payment amount' }, { status: 400 })
+      if (newTierId) {
+        // Upgrade: amount = server-side proration quote (same as /upgrade), minus wallet part
+        const newTier = await db.query.pricingTiers.findFirst({
+          where: and(eq(pricingTiers.id, newTierId), eq(pricingTiers.isActive, true)),
+        })
+        if (!newTier) return NextResponse.json({ error: 'Invalid tier' }, { status: 400 })
+        const quote = quotePlanChange(sub, sub.tier, newTier, billingCycle)
+        if (!quote.ok) return NextResponse.json({ error: quote.error }, { status: 400 })
+        if (quote.amountDue <= 0) {
+          return NextResponse.json({ error: 'No payment is needed for this plan change' }, { status: 400 })
+        }
+        if (!quote.noProration) {
+          const walletBalance = Math.max(0, Number(account.walletBalance || 0))
+          walletCredit = Math.min(walletBalance, quote.amountDue)
+          if (walletCredit >= quote.amountDue) {
+            return NextResponse.json({ error: 'Your wallet covers this change; no card payment is needed' }, { status: 400 })
+          }
+        }
+        price = Math.round((quote.amountDue - walletCredit) * 100) / 100
+        tier = newTier
+        upgradeTierId = newTier.id
+      } else {
+        // Renewal of the CURRENT plan at the subscriber's locked-in price
+        tier = sub.tier
+        price = getSubscriptionPrice(sub, sub.tier, billingCycle)
       }
-      price = overrideValue
     } else {
-      price = expectedPrice
+      return NextResponse.json({ error: 'subscriptionId or pendingCompanyId is required' }, { status: 400 })
     }
+    void tierId // kept in the request schema for older clients; no longer used for pricing
 
-    if (price <= 0) {
+    if (!Number.isFinite(price) || price <= 0) {
       return NextResponse.json({ error: 'Cannot checkout for free tier' }, { status: 400 })
     }
 
@@ -104,14 +130,14 @@ export async function POST(request: NextRequest) {
     const orderId = generateOrderId()
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
-    const isUpgrade = !!newTierId && !!subscriptionId
+    const isUpgrade = !!upgradeTierId
     const description = isUpgrade
       ? `Plan upgrade to ${tier.displayName} - ${billingCycle === 'yearly' ? 'Annual' : 'Monthly'} (prorated)`
       : `${tier.displayName} Plan - ${billingCycle === 'yearly' ? 'Annual' : 'Monthly'}`
 
     // Create pending transaction record
     await db.insert(payhereTransactions).values({
-      accountId: session.user.accountId,
+      accountId: accountId,
       subscriptionId: subscriptionId || null,
       pendingCompanyId: pendingCompanyId || null,
       orderId,
@@ -121,8 +147,9 @@ export async function POST(request: NextRequest) {
       description,
       periodMonths,
       billingCycle,
-      newTierId: newTierId || null,
-      walletCreditApplied: walletCreditApplied ? String(walletCreditApplied) : '0',
+      newTierId: upgradeTierId,
+      // Deducted from the wallet by the notify webhook only when the payment succeeds
+      walletCreditApplied: walletCredit.toFixed(2),
     })
 
     // Generate checkout form params

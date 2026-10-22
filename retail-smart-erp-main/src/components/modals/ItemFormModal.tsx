@@ -17,6 +17,7 @@ import { VehicleMakeModal } from './VehicleMakeModal'
 import { VehicleModelModal } from './VehicleModelModal'
 import { ItemHistoryPanel } from './ItemHistoryPanel'
 import { formatDateTime } from '@/lib/utils/date-format'
+import { ItemUnitsBarcodesEditor } from '@/components/items/ItemUnitsBarcodesEditor'
 
 type TabType = 'basic' | 'pricing' | 'inventory' | 'supplier' | 'physical' | 'dietary' | 'freshness' | 'fits' | 'cost_tracking' | 'history'
 
@@ -104,7 +105,11 @@ interface Item {
   isGiftCard: boolean
   // Tax template
   taxTemplateId: string | null
+  // H5: stockable | consumable | service (older API responses may omit it)
+  productType?: 'stockable' | 'consumable' | 'service'
 }
+
+type ProductType = 'stockable' | 'consumable' | 'service'
 
 interface ItemFormModalProps {
   isOpen: boolean
@@ -171,6 +176,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     sellingPrice: '',
     unit: 'pcs',
     trackStock: true,
+    productType: 'stockable' as ProductType,
     trackBatches: false,
     trackSerialNumbers: false,
     // Auto parts fields
@@ -322,6 +328,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           sellingPrice: editItem.sellingPrice,
           unit: editItem.unit,
           trackStock: editItem.trackStock,
+          productType: (editItem.productType || (editItem.trackStock ? 'stockable' : 'service')) as ProductType,
           trackBatches: editItem.trackBatches || false,
           trackSerialNumbers: editItem.trackSerialNumbers || false,
           oemPartNumber: editItem.oemPartNumber || '',
@@ -394,6 +401,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       sellingPrice: '',
       unit: 'pcs',
       trackStock: true,
+      productType: 'stockable' as ProductType,
       trackBatches: false,
       trackSerialNumbers: false,
       oemPartNumber: '',
@@ -575,7 +583,8 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           categoryId: formData.categoryId || null,
           costPrice: parseFloat(formData.costPrice) || 0,
           sellingPrice: parseFloat(formData.sellingPrice) || 0,
-          trackStock: formData.trackStock,
+          trackStock: formData.productType === 'stockable',
+          productType: formData.productType,
           trackBatches: formData.trackBatches,
           trackSerialNumbers: formData.trackSerialNumbers,
           oemPartNumber: formData.oemPartNumber || null,
@@ -820,18 +829,26 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
 
                 {/* Options */}
                 <div className="flex flex-wrap gap-6 pt-4 border-t dark:border-gray-700">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={!formData.trackStock}
-                      onChange={(e) => setFormData({ ...formData, trackStock: !e.target.checked })}
-                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                      disabled={editItem !== null}
-                    />
+                  {/* H5: product type — stockable tracks stock; consumable / service do not.
+                      Stock tracking cannot be switched on an existing item (stock history). */}
+                  <label className="flex items-center gap-2">
                     <span className="text-sm font-medium dark:text-gray-300">
                       <Package size={16} className="inline mr-1" />
-                      Non-Inventory Item
+                      Product type
                     </span>
+                    <select
+                      value={formData.productType}
+                      onChange={(e) => {
+                        const productType = e.target.value as ProductType
+                        setFormData({ ...formData, productType, trackStock: productType === 'stockable' })
+                      }}
+                      className="px-2 py-1 text-sm border rounded bg-white dark:bg-gray-800 dark:border-gray-600 dark:text-white"
+                      disabled={!!editItem && formData.productType === 'stockable'}
+                    >
+                      <option value="stockable" disabled={!!editItem && editItem.trackStock === false}>Stockable (track stock)</option>
+                      <option value="consumable">Consumable (no stock)</option>
+                      <option value="service">Service</option>
+                    </select>
                   </label>
                   {formData.trackStock && (
                     <>
@@ -1030,6 +1047,15 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                 </div>
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded text-sm text-blue-700 dark:text-blue-300">
                   Stock levels are managed per warehouse. Use Settings → Warehouses to manage stock.
+                </div>
+                <div className="pt-4 border-t dark:border-gray-700">
+                  {editItem ? (
+                    <ItemUnitsBarcodesEditor itemId={editItem.id} baseUnit={editItem.unit} basePrice={parseFloat(editItem.sellingPrice) || 0} />
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Save the {t.item.toLowerCase()} first to add other units of measure (box, pack …) and additional barcodes.
+                    </p>
+                  )}
                 </div>
               </div>
             )}

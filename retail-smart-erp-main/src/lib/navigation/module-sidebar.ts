@@ -74,6 +74,7 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/stock', 'stock'],
   ['/items', 'stock'],
   ['/categories', 'stock'],
+  ['/units', 'stock'],
   ['/stock-transfers', 'stock'],
   ['/stock-takes', 'stock'],
   ['/inventory/stock-intake', 'stock'],
@@ -88,7 +89,10 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/sales', 'selling'],
   ['/quotations', 'selling'],
   ['/credit-notes', 'selling'],
+  ['/debit-notes', 'selling'],
   ['/customers', 'selling'],
+  ['/price-lists', 'selling'],
+  ['/promotions', 'selling'],
   ['/layaways', 'selling'],
 
   // Barcode & Labels
@@ -107,6 +111,8 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/buying/grn', 'buying'],
   ['/reports/aged-payables', 'buying'],
   ['/reports/supplier-performance', 'buying'],
+  ['/reports/adjustments-by-reason', 'stock'],
+  ['/reports/inventory-valuation', 'stock'],
 
   // Auto Service
   ['/auto-service', 'auto-service'],
@@ -194,6 +200,7 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/accounting/cost-centers', 'accounting'],
   ['/accounting/budgets', 'accounting'],
   ['/accounting/tax-templates', 'accounting'],
+  ['/accounting/e-invoicing', 'accounting'],
   ['/accounting/period-closing', 'accounting'],
   ['/accounting/opening-balances', 'accounting'],
   ['/accounting/settings', 'accounting'],
@@ -302,6 +309,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
       items: [
         { href: '/items', label: 'Items', icon: 'Package' },
         { href: '/categories', label: 'Categories', icon: 'FolderTree' },
+        { href: '/units', label: 'Units of Measure', icon: 'Ruler', permission: 'manageItems' },
         { href: '/settings/warehouses', label: 'Warehouses', icon: 'Warehouse', permission: 'manageSettings' },
       ],
     },
@@ -354,6 +362,8 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
       title: 'Masters',
       items: [
         { href: '/customers', label: 'Customers', icon: 'Users' },
+        { href: '/price-lists', label: 'Price Lists', icon: 'Tags', permission: 'manageItems' },
+        { href: '/promotions', label: 'Promotions', icon: 'BadgePercent', permission: 'manageItems' },
         { href: '/settings/pos-profiles', label: 'POS Profiles', icon: 'Monitor', permission: 'manageSettings' },
         { href: '/settings/loyalty', label: 'Loyalty Program', icon: 'Star', permission: 'manageSettings' },
       ],
@@ -366,6 +376,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/sales-orders', label: 'Sales Orders', icon: 'ClipboardList', permission: 'createSales' },
         { href: '/quotations', label: 'Quotations', icon: 'FileText', permission: 'createSales' },
         { href: '/credit-notes', label: 'Credit Notes', icon: 'Receipt', permission: 'manageSales' },
+        { href: '/debit-notes', label: 'Debit Notes', icon: 'Receipt', permission: 'manageSales' },
         { href: '/sales', label: 'Sales Invoices', icon: 'Receipt' },
         { href: '/layaways', label: 'Layaways', icon: 'CreditCard', permission: 'createSales' },
       ],
@@ -401,6 +412,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/purchase-orders', label: 'Purchase Orders', icon: 'ClipboardList', permission: 'managePurchases' },
         { href: '/buying/grn', label: 'GRN', icon: 'Package', permission: 'managePurchases' },
         { href: '/purchases', label: 'Purchase Invoices', icon: 'CreditCard', permission: 'managePurchases' },
+        { href: '/purchases/landed-costs', label: 'Landed Costs', icon: 'Truck', permission: 'managePurchases' },
       ],
     },
     {
@@ -534,6 +546,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/accounting/fiscal-years', label: 'Fiscal Years', icon: 'Calendar', permission: 'manageAccounting' },
         { href: '/accounting/cost-centers', label: 'Cost Centers', icon: 'Target', permission: 'manageAccounting' },
         { href: '/accounting/tax-templates', label: 'Tax Templates', icon: 'Receipt', permission: 'manageAccounting' },
+        { href: '/accounting/e-invoicing', label: 'E-Invoicing', icon: 'FileText', permission: 'manageAccounting' },
       ],
     },
     {
@@ -587,7 +600,9 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/accounting/reports/sales-by-customer', label: 'Sales by Customer', icon: 'Users', permission: 'viewReports' },
         { href: '/accounting/reports/daily-sales', label: 'Daily Sales', icon: 'CalendarDays', permission: 'viewReports' },
         { href: '/accounting/reports/payment-collection', label: 'Payment Collection', icon: 'Wallet', permission: 'viewReports' },
+        { href: '/accounting/reports/promotions', label: 'Promotion Report', icon: 'BadgePercent', permission: 'viewReports' },
         { href: '/accounting/reports/tax-report', label: 'Tax Report', icon: 'Receipt', permission: 'viewReports' },
+        { href: '/accounting/reports/vat-schedule', label: 'VAT Schedules', icon: 'FileText', permission: 'viewReports' },
       ],
     },
     {
@@ -704,7 +719,9 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/accounting/reports/sales-by-customer', label: 'Sales by Customer', icon: 'Users', permission: 'viewReports' },
         { href: '/accounting/reports/daily-sales', label: 'Daily Sales', icon: 'CalendarDays', permission: 'viewReports' },
         { href: '/accounting/reports/payment-collection', label: 'Payment Collection', icon: 'Wallet', permission: 'viewReports' },
+        { href: '/accounting/reports/promotions', label: 'Promotion Report', icon: 'BadgePercent', permission: 'viewReports' },
         { href: '/accounting/reports/tax-report', label: 'Tax Report', icon: 'Receipt', permission: 'viewReports' },
+        { href: '/accounting/reports/vat-schedule', label: 'VAT Schedules', icon: 'FileText', permission: 'viewReports' },
       ],
     },
     {
