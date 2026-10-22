@@ -31,8 +31,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(request)
         .then((res) => {
-          const copy = res.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
+          if (res && res.status === 200) {
+            const copy = res.clone()
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {})
+          }
           return res
         })
         .catch(() => caches.match(request).then((cached) => cached || caches.match('/')))
@@ -49,14 +51,27 @@ self.addEventListener('fetch', (event) => {
   ) {
     event.respondWith(
       caches.match(request).then((cached) => {
-        const network = fetch(request).then((res) => {
-          const copy = res.clone()
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy))
-          return res
+        const network = fetch(request)
+          .then((res) => {
+            if (res && res.status === 200) {
+              const copy = res.clone()
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {})
+            }
+            return res
+          })
+          .catch(() => null)
+
+        if (cached) {
+          return cached
+        }
+
+        return network.then((res) => {
+          if (res) return res
+          return new Response('', { status: 503, statusText: 'Offline' })
         })
-        return cached || network
       })
     )
+    return
   }
 })
 
