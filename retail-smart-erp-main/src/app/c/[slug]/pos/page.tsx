@@ -25,6 +25,8 @@ import {
 import { POS_SEARCH_INPUT_ID } from '@/components/pos/ProductGrid'
 import { publishPosDisplay, createIdlePosDisplayState } from '@/lib/pos/display-channel'
 import { WeightInputModal } from '@/components/pos/WeightInputModal'
+import { VariantPickerModal } from '@/components/pos/VariantPickerModal'
+import { QuickItemAddModal } from '@/components/pos/QuickItemAddModal'
 import { OfflineStatusBanner } from '@/components/pos/OfflineStatusBanner'
 import { SerialPickerModal } from '@/components/pos/SerialPickerModal'
 import { ModifierPickerModal } from '@/components/pos/ModifierPickerModal'
@@ -230,6 +232,7 @@ export default function POSPage() {
     | { type: 'custom_discount'; discount: { type: 'percentage' | 'fixed'; value: number; reason: string } }
     | { type: 'price_override'; cartLineId: string; newPrice: number; itemName: string; originalPrice: number }
     | { type: 'cart_void' }
+    | { type: 'quick_add_item' }
   const [supervisorRequest, setSupervisorRequest] = useState<SupervisorRequest | null>(null)
   const [terminalLocked, setTerminalLocked] = useState(false)
   const [clearCartConfirm, setClearCartConfirm] = useState(false)
@@ -240,6 +243,11 @@ export default function POSPage() {
 
   // Supermarket: weighable item state
   const [weightInputItem, setWeightInputItem] = useState<Item | null>(null)
+
+  // Product Variants & Quick Add Item modals
+  const [variantPickerParentItem, setVariantPickerParentItem] = useState<Item | null>(null)
+  const [showQuickAddModal, setShowQuickAddModal] = useState(false)
+  const [quickAddInitialBarcode, setQuickAddInitialBarcode] = useState('')
 
   // Supermarket: Float / Safe Drop & Price Check modals
   const [showFloatModal, setShowFloatModal] = useState(false)
@@ -712,14 +720,22 @@ export default function POSPage() {
   // ─── Cart Functions ───────────────────────────────────────────
 
   function addToCart(item: Item, quantity = 1) {
+    // Parent item with variants opens variant picker first
+    if (item.hasVariants && !isReturnMode) {
+      setVariantPickerParentItem(item)
+      return
+    }
+
     // Serial-tracked items need serial picker first
     if (item.trackSerialNumbers && !isReturnMode) {
       setSerialPickerItem(item)
       return
     }
 
-    // Supermarket: weighable items need weight input first
-    if (config.enableWeighableItems && item.isWeighable && !isReturnMode) {
+    // Supermarket / measured items (kg, g, l, ml, m) need measurement input first
+    const itemUnit = (item.unit || '').toLowerCase()
+    const isMeasuredUnit = ['kg', 'g', 'l', 'ml', 'm'].includes(itemUnit)
+    if (((config.enableWeighableItems && item.isWeighable) || isMeasuredUnit) && !isReturnMode) {
       setWeightInputItem(item)
       return
     }
@@ -767,17 +783,22 @@ export default function POSPage() {
     addToCart(item, effectiveMult)
   }
 
-  function addToCartWithWeight(item: Item, weight: number) {
+  function addToCartWithWeight(item: Item, weight: number, displayLabel?: string) {
     const unitPrice = parseFloat(item.sellingPrice)
-    const total = weight * unitPrice
-    setCart([...cart, {
+    const total = roundCurrency(weight * unitPrice)
+    const baseUnit = (item.unit || (item.isWeighable ? 'kg' : 'pcs')).toLowerCase()
+    const labelSuffix = displayLabel ? ` (${displayLabel})` : ` (${weight} ${baseUnit})`
+    setCart(prev => [...prev, {
       cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       itemId: item.id,
-      name: formatItemLabel(item, company.businessType),
+      name: formatItemLabel(item, company.businessType) + labelSuffix,
       quantity: 1,
       unitPrice: total,
       total,
       weight,
+      unit: baseUnit,
+      unitQuantity: weight,
+      displayUnit: displayLabel || `${weight} ${baseUnit}`,
       isWeighable: true,
       taxTemplateId: item.taxTemplateId || null,
     }])
@@ -1805,10 +1826,39 @@ export default function POSPage() {
       applyPrice(supervisorRequest.cartLineId, supervisorRequest.newPrice)
     } else if (supervisorRequest.type === 'cart_void') {
       clearCart()
+    } else if (supervisorRequest.type === 'quick_add_item') {
+      setShowQuickAddModal(true)
     }
     toast.success(`Approved by ${approver}`)
     setSupervisorRequest(null)
     return true
+  }
+
+  function handleOpenQuickAdd() {
+    const profile = activeShift?.posProfile
+    const rawSettings = (profile?.receiptSettings || {}) as Record<string, unknown>
+    const cp = rawSettings.cashierPermissions as Record<string, boolean> | undefined
+    const allowQuick = cp?.allowQuickItemAdd ?? true
+
+    if (!allowQuick) {
+      setSupervisorRequest({ type: 'quick_add_item' })
+      return
+    }
+    setShowQuickAddModal(true)
+  }
+
+  function handleClearCartRequest() {
+    if (cart.length === 0) return
+    const profile = activeShift?.posProfile
+    const rawSettings = (profile?.receiptSettings || {}) as Record<string, unknown>
+    const cp = rawSettings.cashierPermissions as Record<string, boolean> | undefined
+    const allowClear = cp?.allowCartClear ?? true
+
+    if (!allowClear) {
+      setSupervisorRequest({ type: 'cart_void' })
+      return
+    }
+    setClearCartConfirm(true)
   }
 
   // ─── Terminal lock (F8 / idle) ────────────────────────────────
@@ -1859,13 +1909,27 @@ export default function POSPage() {
       return true
     }
 
-    // Support multiplier format: e.g. "5*8901234567890" or "12x479..." or "3 * MILK"
+    // Support multiplier & UOM format: e.g. "5*8901234567890", "250g*VEG", "500ml*MILK", "1.5kg*RICE", "12xPEN"
     let scanQty = 1
+    let scanUom: string | null = null
+    let rawQtyStr = ''
     let trimmed = rawTrimmed
-    const multMatch = rawTrimmed.match(/^([1-9]\d*)\s*[*xX]\s*(.+)$/)
-    if (multMatch) {
-      scanQty = parseInt(multMatch[1], 10)
-      trimmed = multMatch[2].trim()
+    const uomMultMatch = rawTrimmed.match(/^(\d+(?:\.\d+)?)\s*(kg|g|l|ml|m|pcs|doz)?\s*[*xX]\s*(.+)$/i)
+    if (uomMultMatch) {
+      rawQtyStr = uomMultMatch[1]
+      const rawVal = parseFloat(rawQtyStr)
+      scanUom = uomMultMatch[2] ? uomMultMatch[2].toLowerCase() : null
+      trimmed = uomMultMatch[3].trim()
+
+      if (scanUom === 'g') {
+        scanQty = rawVal / 1000 // Convert grams to kg
+      } else if (scanUom === 'ml') {
+        scanQty = rawVal / 1000 // Convert ml to L
+      } else if (scanUom === 'doz') {
+        scanQty = rawVal * 12
+      } else {
+        scanQty = rawVal
+      }
     }
 
     if (posWarehouse) {
@@ -1873,7 +1937,11 @@ export default function POSPage() {
         const res = await fetch(`/api/items/barcode-lookup?barcode=${encodeURIComponent(trimmed)}&warehouseId=${posWarehouse.id}`)
         if (res.ok) {
           const item: Item = await res.json()
-          addScannedItem(item, scanQty)
+          if (scanUom || (item.isWeighable && scanQty !== 1)) {
+            addToCartWithWeight(item, scanQty, scanUom ? `${rawQtyStr} ${scanUom}` : undefined)
+          } else {
+            addScannedItem(item, scanQty)
+          }
           setSearch('')
           return true
         }
@@ -1887,11 +1955,19 @@ export default function POSPage() {
       ? exact
       : items.filter(i => i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q) || (i.barcode || '').includes(trimmed))
     if (candidates.length === 1) {
-      addToCart(candidates[0], scanQty)
+      const match = candidates[0]
+      if (scanUom || (match.isWeighable && scanQty !== 1)) {
+        addToCartWithWeight(match, scanQty, scanUom ? `${rawQtyStr} ${scanUom}` : undefined)
+      } else {
+        addToCart(match, scanQty)
+      }
       setSearch('')
       return true
     }
-    if (candidates.length === 0) toast.error(`No item found for "${trimmed}"`)
+    if (candidates.length === 0) {
+      toast.error(`No item found for "${trimmed}". Press F4 to Quick Add.`)
+      setQuickAddInitialBarcode(trimmed)
+    }
     return false
   }
 
@@ -1901,7 +1977,7 @@ export default function POSPage() {
       !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
     const modalOpen = showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
       || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || showFloatModal || showPriceCheckModal
-      || !!supervisorRequest || clearCartConfirm
+      || showQuickAddModal || !!variantPickerParentItem || !!supervisorRequest || clearCartConfirm
 
     function onKey(e: KeyboardEvent) {
       if (terminalLocked) return
@@ -1913,6 +1989,8 @@ export default function POSPage() {
         case 'F3':
           e.preventDefault(); if (!modalOpen) setShowHeldSalesModal(true); break
         case 'F4':
+          e.preventDefault(); if (!modalOpen) handleOpenQuickAdd(); break
+        case 'F5':
           e.preventDefault(); if (!modalOpen && allowDiscount && cart.length > 0) setShowDiscountModal(true); break
         case 'F6':
           e.preventDefault(); if (!modalOpen) { if (cart.length > 0) setReturnModeConfirm(true); else setShowReturnLookupModal(true) } break
@@ -1927,7 +2005,7 @@ export default function POSPage() {
         case 'Escape':
           if (!modalOpen && search) { setSearch(''); focusSearch() } break
         case 'Delete':
-          if (e.ctrlKey && !modalOpen && cart.length > 0) { e.preventDefault(); setClearCartConfirm(true) } break
+          if (e.ctrlKey && !modalOpen && cart.length > 0) { e.preventDefault(); handleClearCartRequest(); } break
         case '/':
           if (!isTyping(document.activeElement)) { e.preventDefault(); focusSearch() } break
         default:
@@ -1938,7 +2016,7 @@ export default function POSPage() {
     return () => window.removeEventListener('keydown', onKey)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPayment, showDiscountModal, showHeldSalesModal, showCustomerModal, showVehicleModal, showShiftOpenModal, showShiftCloseModal,
-      showReturnLookupModal, showFloatModal, showPriceCheckModal, supervisorRequest, clearCartConfirm, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
+      showReturnLookupModal, showFloatModal, showPriceCheckModal, showQuickAddModal, variantPickerParentItem, supervisorRequest, clearCartConfirm, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
 
   // ─── Customer-facing display mirror (/pos/display) ─────────────
   useEffect(() => {
@@ -2451,6 +2529,7 @@ export default function POSPage() {
         config={config}
         businessType={company.businessType}
         onScanSubmit={handleScanSubmit}
+        onOpenQuickAdd={handleOpenQuickAdd}
       />
 
       <CartPanel
@@ -2471,7 +2550,7 @@ export default function POSPage() {
         onUpdatePrice={updatePrice}
         onSetQuantityDirectly={setQuantityDirectly}
         onChangeBatch={changeBatch}
-        onClearCart={clearCart}
+        onClearCart={handleClearCartRequest}
         onCancelReturnMode={cancelReturnMode}
         onStartExchange={returnAgainstSale ? startExchange : undefined}
         subtotal={subtotal}
@@ -2726,13 +2805,38 @@ export default function POSPage() {
         variant="danger"
       />
 
-      {/* Supermarket: Weight Input Modal */}
+      {/* Supermarket: Weight / Measurement Input Modal */}
       <WeightInputModal
         isOpen={!!weightInputItem}
         item={weightInputItem}
         onClose={() => setWeightInputItem(null)}
-        onConfirm={(weight) => {
-          if (weightInputItem) addToCartWithWeight(weightInputItem, weight)
+        onConfirm={(weight, displayLabel) => {
+          if (weightInputItem) addToCartWithWeight(weightInputItem, weight, displayLabel)
+        }}
+      />
+
+      {/* Multi-category Product Variants Picker */}
+      <VariantPickerModal
+        isOpen={!!variantPickerParentItem}
+        parentItem={variantPickerParentItem}
+        warehouseId={posWarehouse?.id || null}
+        onClose={() => setVariantPickerParentItem(null)}
+        onSelectVariant={(variant) => {
+          addToCart(variant)
+          setVariantPickerParentItem(null)
+        }}
+      />
+
+      {/* POS Quick Add Item Modal (F4) */}
+      <QuickItemAddModal
+        isOpen={showQuickAddModal}
+        initialBarcode={quickAddInitialBarcode}
+        warehouseId={posWarehouse?.id || null}
+        categories={categories}
+        onClose={() => setShowQuickAddModal(false)}
+        onItemCreated={(newItem) => {
+          setItems(prev => [newItem, ...prev])
+          addToCart(newItem)
         }}
       />
 

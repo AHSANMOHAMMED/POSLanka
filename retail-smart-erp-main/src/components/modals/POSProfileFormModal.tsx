@@ -127,6 +127,11 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
   const [formData, setFormData] = useState(initialFormData)
   // Per-counter receipt overrides stored in pos_profiles.receipt_settings
   const [receiptOverrides, setReceiptOverrides] = useState<ReceiptSettingsPatch>({})
+  const [cashierPermissions, setCashierPermissions] = useState({
+    allowQuickItemAdd: true,
+    allowCartClear: true,
+    allowNoSaleDrawerOpen: true,
+  })
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>([
     { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
     { paymentMethod: 'card', isDefault: false, allowInReturns: true, sortOrder: 1 },
@@ -186,9 +191,29 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
         setPaymentMethods(editProfile.paymentMethods || [])
         setUserAssignments(editProfile.users || [])
         setReceiptOverrides(sanitizeReceiptSettingsPatch(editProfile.receiptSettings))
+        const rawReceipt = (editProfile.receiptSettings || {}) as Record<string, unknown>
+        const cp = rawReceipt.cashierPermissions as Record<string, boolean> | undefined
+        if (cp) {
+          setCashierPermissions({
+            allowQuickItemAdd: cp.allowQuickItemAdd !== false,
+            allowCartClear: cp.allowCartClear !== false,
+            allowNoSaleDrawerOpen: cp.allowNoSaleDrawerOpen !== false,
+          })
+        } else {
+          setCashierPermissions({
+            allowQuickItemAdd: true,
+            allowCartClear: true,
+            allowNoSaleDrawerOpen: true,
+          })
+        }
       } else {
         setFormData(initialFormData)
         setReceiptOverrides({})
+        setCashierPermissions({
+          allowQuickItemAdd: true,
+          allowCartClear: true,
+          allowNoSaleDrawerOpen: true,
+        })
         setPaymentMethods([
           { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
           { paymentMethod: 'card', isDefault: false, allowInReturns: true, sortOrder: 1 },
@@ -325,7 +350,10 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
           maxDiscountPercent: parseFloat(formData.maxDiscountPercent) || 100,
           receiptHeader: formData.receiptHeader || null,
           receiptFooter: formData.receiptFooter || null,
-          receiptSettings: receiptOverrides,
+          receiptSettings: {
+            ...receiptOverrides,
+            cashierPermissions,
+          },
           paymentMethods: paymentMethods.map((pm, i) => ({
             ...pm,
             sortOrder: i,
@@ -549,6 +577,49 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
                     />
                     <span className="text-sm dark:text-gray-300">Allow credit sales</span>
                   </label>
+
+                  <div className="pt-2 border-t border-gray-100 dark:border-gray-700">
+                    <span className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">
+                      Cashier & Checkout Authorizations
+                    </span>
+                    <div className="space-y-2">
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={cashierPermissions.allowQuickItemAdd}
+                          onChange={(e) => setCashierPermissions(prev => ({ ...prev, allowQuickItemAdd: e.target.checked }))}
+                          className="rounded border-gray-300 dark:border-gray-600"
+                        />
+                        <span className="text-sm dark:text-gray-300">
+                          Allow Quick-Add Item (cashier can create unlisted items directly at POS)
+                        </span>
+                      </label>
+
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={cashierPermissions.allowCartClear}
+                          onChange={(e) => setCashierPermissions(prev => ({ ...prev, allowCartClear: e.target.checked }))}
+                          className="rounded border-gray-300 dark:border-gray-600"
+                        />
+                        <span className="text-sm dark:text-gray-300">
+                          Allow Void / Clear Cart without supervisor PIN
+                        </span>
+                      </label>
+
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={cashierPermissions.allowNoSaleDrawerOpen}
+                          onChange={(e) => setCashierPermissions(prev => ({ ...prev, allowNoSaleDrawerOpen: e.target.checked }))}
+                          className="rounded border-gray-300 dark:border-gray-600"
+                        />
+                        <span className="text-sm dark:text-gray-300">
+                          Allow No-Sale Cash Drawer Open without supervisor PIN
+                        </span>
+                      </label>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
-import { Search, ScanBarcode, Package, RotateCcw, Loader2, Warehouse, ChevronLeft, ChevronRight, Scale } from 'lucide-react'
+import { Search, ScanBarcode, Package, RotateCcw, Loader2, Warehouse, ChevronLeft, ChevronRight, Scale, Layers, PlusCircle } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { ShiftStatus } from './ShiftStatus'
 import { useCurrency } from '@/hooks/useCurrency'
@@ -32,6 +32,8 @@ interface ProductGridProps {
   businessType?: string
   /** Enter in the search box: immediate exact barcode/PLU lookup (bypasses debounce). Return true when handled. */
   onScanSubmit?: (code: string) => Promise<boolean> | boolean
+  /** Quick-Add item directly from POS (F4) */
+  onOpenQuickAdd?: () => void
 }
 
 /** DOM id of the POS search box so keyboard shortcuts can focus it */
@@ -130,6 +132,7 @@ export function ProductGrid({
   config,
   businessType,
   onScanSubmit,
+  onOpenQuickAdd,
 }: ProductGridProps) {
   const [scanBusy, setScanBusy] = useState(false)
 
@@ -202,6 +205,20 @@ export function ProductGrid({
               autoFocus
             />
           </div>
+
+          {/* Quick Add Button (F4) */}
+          {onOpenQuickAdd && !isReturnMode && (
+            <button
+              type="button"
+              onClick={onOpenQuickAdd}
+              className="flex items-center gap-1.5 px-3.5 py-3 bg-teal-50 text-teal-800 border border-teal-200/80 rounded-xl font-bold text-xs hover:bg-teal-100 transition-colors flex-shrink-0 shadow-sm"
+              title="Quick Add unlisted item to POS (F4)"
+            >
+              <PlusCircle size={16} className="text-teal-700" />
+              <span className="hidden md:inline">Quick Add</span>
+              <span className="text-[10px] bg-teal-200/60 text-teal-900 px-1 py-0.5 rounded font-mono font-extrabold">F4</span>
+            </button>
+          )}
 
           {/* Return Button */}
           {!isReturnMode && (
@@ -290,6 +307,12 @@ export function ProductGrid({
                     <span className="text-xs text-amber-700 font-medium">Weighable (PLU)</span>
                   </div>
                 )}
+                {item.hasVariants && (
+                  <div className="flex items-center gap-1 mb-1">
+                    <Layers size={12} className="text-purple-600" />
+                    <span className="text-xs text-purple-700 font-semibold">Has Variants</span>
+                  </div>
+                )}
                 {(config.enableCoreChargeDisplay && item.coreCharge && parseFloat(item.coreCharge) > 0) && (
                   <div className="text-xs text-purple-600 font-medium mb-1">
                     +Core: {currencyCode} {parseFloat(item.coreCharge).toFixed(0)}
@@ -299,9 +322,11 @@ export function ProductGrid({
                 <div className="flex items-end justify-between pt-2 border-t border-slate-100 mt-2">
                   <span className="text-base font-bold text-teal-800 font-mono">
                     {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
-                    {config.enableWeighableItems && item.isWeighable && (
-                      <span className="text-xs font-normal text-slate-400">/kg</span>
-                    )}
+                    {config.enableWeighableItems && item.isWeighable ? (
+                      <span className="text-xs font-normal text-slate-400">/{item.unit || 'kg'}</span>
+                    ) : item.unit && item.unit !== 'pcs' ? (
+                      <span className="text-xs font-normal text-slate-400">/{item.unit}</span>
+                    ) : null}
                   </span>
                   <span className="w-7 h-7 rounded-lg bg-slate-100 group-hover:bg-teal-700 group-hover:text-white flex items-center justify-center text-slate-700 text-xs font-bold transition-colors">
                     +
@@ -316,7 +341,17 @@ export function ProductGrid({
           <div className="text-center py-16">
             <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 font-medium">No {terms.items.toLowerCase()} found</p>
-            <p className="text-gray-400 text-sm mt-1">Try a different search term</p>
+            {onOpenQuickAdd && (
+              <button
+                type="button"
+                onClick={onOpenQuickAdd}
+                className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-teal-700 text-white rounded-xl text-xs font-bold hover:bg-teal-800 transition-colors shadow-sm"
+              >
+                <PlusCircle size={15} />
+                Quick Add {search ? `"${search}"` : 'New Item'} to POS (F4)
+              </button>
+            )}
+            <p className="text-gray-400 text-sm mt-2">Try a different search term or add it to inventory</p>
           </div>
         )}
 

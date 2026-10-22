@@ -9,7 +9,7 @@ interface SupervisorAuthModalProps {
   onClose: () => void
   onAuthorize: (pin: string, reason: string) => Promise<boolean> | boolean
   title?: string
-  actionType?: 'price_override' | 'void_item' | 'cart_void' | 'drawer_open' | 'custom_discount'
+  actionType?: 'price_override' | 'void_item' | 'cart_void' | 'drawer_open' | 'custom_discount' | 'quick_add_item'
   contextDetails?: {
     itemName?: string
     originalPrice?: number
@@ -121,6 +121,7 @@ export function SupervisorAuthModal({
                 {actionType === 'cart_void' && 'Full Transaction Cancellation'}
                 {actionType === 'drawer_open' && 'Manual Cash Drawer Release'}
                 {actionType === 'custom_discount' && 'High-Threshold Discount Approval'}
+                {actionType === 'quick_add_item' && 'Unlisted Item Creation Approval'}
               </span>
               {contextDetails?.ticketNumber && (
                 <span className="text-slate-500 font-mono">

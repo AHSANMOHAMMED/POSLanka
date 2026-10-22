@@ -283,6 +283,19 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // Check which items have variants (are parent of child items)
+      const parentIdSet = new Set<string>()
+      if (itemIds.length > 0) {
+        const parentRows = await db
+          .select({ parentItemId: items.parentItemId })
+          .from(items)
+          .where(and(isNotNull(items.parentItemId), inArray(items.parentItemId, itemIds), eq(items.isActive, true)))
+          .groupBy(items.parentItemId)
+        for (const row of parentRows) {
+          if (row.parentItemId) parentIdSet.add(row.parentItemId)
+        }
+      }
+
       // Resolve audit users (createdBy / updatedBy → { id, name })
       const auditUserIds = [...new Set(result.flatMap(i => [i.createdBy, i.updatedBy]).filter((v): v is string => !!v))]
       const auditUsers = auditUserIds.length > 0
@@ -316,6 +329,7 @@ export async function GET(request: NextRequest) {
           availableStock: String(available),
           minStock: String(warehouseStockInfo?.minStock ?? 0),
           hasStockHistory: stockHistorySet.has(item.id),
+          hasVariants: parentIdSet.has(item.id),
           // Include warehouse-specific fields if querying by warehouse
           ...(warehouseStockInfo ? {
             warehouseMinStock: String(warehouseStockInfo.minStock),

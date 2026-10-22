@@ -17,9 +17,14 @@ export interface Item {
   categoryId: string | null
   categoryName?: string | null
   isWeighable?: boolean
+  unit?: string | null
   pluCode?: string | null
   coreCharge?: string | null
   taxTemplateId?: string | null
+  parentItemId?: string | null
+  variantAttributes?: Record<string, string> | null
+  hasVariants?: boolean
+  variants?: Item[]
 }
 
 export interface Category {
@@ -54,6 +59,9 @@ export interface CartItem {
   notes?: string
   weight?: number
   isWeighable?: boolean
+  unit?: string | null
+  unitQuantity?: number
+  displayUnit?: string | null
   coreCharge?: number
   restaurantOrderItemId?: string
   taxTemplateId?: string | null
@@ -170,6 +178,10 @@ export interface ActiveShift {
     allowDiscountChange: boolean
     maxDiscountPercent: string
     allowRateChange: boolean
+    allowNegativeStock?: boolean
+    allowQuickItemAdd?: boolean
+    allowCartClear?: boolean
+    allowNoSaleDrawerOpen?: boolean
     printReceiptOnComplete: boolean
     skipPrintPreview: boolean
     receiptPrintFormat: string
