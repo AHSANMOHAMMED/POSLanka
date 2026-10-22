@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import Link from 'next/link'
+import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3 } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
 import { LabelPreview } from '@/components/labels/LabelPreview'
 import { printLabels, printLabelsRaw, isRawLabelPrinter } from '@/lib/labels/label-print'
@@ -11,12 +12,34 @@ import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
-import type { LabelTemplate, LabelItemData, PrintLabelConfig } from '@/lib/labels/types'
+import type { LabelTemplate, LabelItemData, PrintLabelConfig, LabelElement } from '@/lib/labels/types'
 import type { AsyncSelectOption } from '@/components/ui/async-creatable-select'
 
 interface ItemWithQty {
   item: LabelItemData
   quantity: number
+}
+
+interface VisibleBarcodeFields {
+  showName: boolean
+  showBarcode: boolean
+  showPrice: boolean
+  showSku: boolean
+  showCompany: boolean
+  showCategory: boolean
+  showUnit: boolean
+  showPriceCode: boolean
+}
+
+const DEFAULT_VISIBLE_FIELDS: VisibleBarcodeFields = {
+  showName: true,
+  showBarcode: true,
+  showPrice: true,
+  showSku: true,
+  showCompany: false,
+  showCategory: false,
+  showUnit: false,
+  showPriceCode: false,
 }
 
 export default function BarcodePrintPage() {
@@ -27,6 +50,7 @@ export default function BarcodePrintPage() {
   const [codeWord, setCodeWord] = useState<string>('')
   const [previewIndex, setPreviewIndex] = useState(0)
   const [showFullPreview, setShowFullPreview] = useState(false)
+  const [visibleFields, setVisibleFields] = useState<VisibleBarcodeFields>(DEFAULT_VISIBLE_FIELDS)
   const [config, setConfig] = useState<PrintLabelConfig>({
     labelsPerRow: 3,
     gapMm: 3,
@@ -140,8 +164,129 @@ export default function BarcodePrintPage() {
   const selectedTemplate = templates.find(t => t.id === selectedTemplateId)
   const totalLabels = items.reduce((sum, i) => sum + i.quantity, 0)
 
+  // Auto-sync toggles to match initial elements of the chosen template
+  useEffect(() => {
+    if (!selectedTemplate) return
+    const elements = selectedTemplate.elements || []
+    setVisibleFields({
+      showName: elements.some(el => el.type === 'text' && el.dataField === 'item.name'),
+      showBarcode: elements.some(el => el.type === 'barcode'),
+      showPrice: elements.some(el => el.type === 'text' && el.dataField === 'item.sellingPrice'),
+      showSku: elements.some(el => el.type === 'text' && el.dataField === 'item.sku'),
+      showCompany: elements.some(el => el.type === 'text' && el.dataField === 'tenant.name'),
+      showCategory: elements.some(el => el.type === 'text' && el.dataField === 'item.category'),
+      showUnit: elements.some(el => el.type === 'text' && el.dataField === 'item.unit'),
+      showPriceCode: elements.some(el => el.type === 'text' && el.dataField === 'item.priceCode'),
+    })
+  }, [selectedTemplate])
+
+  // Dynamically compute activeTemplate based on enabled/disabled visibleFields
+  const activeTemplate = useMemo<LabelTemplate | null>(() => {
+    if (!selectedTemplate) return null
+
+    // Filter elements
+    const elements = (selectedTemplate.elements || []).filter((el) => {
+      if (el.type === 'barcode') return visibleFields.showBarcode
+      if (el.type === 'text') {
+        if (el.dataField === 'item.name') return visibleFields.showName
+        if (el.dataField === 'item.sellingPrice') return visibleFields.showPrice
+        if (el.dataField === 'item.sku') return visibleFields.showSku
+        if (el.dataField === 'tenant.name') return visibleFields.showCompany
+        if (el.dataField === 'item.category') return visibleFields.showCategory
+        if (el.dataField === 'item.unit') return visibleFields.showUnit
+        if (el.dataField === 'item.priceCode') return visibleFields.showPriceCode
+      }
+      return true
+    })
+
+    const widthMm = Number(selectedTemplate.widthMm) || 50
+    const heightMm = Number(selectedTemplate.heightMm) || 30
+    const resultElements: LabelElement[] = [...elements]
+
+    // Injected fields if checked but not currently in template
+    if (visibleFields.showCompany && !resultElements.some(el => el.type === 'text' && el.dataField === 'tenant.name')) {
+      resultElements.push({
+        id: 'dyn-company',
+        type: 'text',
+        dataField: 'tenant.name',
+        x: 2,
+        y: 1.5,
+        width: Math.max(10, widthMm - 4),
+        height: 3.5,
+        fontSize: 7,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        maxLines: 1,
+        rotation: 0,
+        zIndex: 1,
+      })
+    }
+
+    if (visibleFields.showPriceCode && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.priceCode')) {
+      resultElements.push({
+        id: 'dyn-pricecode',
+        type: 'text',
+        dataField: 'item.priceCode',
+        x: Math.max(2, widthMm - 16),
+        y: Math.max(1, heightMm - 4),
+        width: 14,
+        height: 3,
+        fontSize: 6,
+        fontWeight: 'normal',
+        textAlign: 'right',
+        prefix: '*',
+        maxLines: 1,
+        rotation: 0,
+        zIndex: 2,
+      })
+    }
+
+    if (visibleFields.showCategory && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.category')) {
+      resultElements.push({
+        id: 'dyn-category',
+        type: 'text',
+        dataField: 'item.category',
+        x: 2,
+        y: Math.max(1, heightMm - 4),
+        width: 18,
+        height: 3,
+        fontSize: 6,
+        fontWeight: 'normal',
+        textAlign: 'left',
+        maxLines: 1,
+        rotation: 0,
+        zIndex: 2,
+      })
+    }
+
+    if (visibleFields.showUnit && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.unit')) {
+      resultElements.push({
+        id: 'dyn-unit',
+        type: 'text',
+        dataField: 'item.unit',
+        x: Math.max(2, widthMm / 2 - 8),
+        y: Math.max(1, heightMm - 4),
+        width: 16,
+        height: 3,
+        fontSize: 6,
+        fontWeight: 'normal',
+        textAlign: 'center',
+        prefix: '/ ',
+        maxLines: 1,
+        rotation: 0,
+        zIndex: 2,
+      })
+    }
+
+    return {
+      ...selectedTemplate,
+      elements: resultElements,
+    }
+  }, [selectedTemplate, visibleFields])
+
   async function handlePrint() {
-    if (!selectedTemplate) {
+    const templateToPrint = activeTemplate || selectedTemplate
+    if (!templateToPrint) {
       toast.error('Please select a template')
       return
     }
@@ -152,7 +297,7 @@ export default function BarcodePrintPage() {
     if (isRawLabelPrinter(chosenPrinter)) {
       setPrinting(true)
       try {
-        const res = await printLabelsRaw(chosenPrinter, selectedTemplate, items, {
+        const res = await printLabelsRaw(chosenPrinter, templateToPrint, items, {
           currencySymbol,
           tenantName: company?.tenantName,
           codeWord,
@@ -169,7 +314,7 @@ export default function BarcodePrintPage() {
     }
     try {
       const success = await printLabels(
-        selectedTemplate,
+        templateToPrint,
         items,
         config,
         currencySymbol,
@@ -377,6 +522,181 @@ export default function BarcodePrintPage() {
             )}
           </div>
 
+          {/* Information on Label Customizer (Enable/Disable Fields) */}
+          <div className="bg-white rounded-lg border p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Sliders size={16} className="text-blue-600" />
+                <span className="text-sm font-semibold text-gray-900">Information on Label</span>
+              </div>
+              {selectedTemplateId && (
+                <Link
+                  href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/${selectedTemplateId}`}
+                  className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                  title="Open in full template drag-and-drop designer"
+                >
+                  <Edit3 size={12} />
+                  Full Designer
+                </Link>
+              )}
+            </div>
+
+            <p className="text-xs text-gray-500">
+              Enable or disable which product information prints on this barcode label:
+            </p>
+
+            {/* Quick Presets */}
+            <div className="flex flex-wrap gap-1.5 pb-1">
+              <button
+                type="button"
+                onClick={() => setVisibleFields({
+                  showName: true,
+                  showBarcode: true,
+                  showPrice: true,
+                  showSku: true,
+                  showCompany: false,
+                  showCategory: false,
+                  showUnit: false,
+                  showPriceCode: false,
+                })}
+                className="px-2 py-0.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md border font-medium transition-colors"
+              >
+                Standard
+              </button>
+              <button
+                type="button"
+                onClick={() => setVisibleFields({
+                  showName: true,
+                  showBarcode: true,
+                  showPrice: true,
+                  showSku: true,
+                  showCompany: true,
+                  showCategory: true,
+                  showUnit: true,
+                  showPriceCode: true,
+                })}
+                className="px-2 py-0.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md border font-medium transition-colors"
+              >
+                All Fields
+              </button>
+              <button
+                type="button"
+                onClick={() => setVisibleFields({
+                  showName: false,
+                  showBarcode: true,
+                  showPrice: true,
+                  showSku: false,
+                  showCompany: false,
+                  showCategory: false,
+                  showUnit: false,
+                  showPriceCode: false,
+                })}
+                className="px-2 py-0.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md border font-medium transition-colors"
+              >
+                Price + Barcode
+              </button>
+              <button
+                type="button"
+                onClick={() => setVisibleFields({
+                  showName: false,
+                  showBarcode: true,
+                  showPrice: false,
+                  showSku: false,
+                  showCompany: false,
+                  showCategory: false,
+                  showUnit: false,
+                  showPriceCode: false,
+                })}
+                className="px-2 py-0.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md border font-medium transition-colors"
+              >
+                Barcode Only
+              </button>
+            </div>
+
+            {/* Interactive Grid of Field Toggles */}
+            <div className="grid grid-cols-2 gap-1.5 pt-1 border-t">
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showName}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showName: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-medium">Product Name</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showBarcode}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showBarcode: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-medium">Barcode Graphic</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showPrice}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showPrice: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-medium">Selling Price</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showSku}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showSku: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-medium">SKU / Code</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showCompany}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showCompany: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-medium">Store Name</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showCategory}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showCategory: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-medium">Category</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showUnit}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showUnit: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-medium">Unit (pcs/kg)</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showPriceCode}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showPriceCode: e.target.checked }))}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-medium">Cost Code</span>
+              </label>
+            </div>
+          </div>
+
           {/* Preview */}
           <div className="bg-white rounded-lg border p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -419,7 +739,7 @@ export default function BarcodePrintPage() {
 
                 <div className="p-4 bg-slate-100/70 dark:bg-slate-800/50 rounded-lg flex flex-col items-center justify-center border border-dashed border-gray-200 dark:border-gray-700 min-h-[160px]">
                   <LabelPreview
-                    template={selectedTemplate}
+                    template={activeTemplate || selectedTemplate}
                     item={items[previewIndex]?.item || null}
                     currencySymbol={currencySymbol}
                     tenantName={company?.tenantName}
@@ -474,7 +794,7 @@ export default function BarcodePrintPage() {
             <div className="p-6 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center overflow-auto max-h-[60vh]">
               <div className="shadow-md bg-white p-2 rounded">
                 <LabelPreview
-                  template={selectedTemplate}
+                  template={activeTemplate || selectedTemplate}
                   item={items[previewIndex]?.item || null}
                   currencySymbol={currencySymbol}
                   tenantName={company?.tenantName}

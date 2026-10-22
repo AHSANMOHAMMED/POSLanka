@@ -110,6 +110,93 @@
   --ring: 213 94% 53%;
 }
 
+/* ==================== THEME PALETTES (High Contrast & Vibrant) ==================== */
+/* Midnight Luxury Navy */
+[data-theme="midnight"] {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --page-bg: #f1f5f9;
+  --content-bg: #ffffff;
+}
+[data-theme="midnight"].dark,
+.dark[data-theme="midnight"] {
+  --page-bg: #090e1a;
+  --content-bg: #10172a;
+  --sidebar-bg: #070b14;
+  --sidebar-border: #1e293b;
+  --sidebar-hover-bg: #162036;
+  --navbar-bg: #05080f;
+  --primary: #3b82f6;
+  --primary-hover: #60a5fa;
+  --border-color: #1e293b;
+  --border: 217 33% 17%;
+  --card: 222 47% 11%;
+  --background: 222 47% 7%;
+}
+
+/* Emerald Botanical / Supermarket */
+[data-theme="emerald"] {
+  --primary: #059669;
+  --primary-hover: #047857;
+  --page-bg: #f0fdf4;
+  --content-bg: #ffffff;
+}
+[data-theme="emerald"].dark,
+.dark[data-theme="emerald"] {
+  --page-bg: #04140d;
+  --content-bg: #0a2418;
+  --sidebar-bg: #030f0a;
+  --sidebar-border: #133a28;
+  --sidebar-hover-bg: #0f3323;
+  --navbar-bg: #020a06;
+  --primary: #10b981;
+  --primary-hover: #34d399;
+  --border-color: #133a28;
+  --border: 155 50% 15%;
+  --card: 155 58% 9%;
+  --background: 155 60% 5%;
+}
+
+/* Carbon OLED (Ultra-High Contrast Black) */
+[data-theme="charcoal"].dark,
+.dark[data-theme="charcoal"] {
+  --page-bg: #000000;
+  --content-bg: #111111;
+  --sidebar-bg: #080808;
+  --sidebar-border: #222222;
+  --sidebar-hover-bg: #1a1a1a;
+  --navbar-bg: #000000;
+  --primary: #38bdf8;
+  --primary-hover: #7dd3fc;
+  --border-color: #262626;
+  --border: 0 0% 15%;
+  --card: 0 0% 7%;
+  --background: 0 0% 0%;
+}
+
+/* Warm Amber / Bistro */
+[data-theme="amber"] {
+  --primary: #d97706;
+  --primary-hover: #b45309;
+  --page-bg: #faf8f5;
+  --content-bg: #ffffff;
+}
+[data-theme="amber"].dark,
+.dark[data-theme="amber"] {
+  --page-bg: #140e0a;
+  --content-bg: #1f1711;
+  --sidebar-bg: #0e0a07;
+  --sidebar-border: #38291e;
+  --sidebar-hover-bg: #2a1f17;
+  --navbar-bg: #080604;
+  --primary: #f59e0b;
+  --primary-hover: #fbbf24;
+  --border-color: #38291e;
+  --border: 25 30% 17%;
+  --card: 25 30% 10%;
+  --background: 25 33% 6%;
+}
+
 /* Base body styles */
 body {
   font-family: var(--font-inter, 'Inter', system-ui, -apple-system, sans-serif);

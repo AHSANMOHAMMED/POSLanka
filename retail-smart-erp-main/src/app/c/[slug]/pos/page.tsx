@@ -32,6 +32,7 @@ import { SerialPickerModal } from '@/components/pos/SerialPickerModal'
 import { ModifierPickerModal } from '@/components/pos/ModifierPickerModal'
 import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
 import { CameraScanModal } from '@/components/pos/CameraScanModal'
+import { ThemeToggle } from '@/components/ui/theme-toggle'
 import type {
   Item,
   Category,
@@ -2539,6 +2540,9 @@ export default function POSPage() {
               Lock
             </button>
           )}
+          <div className="flex items-center text-slate-300">
+            <ThemeToggle />
+          </div>
         </div>
       </div>
       <div className="flex flex-1 overflow-hidden">
