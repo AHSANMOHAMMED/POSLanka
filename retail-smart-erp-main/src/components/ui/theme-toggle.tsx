@@ -52,6 +52,20 @@ const paletteOptions: Array<{
     bgPreview: 'bg-[#140e0a]',
     description: 'Warm golden bistro tone',
   },
+  {
+    value: 'violet',
+    label: 'Cyber Violet',
+    accentColor: '#a855f7',
+    bgPreview: 'bg-[#0b0717]',
+    description: 'Electric neon amethyst dark',
+  },
+  {
+    value: 'crimson',
+    label: 'Ruby Crimson',
+    accentColor: '#f43f5e',
+    bgPreview: 'bg-[#14050a]',
+    description: 'High performance crimson wine',
+  },
 ]
 
 interface ThemeToggleProps {
@@ -87,21 +101,21 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center gap-1.5 text-gray-600 dark:text-gray-300"
+        className="p-2 rounded-xl hover:bg-white/10 dark:hover:bg-white/10 active:scale-95 transition-all duration-150 flex items-center gap-1.5 text-white/90 hover:text-white"
         aria-label="Customize theme"
         title="Customize theme & background colors"
       >
-        <CurrentIcon className="w-5 h-5" />
+        <CurrentIcon className="w-4.5 h-4.5 transition-transform hover:rotate-12 duration-200" />
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-64 rounded-xl shadow-2xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 p-3 z-50 space-y-3">
+        <div className="absolute right-0 mt-2 w-72 rounded-2xl shadow-2xl bg-white/95 dark:bg-[#121622]/95 backdrop-blur-xl border border-gray-200/90 dark:border-white/10 p-3.5 z-50 space-y-3.5">
           {/* Appearance Mode */}
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1.5 px-1">
-              Mode
+            <div className="text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2 px-1">
+              Display Mode
             </div>
-            <div className="grid grid-cols-3 gap-1 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+            <div className="grid grid-cols-3 gap-1.5 bg-gray-100 dark:bg-white/[0.06] p-1 rounded-xl">
               {themeOptions.map((option) => {
                 const Icon = option.icon
                 const isSelected = theme === option.value
@@ -110,10 +124,10 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
                     key={option.value}
                     type="button"
                     onClick={() => handleModeSelect(option.value)}
-                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-md text-xs font-medium transition-all ${
+                    className={`flex items-center justify-center gap-1.5 py-1.5 px-2 rounded-lg text-xs font-semibold transition-all ${
                       isSelected
-                        ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-xs'
-                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                        ? 'bg-white dark:bg-gray-800 text-gray-950 dark:text-white shadow-xs ring-1 ring-black/5 dark:ring-white/10'
+                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-950 dark:hover:text-white hover:bg-white/50 dark:hover:bg-white/[0.04]'
                     }`}
                   >
                     <Icon className="w-3.5 h-3.5" />
@@ -125,14 +139,14 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
           </div>
 
           {/* Color Palettes (Rich Contrast Backgrounds) */}
-          <div className="border-t border-gray-100 dark:border-gray-800 pt-2.5">
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-2 px-1">
-              <span className="flex items-center gap-1">
-                <Palette size={12} />
-                Background Theme
+          <div className="border-t border-gray-100 dark:border-white/10 pt-3">
+            <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2 px-1">
+              <span className="flex items-center gap-1.5">
+                <Palette size={13} className="text-[var(--primary)]" />
+                Color Palette & Themes
               </span>
             </div>
-            <div className="space-y-1">
+            <div className="space-y-1 max-h-[260px] overflow-y-auto pr-1">
               {paletteOptions.map((p) => {
                 const isSelected = palette === p.value
                 return (
@@ -140,19 +154,20 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
                     key={p.value}
                     type="button"
                     onClick={() => setPalette(p.value)}
-                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left transition-all ${
+                    className={`w-full flex items-center justify-between p-2 rounded-xl text-left transition-all ${
                       isSelected
-                        ? 'bg-blue-50/80 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 ring-1 ring-blue-500/30'
-                        : 'hover:bg-gray-50 dark:hover:bg-gray-800/60 text-gray-700 dark:text-gray-300'
+                        ? 'bg-[var(--primary)]/10 dark:bg-[var(--primary)]/20 text-gray-900 dark:text-white ring-1 ring-[var(--primary)]/40 shadow-xs'
+                        : 'hover:bg-gray-100/80 dark:hover:bg-white/[0.06] text-gray-700 dark:text-gray-300'
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="relative w-5 h-5 rounded-full border border-gray-300 dark:border-gray-600 flex items-center justify-center overflow-hidden flex-shrink-0">
-                        <div
-                          className="w-full h-full"
-                          style={{ backgroundColor: p.accentColor }}
-                        />
-                      </div>
+                      <div
+                        className="w-5 h-5 rounded-full border-2 border-white dark:border-gray-800 shadow-xs flex-shrink-0"
+                        style={{
+                          backgroundColor: p.accentColor,
+                          boxShadow: isSelected ? `0 0 10px ${p.accentColor}80` : undefined,
+                        }}
+                      />
                       <div className="min-w-0">
                         <div className="text-xs font-semibold truncate leading-tight">
                           {p.label}
@@ -163,7 +178,7 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
                       </div>
                     </div>
                     {isSelected && (
-                      <span className="text-blue-600 dark:text-blue-400 text-xs font-bold pl-2">
+                      <span className="w-4 h-4 rounded-full bg-[var(--primary)] text-white text-[10px] flex items-center justify-center font-bold">
                         ✓
                       </span>
                     )}

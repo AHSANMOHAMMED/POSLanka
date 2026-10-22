@@ -221,10 +221,7 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
           <button
             type="button"
             onClick={() => setAppSwitcherOpen(!appSwitcherOpen)}
-            className="p-1.5 rounded transition-colors hidden lg:flex items-center"
-            style={{ color: 'var(--navbar-text-muted)' }}
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+            className="p-1.5 rounded-xl transition-all duration-150 hover:bg-white/10 active:scale-95 hidden lg:flex items-center text-white/80 hover:text-white"
             aria-label="Open app switcher"
           >
             <Grid3X3 size={18} />
@@ -371,10 +368,7 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
         <button
           type="button"
           onClick={() => setBugReportOpen(true)}
-          className="items-center gap-1 px-2 py-1.5 rounded text-[13px] font-medium transition-colors hidden lg:flex"
-          style={{ color: 'var(--navbar-text-muted)' }}
-          onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
-          onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+          className="items-center gap-1 p-2 rounded-xl text-white/80 hover:text-white hover:bg-white/10 active:scale-95 transition-all duration-150 hidden lg:flex"
           title="Report a bug (Ctrl+Shift+B)"
         >
           <Bug size={16} />
@@ -385,20 +379,17 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
           <button
             type="button"
             onClick={() => setHelpMenuOpen(!helpMenuOpen)}
-            className="flex items-center gap-1 px-2 py-1.5 rounded text-[13px] font-medium transition-colors"
-            style={{ color: 'var(--navbar-text-muted)' }}
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-[13px] font-medium transition-all duration-150 text-white/80 hover:text-white hover:bg-white/10 active:scale-95"
           >
             <HelpCircle size={16} />
             <ChevronDown size={12} />
           </button>
           {helpMenuOpen && (
-            <div className="absolute right-0 top-full mt-1 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg z-50 py-1 animate-dropdown">
-              <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700">
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Retail Smart ERP</p>
+            <div className="absolute right-0 top-full mt-1.5 w-56 bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border border-gray-200 dark:border-white/10 rounded-2xl shadow-xl z-50 py-1.5 animate-dropdown">
+              <div className="px-3.5 py-2 border-b border-gray-100 dark:border-white/10">
+                <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">Retail Smart ERP</p>
                 {appVersion && (
-                  <p className="text-xs text-gray-400 dark:text-gray-500">Version {appVersion}</p>
+                  <p className="text-[11px] text-gray-400 dark:text-gray-500">Version {appVersion}</p>
                 )}
               </div>
               <button
@@ -407,7 +398,7 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
                   setHelpMenuOpen(false)
                   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true }))
                 }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                className="w-full flex items-center gap-2 px-3.5 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100/70 dark:hover:bg-white/[0.08] transition-colors"
               >
                 <Keyboard size={14} className="text-gray-400" />
                 Search
@@ -418,7 +409,7 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={() => setHelpMenuOpen(false)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                className="w-full flex items-center gap-2 px-3.5 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100/70 dark:hover:bg-white/[0.08] transition-colors"
               >
                 <Info size={14} className="text-gray-400" />
                 About
@@ -433,16 +424,14 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
         </div>
 
         {/* Divider */}
-        <div className="h-5 w-px mx-1 hidden lg:block" style={{ backgroundColor: 'rgba(255,255,255,0.15)' }} />
+        <div className="h-5 w-px mx-1 hidden lg:block bg-white/15" />
 
         {/* User avatar dropdown (desktop only) */}
         <div ref={userMenuRef} className="relative hidden lg:block">
           <button
             type="button"
             onClick={() => setUserMenuOpen(!userMenuOpen)}
-            className="flex items-center gap-2 p-1 rounded transition-colors"
-            onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
+            className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-white/10 active:scale-95 transition-all duration-150"
           >
             {session?.user?.avatarUrl ? (
               /* eslint-disable-next-line @next/next/no-img-element */
