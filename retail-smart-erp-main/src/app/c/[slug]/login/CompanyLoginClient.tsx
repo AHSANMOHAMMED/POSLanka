@@ -169,27 +169,26 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
   }, [slug, searchParams, router])
 
   // PWA: per-company manifest + theme colour + service worker
+  // Uses its own tags only: the <link rel="manifest"> Next renders from app/manifest.ts belongs to
+  // React. Re-pointing and then removing that one crashed the next navigation with "Cannot read
+  // properties of null (reading 'removeChild')". Ours go first in <head> because browsers use the
+  // first manifest / theme-color tag, and only ours are removed on unmount.
   useEffect(() => {
-    let manifestLink = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null
-    if (!manifestLink) {
-      manifestLink = document.createElement('link')
-      manifestLink.rel = 'manifest'
-      document.head.appendChild(manifestLink)
-    }
+    const manifestLink = document.createElement('link')
+    manifestLink.rel = 'manifest'
     manifestLink.href = `/api/c/${slug}/manifest.json`
-    let themeMeta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null
-    if (!themeMeta) {
-      themeMeta = document.createElement('meta')
-      themeMeta.name = 'theme-color'
-      document.head.appendChild(themeMeta)
-    }
+    manifestLink.dataset.companyPwa = slug
+    const themeMeta = document.createElement('meta')
+    themeMeta.name = 'theme-color'
     themeMeta.content = THEME_COLOR
+    themeMeta.dataset.companyPwa = slug
+    document.head.prepend(manifestLink, themeMeta)
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {})
     }
     return () => {
-      manifestLink?.remove()
-      themeMeta?.remove()
+      manifestLink.remove()
+      themeMeta.remove()
     }
   }, [slug])
 
