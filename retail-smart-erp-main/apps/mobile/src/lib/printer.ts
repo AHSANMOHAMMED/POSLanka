@@ -570,6 +570,7 @@ export function receiptHtml(input: ReceiptInput): string {
     .map(
       (l) =>
         `<tr><td>${escapeHtml(l.name)}</td><td class="r">${escapeHtml(qtyText(l.qty))}${l.unit ? escapeHtml(l.unit) : ''}</td><td class="r">${money(l.unitPrice)}</td><td class="r">${money(l.total)}</td></tr>` +
+        (l.conversion ? `<tr><td colspan="4">&nbsp;&nbsp;${escapeHtml(l.conversion)}</td></tr>` : '') +
         (ti && l.vatAmount ? `<tr><td colspan="3">&nbsp;&nbsp;VAT ${escapeHtml(vatRateText(l.vatRate))}%</td><td class="r">${money(l.vatAmount)}</td></tr>` : '')
     )
     .join('')

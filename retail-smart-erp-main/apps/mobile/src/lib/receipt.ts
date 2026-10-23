@@ -9,6 +9,7 @@ import { apiGet, getUser } from './api'
 import type { InvoiceCodeType, ReceiptInput, ReceiptLine, ReceiptLogo, ReceiptPayment, ReceiptTaxInvoice, ZReportInput } from './escpos'
 import { getPrinterSettings } from './printer'
 import { shiftCounterName, type Shift } from './shift'
+import { lineUnit } from './unitConversion'
 
 /** Subset of the web ReceiptSettings (src/lib/print/receipt-settings.ts). */
 export interface ReceiptSettingsLite {
@@ -211,6 +212,10 @@ export interface SaleResponseLike {
     itemName?: string; name?: string; quantity: string | number; unitPrice: string | number; total?: string | number; unit?: string | null; taxAmount?: string | number; taxRate?: string | number
     /** H5: unit sold and promotions applied (cart: share of a bill promotion) */
     uom?: string | null
+    /** Base units per 1 `uom` (sale_items.uom_factor) and the item's base unit name */
+    uomFactor?: string | number | null
+    baseUnit?: string | null
+    item?: { unit?: string | null } | null
     promotions?: Array<{ label: string; amount: string | number; cart?: boolean }> | null
   }>
   payments?: Array<{ method?: string; paymentMethod?: string; amount: string | number; reference?: string | null }>
@@ -273,10 +278,12 @@ export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): Mo
     // H5: line promotions print with the item name (the line total is already net of them)
     const promo = (i.promotions || []).filter((p) => !p.cart && num(p.amount) > 0)
     const name = i.itemName || i.name || 'Item'
+    const { conversion } = lineUnit({ uom: i.uom, uomFactor: i.uomFactor, baseUnit: i.baseUnit ?? i.item?.unit ?? null })
     return {
       name: promo.length ? `${name} (${promo.map((p) => `${p.label} -${num(p.amount).toFixed(2)}`).join(', ')})` : name,
       qty,
       unit: i.uom || i.unit || null,
+      conversion,
       unitPrice,
       total: i.total !== undefined ? num(i.total) : qty * unitPrice,
     }

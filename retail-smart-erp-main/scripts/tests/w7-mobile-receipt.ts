@@ -2,6 +2,7 @@
  * Mobile ESC/POS receipt (logo + invoice codes): npx tsx scripts/tests/w7-mobile-receipt.ts
  */
 import { buildReceipt, base64ToBytes, bytesToBase64, invoiceCodeFor, type ReceiptInput } from '../../apps/mobile/src/lib/escpos'
+import { lineUnit } from '../../apps/mobile/src/lib/unitConversion'
 
 let pass = 0
 let fail = 0
@@ -45,6 +46,23 @@ check(idx(b, [0x1d, 0x6b, 73]) >= 0, 'CODE128 for OFF- ref')
 check(idx(b, [0x1d, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x51, 0x30]) >= 0, 'QR printed')
 for (const s of ['Test Shop (Pvt) Ltd', 'VAT/TIN: 1234-7000', 'BRN: PV 99', 'shop.lk', 'Welcome', 'Come again', 'Exchange within 7 days'])
   check(idx(b, ascii(s)) >= 0, `contains ${s}`)
+
+// Lines sold in a non-base unit print the conversion under the item ("1 Box = 12 pcs")
+check(lineUnit({ uom: 'Box', uomFactor: 12, baseUnit: 'pcs' }).conversion === '1 Box = 12 pcs', 'lineUnit: 1 Box = 12 pcs')
+check(lineUnit({ uom: 'kg', uomFactor: 1, baseUnit: 'kg' }).conversion === null, 'lineUnit: base unit has no conversion')
+check(lineUnit({ uom: 'Pack', uomFactor: 0.5, baseUnit: 'kg' }).conversion === '1 Pack = 0.5 kg', 'lineUnit: fractional factor')
+const convInput: ReceiptInput = {
+  ...base,
+  lines: [
+    { name: 'Milk 1L', qty: 2, unit: 'Box', unitPrice: 250, total: 500, conversion: lineUnit({ uom: 'Box', uomFactor: 12, baseUnit: 'pcs' }).conversion },
+    { name: 'Sugar', qty: 1, unit: 'kg', unitPrice: 350, total: 350, conversion: lineUnit({ uom: 'kg', uomFactor: 1, baseUnit: 'kg' }).conversion },
+  ],
+}
+for (const w of [58, 80] as const) {
+  const cb = buildReceipt(convInput, { paperWidth: w })
+  check(idx(cb, ascii('1 Box = 12 pcs')) >= 0, `${w}mm: conversion printed under the box line`)
+  check(idx(cb, ascii('1 kg =')) < 0, `${w}mm: no conversion for a base-unit line`)
+}
 
 const wide = buildReceipt({ ...base, logo: { width: 576, height: 1, data: bytesToBase64(new Uint8Array(72).fill(0xff)) } }, { paperWidth: 58 })
 check(idx(wide, [0x1d, 0x76, 0x30, 0, 48, 0, 1, 0]) >= 0, '576-dot logo cropped to 48 bytes on 58mm')

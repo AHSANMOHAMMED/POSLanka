@@ -344,6 +344,8 @@ export interface ReceiptLine {
   unit?: string | null
   unitPrice: number
   total: number
+  /** Sold in a non-base unit: "1 Box = 12 pcs" (printed under the item, columns untouched) */
+  conversion?: string | null
   /** Tax invoices: line VAT rate (%) and amount. */
   vatRate?: number | null
   vatAmount?: number | null
@@ -496,6 +498,7 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
     b.bold(true).columns(['Item', 'Qty', 'Price', 'Total'], [nameW, qtyW, priceW, totalW], undefined, false).bold(false)
     for (const l of input.lines) {
       b.columns([l.name, qtyText(l.qty) + (l.unit ? l.unit : ''), money(l.unitPrice), money(l.total)], [nameW, qtyW, priceW, totalW])
+      if (l.conversion) b.line(`  ${l.conversion}`)
       if (ti && l.vatAmount) b.row(`  VAT ${vatRateText(l.vatRate)}%`, money(l.vatAmount))
     }
   } else {
@@ -503,6 +506,7 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
     for (const l of input.lines) {
       b.paragraph(l.name)
       b.row(`  ${qtyText(l.qty)}${l.unit ? ` ${l.unit}` : ''} x ${money(l.unitPrice)}`, money(l.total))
+      if (l.conversion) b.line(`  ${l.conversion}`)
       if (ti && l.vatAmount) b.row(`  VAT ${vatRateText(l.vatRate)}%`, money(l.vatAmount))
     }
   }

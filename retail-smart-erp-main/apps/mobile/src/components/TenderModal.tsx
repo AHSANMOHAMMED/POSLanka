@@ -331,7 +331,7 @@ export function TenderModal({
             taxAmount: tax,
             createdAt: new Date().toISOString(),
             taxBreakdown: taxResult.breakdown.length ? taxResult.breakdown.map((b) => ({ taxName: b.taxName, amount: b.amount })) : null,
-            items: cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: lineTotal(c), unit: c.unit })),
+            items: cart.map((c) => ({ itemName: c.name, quantity: c.quantity, unitPrice: Number(c.sellingPrice), total: lineTotal(c), unit: c.unit, uom: c.uom, uomFactor: c.uomFactor, baseUnit: c.unit })),
           },
           { business: businessInfo, shift, cashier: cashierName, customerName: customer?.name, customer: buyer, change, fallbackPayment }
         )
