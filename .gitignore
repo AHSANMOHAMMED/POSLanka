@@ -11,4 +11,3 @@ coverage/
 .idea/
 .vscode/
 *.tsbuildinfo
-retail-smart-erp-main/apps/mobile/releases/*.apk
