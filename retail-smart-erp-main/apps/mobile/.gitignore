@@ -1,0 +1,9 @@
+# Native projects are generated from app.json by `expo prebuild` (continuous native generation)
+/android
+/ios
+# Build output (scripts/build-apk.sh writes to dist/); published builds are kept in releases/
+*.apk
+*.aab
+!/releases/*.apk
+.expo/
+dist/

@@ -79,6 +79,8 @@ export interface CartItem {
   batchExpiry?: string | null
   /** D1 (UI only): batches the cashier can pick from */
   batchOptions?: CartBatchOption[]
+  /** Weighable base price per unit */
+  baseUnitPrice?: number
   /** H5: unit sold (null / undefined = base unit); quantity is in this unit */
   uom?: string | null
   uomFactor?: number

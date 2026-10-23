@@ -150,7 +150,7 @@ export function LabelElementComponent({ element, zoom, selected, onSelect, onDra
 }
 
 function BarcodePreview({ element }: { element: LabelElementType & { type: 'barcode' } }) {
-  const [dataUrl, setDataUrl] = useState<string>('')
+  const [dataUrl, setDataUrl] = useState<string | null>(null)
   const rawData = resolveValue(element)
   // Use format-appropriate fallback when data is empty or incompatible with
   // the selected format (e.g. 13-digit EAN-13 sample won't work for UPC-A)
@@ -159,10 +159,18 @@ function BarcodePreview({ element }: { element: LabelElementType & { type: 'barc
     : getBarcodeFallbackData(element.format)
 
   useEffect(() => {
+    let active = true
     renderBarcodeDataUrl(element.format, data, {
       showText: element.showText,
-    }).then(setDataUrl)
+    }).then((url) => {
+      if (active && url) setDataUrl(url)
+    })
+    return () => {
+      active = false
+    }
   }, [element.format, data, element.showText])
+
+  if (!dataUrl) return null
 
   return (
     // eslint-disable-next-line @next/next/no-img-element -- generated barcode data URL; next/image cannot optimise it

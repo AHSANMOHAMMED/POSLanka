@@ -49,7 +49,7 @@ async function step(name: string, fn: () => Promise<void>) {
 }
 
 interface Actor { id: string; role: string; customRoleId?: string | null }
-interface Fx { tenantId: string; slug: string; businessId: string; wh: string; owner: Actor; owner2: Actor; manager: Actor; cashier: Actor }
+interface Fx { tenantId: string; slug: string; businessId: string; wh: string; owner: Actor; owner2: Actor; manager: Actor; cashier: Actor; stock: Actor }
 
 let fx: Fx
 
@@ -96,6 +96,7 @@ async function makeTenant(admin: Client): Promise<Fx> {
     tenantId, slug, businessId: rows[0].business_id, wh,
     owner: await mk('owner', 'owner'), owner2: await mk('owner', 'owner2'),
     manager: await mk('manager', 'manager'), cashier: await mk('cashier', 'cashier'),
+    stock: await mk('stock_manager', 'stock'),
   }
 }
 
@@ -204,7 +205,8 @@ async function main() {
       const c1 = await json(await dashboardStats())
       check('plain cashier → dashboard-stats 403', c1.status === 403, c1.status)
       const c2 = await json(await listIntake(req('GET', '/api/stock-intake')))
-      check('plain cashier → stock-intake 200', c2.status === 200, c2)
+      // Stock intake is for stock staff only (cashiers were removed from submitStockIntake)
+      check('plain cashier → stock-intake 403 (stock staff only)', c2.status === 403, c2)
     })
 
     // ---------------------------------------------------------------- module access
@@ -217,6 +219,7 @@ async function main() {
       const off = await json(await putModuleAccess(req('PUT', '/api/module-access', {
         entries: [
           { moduleKey: 'stock', role: 'cashier', isEnabled: false },
+          { moduleKey: 'stock', role: 'stock_manager', isEnabled: false },
           { moduleKey: 'reports', role: 'cashier', isEnabled: false },
           { moduleKey: 'selling', role: 'owner', isEnabled: false },
         ],
@@ -225,9 +228,9 @@ async function main() {
       const unknown = await json(await putModuleAccess(req('PUT', '/api/module-access', { entries: [{ moduleKey: 'casino', role: 'cashier', isEnabled: false }] })))
       check('unknown module refused (400)', unknown.status === 400, unknown.status)
 
-      await as(fx.cashier)
+      await as(fx.stock)
       const c = await json(await listIntake(req('GET', '/api/stock-intake')))
-      check('Stock disabled → cashier GET stock-intake 403', c.status === 403, c.status)
+      check('Stock disabled → stock manager GET stock-intake 403', c.status === 403, c.status)
       await as(seniorUser)
       const s = await json(await dashboardStats())
       check('Reports disabled for base role → custom role viewReports refused (403)', s.status === 403, s.status)
@@ -241,11 +244,15 @@ async function main() {
       check('owner module rows are not stored', rows[0].n === 0, rows[0])
 
       const on = await json(await putModuleAccess(req('PUT', '/api/module-access', {
-        entries: [{ moduleKey: 'stock', role: 'cashier', isEnabled: true }, { moduleKey: 'reports', role: 'cashier', isEnabled: true }],
+        entries: [
+          { moduleKey: 'stock', role: 'cashier', isEnabled: true },
+          { moduleKey: 'stock', role: 'stock_manager', isEnabled: true },
+          { moduleKey: 'reports', role: 'cashier', isEnabled: true },
+        ],
       })))
-      await as(fx.cashier)
+      await as(fx.stock)
       const c2 = await json(await listIntake(req('GET', '/api/stock-intake')))
-      check('re-enabled → cashier GET stock-intake 200 again', on.status === 200 && c2.status === 200, c2.status)
+      check('re-enabled → stock manager GET stock-intake 200 again', on.status === 200 && c2.status === 200, c2.status)
     })
 
     // ---------------------------------------------------------------- module access on read endpoints

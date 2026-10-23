@@ -170,7 +170,10 @@ export function LabelCanvas({
   const gridBg = showGrid ? {
     backgroundImage: `url("data:image/svg+xml;base64,${btoa(gridSvg)}")`,
     backgroundRepeat: 'repeat',
-  } : {}
+  } : {
+    backgroundImage: 'none',
+    backgroundRepeat: 'no-repeat',
+  }
 
   const shapeBorderRadius =
     labelShape === 'circle' || labelShape === 'oval' ? '50%' :
@@ -185,7 +188,7 @@ export function LabelCanvas({
           width: canvasWidthPx,
           height: canvasHeightPx,
           position: 'relative',
-          background: 'white',
+          backgroundColor: 'white',
           boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
           borderRadius: shapeBorderRadius,
           overflow: 'hidden',

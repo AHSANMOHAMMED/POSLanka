@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { canViewCostPrices, redactItemCost } from '@/lib/auth/field-access'
 import { withTenant, withTenantTransaction } from '@/lib/db'
-import { items, saleItems, workOrderParts, heldSales, layawayItems, purchaseItems, purchaseOrderItems, stockMovements, warehouseStock, itemCostHistory, users, itemTombstones } from '@/lib/db/schema'
+import { items, saleItems, workOrderParts, heldSales, layawayItems, purchaseItems, purchaseOrderItems, stockMovements, warehouseStock, warehouses, itemCostHistory, users, itemTombstones } from '@/lib/db/schema'
 import { eq, and, sql, ne, inArray } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { checkPriceChangeAnomalies } from '@/lib/ai/anomaly-detector'
@@ -111,7 +111,7 @@ export async function PUT(
     const {
       name, itemCode, sku, barcode, categoryId, costPrice, sellingPrice, unit, isActive, trackStock, trackBatches, trackSerialNumbers, expectedUpdatedAt, expectedVersion,
       // Auto parts fields
-      oemPartNumber, alternatePartNumbers, brand, condition,
+      oemPartNumber, alternatePartNumbers, brand, condition, binLocation,
       supplierId, supplierPartNumber, leadTimeDays, weight, dimensions, warrantyMonths, imageUrl, supersededBy,
       // Restaurant fields
       preparationTime, allergens, calories, isVegetarian, isVegan, isGlutenFree, spiceLevel, availableFrom, availableTo,
@@ -285,6 +285,31 @@ export async function PUT(
             notes: 'Manual cost price adjustment',
             createdBy: userId,
           })
+        }
+
+        // Update binLocation if provided for default warehouse
+        if (binLocation !== undefined) {
+          const defaultWarehouse = await tx.query.warehouses.findFirst({
+            where: and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),
+          })
+          if (defaultWarehouse) {
+            await tx
+              .insert(warehouseStock)
+              .values({
+                tenantId,
+                warehouseId: defaultWarehouse.id,
+                itemId: id,
+                currentStock: '0',
+                binLocation: binLocation || null,
+              })
+              .onConflictDoUpdate({
+                target: [warehouseStock.warehouseId, warehouseStock.itemId],
+                set: {
+                  binLocation: binLocation || null,
+                  updatedAt: new Date(),
+                },
+              })
+          }
         }
 
         return updated

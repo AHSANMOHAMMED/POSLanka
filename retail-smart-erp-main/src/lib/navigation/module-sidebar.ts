@@ -47,14 +47,14 @@ export interface ModuleTab {
 }
 
 export const MODULE_TABS: ModuleTab[] = [
-  { key: 'dashboard', label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard' },
+  { key: 'dashboard', label: 'Dashboard', href: '/dashboard', icon: 'LayoutDashboard', permission: 'viewReports' },
   { key: 'stock', label: 'Stock', href: '/stock', icon: 'Package', permission: 'manageItems', altPermissions: ['submitStockIntake'], limitedHref: '/inventory/stock-intake' },
   { key: 'selling', label: 'Selling', href: '/selling', icon: 'ShoppingCart' },
-  { key: 'barcode', label: 'Barcode & Labels', href: '/barcode', icon: 'Barcode' },
+  { key: 'barcode', label: 'Barcode & Labels', href: '/barcode', icon: 'Barcode', permission: 'manageItems' },
   { key: 'buying', label: 'Buying', href: '/buying', icon: 'Truck', permission: 'managePurchases' },
-  { key: 'auto-service', label: 'Auto Service', href: '/auto-service', icon: 'Wrench', autoServiceOnly: true },
-  { key: 'dealership', label: 'Dealership', href: '/dealership', icon: 'Car', dealershipOnly: true },
-  { key: 'restaurant', label: 'Restaurant', href: '/restaurant', icon: 'UtensilsCrossed', restaurantOnly: true },
+  { key: 'auto-service', label: 'Auto Service', href: '/auto-service', icon: 'Wrench', autoServiceOnly: true, permission: 'manageWorkOrders' },
+  { key: 'dealership', label: 'Dealership', href: '/dealership', icon: 'Car', dealershipOnly: true, permission: 'manageSales' },
+  { key: 'restaurant', label: 'Restaurant', href: '/restaurant', icon: 'UtensilsCrossed', restaurantOnly: true, permission: 'manageSales' },
   { key: 'hr', label: 'HR', href: '/hr', icon: 'Users', permission: 'manageEmployees' },
   { key: 'accounting', label: 'Accounting', href: '/accounting', icon: 'BookOpen', permission: 'manageAccounting' },
   { key: 'reports', label: 'Reports', href: '/reports', icon: 'BarChart3', permission: 'viewReports' },
@@ -334,10 +334,11 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
       ],
     },
     {
-      title: 'Bulk Operations',
+      title: 'Bulk & Manufacturing',
       items: [
         { href: '/items/bulk-price-update', label: 'Bulk Price Update', icon: 'DollarSign', permission: 'manageItems' },
         { href: '/stock/bulk-adjustment', label: 'Bulk Stock Adjustment', icon: 'PackageCheck', permission: 'manageInventory' },
+        { href: '/stock/breakdown', label: 'Bulk Repack & Breakdown', icon: 'Layers', permission: 'manageInventory' },
       ],
     },
   ],

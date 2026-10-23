@@ -33,7 +33,7 @@ interface Fx { tenantId: string; slug: string; wh1: string; wh2: string; ownerId
 
 const ROOT = join(__dirname, '..', '..')
 
-function session(f: Fx, role: 'owner' | 'cashier' = 'owner') {
+function session(f: Fx, role: 'owner' | 'cashier' | 'stock_manager' = 'owner') {
   return {
     user: {
       id: role === 'owner' ? f.ownerId : f.cashierId,
@@ -330,14 +330,19 @@ export async function runC3WriterTests(check: Check): Promise<void> {
 
     // D. stock intake branch access
     await (async () => {
+      // Stock intake is for stock staff only (cashiers were removed from submitStockIntake)
       setTestSession(session(f, 'cashier'))
+      const cashier = await json(await createIntake(req('POST', { warehouseId: f.wh1 })))
+      check('intake: cashier → 403 (no stock-intake permission)', cashier.status === 403, JSON.stringify(cashier.body))
+      // Branch rules apply to stock managers (only owners/managers bypass them)
+      setTestSession(session(f, 'stock_manager'))
       const denied = await json(await createIntake(req('POST', { warehouseId: f.wh2 })))
-      check('intake: cashier without branch assignment → 403', denied.status === 403 && denied.body.code === 'BRANCH_FORBIDDEN', JSON.stringify(denied.body))
+      check('intake: stock manager without branch assignment → 403', denied.status === 403 && denied.body.code === 'BRANCH_FORBIDDEN', JSON.stringify(denied.body))
       await admin.query(`INSERT INTO user_warehouses (tenant_id, user_id, warehouse_id, is_active) VALUES ($1,$2,$3,true)`, [f.tenantId, f.cashierId, f.wh1])
       const ok = await json(await createIntake(req('POST', { warehouseId: f.wh1 })))
-      check('intake: cashier on assigned branch → 201', ok.status === 201, JSON.stringify(ok.body).slice(0, 200))
+      check('intake: stock manager on assigned branch → 201', ok.status === 201, JSON.stringify(ok.body).slice(0, 200))
       const other = await json(await createIntake(req('POST', { warehouseId: f.wh2 })))
-      check('intake: cashier on other branch → 403', other.status === 403, JSON.stringify(other.body))
+      check('intake: stock manager on other branch → 403', other.status === 403, JSON.stringify(other.body))
       setTestSession(session(f))
       const owner = await json(await createIntake(req('POST', { warehouseId: f.wh2 })))
       check('intake: owner bypasses branch assignment → 201', owner.status === 201, JSON.stringify(owner.body).slice(0, 200))

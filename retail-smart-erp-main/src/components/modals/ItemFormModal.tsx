@@ -202,11 +202,12 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     spiceLevel: '',
     availableFrom: '',
     availableTo: '',
-    // Supermarket fields
+    // Supermarket & Warehouse fields
     pluCode: '',
     shelfLifeDays: '',
     storageTemp: '',
     expiryDate: '',
+    binLocation: '',
     // Gift card
     isGiftCard: false,
     // Tax template
@@ -358,6 +359,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           shelfLifeDays: editItem.shelfLifeDays?.toString() || '',
           storageTemp: editItem.storageTemp || '',
           expiryDate: editItem.expiryDate || '',
+          binLocation: (editItem as { binLocation?: string | null }).binLocation || '',
           // Gift card
           isGiftCard: editItem.isGiftCard || false,
           // Tax template
@@ -429,6 +431,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       shelfLifeDays: '',
       storageTemp: '',
       expiryDate: '',
+      binLocation: '',
       isGiftCard: false,
       taxTemplateId: '',
     })
@@ -613,11 +616,12 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           spiceLevel: formData.spiceLevel || null,
           availableFrom: formData.availableFrom || null,
           availableTo: formData.availableTo || null,
-          // Supermarket fields
+          // Supermarket & Warehouse fields
           pluCode: formData.pluCode || null,
           shelfLifeDays: formData.shelfLifeDays ? parseInt(formData.shelfLifeDays) : null,
           storageTemp: formData.storageTemp || null,
           expiryDate: formData.expiryDate || null,
+          binLocation: formData.binLocation || null,
           // Gift card
           isGiftCard: formData.isGiftCard,
           // Tax template
@@ -715,29 +719,73 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                 )}
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="md:col-span-2">
-                    <FormLabel required>Name</FormLabel>
+                    <FormLabel required>Item Name</FormLabel>
                     <FormInput
                       type="text"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      placeholder="e.g. Anchor Milk Powder 400g"
                       required
                       autoFocus
                     />
                   </div>
                   <div>
-                    <FormLabel>SKU</FormLabel>
+                    <FormLabel required>Item Code / ID</FormLabel>
                     <FormInput
                       type="text"
-                      value={formData.sku}
+                      value={formData.sku || (editItem?.itemCode ?? '')}
                       onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                      placeholder={editItem ? 'Code' : 'Auto (e.g. ITM-0001)'}
                     />
                   </div>
                   <div>
-                    <FormLabel>Barcode</FormLabel>
+                    <div className="flex items-center justify-between">
+                      <FormLabel required>Barcode</FormLabel>
+                      {!editItem && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const generated = Math.floor(100000000000 + Math.random() * 900000000000).toString()
+                            setFormData((prev) => ({ ...prev, barcode: generated }))
+                          }}
+                          className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline"
+                        >
+                          Auto Generate
+                        </button>
+                      )}
+                    </div>
                     <FormInput
                       type="text"
                       value={formData.barcode}
                       onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                      placeholder="Scan or enter barcode"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <FormLabel required>Purchase / Cost Price</FormLabel>
+                    <FormInput
+                      type="number"
+                      step="0.01"
+                      value={formData.costPrice}
+                      onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                      placeholder="0.00"
+                      required
+                      disabled={editItem !== null}
+                    />
+                  </div>
+                  <div>
+                    <FormLabel required>Selling Price</FormLabel>
+                    <FormInput
+                      type="number"
+                      step="0.01"
+                      value={formData.sellingPrice}
+                      onChange={(e) => setFormData({ ...formData, sellingPrice: e.target.value })}
+                      placeholder="0.00"
+                      required
                     />
                   </div>
                 </div>
@@ -755,6 +803,15 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                       }}
                       placeholder={t.categoryPlaceholder}
                       createLabel={`Add ${t.category.toLowerCase()}`}
+                    />
+                  </div>
+                  <div>
+                    <FormLabel>Shelf / Rack / Bin Location</FormLabel>
+                    <FormInput
+                      type="text"
+                      value={formData.binLocation}
+                      onChange={(e) => setFormData({ ...formData, binLocation: e.target.value })}
+                      placeholder="e.g. Aisle 3 / Rack B-2"
                     />
                   </div>
                   {(isAutoService || !businessType) && (
@@ -1043,6 +1100,15 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                       <option value="box">Box</option>
                       <option value="pack">Pack</option>
                     </FormSelect>
+                  </div>
+                  <div>
+                    <FormLabel>Shelf / Rack / Bin Location</FormLabel>
+                    <FormInput
+                      value={formData.binLocation}
+                      onChange={(e) => setFormData({ ...formData, binLocation: e.target.value })}
+                      placeholder="e.g. Aisle 3, Rack B-2, Shelf 4"
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Helps storekeepers and cashiers locate item in store</p>
                   </div>
                 </div>
                 <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded text-sm text-blue-700 dark:text-blue-300">

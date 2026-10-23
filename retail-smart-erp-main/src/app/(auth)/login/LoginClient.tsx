@@ -72,8 +72,12 @@ function LoginForm() {
 
   // Business ID step
   const [identifier, setIdentifier] = useState(searchParams.get('company') ?? '')
-  const [lookingUp, setLookingUp] = useState(false)
   const [lookupError, setLookupError] = useState('')
+
+  // Staff direct sign-in (Business ID + Email + Password in one step)
+  const [staffEmail, setStaffEmail] = useState('')
+  const [staffPassword, setStaffPassword] = useState('')
+  const [staffLoading, setStaffLoading] = useState(false)
 
   // Owner account step
   const [email, setEmail] = useState('')
@@ -104,36 +108,68 @@ function LoginForm() {
     router.push(`/c/${encodeURIComponent(c.slug)}/login`)
   }
 
-  async function handleLookup(e: React.FormEvent<HTMLFormElement>) {
+  async function handleStaffSignIn(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const value = identifier.trim()
-    if (value.length < 2) {
-      setLookupError('Enter your Business ID — ask your business owner or manager if you don’t have it.')
+    const rawBizId = identifier.trim()
+    const rawEmail = staffEmail.trim()
+    if (!rawBizId) {
+      setLookupError('Enter your Business ID (e.g. PL-123456 or company code)')
       return
     }
+    if (!rawEmail) {
+      setLookupError('Enter your staff email or username')
+      return
+    }
+    if (!staffPassword) {
+      setLookupError('Enter your password')
+      return
+    }
+
     setLookupError('')
-    setLookingUp(true)
+    setStaffLoading(true)
+
     try {
+      // First resolve Business ID or slug to get the canonical tenant
       const res = await fetch('/api/lookup-tenant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: value }),
+        body: JSON.stringify({ identifier: rawBizId }),
       })
       const data = await res.json().catch(() => ({}))
-      if (res.status === 429) {
-        setLookupError(data.error || 'Too many attempts. Please wait a minute and try again.')
-      } else if (!res.ok) {
-        setLookupError(data.error || 'Something went wrong. Please try again.')
-      } else if (!data.tenant) {
-        setLookupError('We couldn’t find an active business with that ID. Check the ID and try again.')
-      } else {
-        goToCompany(data.tenant)
+      if (!res.ok || !data.tenant) {
+        setLookupError(data?.error || 'Business ID not found. Please verify your Business ID.')
+        setStaffLoading(false)
         return
       }
+
+      // Save to recent
+      try {
+        localStorage.setItem(RECENT_KEY, JSON.stringify(data.tenant))
+      } catch {
+        // ignore
+      }
+
+      // Directly sign in to company with credentials
+      const result = await signIn('credentials', {
+        email: rawEmail,
+        password: staffPassword,
+        tenantSlug: data.tenant.slug,
+        businessId: rawBizId,
+        redirect: false,
+      })
+
+      if (result?.error) {
+        setLookupError(`Sign-in failed. Please verify your email and password for ${data.tenant.name}.`)
+        setStaffLoading(false)
+      } else {
+        broadcastAuthEvent('login', 'company')
+        router.push(`/c/${data.tenant.slug}/pos`)
+        router.refresh()
+      }
     } catch {
-      setLookupError('Can’t reach POSLanka. Check your connection and try again.')
+      setLookupError('Could not connect. Please check your connection and try again.')
+      setStaffLoading(false)
     }
-    setLookingUp(false)
   }
 
   async function handleOwnerSignIn(e: React.FormEvent<HTMLFormElement>) {
@@ -213,11 +249,11 @@ function LoginForm() {
 
           {lookupError && <Alert tone="danger">{lookupError}</Alert>}
 
-          <form onSubmit={handleLookup} className="space-y-4" noValidate>
+          <form onSubmit={handleStaffSignIn} className="space-y-4" noValidate>
             <Field
               label="Business ID"
               htmlFor="business-id"
-              hint="Looks like PL-123456. Your business owner or manager can tell you yours."
+              hint="Looks like PL-123456 or your company slug (e.g. demo-retail)."
             >
               <Input
                 id="business-id"
@@ -231,14 +267,48 @@ function LoginForm() {
                 spellCheck={false}
                 autoFocus={!recent}
                 invalid={!!lookupError}
+                required
               />
             </Field>
-            <Button type="submit" variant="primary" size="lg" fullWidth loading={lookingUp} iconRight={lookingUp ? undefined : ArrowRight}>
-              Continue
+
+            <Field label="Staff Email or Username" htmlFor="staff-email">
+              <Input
+                id="staff-email"
+                type="email"
+                leftIcon={Mail}
+                size="lg"
+                value={staffEmail}
+                onChange={(e) => setStaffEmail(e.target.value)}
+                placeholder="cashier@demo.poslanka.lk"
+                autoComplete="username"
+                required
+              />
+            </Field>
+
+            <Field label="Password" htmlFor="staff-password">
+              <PasswordInput
+                id="staff-password"
+                size="lg"
+                value={staffPassword}
+                onChange={(e) => setStaffPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </Field>
+
+            <Button
+              type="submit"
+              variant="primary"
+              size="lg"
+              fullWidth
+              loading={staffLoading}
+              iconRight={staffLoading ? undefined : ArrowRight}
+            >
+              Sign In to POS
             </Button>
           </form>
           <p className="text-center text-[13px] text-adm-muted">
-            You can also use your company code (the part after /c/ in your sign-in link).
+            Ask your store manager or owner if you don’t have your Business ID.
           </p>
         </div>
       ) : (

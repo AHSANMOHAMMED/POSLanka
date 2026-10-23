@@ -545,18 +545,57 @@ export function POSPaymentModal({
                   if (paymentMethod !== 'cash' && val > remainingAfterCredit) val = remainingAfterCredit
                   setAmountPaid(val > 0 ? val.toString() : '0')
                 }}
-                className="text-xl font-bold"
+                className="text-2xl font-bold tracking-wide"
+                autoFocus
               />
-              <div className="flex gap-2 mt-3">
+
+              {/* Quick Cash Shortcuts */}
+              <div className="flex flex-wrap gap-2 mt-3">
                 {quickAmounts.map((qa, i) => (
                   <button
                     key={i}
+                    type="button"
                     onClick={() => setAmountPaid(qa.value.toFixed(2))}
-                    className="px-4 py-2 bg-gray-100 rounded text-sm font-medium hover:bg-gray-200"
+                    className="flex-1 py-2.5 px-3 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl text-sm font-semibold text-slate-800 transition-colors shadow-sm"
                   >
                     {qa.label}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  onClick={() => setAmountPaid(remainingAfterCredit.toFixed(2))}
+                  className="py-2.5 px-4 bg-teal-50 hover:bg-teal-100 border border-teal-300 text-teal-800 rounded-xl text-sm font-bold shadow-sm"
+                >
+                  Exact ({remainingAfterCredit.toFixed(2)})
+                </button>
+              </div>
+
+              {/* Touchscreen On-Screen Numeric Dialpad */}
+              <div className="mt-4 pt-3 border-t border-slate-200">
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Touch Dialpad</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'].map((btn) => (
+                    <button
+                      key={btn}
+                      type="button"
+                      onClick={() => {
+                        const cur = amountPaid || ''
+                        if (btn === '⌫') {
+                          setAmountPaid(cur.length > 1 ? cur.slice(0, -1) : '0')
+                        } else if (btn === '.') {
+                          if (!cur.includes('.')) {
+                            setAmountPaid((cur === '0' || !cur) ? '0.' : cur + '.')
+                          }
+                        } else {
+                          setAmountPaid((cur === '0' || !cur) ? btn : cur + btn)
+                        }
+                      }}
+                      className="h-12 bg-white hover:bg-slate-50 active:bg-slate-200 border border-slate-200 rounded-xl text-lg font-bold text-slate-700 shadow-sm flex items-center justify-center transition-all select-none"
+                    >
+                      {btn}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}

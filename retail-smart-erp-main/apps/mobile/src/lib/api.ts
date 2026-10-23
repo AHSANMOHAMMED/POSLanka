@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store'
 import { router } from 'expo-router'
 
 declare const process: {
-  env?: {
+  env: {
     EXPO_PUBLIC_API_URL?: string
     [key: string]: string | undefined
   }
@@ -17,7 +17,10 @@ const API_BASE_KEY = 'poslanka_api_base'
 const TENANT_SLUG_KEY = 'poslanka_tenant_slug'
 const BUSINESS_ID_KEY = 'poslanka_business_id'
 
-export const DEFAULT_API_URL = 'http://localhost:3000'
+// Server the app talks to until the user changes it on the sign-in screen. Set per build with
+// EXPO_PUBLIC_API_URL (eas.json profiles, scripts/build-apk.sh). Expo inlines EXPO_PUBLIC_* only
+// for this exact `process.env.NAME` form — with `?.` the release APK silently fell back to localhost.
+export const DEFAULT_API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:3000').replace(/\/$/, '')
 export const REQUEST_TIMEOUT_MS = 15_000
 
 // ---------------------------------------------------------------------------
@@ -64,10 +67,7 @@ export function isNetworkError(result: ApiResult<unknown>): boolean {
 // ---------------------------------------------------------------------------
 // API base URL (remembered on device)
 // ---------------------------------------------------------------------------
-let apiBase = (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_API_URL
-  ? process.env.EXPO_PUBLIC_API_URL
-  : DEFAULT_API_URL
-).replace(/\/$/, '')
+let apiBase = DEFAULT_API_URL
 
 export function setApiBase(url: string) {
   apiBase = (url || DEFAULT_API_URL).trim().replace(/\/$/, '')

@@ -53,3 +53,20 @@ npx eas build --platform android --profile production    # Play Store bundle
 ```
 
 Set the server URL per profile in `eas.json` (`EXPO_PUBLIC_API_URL`). In Expo Go everything except Bluetooth/USB/network printing works, and the Printer screen says so.
+
+### Local release APK (no Expo account)
+
+```bash
+npm run build:apk                                   # → dist/POSLanka-<version>.apk, server https://app.poslanka.lk
+API_URL=http://192.168.1.10:3000 npm run build:apk  # different default server (still editable on the sign-in screen)
+ABIS=x86_64 npm run build:apk                       # emulator test build (real phones are arm64/armv7)
+```
+
+Needs JDK 17 and the Android SDK (`ANDROID_HOME`); Gradle fetches missing SDK/NDK parts. The script
+regenerates `android/` with `expo prebuild`, runs the libraries' codegen first (new architecture), and
+signs with the POSLanka key in `~/.poslanka-keys/` (created on first run). **Back that folder up** —
+an APK signed with a different key cannot be installed as an update over this one.
+
+The latest published build is in `releases/` (with its SHA-256). Install it with
+`adb install releases/POSLanka-1.0.0.apk` or by copying it to the phone. `http://` servers on a shop's
+own network are allowed (cleartext), but use `https://` for anything reachable from the internet.

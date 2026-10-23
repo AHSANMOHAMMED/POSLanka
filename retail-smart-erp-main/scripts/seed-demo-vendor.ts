@@ -16,7 +16,7 @@ async function seedDemoVendor() {
 
   const pool = new Pool({
     connectionString,
-    ssl: { rejectUnauthorized: false },
+    ssl: connectionString.includes('sslmode=disable') ? false : (connectionString.includes('localhost') || connectionString.includes('127.0.0.1') ? false : { rejectUnauthorized: false }),
   })
 
   console.log('Seeding demo vendor for POSLanka...')
@@ -230,7 +230,22 @@ async function seedDemoVendor() {
         [adminAccountId, tenantId]
       )
     }
-    console.log('Admin and Cashier users seeded.')
+
+    // Assign both users to the POS profile
+    for (const uid of [adminUserId, cashierUserId]) {
+      const assigned = await pool.query(
+        'SELECT id FROM pos_profile_users WHERE pos_profile_id = $1 AND user_id = $2',
+        [posProfileId, uid]
+      )
+      if (assigned.rows.length === 0) {
+        await pool.query(
+          `INSERT INTO pos_profile_users (tenant_id, pos_profile_id, user_id, is_default)
+           VALUES ($1, $2, $3, true)`,
+          [tenantId, posProfileId, uid]
+        )
+      }
+    }
+    console.log('Admin and Cashier users seeded and assigned to POS profile.')
 
     // 5. Seed Categories
     const categoriesData = [

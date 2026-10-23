@@ -862,6 +862,7 @@ export default function POSPage() {
       unitPrice: total,
       total,
       weight,
+      baseUnitPrice: unitPrice,
       unit: baseUnit,
       unitQuantity: weight,
       displayUnit: displayLabel || `${weight} ${baseUnit}`,
@@ -1046,19 +1047,19 @@ export default function POSPage() {
     const item = items.find(i => i.id === cartItem.itemId)
     if (!item && !isReturnMode) return
 
-    const newQty = cartItem.quantity + delta
+    const newQty = cartItem.isWeighable ? roundCurrency((cartItem.weight || 1) + delta) : cartItem.quantity + delta
     if (isReturnMode) {
-      if (newQty === 0) { removeFromCart(cartLineId); return }
+      if (newQty <= 0) { removeFromCart(cartLineId); return }
       if (cartItem.maxReturnQuantity !== undefined && (newQty > 0 || Math.abs(newQty) > cartItem.maxReturnQuantity)) {
         toast.warning(`Only ${cartItem.maxReturnQuantity} returnable on this invoice line`)
         return
       }
     } else {
-      if (newQty <= 0) return
+      if (newQty <= 0) { removeFromCart(cartLineId); return }
     }
 
     if (!isReturnMode && item && item.trackStock) {
-      const totalInCart = cart.filter(c => c.itemId === cartItem.itemId).reduce((sum, c) => sum + c.quantity, 0)
+      const totalInCart = cart.filter(c => c.itemId === cartItem.itemId).reduce((sum, c) => sum + (c.isWeighable ? (c.weight || 1) : c.quantity), 0)
       const availableStock = parseFloat(item.availableStock)
       if (totalInCart + delta > availableStock) {
         toast.warning('Not enough stock available')
@@ -1066,11 +1067,23 @@ export default function POSPage() {
       }
     }
 
-    setCart(cart.map(c =>
-      c.cartLineId === cartLineId
-        ? { ...c, quantity: newQty, total: newQty * c.unitPrice }
-        : c
-    ))
+    setCart(cart.map(c => {
+      if (c.cartLineId !== cartLineId) return c
+      if (c.isWeighable) {
+        const basePrice = c.baseUnitPrice || (c.weight ? c.total / c.weight : c.unitPrice)
+        const total = roundCurrency(newQty * basePrice)
+        return {
+          ...c,
+          quantity: 1,
+          weight: newQty,
+          unitQuantity: newQty,
+          unitPrice: total,
+          total,
+          displayUnit: `${newQty} ${c.unit || 'kg'}`,
+        }
+      }
+      return { ...c, quantity: newQty, total: roundCurrency(newQty * c.unitPrice) }
+    }))
   }
 
   function removeFromCart(cartLineId: string) {
@@ -1106,12 +1119,24 @@ export default function POSPage() {
   }
 
   function setQuantityDirectly(cartLineId: string, newQty: number) {
-    if (newQty === 0) { removeFromCart(cartLineId); return }
-    setCart(cart.map(c =>
-      c.cartLineId === cartLineId
-        ? { ...c, quantity: newQty, total: newQty * c.unitPrice }
-        : c
-    ))
+    if (newQty <= 0) { removeFromCart(cartLineId); return }
+    setCart(cart.map(c => {
+      if (c.cartLineId !== cartLineId) return c
+      if (c.isWeighable) {
+        const basePrice = c.baseUnitPrice || (c.weight ? c.total / c.weight : c.unitPrice)
+        const total = roundCurrency(newQty * basePrice)
+        return {
+          ...c,
+          quantity: 1,
+          weight: newQty,
+          unitQuantity: newQty,
+          unitPrice: total,
+          total,
+          displayUnit: `${newQty} ${c.unit || 'kg'}`,
+        }
+      }
+      return { ...c, quantity: newQty, total: roundCurrency(newQty * c.unitPrice) }
+    }))
   }
 
   function clearCart() {

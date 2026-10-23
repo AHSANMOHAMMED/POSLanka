@@ -46,7 +46,9 @@
           "defaultChannel": "poslanka-default"
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "./plugins/withReleaseSigning",
+      "./plugins/withCleartextTraffic"
     ],
     "extra": {
       "apiBaseUrl": "https://app.poslanka.lk"
@@ -55,6 +57,7 @@
       "color": "#0F766E",
       "androidMode": "default",
       "androidCollapsedTitle": "POSLanka"
-    }
+    },
+    "newArchEnabled": true
   }
 }

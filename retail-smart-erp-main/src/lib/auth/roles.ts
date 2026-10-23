@@ -46,8 +46,8 @@ export const ROLE_PERMISSIONS = {
   manageItems: ['owner', 'manager', 'stock_manager'],
   manageCategories: ['owner', 'manager', 'stock_manager'],
   manageInventory: ['owner', 'manager', 'stock_manager'], // Stock transfers, warehouse stock adjustments
-  submitStockIntake: ['owner', 'manager', 'stock_manager', 'cashier', 'pos_user'], // W3: create/scan stock intake batches
-  postStockIntake: ['owner', 'manager', 'stock_manager'], // W3: sync intake batches into stock
+  submitStockIntake: ['owner', 'manager', 'stock_manager'], // Stock intake only for authorized managers
+  postStockIntake: ['owner', 'manager', 'stock_manager'], // Sync intake batches into stock
 
   // Service configuration (auto_service)
   manageServiceTypes: ['owner', 'manager'],

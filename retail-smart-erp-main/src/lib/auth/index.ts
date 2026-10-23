@@ -61,18 +61,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
         tenantSlug: { label: 'Tenant', type: 'text' },
+        businessId: { label: 'Business ID', type: 'text' },
       },
       async authorize(credentials, request) {
         if (!credentials?.email || !credentials?.password) {
           return null
         }
 
-        const email = (credentials.email as string).toLowerCase()
+        const email = (credentials.email as string).toLowerCase().trim()
         const password = credentials.password as string
-        const tenantSlug = credentials.tenantSlug as string | undefined
+        const tenantSlug = (credentials.tenantSlug as string | undefined)?.trim()
+        const rawBusinessId = (credentials.businessId as string | undefined)?.trim()
 
-        if (!tenantSlug) {
-          // Company auth requires tenantSlug
+        if (!tenantSlug && !rawBusinessId) {
+          // Company auth requires tenantSlug or businessId
           return null
         }
 
@@ -84,15 +86,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         // --- Brute-force protection: check rate limit before any DB work ---
         if (await isRateLimited(email)) {
-          console.warn('[Auth] Rate limited login attempt:', { email, tenantSlug })
+          console.warn('[Auth] Rate limited login attempt:', { email, tenantSlug, rawBusinessId })
           throw new Error('Too many failed login attempts. Please try again later.')
         }
 
         try {
           // Users-first flow: authenticate directly via users table
-          // 1. Find tenant by slug
+          // 1. Find tenant by slug or businessId
+          const cleanBizId = rawBusinessId ? rawBusinessId.toUpperCase().replace(/\s+/g, '') : null
           const tenant = await db.query.tenants.findFirst({
-            where: eq(tenants.slug, tenantSlug),
+            where: cleanBizId
+              ? eq(tenants.businessId, cleanBizId)
+              : eq(tenants.slug, tenantSlug!),
           })
 
           if (!tenant) {

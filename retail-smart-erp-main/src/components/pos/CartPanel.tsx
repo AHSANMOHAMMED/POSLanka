@@ -350,15 +350,17 @@ export function CartPanel({
                     </button>
                     <FormInput
                       type="number"
+                      step={item.isWeighable ? '0.001' : '1'}
                       inputSize="sm"
-                      key={`qty-${item.cartLineId}-${item.quantity}`}
-                      defaultValue={item.quantity}
+                      key={`qty-${item.cartLineId}-${item.isWeighable ? item.weight : item.quantity}`}
+                      defaultValue={item.isWeighable ? item.weight : item.quantity}
                       onBlur={(e) => {
-                        const newQty = parseInt(e.currentTarget.value) || 0
-                        if (newQty !== item.quantity) onSetQuantityDirectly(item.cartLineId, newQty)
+                        const newQty = parseFloat(e.currentTarget.value) || 0
+                        const current = item.isWeighable ? (item.weight || 1) : item.quantity
+                        if (newQty !== current) onSetQuantityDirectly(item.cartLineId, newQty)
                       }}
                       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-                      className="w-14 text-center font-bold !border-0 !ring-0 !shadow-none"
+                      className="w-16 text-center font-bold !border-0 !ring-0 !shadow-none"
                     />
                     <button
                       onClick={() => onUpdateQuantity(item.cartLineId, 1)}
@@ -366,6 +368,11 @@ export function CartPanel({
                     >
                       <Plus size={16} />
                     </button>
+                    {item.unit && item.unit !== 'pcs' && (
+                      <span className="text-[11px] font-semibold text-slate-500 px-1 select-none">
+                        {item.unit}
+                      </span>
+                    )}
                   </div>
 
                   {/* Price */}

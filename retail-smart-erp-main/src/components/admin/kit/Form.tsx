@@ -88,6 +88,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       )}
       <input
         ref={ref}
+        suppressHydrationWarning
         aria-invalid={invalid || undefined}
         className={cn(
           'adm-input block w-full',
