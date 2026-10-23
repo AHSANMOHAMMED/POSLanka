@@ -3,7 +3,7 @@
  *
  *   1. OAuth client credentials: POST {base}/merchant/v1/oauth/token
  *        Authorization: Basic base64(PAYHERE_APP_ID:PAYHERE_APP_SECRET), grant_type=client_credentials
- *   2. POST {base}/merchant/v1/payment/refund  { payment_id, description }  (Bearer token)
+ *   2. POST {base}/merchant/v1/payment/refund  { payment_id, description[, amount] }  (Bearer token)
  *        → { status: 1, msg, data } on success; status <= 0 with msg on failure
  *
  * base = https://sandbox.payhere.lk (PAYHERE_MODE=sandbox, the default) or https://www.payhere.lk.
@@ -13,7 +13,9 @@
  * refundPayhereTransaction() makes a refund happen at most once: the transaction row is claimed
  * with a conditional UPDATE (refund_status NULL/failed → processing) before PayHere is called, so
  * a double click or two admins get "already being refunded" instead of a second refund.
- * PayHere's refund API refunds the whole payment (it takes no amount), so only full refunds are offered.
+ * Partial refunds: `amount` (a string like "100.50") refunds part of the payment; several partial
+ * refunds can follow each other until the full amount is refunded (refunded_amount is the running
+ * total, refund_status 'partial' until then). Without an amount PayHere refunds the whole payment.
  */
 import { and, eq, isNotNull, isNull, lt, or } from 'drizzle-orm'
 import { db } from '@/lib/db'
@@ -66,12 +68,14 @@ export async function getPayhereAccessToken(): Promise<string> {
 }
 
 /** Call the refund endpoint. Returns PayHere's reference for the refund (or its message). Throws RefundError. */
-export async function requestPayhereRefund(paymentId: string, description: string): Promise<{ reference: string | null; message: string }> {
+export async function requestPayhereRefund(paymentId: string, description: string, amount?: number): Promise<{ reference: string | null; message: string }> {
   const token = await getPayhereAccessToken()
+  const payload: Record<string, string> = { payment_id: paymentId, description: description.slice(0, 255) }
+  if (amount !== undefined) payload.amount = amount.toFixed(2)
   const res = await fetchWithTimeout(`${payhereApiBase()}/merchant/v1/payment/refund`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ payment_id: paymentId, description: description.slice(0, 255) }),
+    body: JSON.stringify(payload),
   })
   const body = await readJson(res)
   const status = Number(body.status)
@@ -87,7 +91,13 @@ export async function requestPayhereRefund(paymentId: string, description: strin
 export interface RefundOutcome {
   transactionId: string
   orderId: string
+  /** Refunded by this request */
   amount: number
+  /** Refunded so far, this request included */
+  refundedTotal: number
+  /** Still refundable (0 once fully refunded) */
+  remaining: number
+  fullyRefunded: boolean
   reference: string | null
   message: string
   /** What the payment bought — the admin decides what happens to it (nothing is changed here) */
@@ -103,10 +113,12 @@ export interface RefundOutcome {
 }
 
 /**
- * Full refund of a successful PayHere payment, at most once. The subscription is NOT changed:
+ * Refund all or part of a successful PayHere payment. One request per payment at a time; partial
+ * refunds may follow each other until the full amount is refunded. The subscription is NOT changed:
  * the outcome tells the console what the payment bought so the admin can decide.
+ * `amount` omitted = everything still refundable.
  */
-export async function refundPayhereTransaction(input: { transactionId: string; superAdminId: string; reason: string }): Promise<RefundOutcome> {
+export async function refundPayhereTransaction(input: { transactionId: string; superAdminId: string; reason: string; amount?: number }): Promise<RefundOutcome> {
   if (!isPayhereRefundConfigured()) {
     throw new RefundError('PayHere refunds are not configured. Set PAYHERE_APP_ID and PAYHERE_APP_SECRET (a PayHere Business App with refund permission) on the server.', 503, 'REFUND_NOT_CONFIGURED')
   }
@@ -115,6 +127,16 @@ export async function refundPayhereTransaction(input: { transactionId: string; s
   if (tx.refundStatus === 'refunded' || tx.status === 'refunded') throw new RefundError('This payment has already been refunded.', 409, 'ALREADY_REFUNDED')
   if (tx.status !== 'success') throw new RefundError('Only successful payments can be refunded.', 400, 'NOT_REFUNDABLE')
   if (!tx.payherePaymentId) throw new RefundError('PayHere did not report a payment id for this order, so it cannot be refunded here. Refund it in the PayHere merchant portal.', 400, 'NO_PAYMENT_ID')
+
+  const paid = Number(tx.amount)
+  const already = Number(tx.refundedAmount || 0)
+  const remaining = Math.round((paid - already) * 100) / 100
+  if (remaining <= 0) throw new RefundError('This payment has already been refunded.', 409, 'ALREADY_REFUNDED')
+  const amount = input.amount === undefined ? remaining : Math.round(input.amount * 100) / 100
+  if (!(amount > 0)) throw new RefundError('The refund amount must be more than zero.', 400, 'INVALID_AMOUNT')
+  if (amount > remaining) {
+    throw new RefundError(`At most ${remaining.toFixed(2)} can still be refunded on this payment.`, 400, 'AMOUNT_TOO_HIGH')
+  }
 
   // Claim: only one request may talk to PayHere for this payment
   const now = new Date()
@@ -127,6 +149,7 @@ export async function refundPayhereTransaction(input: { transactionId: string; s
       or(
         isNull(payhereTransactions.refundStatus),
         eq(payhereTransactions.refundStatus, 'failed'),
+        eq(payhereTransactions.refundStatus, 'partial'),
         and(eq(payhereTransactions.refundStatus, 'processing'), lt(payhereTransactions.refundRequestedAt, new Date(now.getTime() - STALE_PROCESSING_MS))),
       ),
     ))
@@ -135,7 +158,10 @@ export async function refundPayhereTransaction(input: { transactionId: string; s
 
   let result: { reference: string | null; message: string }
   try {
-    result = await requestPayhereRefund(tx.payherePaymentId, `Refund ${tx.orderId}: ${input.reason}`)
+    // A single full refund goes without an amount (PayHere refunds the whole payment); anything
+    // else — a partial refund or the rest after earlier partial refunds — states the amount.
+    const sendAmount = amount === paid && already === 0 ? undefined : amount
+    result = await requestPayhereRefund(tx.payherePaymentId, `Refund ${tx.orderId}: ${input.reason}`, sendAmount)
   } catch (err) {
     const message = err instanceof RefundError ? err.message : `Could not reach PayHere (${err instanceof Error ? err.message : 'network error'}). Check the merchant portal before trying again.`
     await db.update(payhereTransactions)
@@ -145,13 +171,16 @@ export async function refundPayhereTransaction(input: { transactionId: string; s
     throw new RefundError(message, 502, 'REFUND_UNREACHABLE')
   }
 
-  const amount = Number(tx.amount)
+  const refundedTotal = Math.round((already + amount) * 100) / 100
+  const fullyRefunded = refundedTotal >= paid
+  const references = [tx.refundReference, result.reference].filter(Boolean).join(', ')
   await db.update(payhereTransactions)
     .set({
-      status: 'refunded',
-      refundStatus: 'refunded',
-      refundedAmount: amount.toFixed(2),
-      refundReference: result.reference,
+      // A partly refunded payment is still a successful payment
+      status: fullyRefunded ? 'refunded' : 'success',
+      refundStatus: fullyRefunded ? 'refunded' : 'partial',
+      refundedAmount: refundedTotal.toFixed(2),
+      refundReference: references ? references.slice(-100) : null,
       refundError: null,
       refundedAt: new Date(),
       updatedAt: new Date(),
@@ -167,5 +196,9 @@ export async function refundPayhereTransaction(input: { transactionId: string; s
       .where(eq(subscriptions.id, tx.subscriptionId)).limit(1)
     if (row) subscription = { ...row, periodMonths: tx.periodMonths, wasUpgrade: !!tx.newTierId }
   }
-  return { transactionId: tx.id, orderId: tx.orderId, amount, reference: result.reference, message: result.message, subscription }
+  return {
+    transactionId: tx.id, orderId: tx.orderId, amount, refundedTotal,
+    remaining: Math.max(0, Math.round((paid - refundedTotal) * 100) / 100), fullyRefunded,
+    reference: result.reference, message: result.message, subscription,
+  }
 }

@@ -399,6 +399,7 @@ async function main() {
       const refundCalls = fetchCalls.filter((c) => c.url.endsWith('/payment/refund'))
       const tokenCall = fetchCalls.find((c) => c.url.endsWith('/oauth/token'))
       check('double click: one 200 + one 409, PayHere refund called once', [r1.status, r2.status].sort().join(',') === '200,409' && refundCalls.length === 1, { r1: r1.status, r2: r2.status, calls: refundCalls.length })
+      check('a single full refund sends no amount (PayHere refunds the whole payment)', refundCalls.length === 1 && !('amount' in JSON.parse(refundCalls[0].body || '{}')), refundCalls[0]?.body)
       check('sandbox endpoints + client-credentials grant + payment_id sent', !!tokenCall && tokenCall.url.startsWith('https://sandbox.payhere.lk') && /grant_type=client_credentials/.test(tokenCall.body) && JSON.parse(refundCalls[0]?.body || '{}').payment_id?.startsWith('32'), { tokenCall, refundCalls })
       const row = (await pg.query(`SELECT status, refund_status, refunded_amount, refund_reference, refund_reason, refunded_by FROM payhere_transactions WHERE id = $1`, [txId])).rows[0]
       check('transaction records refund status / amount / reference / admin', row.status === 'refunded' && row.refund_status === 'refunded' && Number(row.refunded_amount) === 5000 && row.refund_reference === '77001' && row.refund_reason === 'Customer asked' && row.refunded_by === billing.id, row)
@@ -430,6 +431,36 @@ async function main() {
       as(support)
       const denied = await json(await refund(req('POST', `/api/sys-control/payhere-transactions/${tx3}/refund`, { reason: 'Support try' }), ctx(tx3)))
       check('support role cannot refund', denied.status === 403, denied.body)
+
+      // partial refunds: 1500 + 1000 of 5000, then the rest (2500); amounts sent to PayHere
+      as(billing)
+      const tx4 = randomUUID()
+      await pg.query(`INSERT INTO payhere_transactions (id, account_id, subscription_id, order_id, payhere_payment_id, amount, status, period_months, billing_cycle, paid_at, activated_at)
+        VALUES ($1, $2, $3, $4, '3200000101', 5000, 'success', 1, 'monthly', now(), now())`, [tx4, acc, sub, `I6R4-${tag}`])
+      let n = 0
+      fetchCalls.length = 0
+      fetchHandler = (u) => u.endsWith('/oauth/token') ? jsonRes({ access_token: 'tok' }) : jsonRes({ status: 1, msg: 'ok', data: `P-${++n}` })
+      const sent = () => fetchCalls.filter((c) => c.url.endsWith('/payment/refund')).map((c) => JSON.parse(c.body).amount)
+      const rowOf = async () => (await pg.query(`SELECT status, refund_status, refunded_amount, refund_reference FROM payhere_transactions WHERE id = $1`, [tx4])).rows[0]
+      const p1 = await json(await refund(req('POST', `/api/sys-control/payhere-transactions/${tx4}/refund`, { reason: 'Part 1', amount: 1500 }), ctx(tx4)))
+      let row4 = await rowOf()
+      check('partial refund 1500 → 200, amount "1500.00" sent, remaining 3500',
+        p1.status === 200 && sent()[0] === '1500.00' && p1.body.amount === 1500 && p1.body.remaining === 3500 && p1.body.fullyRefunded === false, { body: p1.body, sent: sent() })
+      check('partly refunded payment stays successful, refund_status partial, running total 1500',
+        row4.status === 'success' && row4.refund_status === 'partial' && Number(row4.refunded_amount) === 1500, row4)
+      const tooHigh = await json(await refund(req('POST', `/api/sys-control/payhere-transactions/${tx4}/refund`, { reason: 'Too much', amount: 4000 }), ctx(tx4)))
+      check('more than still refundable → 400 AMOUNT_TOO_HIGH, PayHere not called', tooHigh.status === 400 && tooHigh.body.code === 'AMOUNT_TOO_HIGH' && sent().length === 1, tooHigh.body)
+      const zero = await json(await refund(req('POST', `/api/sys-control/payhere-transactions/${tx4}/refund`, { reason: 'Zero', amount: 0 }), ctx(tx4)))
+      check('zero amount → 400', zero.status === 400, zero.body)
+      const p2 = await json(await refund(req('POST', `/api/sys-control/payhere-transactions/${tx4}/refund`, { reason: 'Part 2', amount: 1000 }), ctx(tx4)))
+      check('second partial refund 1000 → total 2500, remaining 2500', p2.status === 200 && p2.body.refundedTotal === 2500 && p2.body.remaining === 2500, p2.body)
+      const rest = await json(await refund(req('POST', `/api/sys-control/payhere-transactions/${tx4}/refund`, { reason: 'The rest' }), ctx(tx4)))
+      row4 = await rowOf()
+      check('the rest (no amount) sends "2500.00" explicitly, not a full-payment refund', rest.status === 200 && sent()[2] === '2500.00' && rest.body.amount === 2500, { body: rest.body, sent: sent() })
+      check('fully refunded after the rest: status refunded, total 5000, all references kept',
+        rest.body.fullyRefunded === true && row4.status === 'refunded' && row4.refund_status === 'refunded' && Number(row4.refunded_amount) === 5000 && row4.refund_reference === 'P-1, P-2, P-3', row4)
+      const after = await json(await refund(req('POST', `/api/sys-control/payhere-transactions/${tx4}/refund`, { reason: 'Again', amount: 1 }), ctx(tx4)))
+      check('nothing left → 409 ALREADY_REFUNDED', after.status === 409 && after.body.code === 'ALREADY_REFUNDED', after.body)
       fetchHandler = null
       delete process.env.PAYHERE_APP_ID
       delete process.env.PAYHERE_APP_SECRET

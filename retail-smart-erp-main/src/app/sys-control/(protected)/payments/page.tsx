@@ -21,6 +21,7 @@ import {
   StatCard,
   StatGrid,
   Textarea,
+  Input,
   fmtDateTime,
   fmtLKR,
   fmtNumber,
@@ -85,7 +86,7 @@ interface PayhereTx {
   couponCode: string | null
   listAmount: string | null
   discountAmount: string
-  refundStatus: 'processing' | 'refunded' | 'failed' | null
+  refundStatus: 'processing' | 'partial' | 'refunded' | 'failed' | null
   refundedAmount: string | null
   refundReference: string | null
   refundReason: string | null
@@ -104,6 +105,9 @@ interface PayhereList {
 
 interface RefundOutcome {
   amount: number
+  refundedTotal: number
+  remaining: number
+  fullyRefunded: boolean
   reference: string | null
   message: string
   subscription: { id: string; tenantName: string | null; status: string; currentPeriodEnd: string | null; periodMonths: number; wasUpgrade: boolean } | null
@@ -450,6 +454,7 @@ function CardPayments() {
           <Badge tone={statusTone(x.status)}>{x.status.replace(/_/g, ' ')}</Badge>
           {x.refundStatus === 'processing' && <Badge tone="warning">refund in progress</Badge>}
           {x.refundStatus === 'failed' && <Badge tone="danger">refund failed</Badge>}
+          {x.refundStatus === 'partial' && <Badge tone="warning">partly refunded</Badge>}
         </div>
       ),
     },
@@ -519,22 +524,34 @@ function CardPaymentDialog({ tx: x, refundsConfigured, onClose, onChanged }: {
   const canBill = useAdminCan('billing')
   const [confirming, setConfirming] = useState(false)
   const [reason, setReason] = useState('')
+  const paid = Number(x.amount)
+  const refundableLeft = Math.max(0, Math.round((paid - Number(x.refundedAmount || 0)) * 100) / 100)
+  const [amountText, setAmountText] = useState('')
+  const refundAmount = Number(amountText)
+  const amountOk = amountText.trim() !== '' && Number.isFinite(refundAmount) && refundAmount > 0 && refundAmount <= refundableLeft
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [outcome, setOutcome] = useState<RefundOutcome | null>(null)
   const [subBusy, setSubBusy] = useState<'remove' | 'end' | null>(null)
   const [subDone, setSubDone] = useState<string | null>(null)
 
-  const refundable = x.status === 'success' && !!x.payherePaymentId && x.refundStatus !== 'refunded' && x.refundStatus !== 'processing'
+  const refundable = x.status === 'success' && !!x.payherePaymentId && x.refundStatus !== 'refunded' && x.refundStatus !== 'processing' && refundableLeft > 0
 
   async function refund() {
     setBusy(true)
     setError(null)
     try {
-      const res = await adminFetch<RefundOutcome>(`/api/sys-control/payhere-transactions/${x.id}/refund`, { method: 'POST', json: { reason: reason.trim() } })
+      const partial = refundAmount < refundableLeft
+      const res = await adminFetch<RefundOutcome>(`/api/sys-control/payhere-transactions/${x.id}/refund`, {
+        method: 'POST',
+        // No amount = everything still refundable
+        json: partial ? { reason: reason.trim(), amount: refundAmount } : { reason: reason.trim() },
+      })
       setConfirming(false)
       setOutcome(res)
-      onChanged(`Refunded ${fmtLKR(res.amount, 2)} for order ${x.orderId}.`)
+      onChanged(res.fullyRefunded
+        ? `Refunded ${fmtLKR(res.amount, 2)} for order ${x.orderId}.`
+        : `Refunded ${fmtLKR(res.amount, 2)} of order ${x.orderId}; ${fmtLKR(res.remaining, 2)} can still be refunded.`)
     } catch (e) {
       setConfirming(false)
       setError(e instanceof Error ? e.message : 'The refund failed')
@@ -576,7 +593,7 @@ function CardPaymentDialog({ tx: x, refundsConfigured, onClose, onChanged }: {
             {canBill && !outcome && x.status === 'success' && (
               <Button variant="danger" disabled={!refundable || !refundsConfigured}
                 title={!refundsConfigured ? 'PAYHERE_APP_ID / PAYHERE_APP_SECRET are not set on the server' : undefined}
-                onClick={() => { setReason(''); setConfirming(true) }}>
+                onClick={() => { setReason(''); setAmountText(refundableLeft.toFixed(2)); setConfirming(true) }}>
                 Refund…
               </Button>
             )}
@@ -604,6 +621,11 @@ function CardPaymentDialog({ tx: x, refundsConfigured, onClose, onChanged }: {
               ]}
             />
           </div>
+          {x.refundStatus === 'partial' && (
+            <Alert tone="warning" title={`Partly refunded: ${fmtLKR(Number(x.refundedAmount || 0), 2)} of ${fmtLKR(paid, 2)}`}>
+              {fmtLKR(refundableLeft, 2)} can still be refunded.{x.refundReference ? ` · PayHere reference ${x.refundReference}` : ''}
+            </Alert>
+          )}
           {x.refundStatus === 'refunded' && (
             <Alert tone="info" title={`Refunded ${x.refundedAmount ? fmtLKR(Number(x.refundedAmount), 2) : ''} ${x.refundedAt ? fmtDateTime(x.refundedAt) : ''}`}>
               {x.refundReason || 'No reason recorded.'}{x.refundReference ? ` · PayHere reference ${x.refundReference}` : ''}
@@ -619,6 +641,7 @@ function CardPaymentDialog({ tx: x, refundsConfigured, onClose, onChanged }: {
             <div className="space-y-3">
               <Alert tone="success" title={`Refund of ${fmtLKR(outcome.amount, 2)} submitted to PayHere`}>
                 {outcome.message}{outcome.reference ? ` · Reference ${outcome.reference}` : ''}
+                {!outcome.fullyRefunded && ` · Refunded so far ${fmtLKR(outcome.refundedTotal, 2)}; ${fmtLKR(outcome.remaining, 2)} can still be refunded.`}
               </Alert>
               {outcome.subscription ? (
                 <AdminCard title="What about the subscription?" description="The refund did not change the subscription. Decide what the vendor keeps.">
@@ -658,11 +681,16 @@ function CardPaymentDialog({ tx: x, refundsConfigured, onClose, onChanged }: {
           onCancel={() => setConfirming(false)}
           onConfirm={refund}
           loading={busy}
-          title={`Refund ${fmtLKR(Number(x.amount), 2)}?`}
-          description={`PayHere returns the full amount of order ${x.orderId} to ${x.account.fullName}'s card. This cannot be undone. The subscription is not changed automatically — you choose next.`}
+          confirmDisabled={!amountOk || reason.trim().length < 3}
+          title={`Refund order ${x.orderId}?`}
+          description={`PayHere returns the amount below to ${x.account.fullName}'s card. This cannot be undone. The subscription is not changed automatically — you choose next.`}
           confirmLabel="Refund payment"
           confirmVariant="danger"
         >
+          <Field label="Amount (LKR)" htmlFor="rf-amount" required hint={`Up to ${fmtLKR(refundableLeft, 2)}${refundableLeft < paid ? ` (already refunded ${fmtLKR(paid - refundableLeft, 2)})` : ''}. Lower it for a partial refund.`}>
+            <Input id="rf-amount" inputMode="decimal" value={amountText} onChange={(e) => setAmountText(e.target.value)} />
+          </Field>
+          {amountText.trim() !== '' && !amountOk && <p className="text-[12.5px] text-adm-danger">Enter an amount above 0 and at most {fmtLKR(refundableLeft, 2)}.</p>}
           <Field label="Reason" htmlFor="rf-reason" required hint="Recorded on the payment and in the audit log.">
             <Textarea id="rf-reason" rows={2} value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>

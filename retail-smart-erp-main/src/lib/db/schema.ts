@@ -4920,7 +4920,7 @@ export const payhereTransactions = pgTable('payhere_transactions', {
   listAmount: decimal('list_amount', { precision: 12, scale: 2 }),
   discountAmount: decimal('discount_amount', { precision: 12, scale: 2 }).notNull().default('0'),
   // Refund through the PayHere Refund API from the console (drizzle/0169)
-  refundStatus: varchar('refund_status', { length: 20 }).$type<'processing' | 'refunded' | 'failed'>(),
+  refundStatus: varchar('refund_status', { length: 20 }).$type<'processing' | 'partial' | 'refunded' | 'failed'>(),
   refundedAmount: decimal('refunded_amount', { precision: 12, scale: 2 }),
   refundReference: varchar('refund_reference', { length: 100 }),
   refundReason: text('refund_reason'),

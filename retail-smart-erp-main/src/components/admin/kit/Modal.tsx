@@ -91,6 +91,7 @@ export function ConfirmDialog({
   description,
   confirmLabel = 'Confirm',
   confirmVariant = 'primary',
+  confirmDisabled,
   loading,
   children,
 }: {
@@ -101,6 +102,8 @@ export function ConfirmDialog({
   description?: ReactNode
   confirmLabel?: string
   confirmVariant?: ButtonVariant
+  /** Disable the confirm button, e.g. until the form inside is valid */
+  confirmDisabled?: boolean
   loading?: boolean
   children?: ReactNode
 }) {
@@ -114,7 +117,7 @@ export function ConfirmDialog({
       footer={
         <>
           <Button variant="secondary" onClick={onCancel} disabled={loading}>Cancel</Button>
-          <Button variant={confirmVariant} onClick={onConfirm} loading={loading}>{confirmLabel}</Button>
+          <Button variant={confirmVariant} onClick={onConfirm} loading={loading} disabled={confirmDisabled}>{confirmLabel}</Button>
         </>
       }
     >

@@ -8,14 +8,18 @@ import { RefundError, refundPayhereTransaction } from '@/lib/payhere/refund'
 
 const schema = z.object({
   reason: z.string().trim().min(3, 'Give a short reason (3+ characters)').max(500),
+  /** Part of the payment to refund; omitted = everything still refundable */
+  amount: z.number().positive().max(100_000_000).optional(),
 })
 
 /**
- * POST /api/sys-control/payhere-transactions/[id]/refund — full refund of a successful PayHere
- * card payment through the PayHere Refund API. Billing role or owner. At most once per payment
- * (claimed before PayHere is called). The subscription is left unchanged: the response says what
- * the payment bought so the console can offer to end / shorten the paid period. Audited.
+ * POST /api/sys-control/payhere-transactions/[id]/refund — full or partial refund ({ amount }) of a
+ * successful PayHere card payment through the PayHere Refund API. Billing role or owner. One request
+ * per payment at a time (claimed before PayHere is called); partial refunds may follow each other.
+ * The subscription is left unchanged: the response says what the payment bought so the console can
+ * offer to end / shorten the paid period. Audited.
  *   503 REFUND_NOT_CONFIGURED   PAYHERE_APP_ID / PAYHERE_APP_SECRET missing
+ *   400 INVALID_AMOUNT | AMOUNT_TOO_HIGH (more than is still refundable)
  *   409 ALREADY_REFUNDED | REFUND_IN_PROGRESS
  *   502 REFUND_REJECTED | REFUND_AUTH_FAILED | REFUND_UNREACHABLE (recorded as refund_status=failed)
  */
@@ -32,9 +36,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!parsed.success) return parsed.response
 
     try {
-      const outcome = await refundPayhereTransaction({ transactionId: p.data.id, superAdminId: session.superAdminId, reason: parsed.data.reason })
+      const outcome = await refundPayhereTransaction({ transactionId: p.data.id, superAdminId: session.superAdminId, reason: parsed.data.reason, amount: parsed.data.amount })
       await adminAudit.update(session.superAdminId, 'payhere_transaction', p.data.id, {
-        op: 'refund', orderId: outcome.orderId, amount: outcome.amount, reference: outcome.reference, reason: parsed.data.reason,
+        op: 'refund', orderId: outcome.orderId, amount: outcome.amount, refundedTotal: outcome.refundedTotal, fullyRefunded: outcome.fullyRefunded,
+        reference: outcome.reference, reason: parsed.data.reason,
         subscriptionId: outcome.subscription?.id ?? null, subscriptionChanged: false,
       })
       return NextResponse.json({ success: true, ...outcome })
