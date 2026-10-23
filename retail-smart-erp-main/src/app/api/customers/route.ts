@@ -4,8 +4,8 @@ import { withTenant } from '@/lib/db'
 import { customers } from '@/lib/db/schema'
 import { eq, or, ilike, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
-import { requirePermission } from '@/lib/auth/roles'
-import { hasAnyPermission, CUSTOMER_LOOKUP_PERMISSIONS } from '@/lib/auth/field-access'
+import { requireAnyPermission, hasPermission } from '@/lib/auth/roles'
+import { hasAnyPermission, CUSTOMER_LOOKUP_PERMISSIONS, CUSTOMER_CREATE_PERMISSIONS } from '@/lib/auth/field-access'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -88,8 +88,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Check permission
-    const permError = requirePermission(session, 'manageCustomers')
+    // Check permission: customer managers or sales/POS/service staff creating a customer at counter
+    const permError = requireAnyPermission(session, CUSTOMER_CREATE_PERMISSIONS)
     if (permError) return permError
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
@@ -105,6 +105,11 @@ export async function POST(request: NextRequest) {
       customerType, referralSource, marketingOptIn, birthday, notes, specialInstructions, driverLicenseNumber,
       paymentTermsTemplateId
     } = parsed.data
+
+    // If caller does not hold manageCustomerCredit or manageCustomers, sanitize creditLimit to null
+    const canManageCredit = hasPermission(session.user.role, 'manageCustomerCredit', session.user.tenantId, (session.user as Record<string, unknown>)?.customRoleId as string | undefined)
+      || hasPermission(session.user.role, 'manageCustomers', session.user.tenantId, (session.user as Record<string, unknown>)?.customRoleId as string | undefined)
+    const effectiveCreditLimit = canManageCredit ? (creditLimit != null ? String(creditLimit) : null) : null
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -145,7 +150,7 @@ export async function POST(request: NextRequest) {
         taxId: taxId || null,
         taxExempt,
         businessType,
-        creditLimit: creditLimit != null ? String(creditLimit) : null,
+        creditLimit: effectiveCreditLimit,
         paymentTerms: paymentTerms || null,
         defaultPaymentMethod: defaultPaymentMethod || null,
         customerType,

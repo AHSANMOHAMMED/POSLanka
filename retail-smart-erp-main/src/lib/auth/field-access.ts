@@ -34,6 +34,15 @@ export function redactItemCost<T extends Record<string, unknown>>(item: T): T {
 }
 
 /**
+ * Customer creation: staff who create sales at the POS, service staff, or customer managers.
+ * When a non-customer-manager creates a customer at the checkout/counter, sensitive fields like creditLimit
+ * must remain controlled by credit permissions.
+ */
+export const CUSTOMER_CREATE_PERMISSIONS: readonly Permission[] = [
+  'manageCustomers', 'createSales', 'manageSales', 'managePOS', 'manageWorkOrders', 'manageAppointments',
+]
+
+/**
  * Customer lookup: POS sellers, customer managers, service / restaurant staff who attach a
  * customer to a job, and reporting / accounting roles. Excludes e.g. hr_manager, stock_manager,
  * purchase_manager and system_manager unless granted one of these.
