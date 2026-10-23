@@ -14,6 +14,7 @@ python3 scripts/e2e-live/api-smoke.py            # 100 API checks: vendor → lo
 python3 scripts/e2e-live/concurrency.py          # 5 cashiers × 21 concurrent checkouts, invoice/stock exactness
 node    scripts/e2e-live/ui-checkout.cjs         # browser: scan, scale label, F-keys, pay, lock/PIN, all pages
 node    scripts/e2e-live/ui-day-one.cjs          # browser: split pay, scan-to-return, close shift, intake sync, history
+node    scripts/e2e-live/ui-vendor-page.cjs      # browser: super-admin vendor page — every tab and action, effects verified
 python3 scripts/e2e-live/api-sweep.py routes.json out.json   # every API handler, no 5xx allowed
 ```
 
