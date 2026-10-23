@@ -162,11 +162,8 @@ export function ShiftOpenModal({ isOpen, onClose, onShiftOpened }: ShiftOpenModa
         handleClose()
       } else {
         const data = await res.json()
-        if (data.existingShiftId) {
-          setError('You already have an open shift. Please close it first.')
-        } else {
-          setError(data.error || 'Failed to open shift')
-        }
+        // The server names the occupied counter / your own open shift; fall back only without a message
+        setError(data.error || (data.existingShiftId ? 'You already have an open shift. Please close it first.' : 'Failed to open shift'))
       }
     } catch {
       setError('Failed to open shift')

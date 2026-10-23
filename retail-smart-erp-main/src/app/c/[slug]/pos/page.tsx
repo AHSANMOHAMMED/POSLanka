@@ -2702,7 +2702,7 @@ export default function POSPage() {
             type="button"
             onClick={() => setShowRecentSalesModal(true)}
             className="px-2 py-0.5 rounded bg-blue-900/80 hover:bg-blue-800 text-blue-200 font-bold border border-blue-700/80 flex items-center gap-1"
-            title="Recent Sales & Bills (F9)"
+            title="Recent Sales & Bills — reprint or share via WhatsApp"
           >
             <Clock className="w-3 h-3" />
             Bills History

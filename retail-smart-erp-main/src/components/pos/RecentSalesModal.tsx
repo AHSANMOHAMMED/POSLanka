@@ -188,7 +188,7 @@ export function RecentSalesModal({
                       title="Reprint Bill Receipt"
                     >
                       <Printer size={14} />
-                      <span className="hidden sm:inline">Print</span>
+                      <span>Print</span>
                     </button>
 
                     {/* WhatsApp */}
@@ -205,7 +205,7 @@ export function RecentSalesModal({
                       title="Share bill via WhatsApp"
                     >
                       <MessageCircle size={14} />
-                      <span className="hidden sm:inline">WhatsApp</span>
+                      <span>WhatsApp</span>
                     </button>
 
                     {/* Return */}
