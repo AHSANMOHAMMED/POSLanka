@@ -149,23 +149,40 @@ function LoginForm() {
         // ignore
       }
 
-      // Directly sign in to company with credentials
-      const result = await signIn('credentials', {
-        email: rawEmail,
-        password: staffPassword,
-        tenantSlug: data.tenant.slug,
-        businessId: rawBizId,
-        redirect: false,
+      // 1. Get CSRF token for company auth (/api/auth)
+      const csrfRes = await fetch('/api/auth/csrf')
+      const csrfData = await csrfRes.json().catch(() => ({}))
+      const csrfToken = csrfData?.csrfToken || ''
+
+      // 2. Perform company authentication directly against /api/auth
+      const authRes = await fetch('/api/auth/callback/credentials', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'X-Auth-Return-Redirect': '1',
+        },
+        body: new URLSearchParams({
+          email: rawEmail,
+          password: staffPassword,
+          tenantSlug: data.tenant.slug,
+          businessId: rawBizId,
+          csrfToken,
+          callbackUrl: `/c/${data.tenant.slug}/pos`,
+          json: 'true',
+        }),
       })
 
-      if (result?.error) {
+      const authData = await authRes.json().catch(() => ({}))
+      const targetUrl = authData?.url || ''
+
+      if (targetUrl.includes('error=') || !authRes.ok) {
         setLookupError(`Sign-in failed. Please verify your email and password for ${data.tenant.name}.`)
         setStaffLoading(false)
-      } else {
-        broadcastAuthEvent('login', 'company')
-        router.push(`/c/${data.tenant.slug}/pos`)
-        router.refresh()
+        return
       }
+
+      broadcastAuthEvent('login', 'company')
+      window.location.href = `/c/${data.tenant.slug}/pos`
     } catch {
       setLookupError('Could not connect. Please check your connection and try again.')
       setStaffLoading(false)
