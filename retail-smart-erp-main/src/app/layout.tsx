@@ -87,8 +87,12 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={inter.variable} suppressHydrationWarning>
+    // translate="no" + the google notranslate meta: the app ships its own English/Sinhala UI. Browser
+    // auto-translation (Chrome/Google Translate) rewrites text nodes behind React's back, and the next
+    // update then crashes with "Cannot read properties of null (reading 'removeChild')".
+    <html lang="en" translate="no" className={inter.variable} suppressHydrationWarning>
       <head>
+        <meta name="google" content="notranslate" />
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         {process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID && (
           <>
