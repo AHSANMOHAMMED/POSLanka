@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireAnyPermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { costCenters } from '@/lib/db/schema'
 import { eq, and, ilike, sql, asc } from 'drizzle-orm'
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const permError = requirePermission(session, 'viewAccounting')
+    const permError = requireAnyPermission(session, ['viewAccounting', 'createSales', 'manageSales', 'managePOS'])
     if (permError) return permError
 
     const parsed = validateSearchParams(request, costCentersListSchema)

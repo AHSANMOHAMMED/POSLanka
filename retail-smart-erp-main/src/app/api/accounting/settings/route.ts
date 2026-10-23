@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
+import { requirePermission, requireAnyPermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { accountingSettings, chartOfAccounts } from '@/lib/db/schema'
 import { eq, inArray } from 'drizzle-orm'
@@ -13,7 +13,7 @@ import { updateAccountingSettingsSchema } from '@/lib/validation/schemas/account
 export async function GET(_request: NextRequest) {
   try {
     const session = await authWithCompany()
-    const permError = requirePermission(session, 'viewAccounting')
+    const permError = requireAnyPermission(session, ['viewAccounting', 'createSales', 'manageSales', 'managePOS'])
     if (permError) return permError
 
     const tenantId = session!.user.tenantId

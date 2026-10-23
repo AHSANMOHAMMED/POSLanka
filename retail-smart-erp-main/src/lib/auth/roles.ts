@@ -512,6 +512,27 @@ export function requirePermission(session: Session | CompanySession | null, perm
 }
 
 /**
+ * API route helper - returns error response if user lacks ALL specified permissions.
+ * Returns null if user has AT LEAST ONE of the listed permissions.
+ */
+export function requireAnyPermission(
+  session: Session | CompanySession | null,
+  permissions: readonly Permission[] | Permission[],
+): NextResponse | null {
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  let denied: NextResponse | null = null
+  for (const p of permissions) {
+    const err = requirePermission(session, p)
+    if (!err) return null
+    denied ||= err
+  }
+  return denied
+}
+
+/**
  * Get all effective permissions for a user, accounting for overrides and custom roles.
  * Returns a complete map of permission → boolean.
  */
