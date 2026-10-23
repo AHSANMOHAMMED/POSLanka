@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState, useCallback, useEffect } from 'react'
-import { Search, ScanBarcode, Package, RotateCcw, Loader2, Warehouse, ChevronLeft, ChevronRight, Scale, Layers, PlusCircle } from 'lucide-react'
+import { Search, ScanBarcode, Package, RotateCcw, Loader2, Warehouse, ChevronLeft, ChevronRight, Scale, Layers, PlusCircle, LayoutGrid, List, ArrowUpDown } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { ShiftStatus } from './ShiftStatus'
 import { useCurrency } from '@/hooks/useCurrency'
@@ -112,6 +112,8 @@ function CategoryPillBar({ categories, selectedCategory, onCategoryChange, allLa
   )
 }
 
+export type POSSortOption = 'default' | 'name-asc' | 'name-desc' | 'price-asc' | 'price-desc' | 'stock-desc'
+
 export function ProductGrid({
   items,
   categories,
@@ -137,6 +139,8 @@ export function ProductGrid({
   onOpenQuickAdd,
 }: ProductGridProps) {
   const [scanBusy, setScanBusy] = useState(false)
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
+  const [sortBy, setSortBy] = useState<POSSortOption>('default')
 
   async function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key !== 'Enter' || !onScanSubmit) return
@@ -155,7 +159,7 @@ export function ProductGrid({
 
   const filteredItems = useMemo(() => {
     const searchLower = search.toLowerCase()
-    return items.filter(item => {
+    const result = items.filter(item => {
       const matchesSearch = !search ||
         item.name.toLowerCase().includes(searchLower) ||
         item.sku?.toLowerCase().includes(searchLower) ||
@@ -165,7 +169,21 @@ export function ProductGrid({
         item.alternatePartNumbers?.some(pn => pn.toLowerCase().includes(searchLower))
       return matchesSearch
     })
-  }, [items, search])
+
+    if (sortBy === 'name-asc') {
+      result.sort((a, b) => a.name.localeCompare(b.name))
+    } else if (sortBy === 'name-desc') {
+      result.sort((a, b) => b.name.localeCompare(a.name))
+    } else if (sortBy === 'price-asc') {
+      result.sort((a, b) => (parseFloat(a.sellingPrice) || 0) - (parseFloat(b.sellingPrice) || 0))
+    } else if (sortBy === 'price-desc') {
+      result.sort((a, b) => (parseFloat(b.sellingPrice) || 0) - (parseFloat(a.sellingPrice) || 0))
+    } else if (sortBy === 'stock-desc') {
+      result.sort((a, b) => (parseFloat(b.availableStock) || 0) - (parseFloat(a.availableStock) || 0))
+    }
+
+    return result
+  }, [items, search, sortBy])
 
   return (
     <div className="w-full lg:w-[60%] flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50/50">
@@ -236,13 +254,66 @@ export function ProductGrid({
         </div>
       </div>
 
-      {/* Category Filter */}
-      <CategoryPillBar
-        categories={categories}
-        selectedCategory={selectedCategory}
-        onCategoryChange={onCategoryChange}
-        allLabel={`All ${terms.items}`}
-      />
+      {/* Category Filter & View Controls */}
+      <div className="flex items-center justify-between border-b bg-white dark:bg-gray-800 pr-3">
+        <div className="flex-1 min-w-0">
+          <CategoryPillBar
+            categories={categories}
+            selectedCategory={selectedCategory}
+            onCategoryChange={onCategoryChange}
+            allLabel={`All ${terms.items}`}
+          />
+        </div>
+
+        {/* View Mode & Order By Controls */}
+        <div className="flex items-center gap-1.5 flex-shrink-0 pl-2 py-1.5 border-l border-gray-100 dark:border-gray-700">
+          {/* Order By Selector */}
+          <div className="relative flex items-center">
+            <ArrowUpDown size={13} className="absolute left-2 text-gray-400 pointer-events-none" />
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as POSSortOption)}
+              className="text-[11px] font-semibold pl-6 pr-2 py-1 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer"
+              title="Sort products"
+            >
+              <option value="default">Default Order</option>
+              <option value="name-asc">Name (A-Z)</option>
+              <option value="name-desc">Name (Z-A)</option>
+              <option value="price-asc">Price: Low to High</option>
+              <option value="price-desc">Price: High to Low</option>
+              <option value="stock-desc">Highest Stock</option>
+            </select>
+          </div>
+
+          {/* Grid vs List View Toggle */}
+          <div className="flex items-center bg-gray-100 dark:bg-gray-700 p-0.5 rounded-lg border border-gray-200/80 dark:border-gray-600">
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              className={`p-1 rounded-md transition-colors ${
+                viewMode === 'grid'
+                  ? 'bg-white dark:bg-gray-800 text-teal-800 dark:text-teal-400 shadow-xs'
+                  : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+              }`}
+              title="Grid View"
+            >
+              <LayoutGrid size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`p-1 rounded-md transition-colors ${
+                viewMode === 'list'
+                  ? 'bg-white dark:bg-gray-800 text-teal-800 dark:text-teal-400 shadow-xs'
+                  : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+              }`}
+              title="List View"
+            >
+              <List size={14} />
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Products Grid */}
       <div className="flex-1 overflow-y-auto p-4">
@@ -253,92 +324,151 @@ export function ProductGrid({
           </div>
         )}
 
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
-          {filteredItems.map(item => {
-            const stock = parseFloat(item.availableStock)
-            const isLowStock = item.trackStock && stock <= 5 && stock > 0
-            const isOutOfStock = item.trackStock && stock <= 0
+        {/* Products Grid or List */}
+        {viewMode === 'grid' ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+            {filteredItems.map(item => {
+              const stock = parseFloat(item.availableStock)
+              const isLowStock = item.trackStock && stock <= 5 && stock > 0
+              const isOutOfStock = item.trackStock && stock <= 0
 
-            return (
-              <button
-                key={item.id}
-                onClick={() => onAddToCart(item)}
-                disabled={isOutOfStock && !isReturnMode}
-                className={`bg-white rounded-xl border p-3.5 text-left transition-all hover:shadow-md hover:border-teal-600 group relative ${
-                  isOutOfStock && !isReturnMode
-                    ? 'opacity-50 cursor-not-allowed border-slate-200'
-                    : 'border-slate-200 hover:-translate-y-0.5'
-                }`}
-              >
-                {/* Stock Tag on Top Right */}
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-bold">
-                    {item.barcode ? `EAN: ${item.barcode.slice(-6)}` : item.sku || 'ITEM'}
-                  </span>
-                  {item.trackStock && (
-                    <span
-                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                        isOutOfStock
-                          ? 'bg-red-100 text-red-700'
-                          : isLowStock
-                          ? 'bg-amber-100 text-amber-800'
-                          : 'bg-emerald-50 text-emerald-700'
-                      }`}
-                    >
-                      {isOutOfStock ? 'Out' : `${stock.toFixed(0)} in stock`}
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => onAddToCart(item)}
+                  disabled={isOutOfStock && !isReturnMode}
+                  className={`bg-white dark:bg-gray-800 rounded-xl border p-3.5 text-left transition-all hover:shadow-md hover:border-teal-600 group relative ${
+                    isOutOfStock && !isReturnMode
+                      ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-gray-700'
+                      : 'border-slate-200 dark:border-gray-700 hover:-translate-y-0.5'
+                  }`}
+                >
+                  {/* Stock Tag on Top Right */}
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 font-bold">
+                      {item.barcode ? `EAN: ${item.barcode.slice(-6)}` : item.sku || 'ITEM'}
                     </span>
+                    {item.trackStock && (
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          isOutOfStock
+                            ? 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400'
+                            : isLowStock
+                            ? 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400'
+                            : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'
+                        }`}
+                      >
+                        {isOutOfStock ? 'Out' : `${stock.toFixed(0)} in stock`}
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="font-bold text-slate-900 dark:text-white text-sm leading-snug line-clamp-2 min-h-[36px] mb-1 group-hover:text-teal-700 dark:group-hover:text-teal-400 transition-colors">
+                    {item.name}
+                  </h3>
+
+                  {(() => {
+                    const partNum = getItemPartNumber(item, businessType)
+                    return partNum ? <p className="text-[11px] text-slate-400 mb-1 font-mono">{partNum}</p> : null
+                  })()}
+
+                  {item.categoryName && (
+                    <p className="text-[11px] text-slate-400 truncate mb-2">{item.categoryName}</p>
                   )}
-                </div>
 
-                <h3 className="font-bold text-slate-900 text-sm leading-snug line-clamp-2 min-h-[36px] mb-1 group-hover:text-teal-800 transition-colors">
-                  {item.name}
-                </h3>
+                  {/* Weighable / Core charge indicators */}
+                  {(config.enableWeighableItems && item.isWeighable) && (
+                    <div className="flex items-center gap-1 mb-1">
+                      <Scale size={12} className="text-amber-600" />
+                      <span className="text-xs text-amber-700 dark:text-amber-400 font-medium">Weighable (PLU)</span>
+                    </div>
+                  )}
+                  {item.hasVariants && (
+                    <div className="flex items-center gap-1 mb-1">
+                      <Layers size={12} className="text-purple-600" />
+                      <span className="text-xs text-purple-700 dark:text-purple-400 font-semibold">Has Variants</span>
+                    </div>
+                  )}
+                  {(config.enableCoreChargeDisplay && item.coreCharge && parseFloat(item.coreCharge) > 0) && (
+                    <div className="text-xs text-purple-600 dark:text-purple-400 font-medium mb-1">
+                      +Core: {currencyCode} {parseFloat(item.coreCharge).toFixed(0)}
+                    </div>
+                  )}
 
-                {(() => {
-                  const partNum = getItemPartNumber(item, businessType)
-                  return partNum ? <p className="text-[11px] text-slate-400 mb-1 font-mono">{partNum}</p> : null
-                })()}
-
-                {item.categoryName && (
-                  <p className="text-[11px] text-slate-400 truncate mb-2">{item.categoryName}</p>
-                )}
-
-                {/* Weighable / Core charge indicators */}
-                {(config.enableWeighableItems && item.isWeighable) && (
-                  <div className="flex items-center gap-1 mb-1">
-                    <Scale size={12} className="text-amber-600" />
-                    <span className="text-xs text-amber-700 font-medium">Weighable (PLU)</span>
+                  <div className="flex items-end justify-between pt-2 border-t border-slate-100 dark:border-gray-700 mt-2">
+                    <span className="text-base font-bold text-teal-800 dark:text-teal-400 font-mono">
+                      {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
+                      {config.enableWeighableItems && item.isWeighable ? (
+                        <span className="text-xs font-normal text-slate-400">/{item.unit || 'kg'}</span>
+                      ) : item.unit && item.unit !== 'pcs' ? (
+                        <span className="text-xs font-normal text-slate-400">/{item.unit}</span>
+                      ) : null}
+                    </span>
+                    <span className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-gray-700 group-hover:bg-teal-700 group-hover:text-white flex items-center justify-center text-slate-700 dark:text-gray-200 text-xs font-bold transition-colors">
+                      +
+                    </span>
                   </div>
-                )}
-                {item.hasVariants && (
-                  <div className="flex items-center gap-1 mb-1">
-                    <Layers size={12} className="text-purple-600" />
-                    <span className="text-xs text-purple-700 font-semibold">Has Variants</span>
-                  </div>
-                )}
-                {(config.enableCoreChargeDisplay && item.coreCharge && parseFloat(item.coreCharge) > 0) && (
-                  <div className="text-xs text-purple-600 font-medium mb-1">
-                    +Core: {currencyCode} {parseFloat(item.coreCharge).toFixed(0)}
-                  </div>
-                )}
+                </button>
+              )
+            })}
+          </div>
+        ) : (
+          /* List View */
+          <div className="space-y-1.5">
+            {filteredItems.map(item => {
+              const stock = parseFloat(item.availableStock)
+              const isLowStock = item.trackStock && stock <= 5 && stock > 0
+              const isOutOfStock = item.trackStock && stock <= 0
 
-                <div className="flex items-end justify-between pt-2 border-t border-slate-100 mt-2">
-                  <span className="text-base font-bold text-teal-800 font-mono">
-                    {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
-                    {config.enableWeighableItems && item.isWeighable ? (
-                      <span className="text-xs font-normal text-slate-400">/{item.unit || 'kg'}</span>
-                    ) : item.unit && item.unit !== 'pcs' ? (
-                      <span className="text-xs font-normal text-slate-400">/{item.unit}</span>
-                    ) : null}
-                  </span>
-                  <span className="w-7 h-7 rounded-lg bg-slate-100 group-hover:bg-teal-700 group-hover:text-white flex items-center justify-center text-slate-700 text-xs font-bold transition-colors">
-                    +
-                  </span>
-                </div>
-              </button>
-            )
-          })}
-        </div>
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => onAddToCart(item)}
+                  disabled={isOutOfStock && !isReturnMode}
+                  className={`w-full bg-white dark:bg-gray-800 rounded-xl border px-3.5 py-2.5 text-left transition-all hover:shadow-xs hover:border-teal-600 flex items-center justify-between gap-3 group ${
+                    isOutOfStock && !isReturnMode
+                      ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-gray-700'
+                      : 'border-slate-200 dark:border-gray-700 hover:bg-teal-50/20 dark:hover:bg-teal-950/10'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <span className="text-[10px] font-mono px-2 py-1 rounded bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 font-bold flex-shrink-0">
+                      {item.barcode ? item.barcode.slice(-6) : item.sku || 'ITEM'}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-900 dark:text-white text-sm truncate group-hover:text-teal-700 dark:group-hover:text-teal-400">
+                          {item.name}
+                        </span>
+                        {item.categoryName && (
+                          <span className="text-[11px] text-slate-400 hidden sm:inline">({item.categoryName})</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                        {item.trackStock && (
+                          <span className={isOutOfStock ? 'text-red-500 font-bold' : isLowStock ? 'text-amber-500 font-semibold' : 'text-emerald-600 dark:text-emerald-400'}>
+                            {isOutOfStock ? 'Out of stock' : `${stock.toFixed(0)} in stock`}
+                          </span>
+                        )}
+                        {item.isWeighable && <span className="text-amber-600 font-medium">• Weighable</span>}
+                        {item.hasVariants && <span className="text-purple-600 font-medium">• Variants</span>}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className="font-mono font-bold text-sm text-teal-800 dark:text-teal-400">
+                      {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
+                    </span>
+                    <span className="w-6 h-6 rounded-md bg-slate-100 dark:bg-gray-700 group-hover:bg-teal-700 group-hover:text-white flex items-center justify-center text-slate-700 dark:text-gray-200 text-xs font-bold transition-colors">
+                      +
+                    </span>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         {filteredItems.length === 0 && !searchingItems && (
           <div className="text-center py-16">

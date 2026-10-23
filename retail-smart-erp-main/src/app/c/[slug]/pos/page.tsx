@@ -21,6 +21,7 @@ import {
   CashierLockModal,
   CashDrawerFloatModal,
   PriceCheckModal,
+  RecentSalesModal,
   CashMovementModal,
 } from '@/components/pos'
 import { POS_SEARCH_INPUT_ID } from '@/components/pos/ProductGrid'
@@ -327,8 +328,15 @@ export default function POSPage() {
   const [showCameraScan, setShowCameraScan] = useState(false)
 
   // Sale success modal state
-  const [lastSale, setLastSale] = useState<{ invoiceNo: string; total: number; isReturn: boolean } | null>(null)
+  const [lastSale, setLastSale] = useState<{
+    invoiceNo: string
+    total: number
+    isReturn: boolean
+    customerName?: string | null
+    customerPhone?: string | null
+  } | null>(null)
   const [lastSaleId, setLastSaleId] = useState<string | null>(null)
+  const [showRecentSalesModal, setShowRecentSalesModal] = useState(false)
 
   // Tax template state
   const [taxTemplatesMap, setTaxTemplatesMap] = useState<Map<string, ResolvedTaxTemplate>>(new Map())
@@ -2479,7 +2487,13 @@ export default function POSPage() {
         setSplitEnabled(false)
         setSplitSecondAmount('')
         fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
-        setLastSale({ invoiceNo: sale.invoiceNo, total: saleTotal, isReturn: false })
+        setLastSale({
+          invoiceNo: sale.invoiceNo,
+          total: saleTotal,
+          isReturn: false,
+          customerName: selectedCustomer?.name || null,
+          customerPhone: selectedCustomer?.phone || null,
+        })
         setLastSaleId(sale.id)
         // Show generated gift card numbers
         if (sale.generatedGiftCards?.length) {
@@ -2684,6 +2698,15 @@ export default function POSPage() {
             {activeShift ? `Shift ${activeShift.entryNumber}` : 'No open shift'}
           </span>
           <span className="text-slate-600 hidden xl:inline">•</span>
+          <button
+            type="button"
+            onClick={() => setShowRecentSalesModal(true)}
+            className="px-2 py-0.5 rounded bg-blue-900/80 hover:bg-blue-800 text-blue-200 font-bold border border-blue-700/80 flex items-center gap-1"
+            title="Recent Sales & Bills (F9)"
+          >
+            <Clock className="w-3 h-3" />
+            Bills History
+          </button>
           <button
             type="button"
             onClick={() => setShowPriceCheckModal(true)}
@@ -2930,6 +2953,15 @@ export default function POSPage() {
         onDismiss={() => { setLastSale(null); setLastSaleId(null) }}
         onPrintReceipt={printReceiptForSale}
         printingReceipt={printingReceipt}
+        shopName={company?.tenantName || 'POSLanka'}
+      />
+
+      {/* Recent Sales / Bill History Modal */}
+      <RecentSalesModal
+        isOpen={showRecentSalesModal}
+        onClose={() => setShowRecentSalesModal(false)}
+        onPrintReceipt={printReceiptForSale}
+        shopName={company?.tenantName || 'POSLanka'}
       />
 
       <ConfirmModal

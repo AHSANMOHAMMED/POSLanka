@@ -525,10 +525,13 @@ function BillingTab({ data }: { data: Detail }) {
 }
 
 function FeaturesTab({ vendorId, flags, labels, onSaved }: { vendorId: string; flags: Record<string, boolean>; labels: Record<string, string>; onSaved: (text: string) => void }) {
+  // What the server holds now. Starts from the loaded flags and follows each save, so a change can be
+  // saved and then switched back and saved again (comparing with the stale prop disabled Save).
+  const [saved, setSaved] = useState(flags)
   const [draft, setDraft] = useState(flags)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const dirty = Object.keys(labels).some((k) => !!draft[k] !== !!flags[k])
+  const dirty = Object.keys(labels).some((k) => !!draft[k] !== !!saved[k])
   const canEdit = useAdminCan('vendors.manage')
 
   async function save() {
@@ -536,6 +539,7 @@ function FeaturesTab({ vendorId, flags, labels, onSaved }: { vendorId: string; f
     setError(null)
     try {
       const res = await adminFetch<{ featureFlags: Record<string, boolean> }>(`/api/sys-control/vendors/${vendorId}/features`, { method: 'PUT', json: { featureFlags: draft } })
+      setSaved(res.featureFlags)
       setDraft(res.featureFlags)
       onSaved('Feature switches saved. The vendor sees the change on their next page load.')
     } catch (e) {
@@ -553,7 +557,7 @@ function FeaturesTab({ vendorId, flags, labels, onSaved }: { vendorId: string; f
         <div className="flex flex-wrap items-center justify-end gap-2">
           {error && <span className="mr-auto text-[13px] text-adm-danger">{error}</span>}
           {!canEdit && <span className="mr-auto text-[13px] text-adm-subtle">Only owners can change feature switches.</span>}
-          <Button variant="ghost" onClick={() => setDraft(flags)} disabled={!dirty || saving}>Undo changes</Button>
+          <Button variant="ghost" onClick={() => setDraft(saved)} disabled={!dirty || saving}>Undo changes</Button>
           <Button variant="primary" onClick={save} loading={saving} disabled={!dirty || !canEdit}>Save</Button>
         </div>
       }

@@ -66,7 +66,11 @@ const dev = process.env.NODE_ENV !== 'production'
 const hostname = '0.0.0.0'
 const port = parseInt(process.env.PORT || '3000', 10)
 
-const app = next({ dev, hostname, port })
+// The listen address is NOT passed to Next: Next builds request.url from its `hostname` option, so
+// every redirect (`new URL(path, request.url)` — sign-in, invites, payments, "Open as owner") went to
+// http://0.0.0.0:<port> whatever host the browser or reverse proxy used. Without it, Next takes the
+// request's Host header.
+const app = next({ dev, port })
 const handle = app.getRequestHandler()
 
 /**

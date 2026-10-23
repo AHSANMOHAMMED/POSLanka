@@ -1,8 +1,9 @@
-import { NextResponse } from 'next/server'
+import { publicUrl } from '@/lib/http/public-url'
+import { NextResponse, type NextRequest } from 'next/server'
 import { destroyAdminSession, validateAdminSession } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
     const session = await validateAdminSession({ permission: 'self', allowPendingSetup: true })
 
@@ -11,10 +12,10 @@ export async function POST() {
     }
 
     // Redirect to login page after logout
-    return NextResponse.redirect(new URL('/sys-control/login', process.env.NEXTAUTH_URL || 'http://localhost:3000'))
+    return NextResponse.redirect(publicUrl(request, '/sys-control/login'))
   } catch (error) {
     logError('api/sys-control/auth/logout', error)
     // Even on error, redirect to login
-    return NextResponse.redirect(new URL('/sys-control/login', process.env.NEXTAUTH_URL || 'http://localhost:3000'))
+    return NextResponse.redirect(publicUrl(request, '/sys-control/login'))
   }
 }

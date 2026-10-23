@@ -1,3 +1,4 @@
+import { publicUrl } from '@/lib/http/public-url'
 import { NextRequest, NextResponse } from 'next/server'
 import { signIn } from '@/lib/auth'
 
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
   const slug = request.nextUrl.searchParams.get('slug')
 
   if (!token || !slug) {
-    return NextResponse.redirect(new URL('/sys-control/vendors?error=missing_token', request.url))
+    return NextResponse.redirect(publicUrl(request, '/sys-control/vendors?error=missing_token'))
   }
 
   try {
@@ -20,8 +21,8 @@ export async function GET(request: NextRequest) {
     })
   } catch (error) {
     console.error('[Impersonate] signIn failed:', error)
-    return NextResponse.redirect(new URL('/sys-control/vendors?error=impersonate_failed', request.url))
+    return NextResponse.redirect(publicUrl(request, '/sys-control/vendors?error=impersonate_failed'))
   }
 
-  return NextResponse.redirect(new URL(`/c/${slug}/dashboard`, request.url))
+  return NextResponse.redirect(publicUrl(request, `/c/${slug}/dashboard`))
 }
