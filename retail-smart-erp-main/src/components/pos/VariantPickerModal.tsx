@@ -248,7 +248,7 @@ export function VariantPickerModal({
                           <p className="font-bold text-slate-900 text-xs truncate">
                             {attrText || v.name}
                           </p>
-                          <p className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          <p className="text-[11px] text-slate-400 font-mono mt-0.5">
                             {v.barcode ? `EAN: ${v.barcode}` : v.sku || 'ITEM'}
                           </p>
                         </div>
@@ -258,7 +258,7 @@ export function VariantPickerModal({
                           </p>
                           {v.trackStock && (
                             <span
-                              className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full inline-block mt-0.5 ${
                                 vOutOfStock
                                   ? 'bg-red-100 text-red-700'
                                   : 'bg-emerald-50 text-emerald-700'
@@ -278,7 +278,7 @@ export function VariantPickerModal({
               {matchedVariant && (
                 <div className="bg-purple-50/80 border border-purple-200/80 rounded-xl p-3.5 flex items-center justify-between mt-2">
                   <div>
-                    <span className="text-[11px] font-bold text-purple-900 uppercase tracking-wider block">
+                    <span className="text-[12px] font-bold text-purple-900 uppercase tracking-wider block">
                       Ready to Add
                     </span>
                     <span className="text-sm font-bold text-slate-900 block mt-0.5">

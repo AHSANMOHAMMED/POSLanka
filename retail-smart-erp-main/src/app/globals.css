@@ -278,6 +278,12 @@ html {
   font-size: 14px;
 }
 
+/* Cashier POS: ~10% larger text (set by the POS page while it is open) */
+html.pos-large-text,
+html.pos-large-text body {
+  font-size: 15.5px;
+}
+
 /* Compact table styles */
 table {
   font-size: 0.875rem;

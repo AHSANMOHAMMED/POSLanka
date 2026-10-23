@@ -103,6 +103,12 @@ export default function POSPage() {
     }
   }, [config.redirectToDealPipeline, router, params.slug])
 
+  // Larger text while the POS is open (rem-based sizes scale, modals included)
+  useEffect(() => {
+    document.documentElement.classList.add('pos-large-text')
+    return () => document.documentElement.classList.remove('pos-large-text')
+  }, [])
+
   // Load cart from converted quotation (sessionStorage)
   useEffect(() => {
     try {
@@ -2676,8 +2682,8 @@ export default function POSPage() {
         </div>
       )}
       {/* Stitch "Operational Velocity" Operational Context Bar */}
-      <div className="w-full bg-slate-900 text-slate-300 px-4 py-1.5 flex items-center justify-between text-xs font-mono border-b border-slate-800 shrink-0 select-none">
-        <div className="flex items-center gap-2.5">
+      <div className="w-full bg-slate-900 text-slate-300 px-4 py-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs font-mono whitespace-nowrap border-b border-slate-800 shrink-0 select-none">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
           <span className="font-extrabold text-white uppercase tracking-wider">{company.tenantName || 'POSLanka'}</span>
           <span className="text-slate-600">•</span>
           <span className="text-slate-300">{posWarehouse?.name || 'No branch'}</span>
@@ -2693,7 +2699,7 @@ export default function POSPage() {
             {online ? 'Online' : 'Offline'}
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="text-amber-400 font-bold">
             {activeShift ? `Shift ${activeShift.entryNumber}` : 'No open shift'}
           </span>

@@ -176,7 +176,7 @@ export function QuickItemAddModal({
                 <h3 className="font-bold text-slate-900 text-base leading-tight">
                   Quick Add Item
                 </h3>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 font-bold">
+                <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 font-bold">
                   F4
                 </span>
               </div>
@@ -327,7 +327,7 @@ export function QuickItemAddModal({
               >
                 Weighable / Measured Item
               </label>
-              <p className="text-[11px] text-slate-500">
+              <p className="text-[12px] text-slate-500">
                 Prompts for scale weight or volume when selected at POS
               </p>
             </div>

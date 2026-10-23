@@ -45,7 +45,7 @@ export function HeldOrdersDrawerModal({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded">
+                <span className="text-[11px] font-mono uppercase tracking-wider font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded">
                   Parked Carts
                 </span>
                 <span className="text-xs font-mono font-bold text-slate-500">
@@ -90,7 +90,7 @@ export function HeldOrdersDrawerModal({
                         Ticket #{order.ticketNumber}
                       </span>
                       {order.tableOrCounter && (
-                        <span className="text-[11px] font-mono bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded">
+                        <span className="text-[12px] font-mono bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded">
                           {order.tableOrCounter}
                         </span>
                       )}
@@ -107,7 +107,7 @@ export function HeldOrdersDrawerModal({
                     <span className="text-sm font-bold text-teal-700 dark:text-teal-400 block">
                       LKR {order.totalAmount.toFixed(2)}
                     </span>
-                    <span className="text-[11px] text-slate-400">
+                    <span className="text-[12px] text-slate-400">
                       {order.itemsCount} items
                     </span>
                   </div>
@@ -120,7 +120,7 @@ export function HeldOrdersDrawerModal({
                 )}
 
                 <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-700/80">
-                  <div className="text-[11px] font-mono text-slate-400 flex items-center gap-1">
+                  <div className="text-[12px] font-mono text-slate-400 flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     <span>Held {order.heldAt}</span>
                   </div>

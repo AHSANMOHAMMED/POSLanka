@@ -369,7 +369,7 @@ export function CartPanel({
                       <Plus size={16} />
                     </button>
                     {item.unit && item.unit !== 'pcs' && (
-                      <span className="text-[11px] font-semibold text-slate-500 px-1 select-none">
+                      <span className="text-[12px] font-semibold text-slate-500 px-1 select-none">
                         {item.unit}
                       </span>
                     )}

@@ -88,7 +88,7 @@ export function PriceCheckModal({
               <Tag className="w-6 h-6 text-indigo-200" />
             </div>
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-indigo-200 font-bold block">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-indigo-200 font-bold block">
                 Counter Price Verification
               </span>
               <h2 className="text-lg font-bold leading-tight">

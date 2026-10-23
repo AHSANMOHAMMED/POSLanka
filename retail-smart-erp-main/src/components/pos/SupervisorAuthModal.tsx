@@ -92,7 +92,7 @@ export function SupervisorAuthModal({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] font-mono uppercase tracking-wider font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded">
+                <span className="text-[11px] font-mono uppercase tracking-wider font-bold bg-amber-500/20 text-amber-700 dark:text-amber-400 px-2 py-0.5 rounded">
                   Elevated Authorization Required
                 </span>
                 <span className="text-xs font-mono font-bold text-slate-500 dark:text-slate-400">

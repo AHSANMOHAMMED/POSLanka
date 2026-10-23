@@ -75,7 +75,7 @@ export function CashDrawerFloatModal({
               <Wallet className="w-6 h-6 text-teal-200" />
             </div>
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-teal-200 font-bold block">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-teal-200 font-bold block">
                 Drawer Cash Management • Sunmi T2s
               </span>
               <h2 className="text-lg font-bold leading-tight">

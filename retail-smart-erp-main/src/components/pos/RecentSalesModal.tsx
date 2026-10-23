@@ -158,7 +158,7 @@ export function RecentSalesModal({
                       {sale.invoiceNo}
                     </span>
                     <span
-                      className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
+                      className={`text-[11px] uppercase font-bold px-1.5 py-0.5 rounded ${
                         sale.isReturn
                           ? 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400'
                           : 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'

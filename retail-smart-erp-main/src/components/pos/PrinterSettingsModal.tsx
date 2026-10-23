@@ -134,7 +134,7 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
               <Printer className="w-5 h-5 text-teal-300" />
             </div>
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-teal-300 font-bold block">This terminal</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-teal-300 font-bold block">This terminal</span>
               <h2 className="text-base font-bold leading-tight">Printers</h2>
             </div>
           </div>
@@ -166,7 +166,7 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
                   <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-teal-600' : 'text-gray-400'}`} />
                   <div className="min-w-0">
                     <div className="font-medium truncate">{p.name}</div>
-                    <div className="text-[11px] text-gray-500 dark:text-gray-400 truncate">
+                    <div className="text-[12px] text-gray-500 dark:text-gray-400 truncate">
                       {ROLE_LABELS[p.role]} · {TRANSPORTS.find((t) => t.kind === p.transport)?.label}
                       {p.role === 'label' ? ` · ${p.label.language.toUpperCase()}` : ` · ${p.paperWidth}mm`}
                     </div>
@@ -175,7 +175,7 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
               )
             })}
             <div className="pt-2 border-t border-gray-200 dark:border-gray-800 space-y-1">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Add printer</p>
+              <p className="text-[12px] font-semibold uppercase tracking-wide text-gray-500">Add printer</p>
               {(['receipt', 'label', 'kitchen'] as PrinterRole[]).map((role) => {
                 const Icon = ROLE_ICONS[role]
                 return (
@@ -242,7 +242,7 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
                             <div className="font-semibold flex items-center gap-2">
                               {t.label}
                               {!available && (
-                                <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
+                                <span className="text-[11px] font-normal px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200">
                                   not supported here
                                 </span>
                               )}

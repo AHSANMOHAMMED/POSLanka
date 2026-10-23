@@ -266,7 +266,7 @@ export function CameraScanModal({ isOpen, onClose, onDetected, title = 'Scan bar
               <Camera className="w-5 h-5 text-teal-300" />
             </div>
             <div>
-              <span className="text-[10px] font-mono uppercase tracking-wider text-teal-300 font-bold block">Camera scanner</span>
+              <span className="text-[11px] font-mono uppercase tracking-wider text-teal-300 font-bold block">Camera scanner</span>
               <h2 className="text-base font-bold leading-tight">{title}</h2>
             </div>
           </div>

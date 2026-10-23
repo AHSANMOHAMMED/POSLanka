@@ -189,7 +189,7 @@ export function ProductGrid({
     <div className="w-full lg:w-[60%] flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50/50">
       {/* Search Header */}
       <div className="bg-white border-b px-4 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Shift Status */}
           {activeShift && (
             <ShiftStatus
@@ -210,8 +210,8 @@ export function ProductGrid({
             </div>
           )}
 
-          {/* Search */}
-          <div className="flex-1 min-w-0">
+          {/* Search: wraps to its own full-width line when the panel is narrow */}
+          <div className="flex-1 min-w-[16rem] order-last 2xl:order-none basis-full 2xl:basis-0">
             <FormInput
               id={POS_SEARCH_INPUT_ID}
               type="text"
@@ -237,7 +237,7 @@ export function ProductGrid({
             >
               <PlusCircle size={16} className="text-teal-700" />
               <span className="hidden md:inline">Quick Add</span>
-              <span className="text-[10px] bg-teal-200/60 text-teal-900 px-1 py-0.5 rounded font-mono font-extrabold">F4</span>
+              <span className="text-[11px] bg-teal-200/60 text-teal-900 px-1 py-0.5 rounded font-mono font-extrabold">F4</span>
             </button>
           )}
 
@@ -273,7 +273,7 @@ export function ProductGrid({
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as POSSortOption)}
-              className="text-[11px] font-semibold pl-6 pr-2 py-1 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer"
+              className="text-[12px] font-semibold pl-6 pr-2 py-1 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer"
               title="Sort products"
             >
               <option value="default">Default Order</option>
@@ -345,12 +345,12 @@ export function ProductGrid({
                 >
                   {/* Stock Tag on Top Right */}
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 font-bold">
+                    <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 font-bold">
                       {item.barcode ? `EAN: ${item.barcode.slice(-6)}` : item.sku || 'ITEM'}
                     </span>
                     {item.trackStock && (
                       <span
-                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                        className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
                           isOutOfStock
                             ? 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400'
                             : isLowStock
@@ -369,11 +369,11 @@ export function ProductGrid({
 
                   {(() => {
                     const partNum = getItemPartNumber(item, businessType)
-                    return partNum ? <p className="text-[11px] text-slate-400 mb-1 font-mono">{partNum}</p> : null
+                    return partNum ? <p className="text-[12px] text-slate-400 mb-1 font-mono">{partNum}</p> : null
                   })()}
 
                   {item.categoryName && (
-                    <p className="text-[11px] text-slate-400 truncate mb-2">{item.categoryName}</p>
+                    <p className="text-[12px] text-slate-400 truncate mb-2">{item.categoryName}</p>
                   )}
 
                   {/* Weighable / Core charge indicators */}
@@ -432,7 +432,7 @@ export function ProductGrid({
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <span className="text-[10px] font-mono px-2 py-1 rounded bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 font-bold flex-shrink-0">
+                    <span className="text-[11px] font-mono px-2 py-1 rounded bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 font-bold flex-shrink-0">
                       {item.barcode ? item.barcode.slice(-6) : item.sku || 'ITEM'}
                     </span>
                     <div className="min-w-0 flex-1">
@@ -441,10 +441,10 @@ export function ProductGrid({
                           {item.name}
                         </span>
                         {item.categoryName && (
-                          <span className="text-[11px] text-slate-400 hidden sm:inline">({item.categoryName})</span>
+                          <span className="text-[12px] text-slate-400 hidden sm:inline">({item.categoryName})</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                      <div className="flex items-center gap-2 text-[12px] text-slate-500">
                         {item.trackStock && (
                           <span className={isOutOfStock ? 'text-red-500 font-bold' : isLowStock ? 'text-amber-500 font-semibold' : 'text-emerald-600 dark:text-emerald-400'}>
                             {isOutOfStock ? 'Out of stock' : `${stock.toFixed(0)} in stock`}

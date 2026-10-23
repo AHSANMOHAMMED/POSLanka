@@ -44,7 +44,7 @@ export function TableSelector({ tables, selectedTableId, onSelect, disabled }: T
               {table.name}
             </span>
             {table.capacity > 0 && (
-              <span className="block text-[10px] text-gray-400">{table.capacity}p</span>
+              <span className="block text-[11px] text-gray-400">{table.capacity}p</span>
             )}
           </button>
         )
