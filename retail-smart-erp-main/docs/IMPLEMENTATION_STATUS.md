@@ -167,3 +167,14 @@ Ops must set: `METRICS_TOKEN`, S3 storage credentials (or `ALLOW_LOCAL_UPLOADS=t
 - **Verified in a browser:** web POS offline sale → `OFF-…` receipt number → receipt printed → synced once on reconnect.
 
 Verification: fresh DB 0000–0169, 45 suites pass (new i6 61/61), web + mobile typecheck and lint clean, production build OK, admin and vendor pages without overflow and < 1 s.
+
+## Round 11 — Android APK, vendor page, crash fixes, partial refunds (2026-10-23)
+- **Android APK:** `apps/mobile` builds a release-signed APK locally with `npm run build:apk` (no Expo account; key in `~/.poslanka-keys`, not in git — back it up). New architecture, React Native 0.76.9, codegen before the C++ build, server URL inlined (`EXPO_PUBLIC_API_URL`), cleartext allowed for shop LAN servers. Verified on an Android 16 emulator: Business ID sign-in → Mobile POS with live data. `releases/POSLanka-1.0.0.apk` (Git LFS) predates the receipt-conversion change below; the next `npm run build:apk` includes it.
+- **Super-admin vendor page:** every tab and action verified in a browser (`scripts/e2e-live/ui-vendor-page.cjs`, 28/28). Fixed: all server redirects pointed at `http://0.0.0.0:<port>` (now `publicUrl()`: the browser's trusted host, else `NEXTAUTH_URL`), and the Features tab could not save a switch back without a reload.
+- **"Cannot read properties of null (reading 'removeChild')":** the staff sign-in page no longer edits/removes the React-owned `<link rel="manifest">`; the app opts out of browser auto-translation (`translate="no"`, `notranslate`), which rewrites text behind React.
+- **PayHere partial refunds:** optional amount, running total, `partial` status until fully refunded (PayHere Refund API `amount`).
+- **Mobile receipts** print the unit conversion under the item ("1 Box = 12 pcs") on 58/80 mm and HTML receipts.
+- **Tests follow the new rule** that stock intake is for stock staff only (c3-writers, i2-roles).
+- **Permission cache races fixed:** a role change landing during a cache load no longer leaves stale permissions for 5 minutes, and an invalidation no longer makes a request fall back to role defaults (it marks the entry stale instead of deleting it). Module access invalidates after commit.
+
+Still open: Expo SDK upgrade (only remaining npm advisories are in Expo's build tooling), IRD RAMIS transmitter (no public API yet), hardware tests (phones, printers, scanners, scales).

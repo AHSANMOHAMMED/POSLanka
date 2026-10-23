@@ -210,6 +210,27 @@ async function main() {
     })
 
     // ---------------------------------------------------------------- module access
+    await step('permission cache: a change during an in-flight load is not lost', async () => {
+      // Start a load, change a permission and invalidate while it reads the database: the load
+      // must not store the old data (it used to, and the stale value stuck for 5 minutes).
+      // Hold the load mid-read: custom_roles is locked, so that query waits while the overrides
+      // query has already read the old rows; then change + invalidate, then release the lock.
+      permCache.invalidatePermissionCache(fx.tenantId)
+      await admin.query('BEGIN')
+      await admin.query('LOCK TABLE custom_roles IN ACCESS EXCLUSIVE MODE')
+      const loading = permCache.warmPermissionCache(fx.tenantId)
+      await new Promise((r) => setTimeout(r, 300))
+      await admin.query(`INSERT INTO role_permission_overrides (tenant_id, role, permission_key, is_granted) VALUES ($1, 'cashier', 'viewReports', true)`, [fx.tenantId])
+      permCache.invalidatePermissionCache(fx.tenantId)
+      await admin.query('COMMIT')
+      await loading
+      await permCache.warmPermissionCache(fx.tenantId) // no-op when the load above stored fresh data
+      check('override written during a load is visible right after', permCache.getPermissionOverride(fx.tenantId, 'cashier', 'viewReports') === true,
+        permCache.getPermissionOverride(fx.tenantId, 'cashier', 'viewReports'))
+      await admin.query(`DELETE FROM role_permission_overrides WHERE tenant_id = $1 AND role = 'cashier' AND permission_key = 'viewReports'`, [fx.tenantId])
+      permCache.invalidatePermissionCache(fx.tenantId)
+    })
+
     await step('module access enforced server-side', async () => {
       await as(fx.cashier)
       const denied = await json(await putModuleAccess(req('PUT', '/api/module-access', { entries: [{ moduleKey: 'stock', role: 'cashier', isEnabled: true }] })))
@@ -311,14 +332,22 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500)) // listener connects on first warm
       await as(fx.owner)
       const before = permCache.getCachedCustomRoles(fx.tenantId).length
-      // Another app process publishing a change (same SQL invalidatePermissionCache sends)
+      // Another app process changes a custom role directly in the database...
+      const extraRole = randomUUID()
+      await admin.query(`INSERT INTO custom_roles (id, tenant_id, name, slug, base_role) VALUES ($1, $2, 'From another process', $3, 'cashier')`, [extraRole, fx.tenantId, `other-${extraRole.slice(0, 8)}`])
+      await permCache.warmPermissionCache(fx.tenantId)
+      check('without a notice this process keeps its cached copy (TTL)', permCache.getCachedCustomRoles(fx.tenantId).length === before)
+      // ...and publishes the change (same SQL invalidatePermissionCache sends)
       await admin.query(`SELECT pg_notify('permission_cache_invalidate', $1)`, [fx.tenantId])
       let after = before
-      for (let i = 0; i < 20 && after > 0; i++) {
+      for (let i = 0; i < 20 && after === before; i++) {
         await new Promise((r) => setTimeout(r, 100))
+        await permCache.warmPermissionCache(fx.tenantId)
         after = permCache.getCachedCustomRoles(fx.tenantId).length
       }
-      check('a NOTIFY from another process drops this process\'s cached tenant', before > 0 && after === 0, { before, after })
+      check('after a NOTIFY from another process, the next load picks up the change', after === before + 1, { before, after })
+      await admin.query(`DELETE FROM custom_roles WHERE id = $1`, [extraRole])
+      permCache.invalidatePermissionCache(fx.tenantId)
     })
 
     // ---------------------------------------------------------------- email invite with a custom role

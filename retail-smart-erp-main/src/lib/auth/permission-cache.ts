@@ -22,6 +22,28 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>()
 
+// Invalidation marks entries stale instead of deleting them: a missing entry makes every check
+// fall back to the role DEFAULTS (ignoring the tenant's grants and revocations), and the
+// cross-instance notice of an invalidation can arrive between a request's reload and its checks.
+// A stale entry keeps answering until the next warmPermissionCache() replaces it.
+//
+// Generations: a load reads the database asynchronously; if the tenant is invalidated while that
+// read is in flight, its (old) result must not be stored as fresh. Every invalidation bumps the
+// tenant's generation ('*' bumps the global epoch) and a load only stores its result when
+// nothing changed meanwhile.
+const generations = new Map<string, number>()
+let epoch = 0
+const generationOf = (tenantId: string) => `${epoch}:${generations.get(tenantId) ?? 0}`
+function dropTenant(tenantId: string): void {
+  const entry = cache.get(tenantId)
+  if (entry) entry.loadedAt = 0
+  generations.set(tenantId, (generations.get(tenantId) ?? 0) + 1)
+}
+function dropAll(): void {
+  for (const entry of cache.values()) entry.loadedAt = 0
+  epoch++
+}
+
 /**
  * Load all permission overrides and custom roles for a tenant into memory.
  * Called lazily from authWithCompany(). Safe to call repeatedly (TTL-gated).
@@ -31,6 +53,19 @@ export async function warmPermissionCache(tenantId: string): Promise<void> {
   const existing = cache.get(tenantId)
   if (existing && Date.now() - existing.loadedAt < CACHE_TTL_MS) return
 
+  // Retry when an invalidation lands during the read (see generations above)
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const generation = generationOf(tenantId)
+    const entry = await loadEntry(tenantId)
+    if (!entry) return
+    if (generationOf(tenantId) === generation) {
+      cache.set(tenantId, entry)
+      return
+    }
+  }
+}
+
+async function loadEntry(tenantId: string): Promise<CacheEntry | null> {
   try {
     const [overrides, roles, modules] = await Promise.all([
       db.select().from(rolePermissionOverrides).where(eq(rolePermissionOverrides.tenantId, tenantId)),
@@ -64,9 +99,10 @@ export async function warmPermissionCache(tenantId: string): Promise<void> {
       if (!m.isEnabled && m.role !== 'owner') entry.disabledModules.add(`${m.role}:${m.moduleKey}`)
     }
 
-    cache.set(tenantId, entry)
+    return entry
   } catch {
     // On DB error, keep stale cache or no cache — fall back to system defaults
+    return null
   }
 }
 
@@ -163,8 +199,8 @@ function startInvalidationListener(): void {
   }
   client.on('notification', (msg) => {
     if (msg.channel !== CHANNEL) return
-    if (msg.payload === '*') cache.clear()
-    else if (msg.payload) cache.delete(msg.payload)
+    if (msg.payload === '*') dropAll()
+    else if (msg.payload) dropTenant(msg.payload)
     // Same signal: staff/roles changed → cached session checks of that tenant are stale too
     if (msg.payload) clearSessionValidation(msg.payload)
   })
@@ -176,7 +212,7 @@ function startInvalidationListener(): void {
       state.starting = false
       state.retryMs = 1000
       // Anything published while we were not listening is unknown: start clean
-      cache.clear()
+      dropAll()
       clearSessionValidation('*')
       // Never keep a process (tests, scripts) alive just for this socket
       ;(client as unknown as { connection?: { stream?: { unref?: () => void } } }).connection?.stream?.unref?.()
@@ -194,7 +230,7 @@ function startInvalidationListener(): void {
  * the other processes.
  */
 export function invalidatePermissionCache(tenantId: string): void {
-  cache.delete(tenantId)
+  dropTenant(tenantId)
   clearSessionValidation(tenantId)
   if (!UUID_RE.test(tenantId)) return
   db.execute(sql`SELECT pg_notify(${CHANNEL}, ${tenantId})`).catch(() => undefined)

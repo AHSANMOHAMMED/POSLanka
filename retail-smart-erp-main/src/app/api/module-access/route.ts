@@ -53,7 +53,7 @@ export async function PUT(request: NextRequest) {
     // skips owners anyway), so the editor may send the full grid unchanged.
     const entries = requested.filter((e) => e.role !== 'owner')
 
-    return await withTenant(session.user.tenantId, async (db) => {
+    const response = await withTenant(session.user.tenantId, async (db) => {
       for (const entry of entries) {
         const existing = await db.query.moduleAccess.findFirst({
           where: and(
@@ -82,18 +82,21 @@ export async function PUT(request: NextRequest) {
         }
       }
 
-      // Server-side enforcement reads module access from the permission cache
-      invalidatePermissionCache(session.user.tenantId)
-      logAndBroadcast(session.user.tenantId, 'module-access', 'updated', 'bulk')
-      // Effective permissions change too — clients listening for 'settings' refetch them
-      logAndBroadcast(session.user.tenantId, 'settings', 'updated', 'role-permissions', { userId: session.user.id })
-
       const result = await db.query.moduleAccess.findMany({
         orderBy: (m, { asc }) => [asc(m.moduleKey), asc(m.role)],
       })
 
       return NextResponse.json(result)
     })
+
+    // After commit: invalidating (or telling clients to refetch) inside the transaction let a
+    // concurrent request reload the old module access into the cache.
+    // Server-side enforcement reads module access from the permission cache
+    invalidatePermissionCache(session.user.tenantId)
+    logAndBroadcast(session.user.tenantId, 'module-access', 'updated', 'bulk')
+    // Effective permissions change too — clients listening for 'settings' refetch them
+    logAndBroadcast(session.user.tenantId, 'settings', 'updated', 'role-permissions', { userId: session.user.id })
+    return response
   } catch (error) {
     logError('api/module-access', error)
     return NextResponse.json({ error: 'Failed to update module access' }, { status: 500 })
