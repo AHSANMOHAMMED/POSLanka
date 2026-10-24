@@ -127,7 +127,7 @@ export function AuthShell({ aside, mobileHeader, footer, width = 'sm', children 
         >
           <div className="relative z-10 flex flex-col items-center gap-2.5">
             <Link href="/" className="adm-focus inline-flex rounded-2xl bg-white px-4 py-2.5 shadow-[0_10px_30px_-10px_rgba(0,0,0,0.5)]">
-              <BrandWordmark height={48} />
+              <BrandWordmark height={hasAside ? 52 : 68} />
             </Link>
             {mobileHeader
               ? <div className="rounded-xl bg-white/95 px-3.5 py-2 text-left shadow-sm">{mobileHeader}</div>
