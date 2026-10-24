@@ -60,7 +60,9 @@ export default function ImportExportSettingsPage() {
       const res = await fetch('/api/activity-logs?action=import,export&limit=20')
       if (res.ok) {
         const data = await res.json()
-        setRecentActivity(data.data || data || [])
+        // GET /api/activity-logs → { logs: [{ …, user: { fullName } }], pagination }
+        const logs: Array<ActivityLog & { user?: { fullName?: string | null } | null }> = Array.isArray(data?.logs) ? data.logs : []
+        setRecentActivity(logs.map((l) => ({ ...l, userName: l.userName ?? l.user?.fullName ?? undefined })))
       }
     } catch {
       // Silent fail

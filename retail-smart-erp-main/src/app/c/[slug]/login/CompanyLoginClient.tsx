@@ -94,16 +94,19 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
 
   const registered = searchParams.get('registered') === 'true'
   const invited = searchParams.get('invited') === 'true'
+  // Page asked for before signing in (?next=/items/new): only a path inside this company
+  const nextParam = searchParams.get('next') || ''
+  const requestedPath = /^\/(?!\/)[A-Za-z0-9\-_/.]*$/.test(nextParam) && !nextParam.startsWith('/login') ? nextParam : null
 
   const enterCompany = async () => {
     rememberCompany(company)
     broadcastAuthEvent('login', 'company')
     // Each role lands on its own work screen (cashier → POS, kitchen → KDS, owner → dashboard …)
-    let landing = '/dashboard'
+    let landing = requestedPath || '/dashboard'
     try {
       const res = await fetch('/api/auth/session')
       const data = res.ok ? await res.json() : null
-      landing = landingPathForRole(data?.user?.role, data?.user?.businessType ?? company.businessType)
+      landing = requestedPath || landingPathForRole(data?.user?.role, data?.user?.businessType ?? company.businessType)
     } catch {
       // keep the dashboard
     }
@@ -140,7 +143,7 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
         const data = res.ok ? await res.json() : null
         if (cancelled) return
         if (data?.user?.tenantSlug === slug && !isExplicitLogout) {
-          router.replace(`/c/${slug}${landingPathForRole(data.user.role, data.user.businessType ?? company.businessType)}`)
+          router.replace(`/c/${slug}${requestedPath || landingPathForRole(data.user.role, data.user.businessType ?? company.businessType)}`)
           return
         }
         if (isExplicitLogout) return

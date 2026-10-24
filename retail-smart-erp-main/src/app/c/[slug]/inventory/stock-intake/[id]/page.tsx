@@ -72,6 +72,8 @@ interface Validation {
   willCreate: Array<{ lineId: string; name: string }>
   conflicts: Array<{ lineId: string; barcode: string | null; sku: string | null; barcodeItem: { name: string }; skuItem: { name: string } }>
   errors: Array<{ lineId: string; error: string }>
+  /** selling prices on lines that differ from the item's price: applied only when confirmed */
+  priceChanges?: Array<{ lineId: string; itemName: string; currentPrice: number; newPrice: number; decision: 'apply' | 'keep' | null }>
   canSync: boolean
 }
 
@@ -246,13 +248,24 @@ export default function StockIntakeDetailPage() {
     }
   }
 
-  async function runSync() {
+  async function runSync(priceChanges?: 'apply' | 'keep') {
     setBusy('sync')
     setSyncResult(null)
     try {
+      if (!priceChanges) {
+        // Dry run first: a changed selling price is applied only when the user says so
+        const vRes = await fetch(`/api/stock-intake/${id}/validate`, { method: 'POST' })
+        const v = (await readJson(vRes)) as unknown as Validation
+        if (vRes.ok && v.priceChanges?.some((c) => c.decision === null)) {
+          setValidation(v)
+          toast.info('Some selling prices changed: choose to update them or keep the current prices')
+          return
+        }
+      }
       const res = await fetch(`/api/stock-intake/${id}/sync`, {
         method: 'POST',
-        headers: { 'Idempotency-Key': crypto.randomUUID() },
+        headers: { 'Idempotency-Key': crypto.randomUUID(), 'Content-Type': 'application/json' },
+        body: JSON.stringify(priceChanges ? { priceChanges } : {}),
       })
       const data = await readJson(res)
       if (!res.ok) {
@@ -334,7 +347,7 @@ export default function StockIntakeDetailPage() {
               </button>
             )}
             {canPost && EDITABLE.includes(batch.status) && openLines > 0 && (
-              <button onClick={runSync} disabled={!!busy}
+              <button onClick={() => void runSync()} disabled={!!busy}
                 className="px-3 py-2 bg-green-600 text-white rounded text-sm flex items-center gap-2 hover:bg-green-700 disabled:opacity-50">
                 {busy === 'sync' ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
                 {batch.status === 'partially_posted' ? 'Re-sync remaining' : 'Sync to stock'}
@@ -421,6 +434,22 @@ export default function StockIntakeDetailPage() {
             <div key={c.lineId} className="text-orange-700 dark:text-orange-300">Conflict: barcode {c.barcode} → {c.barcodeItem.name}, SKU {c.sku} → {c.skuItem.name}</div>
           ))}
           {validation.errors.map((e) => <div key={e.lineId} className="text-red-600">{e.error}</div>)}
+          {(validation.priceChanges || []).some((c) => c.decision === null) && (
+            <div className="mt-3 rounded border border-blue-300 bg-blue-50 dark:bg-blue-900/20 p-3">
+              <div className="font-medium text-gray-900 dark:text-white mb-1">Selling price changes</div>
+              {(validation.priceChanges || []).filter((c) => c.decision === null).map((c) => (
+                <div key={c.lineId} className="text-gray-700 dark:text-gray-300">
+                  {c.itemName}: {c.currentPrice.toFixed(2)} → <span className="font-semibold">{c.newPrice.toFixed(2)}</span>
+                </div>
+              ))}
+              {canPost && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button onClick={() => void runSync('apply')} disabled={!!busy} className="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 disabled:opacity-50">Update prices &amp; sync</button>
+                  <button onClick={() => void runSync('keep')} disabled={!!busy} className="px-3 py-1.5 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded text-sm hover:bg-gray-50 disabled:opacity-50">Keep current prices &amp; sync</button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

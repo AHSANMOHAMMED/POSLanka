@@ -97,16 +97,19 @@ export default async function CompanyLayout({
 
   // ── AUTH CHECK ──
   const session = await auth()
+  // The page that was asked for: after signing in to this company the login page returns there
+  const requested = pathname.startsWith(`/c/${slug}/`) ? pathname.slice(`/c/${slug}`.length) : ''
+  const loginUrl = requested && requested !== '/dashboard' ? `/c/${slug}/login?next=${encodeURIComponent(requested)}` : `/c/${slug}/login`
 
   if (!session || !session.user?.id) {
-    redirect(`/c/${slug}/login`)
+    redirect(loginUrl)
   }
 
   // ── TENANT CONTEXT CHECK ──
   // If the session is for a different company,
   // redirect to the company login page so the user can sign in to this specific company.
   if (session.user.tenantSlug !== slug) {
-    redirect(`/c/${slug}/login`)
+    redirect(loginUrl)
   }
 
   // Super admins cannot access company pages - redirect to admin panel

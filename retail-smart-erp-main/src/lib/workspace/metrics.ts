@@ -7,6 +7,7 @@ import {
   items, customers, suppliers, purchaseOrders, sales,
   vehicles, warehouses, payments, saleItems, stockMovements,
   posOpeningEntries, posClosingEntries, posClosingReconciliation, users,
+  restaurantOrders, restaurantTables,
 } from '@/lib/db/schema'
 import { eq, and, or, sql, desc } from 'drizzle-orm'
 import { hasPermission, type Permission } from '@/lib/auth/roles'
@@ -34,6 +35,7 @@ const BLOCK_PERMISSIONS: Record<string, Permission[]> = {
   stock_value_by_warehouse: STOCK_VALUE_PERMISSIONS,
   // quick lists
   recent_sales: FINANCIAL_PERMISSIONS,
+  recent_restaurant_orders: FINANCIAL_PERMISSIONS,
   recent_shift_variance: FINANCIAL_PERMISSIONS,
   recent_purchase_orders: PURCHASE_PERMISSIONS,
 }
@@ -531,6 +533,38 @@ const QUICK_LISTS: Record<string, QuickListFn> = {
       columns: [
         { key: 'invoiceNo', label: 'Invoice #', type: 'text' },
         { key: 'customerName', label: 'Customer', type: 'text' },
+        { key: 'total', label: 'Total', type: 'currency' },
+        { key: 'status', label: 'Status', type: 'status' },
+        { key: 'createdAt', label: 'Date', type: 'date' },
+      ],
+      rows: rows as unknown as Record<string, unknown>[],
+      totalCount: Number(countResult?.count || 0),
+    }
+  },
+
+  recent_restaurant_orders: async (db, limit) => {
+    const rows = await db
+      .select({
+        id: restaurantOrders.id,
+        orderNo: restaurantOrders.orderNo,
+        tableName: restaurantTables.name,
+        orderType: restaurantOrders.orderType,
+        total: restaurantOrders.total,
+        status: restaurantOrders.status,
+        createdAt: restaurantOrders.createdAt,
+      })
+      .from(restaurantOrders)
+      .leftJoin(restaurantTables, eq(restaurantTables.id, restaurantOrders.tableId))
+      .orderBy(desc(restaurantOrders.createdAt))
+      .limit(limit)
+
+    const [countResult] = await db.select({ count: sql<number>`COUNT(*)` }).from(restaurantOrders)
+
+    return {
+      title: 'Recent Orders',
+      columns: [
+        { key: 'orderNo', label: 'Order #', type: 'text' },
+        { key: 'tableName', label: 'Table', type: 'text' },
         { key: 'total', label: 'Total', type: 'currency' },
         { key: 'status', label: 'Status', type: 'status' },
         { key: 'createdAt', label: 'Date', type: 'date' },
