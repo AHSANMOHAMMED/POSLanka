@@ -66,6 +66,13 @@ export const addStockIntakeLinesSchema = z.object({
 export const updateStockIntakeLineSchema = z.object({
   quantity: qtySchema.optional(),
   ...lineFields,
+  /** Existing item with a different selling price: confirm ('apply') or keep the item's price */
+  priceDecision: z.enum(['apply', 'keep']).nullable().optional(),
+})
+
+// POST /api/stock-intake/[id]/sync — decide every undecided price change at once (optional)
+export const syncStockIntakeSchema = z.object({
+  priceChanges: z.enum(['apply', 'keep']).optional(),
 })
 
 export const intakeLineParamsSchema = z.object({

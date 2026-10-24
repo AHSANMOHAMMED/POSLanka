@@ -6402,6 +6402,8 @@ export const stockIntakeLines = pgTable('stock_intake_lines', {
   unit: varchar('unit', { length: 50 }),
   costPrice: decimal('cost_price', { precision: 12, scale: 2 }),
   sellingPrice: decimal('selling_price', { precision: 12, scale: 2 }),
+  /** Existing item, different selling price: 'apply' updates the item after confirmation; else kept (drizzle/0175) */
+  priceDecision: varchar('price_decision', { length: 10 }).$type<'apply' | 'keep'>(),
   matchType: varchar('match_type', { length: 20 }), // item | barcode | sku | item_code | new | conflict
   status: stockIntakeLineStatusEnum('status').notNull().default('pending'),
   errorMessage: text('error_message'),

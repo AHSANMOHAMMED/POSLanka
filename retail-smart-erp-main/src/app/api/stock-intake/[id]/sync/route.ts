@@ -5,10 +5,15 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { syncIntakeBatch } from '@/lib/inventory/stock-intake-sync'
+import { syncStockIntakeSchema } from '@/lib/validation/schemas/stock-intake'
+import { withTenant } from '@/lib/db'
+import { stockIntakeLines } from '@/lib/db/schema'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { intakeErrorResponse } from '@/lib/inventory/stock-intake-http'
 import { notify } from '@/lib/notifications/notify'
 
-// POST /api/stock-intake/[id]/sync — post open lines into stock (header Idempotency-Key optional)
+// POST /api/stock-intake/[id]/sync — post open lines into stock (header Idempotency-Key optional;
+// body { priceChanges?: 'apply' | 'keep' } answers undecided price changes — unanswered ones are kept)
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const p = validateParams(await params, idParamSchema)
   if (!p.success) return p.response
@@ -20,6 +25,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (permError) return permError
 
   try {
+    // Optional { priceChanges: 'apply' | 'keep' }: the user's answer for every undecided price change
+    // eslint-disable-next-line custom-rules/no-direct-request-json -- the body is optional (older apps send none)
+    const body = syncStockIntakeSchema.safeParse(await request.json().catch(() => ({})))
+    if (body.success && body.data.priceChanges) {
+      const decision = body.data.priceChanges
+      await withTenant(session.user.tenantId, (db) => db.update(stockIntakeLines)
+        .set({ priceDecision: decision, updatedAt: new Date() })
+        .where(and(eq(stockIntakeLines.batchId, p.data.id), isNull(stockIntakeLines.priceDecision), inArray(stockIntakeLines.status, ['pending', 'error']))))
+    }
     const result = await syncIntakeBatch({
       tenantId: session.user.tenantId,
       userId: session.user.id,

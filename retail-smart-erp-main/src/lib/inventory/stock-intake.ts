@@ -656,7 +656,7 @@ export async function addIntakeLines(db: DbTx, input: AddLinesInput): Promise<Ad
   return { lines: previews, warnings, outcomes }
 }
 
-export type IntakeLinePatch = Partial<Omit<IntakeLineInput, 'clientLineId'>>
+export type IntakeLinePatch = Partial<Omit<IntakeLineInput, 'clientLineId'>> & { priceDecision?: 'apply' | 'keep' | null }
 
 async function loadOpenLineForUpdate(db: DbTx, tenantId: string, batchId: string, lineId: string): Promise<IntakeLineRow> {
   const [line] = await db.select().from(stockIntakeLines)
@@ -703,6 +703,9 @@ export async function updateIntakeLine(db: DbTx, input: { tenantId: string; batc
     unit: has('unit') ? blank(patch.unit) : line.unit,
     costPrice: has('costPrice') ? money(patch.costPrice) : line.costPrice,
     sellingPrice: has('sellingPrice') ? money(patch.sellingPrice) : line.sellingPrice,
+    // A new price needs a new decision; otherwise keep / set the given one
+    priceDecision: has('priceDecision') ? (patch.priceDecision ?? null)
+      : has('sellingPrice') && money(patch.sellingPrice) !== line.sellingPrice ? null : line.priceDecision,
     notes: has('notes') ? blank(patch.notes) : line.notes,
     matchType: matchTypeOf(m),
     status: 'pending',
@@ -841,6 +844,11 @@ export interface IntakeValidation {
     lineId: string; barcode: string | null; sku: string | null
     barcodeItem: { id: string; name: string }; skuItem: { id: string; name: string }
   }>
+  /**
+   * Existing items whose scanned selling price differs from the item's. The item is only changed
+   * when the user confirms ('apply'); undecided lines block canSync so the app asks first.
+   */
+  priceChanges: Array<{ lineId: string; itemId: string; itemName: string; currentPrice: number; newPrice: number; decision: 'apply' | 'keep' | null }>
   errors: Array<{ lineId: string; error: string }>
   totals: { lines: number; willAdd: number; willCreate: number; conflicts: number; errors: number; alreadyPosted: number }
   canSync: boolean
@@ -852,7 +860,7 @@ export async function validateIntakeBatch(db: DbTx, tenantId: string, batchId: s
   const open = all.filter((l) => isOpen(l.status))
   const previews = await buildLinePreviews(db, tenantId, batch.warehouseId, open)
   const out: IntakeValidation = {
-    batchId, status: batch.status, willAdd: [], willCreate: [], conflicts: [], errors: [],
+    batchId, status: batch.status, willAdd: [], willCreate: [], conflicts: [], priceChanges: [], errors: [],
     totals: { lines: open.length, willAdd: 0, willCreate: 0, conflicts: 0, errors: 0, alreadyPosted: all.length - open.length },
     canSync: false,
   }
@@ -868,6 +876,13 @@ export async function validateIntakeBatch(db: DbTx, tenantId: string, batchId: s
         lineId: p.id, itemId: p.match.item.id, itemName: p.match.item.name, itemCode: p.match.item.itemCode,
         mode, quantity: q, currentStock: cur, delta, after: round3(cur + delta),
       })
+      if (p.sellingPrice !== null && Math.abs(parseFloat(p.sellingPrice) - parseFloat(p.match.item.sellingPrice)) >= 0.005) {
+        out.priceChanges.push({
+          lineId: p.id, itemId: p.match.item.id, itemName: p.match.item.name,
+          currentPrice: parseFloat(p.match.item.sellingPrice), newPrice: parseFloat(p.sellingPrice),
+          decision: (p as { priceDecision?: 'apply' | 'keep' | null }).priceDecision ?? null,
+        })
+      }
     } else if (p.match.status === 'new') {
       if (!blank(p.name)) { out.errors.push({ lineId: p.id, error: 'New item needs a name' }); continue }
       out.willCreate.push({
@@ -886,5 +901,6 @@ export async function validateIntakeBatch(db: DbTx, tenantId: string, batchId: s
   out.totals.conflicts = out.conflicts.length
   out.totals.errors = out.errors.length
   out.canSync = open.length > 0 && out.conflicts.length === 0 && out.errors.length === 0
+    && out.priceChanges.every((c) => c.decision !== null)
   return out
 }

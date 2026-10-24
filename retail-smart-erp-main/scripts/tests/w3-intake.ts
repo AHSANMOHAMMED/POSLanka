@@ -293,6 +293,31 @@ async function main() {
       check('cost: item_cost_history row (stock_intake)', h.rows.length === 1 && h.rows[0].source === 'stock_intake' && h.rows[0].n === 110)
     })
 
+    await step('selling price changes need confirmation', async () => {
+      const item = await newItem(A, 'Priced item', { barcode: '4796666666666', sellingPrice: '200' }, 5)
+      const { batch } = await mkBatch(A)
+      await add(A, batch.id, [{ barcode: item.barcode, quantity: 3, sellingPrice: 250 }])
+      const v = await withTenant(A.tenantId, (db) => validateIntakeBatch(db, A.tenantId, batch.id))
+      check('price: validate lists the change 200 → 250, undecided', v.priceChanges.length === 1 && v.priceChanges[0].currentPrice === 200 && v.priceChanges[0].newPrice === 250 && v.priceChanges[0].decision === null, JSON.stringify(v.priceChanges))
+      check('price: canSync false until decided', v.canSync === false)
+      await sync(A, batch.id)
+      const kept = await admin.query(`SELECT selling_price::float AS sp FROM items WHERE id=$1`, [item.id])
+      check('price: no decision → item keeps 200 (data untouched), stock still added', kept.rows[0].sp === 200 && (await stockOf(admin, A, item.id)) === 8, String(kept.rows[0].sp))
+
+      const { batch: b2 } = await mkBatch(A)
+      const added = await add(A, b2.id, [{ barcode: item.barcode, quantity: 1, sellingPrice: 260 }])
+      const lineId = (added as { outcomes?: Array<{ lineId: string }> }).outcomes?.[0]?.lineId
+        ?? (await withTenant(A.tenantId, (db) => getIntakeBatchDetail(db, A.tenantId, b2.id))).lines[0].id
+      await withTenant(A.tenantId, (db) => updateIntakeLine(db, { tenantId: A.tenantId, batchId: b2.id, lineId, patch: { priceDecision: 'apply' } }))
+      const v2 = await withTenant(A.tenantId, (db) => validateIntakeBatch(db, A.tenantId, b2.id))
+      check('price: confirmed → canSync', v2.canSync === true && v2.priceChanges[0]?.decision === 'apply')
+      await sync(A, b2.id)
+      const applied = await admin.query(`SELECT selling_price::float AS sp FROM items WHERE id=$1`, [item.id])
+      check('price: confirmed → item price 260', applied.rows[0].sp === 260, String(applied.rows[0].sp))
+      const log = await admin.query(`SELECT 1 FROM item_change_log WHERE item_id=$1 AND source='intake' AND action='update'`, [item.id])
+      check('price: change logged', (log.rowCount ?? 0) >= 1)
+    })
+
     await step('header version + status rules', async () => {
       const { batch } = await mkBatch(A)
       let conflict = false

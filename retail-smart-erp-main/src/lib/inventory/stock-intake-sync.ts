@@ -152,6 +152,10 @@ async function postLine(db: DbTx, batch: IntakeBatchRow, line: IntakeLineRow, us
   if (batch.updateCost && line.costPrice !== null && line.lineMode === 'receive' && !created && !stock.skipped && stock.delta > 0) {
     await applyWeightedCost(db, batch, line, itemId, stock.delta, parseFloat(line.costPrice), userId)
   }
+  // Existing item data stays as it is; a different selling price only after the user confirmed it
+  if (!created && line.priceDecision === 'apply' && line.sellingPrice !== null) {
+    await applyConfirmedPrice(db, batch, line, itemId, userId)
+  }
 
   return {
     itemId,
@@ -161,6 +165,28 @@ async function postLine(db: DbTx, batch: IntakeBatchRow, line: IntakeLineRow, us
     stock,
     stockInput,
   }
+}
+
+async function applyConfirmedPrice(db: DbTx, batch: IntakeBatchRow, line: IntakeLineRow, itemId: string, userId: string) {
+  const [item] = await db.select().from(items).where(eq(items.id, itemId)).for('update')
+  if (!item || Math.abs(parseFloat(item.sellingPrice) - parseFloat(line.sellingPrice!)) < 0.005) return
+  const [after] = await db.update(items).set({
+    sellingPrice: parseFloat(line.sellingPrice!).toFixed(2),
+    updatedBy: userId,
+    updatedAt: new Date(),
+    version: sql`${items.version} + 1`,
+  }).where(eq(items.id, itemId)).returning()
+  await recordItemChange(db, {
+    tenantId: batch.tenantId,
+    itemId,
+    userId,
+    source: 'intake',
+    action: 'update',
+    before: item as unknown as Record<string, unknown>,
+    after: after as unknown as Record<string, unknown>,
+    intakeBatchId: batch.id,
+    notes: `Selling price confirmed in stock intake ${batch.batchNo}`,
+  })
 }
 
 async function applyWeightedCost(db: DbTx, batch: IntakeBatchRow, line: IntakeLineRow, itemId: string, qty: number, unitCost: number, userId: string) {

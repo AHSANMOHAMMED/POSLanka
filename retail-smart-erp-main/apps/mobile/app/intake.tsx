@@ -19,6 +19,7 @@ import { fetchCurrentShift, shiftWarehouseName } from '../src/lib/shift'
 import { THEME } from '../src/lib/theme'
 import { BarcodeScannerModal } from '../src/components/BarcodeScannerModal'
 import { LoadingView, EmptyView, InlineNotice } from '../src/components/StateViews'
+import { findByCode } from '../src/lib/localdb'
 import {
   addLocalLine,
   adoptServerBatch,
@@ -68,6 +69,15 @@ interface ServerDetail {
   batch: ServerBatchSummary & { version: number; notes: string | null; source: string }
   lines: ServerLine[]
   summary: { total: number; pending: number; posted: number; errors: number; newItems: number }
+}
+
+/** POST /api/stock-intake/[id]/validate (dry run) */
+interface IntakeValidation {
+  willAdd: Array<{ lineId: string; itemName: string; currentStock: number; delta: number; after: number }>
+  willCreate: Array<{ lineId: string; name: string; quantity: number }>
+  conflicts: Array<{ lineId: string; barcode: string | null; sku: string | null; barcodeItem: { name: string }; skuItem: { name: string } }>
+  priceChanges?: Array<{ lineId: string; itemName: string; currentPrice: number; newPrice: number; decision: 'apply' | 'keep' | null }>
+  errors: Array<{ lineId: string; error: string }>
 }
 
 interface SyncResult {
@@ -266,6 +276,7 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
   const [editLine, setEditLine] = useState<ServerLine | null>(null)
   const [newName, setNewName] = useState('')
   const [newPrice, setNewPrice] = useState('')
+  const [scanNote, setScanNote] = useState('')
 
   const refresh = useCallback(async () => {
     if (!batch.serverId) return
@@ -300,9 +311,14 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
       Alert.alert('Quantity', 'Received quantity must be greater than 0')
       return
     }
+    // Instant feedback: an existing item only gets stock (its details stay as they are)
+    const known = await findByCode(barcode).catch(() => null)
     await addLocalLine(batch.clientBatchId, { mode, barcode, quantity })
     setCode('')
     setQty(1)
+    setScanNote(known
+      ? `Already in the catalogue: ${known.item.name} — ${mode === 'receive' ? `+${quantity} to stock` : `counted ${quantity}`}. Item details are not changed.`
+      : `New barcode ${barcode} — enter the item name and price on the line below.`)
     if (online) await flush()
   }
 
@@ -365,10 +381,56 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
         return
       }
     }
+    // Dry run first: show what will change and ask before touching stock or prices
+    setBusy('sync')
+    const check = await api<IntakeValidation>(`/api/stock-intake/${batch.serverId}/validate`, { method: 'POST' }, { timeoutMs: 60_000 })
+    setBusy(null)
+    if (!check.ok) {
+      Alert.alert('Sync failed', check.error)
+      return
+    }
+    const v = check.data
+    if (v.conflicts.length || v.errors.length) {
+      Alert.alert('Fix these first', [
+        ...v.conflicts.map((c) => `Barcode ${c.barcode} is "${c.barcodeItem.name}" but SKU ${c.sku} is "${c.skuItem.name}"`),
+        ...v.errors.map((e) => e.error),
+      ].slice(0, 6).join('\n'))
+      return
+    }
+    const undecided = (v.priceChanges || []).filter((c) => c.decision === null)
+    let priceChanges: 'apply' | 'keep' | undefined
+    if (undecided.length) {
+      const list = undecided.slice(0, 6).map((c) => `• ${c.itemName}: ${c.currentPrice.toFixed(2)} → ${c.newPrice.toFixed(2)}`).join('\n')
+      priceChanges = await new Promise<'apply' | 'keep' | undefined>((resolve) => Alert.alert(
+        'Selling price changed',
+        `${undecided.length} item(s) were scanned with a different selling price:\n${list}${undecided.length > 6 ? '\n…' : ''}\n\nUpdate the prices, or keep the current ones?`,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(undefined) },
+          { text: 'Keep current', onPress: () => resolve('keep') },
+          { text: 'Update prices', onPress: () => resolve('apply') },
+        ],
+        { cancelable: true, onDismiss: () => resolve(undefined) },
+      ))
+      if (!priceChanges) return
+    }
+    const units = v.willAdd.reduce((s, a) => s + a.delta, 0) + v.willCreate.reduce((s, c) => s + c.quantity, 0)
+    const summary = [
+      `${v.willAdd.length} existing item(s), ${units.toFixed(units % 1 ? 3 : 0)} unit(s) in total`,
+      ...v.willAdd.slice(0, 5).map((a) => `• ${a.itemName}: ${a.currentStock} → ${a.after}`),
+      v.willAdd.length > 5 ? '…' : '',
+      v.willCreate.length ? `${v.willCreate.length} new item(s) will be created` : '',
+    ].filter(Boolean).join('\n')
+    const confirmed = await new Promise<boolean>((resolve) => Alert.alert('Add this stock?', summary, [
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+      { text: 'Confirm', onPress: () => resolve(true) },
+    ], { cancelable: true, onDismiss: () => resolve(false) }))
+    if (!confirmed) return
+
     setBusy('sync')
     const res = await api<SyncResult>(`/api/stock-intake/${batch.serverId}/sync`, {
       method: 'POST',
       headers: { 'Idempotency-Key': newId() },
+      body: JSON.stringify(priceChanges ? { priceChanges } : {}),
     }, { timeoutMs: 120_000 })
     setBusy(null)
     if (!res.ok) {
@@ -403,6 +465,7 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
       <Header title={title} subtitle={`${batch.warehouseName || detail?.batch.warehouseName || ''}${serverStatus ? ` · ${STATUS_LABEL[serverStatus] || serverStatus}` : ' · not uploaded'}`} onBack={onBack} />
       {!online && <InlineNotice text="Offline: scans are kept on this device and upload when you are back online." />}
       {batch.lastError && online ? <InlineNotice tone="error" text={batch.lastError} /> : null}
+      {scanNote ? <InlineNotice text={scanNote} /> : null}
 
       {editable && (
         <View style={styles.scanPanel}>
