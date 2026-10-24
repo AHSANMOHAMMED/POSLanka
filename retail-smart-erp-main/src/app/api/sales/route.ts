@@ -28,6 +28,8 @@ import { applyStockChanges, notifyStockDecreased, type StockChangeInput, type St
 import { createReturnInTx, returnStatusOf } from '@/lib/sales/returns'
 import { saleFlowErrorResponse } from '@/lib/sales/route-helpers'
 import { notify } from '@/lib/notifications/notify'
+import { getTenantFeatureFlags } from '@/lib/features/check'
+import { FEATURE_FLAG_LABELS, type FeatureFlag } from '@/lib/features/flags'
 import type { SaleFlags } from '@/lib/db/schema'
 import type { CompanySession } from '@/lib/auth'
 import type { z } from 'zod'
@@ -285,6 +287,18 @@ export async function POST(request: NextRequest) {
       if (permError) return permError
     }
     // Note: gift_card is NOT in refundMethod enum (Zod blocks it at validation)
+
+    // Feature switches (super admin → Features): credit sales, gift cards, loyalty, coupons.
+    // Offline sales already happened at the counter: they sync whatever the switches say now.
+    if (!isReturn && !offlineRef) {
+      const flags = await getTenantFeatureFlags(session.user.tenantId)
+      const methods = new Set([paymentMethod, ...(paymentSplits ?? []).map((p) => p.method)])
+      const off = (flag: FeatureFlag) => NextResponse.json({ error: `${FEATURE_FLAG_LABELS[flag]} is turned off for this business.`, code: 'FEATURE_DISABLED', feature: flag }, { status: 403 })
+      if (!flags.credit_customer && (methods.has('credit') || (creditAmount ?? 0) > 0)) return off('credit_customer')
+      if (!flags.gift_cards && (methods.has('gift_card') || giftCardId)) return off('gift_cards')
+      if (!flags.loyalty && (loyaltyPointsRedeemed ?? 0) > 0) return off('loyalty')
+      if (!flags.promotions && (couponCodes?.length ?? 0) > 0) return off('promotions')
+    }
 
     // Early client-side discount sanity check (skip for returns)
     // Server-side validation with calculated subtotal happens after cart expansion (line ~492)

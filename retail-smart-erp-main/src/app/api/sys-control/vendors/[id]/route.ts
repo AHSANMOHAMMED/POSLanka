@@ -23,7 +23,7 @@ import { adminAuthError, validateAdminSession, adminAudit, requireAdminPermissio
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation'
 import { idParamSchema } from '@/lib/validation/schemas/common'
-import { FEATURE_FLAG_LABELS, normalizeFeatureFlags, type FeatureFlagsMap } from '@/lib/features/flags'
+import { FEATURE_DEFS, FEATURE_FLAG_LABELS, featureAppliesTo, normalizeFeatureFlags, type FeatureFlagsMap } from '@/lib/features/flags'
 import { foldTenantUsage } from '@/lib/db/storage-quota'
 import { neverExpires } from '@/lib/billing/subscription-state'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
@@ -225,6 +225,8 @@ export async function GET(
       activity,
       tiers,
       featureFlagLabels: FEATURE_FLAG_LABELS,
+      /** Feature catalogue for clients that cannot import it (mobile admin) */
+      featureDefs: FEATURE_DEFS.map((d) => ({ key: d.key, label: d.label, description: d.description, group: d.group, applies: featureAppliesTo(d.key, vendor.businessType) })),
     })
   } catch (error) {
     logError('api/sys-control/vendors/[id] GET', error)

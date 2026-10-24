@@ -6,6 +6,7 @@ import { useTerminology } from '@/hooks/useTerminology'
 import { useCurrency } from '@/hooks/useCurrency'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { buildWhatsAppShareUrl } from '@/lib/whatsapp'
+import { useFeatureFlag } from '@/hooks/useFeatureFlag'
 
 interface SaleSuccessModalProps {
   lastSale: {
@@ -34,6 +35,7 @@ export function SaleSuccessModal({
   const { currency: currencyCode } = useCurrency()
   const [customPhone, setCustomPhone] = useState('')
   const [showPhoneInput, setShowPhoneInput] = useState(false)
+  const whatsappOn = useFeatureFlag('whatsapp')
 
   useEscapeKey(!!lastSale, onDismiss, onDismiss)
 
@@ -104,8 +106,8 @@ export function SaleSuccessModal({
             </button>
           )}
 
-          {/* WhatsApp Share Button */}
-          <div className="space-y-1.5">
+          {/* WhatsApp Share Button (feature switch) */}
+          {whatsappOn && <div className="space-y-1.5">
             <button
               onClick={() => {
                 if (!lastSale.customerPhone && !showPhoneInput) {
@@ -139,7 +141,7 @@ export function SaleSuccessModal({
                 </button>
               </div>
             )}
-          </div>
+          </div>}
 
           <button
             onClick={onDismiss}

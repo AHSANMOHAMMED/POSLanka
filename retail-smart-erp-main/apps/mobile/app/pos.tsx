@@ -48,6 +48,7 @@ import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCar
 import { getLocalItem } from '../src/lib/localdb'
 import { applyCartQuote, offlineCartQuote, quoteKey, quoteRequestLines, taxableLineTotals, type CartQuote } from '../src/lib/cartPricing'
 import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
+import { useFeatureFlags } from '../src/lib/features'
 
 interface Item {
   id: string
@@ -148,6 +149,8 @@ export default function PosScreen() {
   // H5: cart-level promotions of the current quote (line promotions live on the cart lines)
   const [cartPromotions, setCartPromotions] = useState<CartQuote['cartPromotions']>([])
   const [couponCode, setCouponCode] = useState('')
+  // Feature switches set by the platform for this business (coupons, credit, loyalty, WhatsApp …)
+  const features = useFeatureFlags()
   const [clientSaleId, setClientSaleId] = useState<string | null>(null)
   const [customer, setCustomer] = useState<Customer | null>(null)
   const [taxConfig, setTaxConfig] = useState<TaxConfig>(EMPTY_TAX_CONFIG)
@@ -1018,7 +1021,7 @@ export default function PosScreen() {
         tax={cartTax.tax}
         totalPayable={cartTotalPayable}
         couponCode={couponCode}
-        onCouponChange={setCouponCode}
+        onCouponChange={features.has('promotions') ? setCouponCode : undefined}
         cartPromotions={cartPromotions}
         taxLabel={taxLabel}
         taxInclusive={cartTax.hasInclusiveTax}

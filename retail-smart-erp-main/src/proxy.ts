@@ -6,6 +6,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { edgeDb } from '@/lib/edge-db'
 import { isTrustedOrigin } from '@/lib/security/origin'
+import { FEATURE_FLAG_LABELS, featureForApiPath, type FeatureFlag } from '@/lib/features/flags'
 
 // Domain configuration from environment
 const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'retailsmarterp.com'
@@ -98,13 +99,56 @@ export function csrfViolation(request: NextRequest): string | null {
   return null
 }
 
-function handleApi(request: NextRequest): NextResponse {
+/**
+ * Feature switches (super admin → vendor → Features): requests to a switched-off feature's API get
+ * 403 FEATURE_DISABLED. The answer comes from /api/features/check (it resolves the session or app
+ * token) and is cached per caller + switch for a few seconds.
+ */
+const FEATURE_CACHE_TTL_MS = 10_000
+const featureCache = new Map<string, { enabled: boolean; at: number }>()
+
+async function featureDisabled(request: NextRequest): Promise<FeatureFlag | null> {
+  const flag = featureForApiPath(request.nextUrl.pathname)
+  if (!flag) return null
+  const authorization = request.headers.get('authorization') || ''
+  const cookie = request.headers.get('cookie') || ''
+  if (!authorization && !cookie) return null // the route answers 401
+  const key = `${flag}|${authorization}|${cookie}`
+  const hit = featureCache.get(key)
+  if (hit && Date.now() - hit.at < FEATURE_CACHE_TTL_MS) return hit.enabled ? null : flag
+  try {
+    const base = process.env.NEXTAUTH_URL_INTERNAL || `http://127.0.0.1:${process.env.PORT || 3000}`
+    const res = await fetch(`${base}/api/features/check?flag=${flag}`, {
+      headers: { ...(authorization ? { authorization } : {}), ...(cookie ? { cookie } : {}), 'x-internal-feature-check': '1' },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(3000),
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as { enabled?: boolean }
+    if (featureCache.size > 5000) featureCache.clear()
+    featureCache.set(key, { enabled: body.enabled !== false, at: Date.now() })
+    return body.enabled === false ? flag : null
+  } catch {
+    return null // fail open: the switch is a product limit, not a security boundary
+  }
+}
+
+async function handleApi(request: NextRequest): Promise<NextResponse> {
   const incoming = request.headers.get('x-request-id')
   const requestId = incoming && /^[A-Za-z0-9._:-]{8,128}$/.test(incoming) ? incoming : crypto.randomUUID()
   const violation = csrfViolation(request)
   if (violation) {
     console.warn(JSON.stringify({ level: 'warn', component: 'csrf', msg: 'blocked cross-site API request', requestId, method: request.method, path: request.nextUrl.pathname, reason: violation }))
     const res = NextResponse.json({ error: 'Cross-site request blocked' }, { status: 403 })
+    res.headers.set('x-request-id', requestId)
+    return res
+  }
+  const disabled = await featureDisabled(request)
+  if (disabled) {
+    const res = NextResponse.json(
+      { error: `${FEATURE_FLAG_LABELS[disabled]} is turned off for this business. Contact POSLanka support to turn it on.`, code: 'FEATURE_DISABLED', feature: disabled },
+      { status: 403 },
+    )
     res.headers.set('x-request-id', requestId)
     return res
   }

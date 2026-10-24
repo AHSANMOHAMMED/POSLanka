@@ -229,6 +229,11 @@ export async function withApiKey(
   try {
     const auth = await authenticateApiKey(request, scope)
     if (!auth.ok) return auth.response
+    // The platform can switch API access off per business (super admin → Features)
+    const { requireTenantFeature } = await import('@/lib/features/check')
+    if (!(await requireTenantFeature(auth.principal.session.user.tenantId, 'api_access')).ok) {
+      return apiError(403, 'API access is turned off for this business', 'FEATURE_DISABLED')
+    }
     const res = await runWithApiPrincipal(auth.principal, () => handler(auth.principal))
     for (const [k, v] of Object.entries(auth.rateHeaders)) res.headers.set(k, v)
     res.headers.set('Cache-Control', 'no-store')

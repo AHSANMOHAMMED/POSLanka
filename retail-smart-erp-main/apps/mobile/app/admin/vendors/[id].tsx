@@ -7,17 +7,8 @@ import { ErrorView, InlineNotice, LoadingView } from '../../../src/components/St
 import { AdminVendorStaff, type AdminStaffRow } from '../../../src/components/admin/AdminVendorStaff'
 import { AdminShell, Card, Kpi, ListRow, Pill, SectionTitle, adminStyles, businessTypeLabel, compactLKR, statusTone, timeAgo } from '../../../src/components/admin/AdminShell'
 
-/** Mirrors src/lib/features/flags.ts on the server (labels only; the server normalises unknown keys away). */
-const FEATURE_LABELS: Record<string, string> = {
-  accounting: 'Accounting module',
-  purchase: 'Purchase module',
-  credit_customer: 'Credit customers',
-  loyalty: 'Loyalty points',
-  multi_warehouse: 'Multi-warehouse',
-  advanced_reports: 'Advanced reports',
-  whatsapp: 'WhatsApp integration',
-  quotation: 'Quotation module',
-}
+/** Feature catalogue from the server (GET /api/sys-control/vendors/[id] → featureDefs) */
+interface FeatureDef { key: string; label: string; description: string; group: string; applies: boolean }
 
 interface VendorDetail {
   id: string
@@ -62,6 +53,8 @@ export default function AdminVendorDetailScreen() {
   const [vendor, setVendor] = useState<VendorDetail | null>(null)
   const [staff, setStaff] = useState<AdminStaffRow[]>([])
   const [roles, setRoles] = useState<string[]>([])
+  const [featureDefs, setFeatureDefs] = useState<FeatureDef[]>([])
+  const [showOtherFeatures, setShowOtherFeatures] = useState(false)
   const [analytics, setAnalytics] = useState<VendorAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -79,13 +72,14 @@ export default function AdminVendorDetailScreen() {
       setError(null)
       setNotice(null)
       const [vRes, aRes] = await Promise.all([
-        adminGet<{ vendor: VendorDetail; staff: AdminStaffRow[]; assignableRoles?: string[] }>(`/api/sys-control/vendors/${id}`),
+        adminGet<{ vendor: VendorDetail; staff: AdminStaffRow[]; assignableRoles?: string[]; featureDefs?: FeatureDef[] }>(`/api/sys-control/vendors/${id}`),
         adminGet<VendorAnalytics>(`/api/sys-control/analytics/vendors/${id}`),
       ])
       if (vRes.ok) {
         setVendor(vRes.data.vendor)
         setStaff(vRes.data.staff || [])
         setRoles(vRes.data.assignableRoles || [])
+        setFeatureDefs(vRes.data.featureDefs || [])
       } else setError(vRes.error)
       if (aRes.ok) setAnalytics(aRes.data)
       else if (vRes.ok) setNotice(`Sales analytics: ${aRes.error}`)
@@ -143,7 +137,8 @@ export default function AdminVendorDetailScreen() {
     if (res.data?.featureFlags) setVendor((v) => (v ? { ...v, featureFlags: res.data.featureFlags } : v))
   }
 
-  const flagKeys = vendor ? Array.from(new Set([...Object.keys(FEATURE_LABELS), ...Object.keys(vendor.featureFlags || {})])) : []
+  const relevantFeatures = featureDefs.filter((d) => d.applies || showOtherFeatures)
+  const featureGroups = Array.from(new Set(relevantFeatures.map((d) => d.group)))
   const locked = vendor?.status === 'locked'
 
   return (
@@ -257,28 +252,38 @@ export default function AdminVendorDetailScreen() {
           {/* Staff: add managers / cashiers / … for this vendor */}
           <AdminVendorStaff vendorId={vendor.id} staff={staff} roles={roles} canManage={canManage} onChanged={() => load(true)} />
 
-          {/* Feature flags */}
-          <SectionTitle>Feature flags</SectionTitle>
-          <Card>
-            {flagKeys.map((flag) => (
-              <View key={flag} style={styles.flagRow}>
-                <View style={{ flex: 1, marginRight: 12 }}>
-                  <Text style={styles.flagTitle}>{FEATURE_LABELS[flag] || flag}</Text>
-                  <Text style={adminStyles.muted}>{flag}</Text>
+          {/* Feature switches, grouped; ones for other business types folded away */}
+          <SectionTitle>Feature switches</SectionTitle>
+          {featureGroups.map((g) => (
+            <Card key={g}>
+              <Text style={styles.groupTitle}>{g}</Text>
+              {relevantFeatures.filter((d) => d.group === g).map((d) => (
+                <View key={d.key} style={styles.flagRow}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={styles.flagTitle}>{d.label}</Text>
+                    <Text style={adminStyles.muted}>{d.description}</Text>
+                  </View>
+                  {busy === d.key ? (
+                    <ActivityIndicator size="small" color={THEME.colors.primary} />
+                  ) : (
+                    <Switch
+                      value={!!vendor.featureFlags?.[d.key]}
+                      onValueChange={(v) => toggleFlag(d.key, v)}
+                      disabled={busy !== null || !canManage}
+                      trackColor={{ false: THEME.colors.border, true: THEME.colors.primary }}
+                    />
+                  )}
                 </View>
-                {busy === flag ? (
-                  <ActivityIndicator size="small" color={THEME.colors.primary} />
-                ) : (
-                  <Switch
-                    value={!!vendor.featureFlags?.[flag]}
-                    onValueChange={(v) => toggleFlag(flag, v)}
-                    disabled={busy !== null || !canManage}
-                    trackColor={{ false: THEME.colors.border, true: THEME.colors.primary }}
-                  />
-                )}
-              </View>
-            ))}
-          </Card>
+              ))}
+            </Card>
+          ))}
+          {featureDefs.some((d) => !d.applies) ? (
+            <Pressable onPress={() => setShowOtherFeatures((v) => !v)}>
+              <Text style={[adminStyles.muted, { color: THEME.colors.primary, fontWeight: '700' }]}>
+                {showOtherFeatures ? 'Hide features for other business types' : 'Show features for other business types'}
+              </Text>
+            </Pressable>
+          ) : null}
 
           {/* Branches & counters */}
           {vendor.branches.length > 0 ? (
@@ -310,4 +315,5 @@ export default function AdminVendorDetailScreen() {
 const styles = StyleSheet.create({
   flagRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: THEME.colors.border },
   flagTitle: { fontSize: 13, fontWeight: '700', color: THEME.colors.text },
+  groupTitle: { fontSize: 11, fontWeight: '800', color: THEME.colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 },
 })

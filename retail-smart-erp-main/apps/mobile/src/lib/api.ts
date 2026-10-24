@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store'
 import { router } from 'expo-router'
+import { clearFeatureFlags } from './features'
 
 declare const process: {
   env: {
@@ -185,6 +186,7 @@ export async function refreshPermissions(): Promise<AuthUser | null> {
 /** Clears token + user. Remembered server URL and slug are kept. */
 export async function clearSession() {
   cachedUser = null
+  clearFeatureFlags()
   await Promise.all([
     SecureStore.deleteItemAsync(TOKEN_KEY),
     SecureStore.deleteItemAsync(USER_KEY),

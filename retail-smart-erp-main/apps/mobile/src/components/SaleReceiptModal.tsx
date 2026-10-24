@@ -12,6 +12,7 @@ import { router } from 'expo-router'
 import { THEME, formatLKR } from '../lib/theme'
 import { getPrinterSettings, isPrintingEnabled, printerErrorMessage, printReceipt, shareReceiptPdf, type PrinterSettings } from '../lib/printer'
 import type { SaleResultData } from './TenderModal'
+import { useFeatureFlags } from '../lib/features'
 
 interface SaleReceiptModalProps {
   visible: boolean
@@ -30,6 +31,7 @@ export function SaleReceiptModal({
   const [printState, setPrintState] = useState<PrintState>({ status: 'idle' })
   const [sharing, setSharing] = useState(false)
   const autoPrintedFor = useRef<string | null>(null)
+  const features = useFeatureFlags()
 
   const invoiceNo = saleData?.invoiceNo
   const receipt = saleData?.receipt || null
@@ -162,9 +164,11 @@ export function SaleReceiptModal({
             ) : null}
 
             <View style={styles.shareRow}>
-              <Pressable style={[styles.whatsAppBtn, { flex: 1 }]} onPress={shareWhatsApp}>
-                <Text style={styles.whatsAppText}>💬 WhatsApp</Text>
-              </Pressable>
+              {features.has('whatsapp') ? (
+                <Pressable style={[styles.whatsAppBtn, { flex: 1 }]} onPress={shareWhatsApp}>
+                  <Text style={styles.whatsAppText}>💬 WhatsApp</Text>
+                </Pressable>
+              ) : null}
               {receipt ? (
                 <Pressable style={[styles.pdfBtn, { flex: 1 }]} onPress={sharePdf} disabled={sharing}>
                   {sharing ? <ActivityIndicator size="small" color={THEME.colors.primary} /> : <Text style={styles.pdfText}>📄 Share PDF</Text>}

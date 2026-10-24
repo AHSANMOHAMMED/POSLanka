@@ -19,6 +19,7 @@ import { StorageBanner } from '@/components/layout/StorageBanner'
 import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { ChatHub } from '@/components/chat/ChatHub'
 import { SubdomainUrlCleaner } from '@/components/layout/SubdomainUrlCleaner'
+import { FeatureRouteGuard } from '@/components/layout/FeatureRouteGuard'
 
 interface CompanyLayoutProps {
   children: React.ReactNode
@@ -257,7 +258,7 @@ export default async function CompanyLayout({
                   <TrialBanner companySlug={slug} />
                   <StorageBanner companySlug={slug} />
                   <div className="p-5">
-                    {children}
+                    <FeatureRouteGuard>{children}</FeatureRouteGuard>
                   </div>
                 </main>
               </div>

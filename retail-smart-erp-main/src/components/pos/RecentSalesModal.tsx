@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { X, Search, Printer, MessageCircle, RotateCcw, Clock, ArrowRight, Loader2 } from 'lucide-react'
 import { useCurrency } from '@/hooks/useCurrency'
 import { buildWhatsAppShareUrl } from '@/lib/whatsapp'
+import { useFeatureFlag } from '@/hooks/useFeatureFlag'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 
 export interface PastSale {
@@ -35,6 +36,7 @@ export function RecentSalesModal({
 }: RecentSalesModalProps) {
   const { currency: currencyCode } = useCurrency()
   const [sales, setSales] = useState<PastSale[]>([])
+  const whatsappOn = useFeatureFlag('whatsapp')
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [sharingSaleId, setSharingSaleId] = useState<string | null>(null)
@@ -191,8 +193,8 @@ export function RecentSalesModal({
                       <span>Print</span>
                     </button>
 
-                    {/* WhatsApp */}
-                    <button
+                    {/* WhatsApp (feature switch) */}
+                    {whatsappOn && <button
                       type="button"
                       onClick={() => {
                         if (!sale.customerPhone) {
@@ -206,7 +208,7 @@ export function RecentSalesModal({
                     >
                       <MessageCircle size={14} />
                       <span>WhatsApp</span>
-                    </button>
+                    </button>}
 
                     {/* Return */}
                     {onReturnSale && !sale.isReturn && (

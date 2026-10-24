@@ -61,6 +61,7 @@ import {
 } from '@/components/admin/console-helpers'
 import { formatBusinessId } from '@/lib/tenant/business-id-format'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
+import { FEATURE_DEFS, FEATURE_GROUPS, featureAppliesTo } from '@/lib/features/flags'
 
 /* ------------------------------------------------------------------ types */
 
@@ -458,7 +459,7 @@ export default function VendorDetailPage() {
 
       {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={v.businessType} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
       {tab === 'billing' && <BillingTab data={data} />}
-      {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} labels={data.featureFlagLabels} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
+      {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} businessType={v.businessType} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
       {tab === 'activity' && <ActivityTab activity={data.activity} />}
 
       <ActionDialogs key={dialog ?? 'none'} dialog={dialog} data={data} onClose={() => setDialog(null)} onDone={done} />
@@ -657,15 +658,19 @@ function BillingTab({ data }: { data: Detail }) {
   )
 }
 
-function FeaturesTab({ vendorId, flags, labels, onSaved }: { vendorId: string; flags: Record<string, boolean>; labels: Record<string, string>; onSaved: (text: string) => void }) {
+function FeaturesTab({ vendorId, flags, businessType, onSaved }: { vendorId: string; flags: Record<string, boolean>; businessType: string; onSaved: (text: string) => void }) {
   // What the server holds now. Starts from the loaded flags and follows each save, so a change can be
   // saved and then switched back and saved again (comparing with the stale prop disabled Save).
   const [saved, setSaved] = useState(flags)
   const [draft, setDraft] = useState(flags)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const dirty = Object.keys(labels).some((k) => !!draft[k] !== !!saved[k])
+  const [showOther, setShowOther] = useState(false)
+  const dirty = FEATURE_DEFS.some((d) => !!draft[d.key] !== !!saved[d.key])
   const canEdit = useAdminCan('vendors.manage')
+  const relevant = FEATURE_DEFS.filter((d) => featureAppliesTo(d.key, businessType))
+  const other = FEATURE_DEFS.filter((d) => !featureAppliesTo(d.key, businessType))
+  const onCount = relevant.filter((d) => draft[d.key]).length
 
   async function save() {
     setSaving(true)
@@ -674,7 +679,7 @@ function FeaturesTab({ vendorId, flags, labels, onSaved }: { vendorId: string; f
       const res = await adminFetch<{ featureFlags: Record<string, boolean> }>(`/api/sys-control/vendors/${vendorId}/features`, { method: 'PUT', json: { featureFlags: draft } })
       setSaved(res.featureFlags)
       setDraft(res.featureFlags)
-      onSaved('Feature switches saved. The vendor sees the change on their next page load.')
+      onSaved('Feature switches saved. Menus update on the vendor’s next page load; the server applies them within seconds.')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save')
     } finally {
@@ -682,10 +687,19 @@ function FeaturesTab({ vendorId, flags, labels, onSaved }: { vendorId: string; f
     }
   }
 
+  const setGroup = (keys: string[], on: boolean) => setDraft((d) => ({ ...d, ...Object.fromEntries(keys.map((k) => [k, on])) }))
+  const renderGroup = (defs: typeof FEATURE_DEFS) => (
+    <div className="grid grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-2">
+      {defs.map((d) => (
+        <Switch key={d.key} label={d.label} description={d.description} checked={!!draft[d.key]} disabled={!canEdit} onChange={(c) => setDraft((x) => ({ ...x, [d.key]: c }))} />
+      ))}
+    </div>
+  )
+
   return (
     <AdminCard
       title="Feature switches"
-      description="Turning a module off hides it from this vendor’s menus. Existing data is kept."
+      description={`${onCount} of ${relevant.length} features on for this ${businessTypeLabel(businessType).toLowerCase()} business. A switched-off feature disappears from the vendor’s menus, web and app, and its API answers “turned off”. Existing data is kept and comes back when switched on.`}
       footer={
         <div className="flex flex-wrap items-center justify-end gap-2">
           {error && <span className="mr-auto text-[13px] text-adm-danger">{error}</span>}
@@ -695,10 +709,33 @@ function FeaturesTab({ vendorId, flags, labels, onSaved }: { vendorId: string; f
         </div>
       }
     >
-      <div className="grid grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-2">
-        {Object.entries(labels).map(([key, label]) => (
-          <Switch key={key} label={label} checked={!!draft[key]} disabled={!canEdit} onChange={(c) => setDraft((d) => ({ ...d, [key]: c }))} />
-        ))}
+      <div className="space-y-6">
+        {FEATURE_GROUPS.map((g) => {
+          const defs = relevant.filter((d) => d.group === g)
+          if (defs.length === 0) return null
+          return (
+            <section key={g}>
+              <div className="mb-3 flex items-center justify-between gap-2 border-b border-adm-border pb-2">
+                <h3 className="text-[13px] font-semibold uppercase tracking-wide text-adm-subtle">{g}</h3>
+                {canEdit && (
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="ghost" onClick={() => setGroup(defs.map((d) => d.key), true)}>All on</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setGroup(defs.map((d) => d.key), false)}>All off</Button>
+                  </div>
+                )}
+              </div>
+              {renderGroup(defs)}
+            </section>
+          )
+        })}
+        {other.length > 0 && (
+          <section>
+            <button type="button" className="text-[13px] font-medium text-adm-primary hover:underline" onClick={() => setShowOther((v) => !v)}>
+              {showOther ? 'Hide' : 'Show'} {other.length} feature{other.length === 1 ? '' : 's'} for other business types
+            </button>
+            {showOther && <div className="mt-3">{renderGroup(other)}</div>}
+          </section>
+        )}
       </div>
     </AdminCard>
   )

@@ -2,6 +2,8 @@
 
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import { useFeatureFlags } from '@/hooks/useFeatureFlag'
+import { isHrefAllowedByFeatures } from '@/lib/features/nav-gate'
 import { ChevronRight, Home } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -57,6 +59,11 @@ export function ModuleWorkspace({
 }: ModuleWorkspaceProps) {
   const params = useParams()
   const slug = params.slug as string
+  // Hide links to features the platform turned off for this business
+  const { flags } = useFeatureFlags()
+  const allowed = (href: string) => isHrefAllowedByFeatures(href.replace(/^\/c\/[^/]+/, ''), flags)
+  shortcuts = shortcuts.filter((s) => allowed(s.href))
+  linkGroups = linkGroups.map((g) => ({ ...g, items: g.items.filter((i) => allowed(i.href)) })).filter((g) => g.items.length > 0)
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">

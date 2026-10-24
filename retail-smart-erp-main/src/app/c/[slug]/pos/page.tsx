@@ -81,6 +81,7 @@ import { roundCurrency } from '@/lib/utils/currency'
 import { calculateItemTax, aggregateTaxBreakdown, type ResolvedTaxTemplate, type TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { POS_ITEMS_LIMIT } from '@/components/pos/types'
 import { usePOSBusinessConfig } from '@/hooks/usePOSBusinessConfig'
+import { useFeatureFlags } from '@/hooks/useFeatureFlag'
 import { useOfflinePos } from '@/hooks/useOfflinePos'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel } from '@/lib/utils/item-display'
@@ -92,6 +93,7 @@ const RECEIPT_CODE_RE = /^(INV|RTN|OFF)-/i
 export default function POSPage() {
   const { currency: currencyCode } = useCurrency()
   const config = usePOSBusinessConfig()
+  const { flags: featureFlags } = useFeatureFlags()
   const company = useCompany()
   const router = useRouter()
   const params = useParams()
@@ -285,19 +287,46 @@ export default function POSPage() {
       return
     }
     const label = type === 'float_in' ? 'Float In' : type === 'float_out' ? 'Safe Drop / Cash Out' : 'Mid-day Count'
-    const noteLine = `\n[${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}] ${label}: ${currencyCode} ${total.toFixed(2)} - ${reason}`
 
     try {
-      const res = await fetch(`/api/pos-opening-entries/${activeShift.id}`, {
-        method: 'PATCH',
+      if (type === 'count') {
+        // A count moves no money: keep it on the shift's notes (PUT /api/pos-opening-entries/[id])
+        const noteLine = `\n[${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}] ${label}: ${currencyCode} ${total.toFixed(2)}${reason ? ` - ${reason}` : ''}`
+        const res = await fetch(`/api/pos-opening-entries/${activeShift.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes: (activeShift.notes || '') + noteLine }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          toast.error(data.error || 'Failed to record the count')
+          return
+        }
+        setActiveShift(prev => prev ? { ...prev, notes: (prev.notes || '') + noteLine } : null)
+        toast.success(`${label} recorded: ${currencyCode} ${total.toFixed(2)}`)
+        return
+      }
+      // Float in / safe drop move cash: a real cash movement, so the expected cash at close includes it
+      const res = await fetch('/api/pos-cash-movements', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes: (activeShift.notes || '') + noteLine }),
+        body: JSON.stringify({
+          openingEntryId: activeShift.id,
+          type: type === 'float_in' ? 'paid_in' : 'paid_out',
+          category: type === 'float_in' ? 'float_top_up' : 'bank_drop',
+          amount: total,
+          note: reason?.trim() || undefined,
+        }),
       })
+      const data = await res.json().catch(() => ({}))
       if (res.ok) {
         toast.success(`${label} recorded: ${currencyCode} ${total.toFixed(2)}`)
-        setActiveShift(prev => prev ? { ...prev, notes: (prev.notes || '') + noteLine } : null)
+      } else if (res.status === 403 && data.code === 'APPROVAL_REQUIRED') {
+        // Over the counter's cash-out limit: Cash In / Out takes the supervisor PIN
+        toast.error('This needs a supervisor. Use Cash In / Out to record it with approval.')
+        setShowCashMovementModal(true)
       } else {
-        toast.error('Failed to record cash drawer operation')
+        toast.error(data.error || 'Failed to record cash drawer operation')
       }
     } catch {
       toast.error('Network error recording drawer operation')
@@ -365,15 +394,17 @@ export default function POSPage() {
   // Enabled payment methods from profile
   const enabledPaymentMethods: PaymentMethodConfig[] = useMemo(() => {
     const methods = posProfile?.paymentMethods
+    // Credit sales and gift cards follow the business's feature switches
+    const allowed = (m: string) => (m !== 'credit' || featureFlags.credit_customer) && (m !== 'gift_card' || featureFlags.gift_cards)
     if (methods && methods.length > 0) {
-      return [...methods].sort((a, b) => a.sortOrder - b.sortOrder)
+      return [...methods].filter((m) => allowed(m.paymentMethod)).sort((a, b) => a.sortOrder - b.sortOrder)
     }
     return [
       { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
       { paymentMethod: 'card', isDefault: false, allowInReturns: true, sortOrder: 1 },
       { paymentMethod: 'bank_transfer', isDefault: false, allowInReturns: true, sortOrder: 2 },
     ]
-  }, [posProfile?.paymentMethods])
+  }, [posProfile?.paymentMethods, featureFlags.credit_customer, featureFlags.gift_cards])
 
   /** Real payment methods used on the receipt being returned (store credit / gift cards excluded) */
   const returnPaidMethods = useMemo(() => Object.entries(returnAgainstSale?.paidByMethod || {})
@@ -384,11 +415,11 @@ export default function POSPage() {
     const methods = enabledPaymentMethods
       .filter(pm => pm.allowInReturns && pm.paymentMethod !== 'gift_card')
       .map(pm => pm.paymentMethod)
-    if (!methods.includes('credit')) methods.push('credit')
+    if (!methods.includes('credit') && featureFlags.credit_customer) methods.push('credit')
     // A receipt paid with several methods can be refunded back to those same methods
     if (returnPaidMethods.length > 1) methods.unshift('original')
     return methods
-  }, [enabledPaymentMethods, returnPaidMethods])
+  }, [enabledPaymentMethods, returnPaidMethods, featureFlags.credit_customer])
 
   useEffect(() => {
     const defaultMethod = enabledPaymentMethods.find(pm => pm.isDefault)
@@ -638,6 +669,7 @@ export default function POSPage() {
   }, [config.showTableSelector])
 
   const fetchLoyaltyProgram = useCallback(async () => {
+    if (!featureFlags.loyalty) { setLoyaltyProgram(null); return }
     try {
       const res = await fetch('/api/loyalty-programs')
       if (res.ok) {
@@ -649,7 +681,7 @@ export default function POSPage() {
     } catch (error) {
       console.error('Error fetching loyalty program:', error)
     }
-  }, [])
+  }, [featureFlags.loyalty])
 
   // ─── Effects ──────────────────────────────────────────────────
 
@@ -2839,7 +2871,7 @@ export default function POSPage() {
         restaurantOrderId={restaurantOrderId}
         cartPromotions={pricingEnabled ? cartPromotions : []}
         couponCode={couponCode}
-        onCouponChange={isReturnMode ? undefined : setCouponCode}
+        onCouponChange={isReturnMode || !featureFlags.promotions ? undefined : setCouponCode}
       />
 
       <POSPaymentModal

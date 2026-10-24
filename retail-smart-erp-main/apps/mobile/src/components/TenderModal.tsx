@@ -27,6 +27,7 @@ import type { CartLine } from './CartDrawerModal'
 import type { Customer } from './CustomerPickerModal'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from './SupervisorPinModal'
 import { useHeaderPad } from '../lib/safeArea'
+import { useFeatureFlags } from '../lib/features'
 
 export interface SaleResultData {
   invoiceNo: string
@@ -163,13 +164,13 @@ export function TenderModal({
   }, [visible, clientSaleId])
 
   useEffect(() => {
-    if (!visible || !customer?.id) { setLoyaltyProgram(null); return }
+    if (!visible || !customer?.id || !features.has('loyalty')) { setLoyaltyProgram(null); return }
     let cancelled = false
     apiGet<LoyaltyProgram | null>('/api/loyalty-programs').then((res) => {
       if (!cancelled) setLoyaltyProgram(res.ok && res.data ? res.data : null)
     })
     return () => { cancelled = true }
-  }, [visible, customer?.id])
+  }, [visible, customer?.id, features.flags?.loyalty]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep the cash field in sync when loyalty redemption changes the payable amount
   useEffect(() => {
@@ -195,7 +196,8 @@ export function TenderModal({
   const changeDue = roundCurrency(numericTendered - netPayable)
   const isTenderSufficient = tender !== 'cash' || changeDue >= -0.009
   const tenders = allowedTenders(shift.posProfile)
-  const creditAllowed = !!customer && shift.posProfile?.allowCreditSale !== false
+  const features = useFeatureFlags()
+  const creditAllowed = !!customer && shift.posProfile?.allowCreditSale !== false && features.has('credit_customer')
   if (!visible) return null
 
   function buildPayload(): Record<string, unknown> {
@@ -411,7 +413,8 @@ export function TenderModal({
     { id: 'cash', emoji: '💵', title: 'Cash', sub: 'Physical tender' },
     { id: 'card', emoji: '💳', title: 'Card POS', sub: tenders.has('card') ? 'Visa / Master / LankaPay' : 'Not enabled on this counter', disabled: !tenders.has('card') },
     { id: 'lankaqr', emoji: '📱', title: 'LankaQR', sub: tenders.has('lankaqr') ? 'Bank transfer with reference' : 'Not enabled on this counter', disabled: !tenders.has('lankaqr') },
-    { id: 'credit', emoji: '🧾', title: 'Customer Credit', sub: customer ? `Bill to ${customer.name}` : 'Link a customer first', disabled: !creditAllowed },
+    // Credit sales switched off by the platform: no credit card at all
+    ...(features.has('credit_customer') ? [{ id: 'credit' as TenderOption, emoji: '🧾', title: 'Customer Credit', sub: customer ? `Bill to ${customer.name}` : 'Link a customer first', disabled: !creditAllowed }] : []),
   ]
 
   return (
