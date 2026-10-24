@@ -12,6 +12,7 @@ import { promotionLabel } from '@/lib/pricing/engine'
 import { toPromotionRuleFromRow } from '@/lib/pricing/promotion-rule'
 import { isUniqueViolation } from '@/lib/db/errors'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET /api/promotions/[id]
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -54,7 +55,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-// DELETE /api/promotions/[id] — a promotion already redeemed is deactivated instead (keeps the history)
+// DELETE /api/promotions/[id] — archived and moved to the recycle bin (keeps the history)
 export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await authWithCompany()
@@ -62,18 +63,14 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
     if (permError) return permError
     const p = validateParams(await params, idParamSchema)
     if (!p.success) return p.response
-    const res = await withTenantTransaction(session!.user.tenantId, async (tx) => {
-      const [row] = await tx.select({ id: promotions.id, usageCount: promotions.usageCount }).from(promotions).where(eq(promotions.id, p.data.id))
-      if (!row) return null
-      if (row.usageCount > 0) {
-        await tx.update(promotions).set({ isActive: false, updatedAt: new Date() }).where(eq(promotions.id, row.id))
-        return { deactivated: true }
-      }
-      await tx.delete(promotions).where(eq(promotions.id, row.id))
-      return { deleted: true }
-    })
-    if (!res) return NextResponse.json({ error: 'Promotion not found' }, { status: 404 })
-    return NextResponse.json({ success: true, ...res })
+    // Vendors never hard-delete: archive + recycle bin (redemption history kept; only a super admin
+    // restores or purges)
+    const binned = await withTenantTransaction(session!.user.tenantId, (tx) => moveToRecycleBin(tx, {
+      tenantId: session!.user.tenantId, entityType: 'promotion', entityId: p.data.id,
+      userId: session!.user.id, userName: session!.user.name,
+    }))
+    if (!binned) return NextResponse.json({ error: 'Promotion not found' }, { status: 404 })
+    return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
   } catch (error) {
     logError('api/promotions/[id]', error)
     return NextResponse.json({ error: 'Failed to delete promotion' }, { status: 500 })

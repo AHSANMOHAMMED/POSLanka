@@ -3,9 +3,10 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { modifiers, modifierGroups } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { createModifierSchema } from '@/lib/validation/schemas/restaurant'
@@ -38,7 +39,7 @@ export async function GET(
       }
 
       const result = await db.query.modifiers.findMany({
-        where: eq(modifiers.groupId, id),
+        where: and(eq(modifiers.groupId, id), notInRecycleBin('modifier', modifiers.id)),
         orderBy: (m, { asc }) => [asc(m.sortOrder), asc(m.name)],
       })
 

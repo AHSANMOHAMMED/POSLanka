@@ -541,13 +541,13 @@ export default function SalesOrderDetailPage() {
   // Delete order
   async function handleDelete() {
     if (!order || order.status !== 'draft') return
-    if (!confirm('Delete this draft sales order?')) return
+    if (!confirm('Delete this draft sales order? A copy is kept in the recycle bin for the platform administrator.')) return
 
     setSaving(true)
     try {
       const res = await fetch(`/api/sales-orders/${id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Sales order deleted')
+        toast.success('Sales order deleted (copy kept in recycle bin)')
         router.push(tenantSlug ? `/c/${tenantSlug}/sales-orders` : '/sales-orders')
       } else {
         const data = await res.json()

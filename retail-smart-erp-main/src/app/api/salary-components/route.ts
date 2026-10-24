@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { salaryComponentsListSchema, createSalaryComponentSchema } from '@/lib/validation/schemas/hr'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // GET all salary components for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -27,6 +28,8 @@ export async function GET(request: NextRequest) {
     return await withTenant(session!.user.tenantId, async (db) => {
       // Build where conditions (tenantId filter handled by RLS)
       const conditions = []
+      // Rows moved to the recycle bin are hidden (deactivated ones still show)
+      conditions.push(notInRecycleBin('salary_component', salaryComponents.id))
 
       if (search) {
         const escaped = escapeLikePattern(search)

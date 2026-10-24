@@ -6,6 +6,7 @@ import { commissionRates, users, serviceTypes, categories } from '@/lib/db/schem
 import { and, eq, sql, isNull } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { commissionRatesListSchema, createCommissionRateSchema } from '@/lib/validation/schemas/commissions'
@@ -25,7 +26,8 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions (tenantId filter handled by RLS)
-      const conditions = []
+      // Rates moved to the recycle bin are hidden (deactivated ones still show)
+      const conditions = [notInRecycleBin('commission_rate', commissionRates.id)]
 
       if (userId) {
         conditions.push(eq(commissionRates.userId, userId))

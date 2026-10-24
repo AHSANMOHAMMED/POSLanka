@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateCategorySchema } from '@/lib/validation/schemas/items'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single category
 export async function GET(
@@ -109,30 +110,32 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session!.user.tenantId, async (db) => {
-      // Check if category has items (RLS scopes the query)
+      // Check if category has active items (RLS scopes the query)
       const itemsInCategory = await db.query.items.findFirst({
-        where: eq(items.categoryId, id),
+        where: and(eq(items.categoryId, id), eq(items.isActive, true)),
       })
 
       if (itemsInCategory) {
         return NextResponse.json(
-          { error: 'Cannot delete category that contains items. Please move or delete the items first.' },
+          { error: 'Cannot move a category that contains items to the recycle bin. Please move the items to another category first.' },
           { status: 400 }
         )
       }
 
-      const [deleted] = await db.delete(categories)
-        .where(eq(categories.id, id))
-        .returning()
+      // Vendors never hard-delete: archive + recycle bin (a super admin can restore or purge it)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'category', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
 
-      if (!deleted) {
+      if (!binned) {
         return NextResponse.json({ error: 'Category not found' }, { status: 404 })
       }
 
       // Broadcast the change to connected clients
       logAndBroadcast(session!.user.tenantId, 'category', 'deleted', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/categories/[id]', error)

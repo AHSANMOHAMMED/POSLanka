@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { salaryStructuresListSchema, createSalaryStructureSchema } from '@/lib/validation/schemas/hr'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,6 +28,8 @@ export async function GET(request: NextRequest) {
 
     return await withTenant(session.user.tenantId, async (db) => {
       const conditions = []
+      // Rows moved to the recycle bin are hidden (deactivated ones still show)
+      conditions.push(notInRecycleBin('salary_structure', salaryStructures.id))
       if (search) conditions.push(ilike(salaryStructures.name, `%${escapeLikePattern(search)}%`))
       if (active) conditions.push(eq(salaryStructures.isActive, true))
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined

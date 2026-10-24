@@ -63,9 +63,9 @@ export default function FinancingOptionsPage() {
       const res = await fetch(`/api/financing-options/${deleteId}`, { method: 'DELETE' })
       if (res.ok) {
         refresh()
-        toast.success('Financing option deleted')
+        toast.success('Financing option moved to the recycle bin')
       } else {
-        toast.error('Failed to delete financing option')
+        toast.error('Failed to move the financing option to the recycle bin')
       }
     } catch (error) {
       console.error('Error deleting financing option:', error)
@@ -188,7 +188,7 @@ export default function FinancingOptionsPage() {
                     </button>
                     <button
                       onClick={() => setDeleteId(opt.id)}
-                      aria-label={`Delete ${opt.lenderName}`}
+                      aria-label={`Move ${opt.lenderName} to the recycle bin`}
                       className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded ml-2"
                     >
                       <Trash2 size={18} />
@@ -227,9 +227,9 @@ export default function FinancingOptionsPage() {
         isOpen={!!deleteId}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
-        title="Delete Financing Option"
-        message="Are you sure you want to delete this financing option? This action cannot be undone."
-        confirmText="Delete"
+        title="Move to Recycle Bin"
+        message="Move this financing option to the recycle bin? Only the platform administrator can restore it."
+        confirmText="Move to recycle bin"
         variant="danger"
         processing={deleting}
       />

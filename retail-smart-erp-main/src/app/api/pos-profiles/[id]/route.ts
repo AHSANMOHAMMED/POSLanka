@@ -6,6 +6,7 @@ import { posProfiles, posProfileUsers, posProfilePaymentMethods, posProfileItemG
 import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePosProfileSchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -300,16 +301,23 @@ export async function DELETE(
 
       if (profileCount.length === 1 && profileCount[0].id === id) {
         return NextResponse.json({
-          error: 'Cannot delete the only active POS profile. Create another profile first.',
+          error: 'Cannot move the only active POS profile to the recycle bin. Create another profile first.',
         }, { status: 400 })
       }
 
-      // Delete the profile (cascades will handle child records)
-      await db.delete(posProfiles).where(eq(posProfiles.id, id))
+      // Vendors never hard-delete: archive (status = inactive; users / item groups kept) + recycle
+      // bin; only a super admin restores or purges
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'pos_profile', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
+      if (!binned) {
+        return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
+      }
 
       logAndBroadcast(session.user.tenantId, 'pos-profile', 'deleted', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/pos-profiles/[id]', error)

@@ -1254,6 +1254,9 @@ export const customers = pgTable('customers', {
   loyaltyTier: loyaltyTierEnum('loyalty_tier').default('bronze'),
   loyaltyPoints: integer('loyalty_points').notNull().default(0),
 
+  // false = moved to the recycle bin (drizzle/0172); hidden from lists, pickers and the POS
+  isActive: boolean('is_active').notNull().default(true),
+
   // Timestamps
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
@@ -1846,6 +1849,28 @@ export const prescriptions = pgTable('prescriptions', {
   notes: text('notes'),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// Recycle bin (drizzle/0172): what vendors "deleted". Master data is archived (hidden, row kept);
+// disposable drafts are hard-deleted with a snapshot (row + child rows) so a super admin can
+// re-insert them. Only a super admin restores or purges.
+export const recycleBin = pgTable('recycle_bin', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  entityType: varchar('entity_type', { length: 50 }).notNull(),
+  entityTable: varchar('entity_table', { length: 63 }).notNull(),
+  entityId: uuid('entity_id').notNull(),
+  displayName: varchar('display_name', { length: 255 }),
+  mode: varchar('mode', { length: 10 }).notNull(), // archive | delete
+  snapshot: jsonb('snapshot').$type<Record<string, unknown>>(),
+  children: jsonb('children').$type<Record<string, Array<Record<string, unknown>>>>(),
+  deletedBy: uuid('deleted_by').references(() => users.id, { onDelete: 'set null' }),
+  deletedByName: varchar('deleted_by_name', { length: 255 }),
+  deletedAt: timestamp('deleted_at').defaultNow().notNull(),
+  restoredAt: timestamp('restored_at'),
+  restoredBy: uuid('restored_by'), // super_admins.id
+  purgedAt: timestamp('purged_at'),
+  purgedBy: uuid('purged_by'), // super_admins.id
 })
 
 export const stockMovements = pgTable('stock_movements', {

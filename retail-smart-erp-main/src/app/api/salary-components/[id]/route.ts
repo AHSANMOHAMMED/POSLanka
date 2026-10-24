@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSalaryComponentSchema } from '@/lib/validation/schemas/hr'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single salary component
 export async function GET(
@@ -200,25 +201,21 @@ export async function DELETE(
         return NextResponse.json({ error: 'Salary component not found' }, { status: 404 })
       }
 
-      if (!existing.isActive) {
-        return NextResponse.json({ error: 'Salary component is already deactivated' }, { status: 400 })
+      // Vendors never hard-delete: archive + recycle bin (only a super admin can restore or purge)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'salary_component', entityId: id, userId: session!.user.id, userName: session!.user.name,
+      })
+      if (!binned) {
+        return NextResponse.json({ error: 'Salary component not found' }, { status: 404 })
       }
-
-      const [deactivated] = await db.update(salaryComponents)
-        .set({
-          isActive: false,
-          updatedAt: new Date(),
-        })
-        .where(eq(salaryComponents.id, id))
-        .returning()
 
       // Broadcast the change to connected clients
       logAndBroadcast(session!.user.tenantId, 'salary-component', 'deleted', id)
 
-      return NextResponse.json(deactivated)
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/salary-components/[id]', error)
-    return NextResponse.json({ error: 'Failed to deactivate salary component' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to move the salary component to the recycle bin' }, { status: 500 })
   }
 }

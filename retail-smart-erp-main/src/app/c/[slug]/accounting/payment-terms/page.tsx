@@ -202,7 +202,7 @@ export default function PaymentTermsPage() {
     try {
       const res = await fetch(`/api/accounting/payment-terms/${deleteTerm.id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Payment term deleted')
+        toast.success('Payment term moved to the recycle bin')
         setDeleteTerm(null)
         refreshTerms()
       } else {
@@ -294,7 +294,7 @@ export default function PaymentTermsPage() {
     try {
       const res = await fetch(`/api/accounting/payment-terms-templates/${deleteTemplate.id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Template deleted')
+        toast.success('Template moved to the recycle bin')
         setDeleteTemplate(null)
         refreshTemplates()
       } else {
@@ -614,8 +614,8 @@ export default function PaymentTermsPage() {
         </div>
       )}
 
-      <ConfirmModal isOpen={!!deleteTerm} onClose={() => setDeleteTerm(null)} onConfirm={handleDeleteTerm} title="Delete Payment Term" message={`Delete "${deleteTerm?.name}"? This cannot be undone.`} confirmText="Delete" variant="danger" processing={deletingTerm} />
-      <ConfirmModal isOpen={!!deleteTemplate} onClose={() => setDeleteTemplate(null)} onConfirm={handleDeleteTemplate} title="Delete Template" message={`Delete "${deleteTemplate?.name}"? This cannot be undone.`} confirmText="Delete" variant="danger" processing={deletingTemplate} />
+      <ConfirmModal isOpen={!!deleteTerm} onClose={() => setDeleteTerm(null)} onConfirm={handleDeleteTerm} title="Move to Recycle Bin" message={`Move "${deleteTerm?.name}" to the recycle bin? Only the platform administrator can restore it.`} confirmText="Move to recycle bin" variant="danger" processing={deletingTerm} />
+      <ConfirmModal isOpen={!!deleteTemplate} onClose={() => setDeleteTemplate(null)} onConfirm={handleDeleteTemplate} title="Move to Recycle Bin" message={`Move "${deleteTemplate?.name}" to the recycle bin? Only the platform administrator can restore it.`} confirmText="Move to recycle bin" variant="danger" processing={deletingTemplate} />
     </ListPageLayout>
   )
 }

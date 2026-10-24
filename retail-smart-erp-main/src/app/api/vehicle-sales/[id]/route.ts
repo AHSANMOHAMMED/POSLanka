@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleSaleDetailSchema } from '@/lib/validation/schemas/vehicles'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   _request: NextRequest,
@@ -202,6 +203,11 @@ export async function DELETE(
         )
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'vehicle_sale_detail', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
       await db.delete(vehicleSaleDetails).where(eq(vehicleSaleDetails.id, id))
 
       logAndBroadcast(session!.user.tenantId, 'vehicle-sale', 'deleted', id)

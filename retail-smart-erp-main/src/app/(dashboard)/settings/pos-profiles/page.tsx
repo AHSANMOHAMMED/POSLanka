@@ -153,7 +153,7 @@ export default function POSProfilesPage() {
       })
 
       if (res.ok) {
-        toast.success('Profile deleted')
+        toast.success('Profile moved to recycle bin')
         fetchProfiles()
       } else {
         const data = await res.json()
@@ -316,9 +316,9 @@ export default function POSProfilesPage() {
           setDeletingId(null)
         }}
         onConfirm={handleDelete}
-        title="Delete POS Profile"
-        message={`Are you sure you want to delete "${profileToDelete?.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move POS Profile to Recycle Bin"
+        message={`Move "${profileToDelete?.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
       />
     </div>

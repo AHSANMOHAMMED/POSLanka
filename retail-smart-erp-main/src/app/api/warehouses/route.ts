@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
@@ -26,7 +27,8 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions (tenantId filter handled by RLS)
-      const conditions = []
+      // Warehouses moved to the recycle bin are hidden (deactivated ones still show)
+      const conditions = [notInRecycleBin('warehouse', warehouses.id)]
 
       if (search) {
         const escaped = escapeLikePattern(search)

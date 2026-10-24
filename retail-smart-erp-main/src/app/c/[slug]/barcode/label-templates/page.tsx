@@ -65,7 +65,7 @@ export default function BarcodeLabelTemplatesPage() {
     try {
       const res = await fetch(`/api/label-templates/${deleteId}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Template deleted')
+        toast.success('Template moved to recycle bin')
       } else {
         toast.error('Failed to delete template')
       }
@@ -168,7 +168,7 @@ export default function BarcodeLabelTemplatesPage() {
                       <button
                         onClick={() => setDeleteId(t.id)}
                         className="p-1 text-gray-500 hover:text-red-600 rounded"
-                        title="Delete"
+                        title="Move to recycle bin"
                       >
                         <Trash2 size={18} />
                       </button>
@@ -185,9 +185,9 @@ export default function BarcodeLabelTemplatesPage() {
         isOpen={!!deleteId}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
-        title="Delete Label Template"
-        message="Are you sure you want to delete this template? This action cannot be undone."
-        confirmText="Delete"
+        title="Move Label Template to Recycle Bin"
+        message="Move this template to the recycle bin? Only the platform administrator can restore it."
+        confirmText="Move to recycle bin"
         variant="danger"
         processing={deleting}
       />

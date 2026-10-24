@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleSchema } from '@/lib/validation/schemas/vehicles'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single vehicle
 export async function GET(
@@ -233,6 +234,11 @@ export async function DELETE(
         )
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'vehicle', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
       const [deleted] = await db.delete(vehicles)
         .where(eq(vehicles.id, id))
         .returning()

@@ -3,20 +3,18 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { canViewCostPrices, redactItemCost } from '@/lib/auth/field-access'
 import { withTenant, withTenantTransaction } from '@/lib/db'
-import { items, saleItems, workOrderParts, heldSales, layawayItems, purchaseItems, purchaseOrderItems, stockMovements, warehouseStock, warehouses, itemCostHistory, users, itemTombstones } from '@/lib/db/schema'
+import { items, warehouseStock, warehouses, itemCostHistory, users } from '@/lib/db/schema'
 import { eq, and, sql, ne, inArray } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { checkPriceChangeAnomalies } from '@/lib/ai/anomaly-detector'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateItemSchema } from '@/lib/validation/schemas/items'
-import { deleteFromR2, keyFromUrl } from '@/lib/files'
-import { deleteFilesByDocument } from '@/lib/utils/file-cleanup'
-import { adjustFileStorage } from '@/lib/db/storage-quota'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { DuplicateError, toApiError } from '@/lib/db/errors'
 import { recordItemChange } from '@/lib/inventory/item-audit'
 import { bumpItemCodeSequence } from '@/lib/inventory/item-codes'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 class StaleItemError extends Error {
   constructor(public readonly currentVersion: number) {
@@ -383,104 +381,18 @@ export async function DELETE(
     const { id } = paramsParsed.data
     const tenantId = session!.user.tenantId
 
-    // Execute with RLS tenant context
+    // Vendors never hard-delete an item: it is archived (hidden from lists and the POS, history kept)
+    // and goes to the recycle bin, where only a super admin can restore or purge it.
     return await withTenant(tenantId, async (db) => {
-      // Check for dependencies before deletion (RLS scopes all queries)
-      const dependencies: string[] = []
-
-      // Check for sale items (historical data)
-      const [itemSales] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(saleItems)
-        .where(eq(saleItems.itemId, id))
-      if (itemSales?.count > 0) {
-        dependencies.push(`${itemSales.count} sale record(s)`)
-      }
-
-      // Check for work order parts
-      const [itemWorkOrders] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(workOrderParts)
-        .where(eq(workOrderParts.itemId, id))
-      if (itemWorkOrders?.count > 0) {
-        dependencies.push(`${itemWorkOrders.count} work order part(s)`)
-      }
-
-      // Check for held sales containing this item
-      const [itemHeldSales] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(heldSales)
-        .where(sql`${heldSales.cartItems}::jsonb @> ${JSON.stringify([{ itemId: id }])}::jsonb`)
-      if (itemHeldSales?.count > 0) {
-        dependencies.push(`${itemHeldSales.count} held sale(s)`)
-      }
-
-      // Check for active layaway items
-      const [itemLayaways] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(layawayItems)
-        .where(eq(layawayItems.itemId, id))
-      if (itemLayaways?.count > 0) {
-        dependencies.push(`${itemLayaways.count} layaway item(s)`)
-      }
-
-      // Check for purchase items (purchase history)
-      const [itemPurchases] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(purchaseItems)
-        .where(eq(purchaseItems.itemId, id))
-      if (itemPurchases?.count > 0) {
-        dependencies.push(`${itemPurchases.count} purchase record(s)`)
-      }
-
-      // Check for purchase order items
-      const [itemPOItems] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(purchaseOrderItems)
-        .where(eq(purchaseOrderItems.itemId, id))
-      if (itemPOItems?.count > 0) {
-        dependencies.push(`${itemPOItems.count} purchase order(s)`)
-      }
-
-      // Check for stock movements (stock history)
-      const [itemStockMoves] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(stockMovements)
-        .where(eq(stockMovements.itemId, id))
-      if (itemStockMoves?.count > 0) {
-        dependencies.push(`${itemStockMoves.count} stock movement(s)`)
-      }
-
-      // If there are dependencies, prevent deletion but suggest deactivation
-      if (dependencies.length > 0) {
-        return NextResponse.json({
-          error: `Cannot delete item. Item is used in: ${dependencies.join(', ')}. Consider deactivating the item instead to preserve historical records.`,
-          dependencies,
-          suggestion: 'deactivate'
-        }, { status: 400 })
-      }
-
-      // Get item before deletion to clean up R2 files (and for the audit trail)
-      const item = await db.query.items.findFirst({
-        where: eq(items.id, id),
-      })
-
+      const item = await db.query.items.findFirst({ where: eq(items.id, id) })
       if (!item) {
         return NextResponse.json({ error: 'Item not found' }, { status: 404 })
       }
 
-      const [deleted] = await db.delete(items)
-        .where(eq(items.id, id))
-        .returning()
-
-      if (!deleted) {
-        return NextResponse.json({ error: 'Item not found' }, { status: 404 })
-      }
-
-      // W6: tombstone (same transaction) so offline catalogs drop the item on their next delta sync
-      await db.insert(itemTombstones)
-        .values({ tenantId, itemId: id, deletedAt: sql`now()` })
-        .onConflictDoUpdate({ target: [itemTombstones.tenantId, itemTombstones.itemId], set: { deletedAt: sql`now()` } })
+      const binned = await moveToRecycleBin(db, {
+        tenantId, entityType: 'item', entityId: id, userId: session!.user.id, userName: session!.user.name,
+      })
+      if (!binned) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
 
       await recordItemChange(db, {
         tenantId,
@@ -489,29 +401,12 @@ export async function DELETE(
         source: 'manual',
         action: 'delete',
         before: item as unknown as Record<string, unknown>,
-        after: null,
+        after: { ...(item as unknown as Record<string, unknown>), isActive: false },
       })
 
-      // Clean up item image from R2
-      if (item.imageUrl) {
-        const key = keyFromUrl(item.imageUrl)
-        if (key) {
-          try { await deleteFromR2(key) } catch { /* ignore */ }
-        }
-      }
-
-      // Subtract item image from file storage counter (bypasses files table)
-      if (item.imageSize) {
-        adjustFileStorage(tenantId, -item.imageSize).catch(() => {})
-      }
-
-      // Clean up any files attached via files table
-      deleteFilesByDocument(tenantId, 'item', id, session!.user.tenantSlug).catch(() => {})
-
-      // Broadcast the change to connected clients
       logAndBroadcast(tenantId, 'item', 'deleted', id, { userId: session!.user.id, entityName: item.name })
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     const mapped = toApiError(error)

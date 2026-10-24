@@ -12,6 +12,7 @@ import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { createRecurringEntrySchema } from '@/lib/validation/schemas/accounting'
 import { z } from 'zod'
 import { paginatedSearchSchema } from '@/lib/validation/schemas/common'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 const recurringEntriesListSchema = paginatedSearchSchema.extend({
   status: z.enum(['active', 'inactive']).optional(),
@@ -55,6 +56,8 @@ export async function GET(request: NextRequest) {
 
     return await withTenant(session.user.tenantId, async (db) => {
       const conditions = []
+      // Rows moved to the recycle bin are hidden (deactivated ones still show)
+      conditions.push(notInRecycleBin('recurring_journal_template', recurringJournalTemplates.id))
       if (search) {
         conditions.push(ilike(recurringJournalTemplates.name, `%${escapeLikePattern(search)}%`))
       }

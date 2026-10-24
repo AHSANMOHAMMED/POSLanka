@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { customers, vehicles, workOrders, sales, layaways, appointments } from '@/lib/db/schema'
+import { customers, workOrders, layaways, appointments } from '@/lib/db/schema'
 import { eq, and, ne, inArray, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateCustomerSchema } from '@/lib/validation/schemas/customers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single customer
 export async function GET(
@@ -225,14 +226,6 @@ export async function DELETE(
         dependencies.push(`${activeWorkOrders.count} active work order(s)`)
       }
 
-      // Check for vehicles owned by this customer
-      const [ownedVehicles] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(vehicles)
-        .where(eq(vehicles.customerId, id))
-      if (ownedVehicles?.count > 0) {
-        dependencies.push(`${ownedVehicles.count} vehicle(s)`)
-      }
 
       // Check for active layaways
       const [activeLayaways] = await db
@@ -258,51 +251,29 @@ export async function DELETE(
         dependencies.push(`${upcomingAppointments.count} upcoming appointment(s)`)
       }
 
-      // Check for sales (historical data)
-      const [customerSales] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(sales)
-        .where(eq(sales.customerId, id))
-      if (customerSales?.count > 0) {
-        dependencies.push(`${customerSales.count} sale record(s)`)
-      }
 
       // If there are dependencies, prevent deletion
       if (dependencies.length > 0) {
         return NextResponse.json({
-          error: `Cannot delete customer. Customer has: ${dependencies.join(', ')}. Please reassign or remove these records first.`,
+          error: `Cannot move the customer to the recycle bin. Customer has: ${dependencies.join(', ')}. Please reassign or remove these records first.`,
           dependencies
         }, { status: 400 })
       }
 
-      // Any other history (quotations, credit / loyalty transactions, gift cards, reservations...)
-      // still references the customer: answer with a clear 400 instead of a 500 FK error.
-      let deleted: typeof customers.$inferSelect | undefined
-      try {
-        await db.execute(sql`SAVEPOINT customer_delete`)
-        ;[deleted] = await db.delete(customers)
-          .where(eq(customers.id, id))
-          .returning()
-        await db.execute(sql`RELEASE SAVEPOINT customer_delete`)
-      } catch (err) {
-        const code = (err as { code?: string; cause?: { code?: string } })?.code ?? (err as { cause?: { code?: string } })?.cause?.code
-        if (code === '23503') {
-          await db.execute(sql`ROLLBACK TO SAVEPOINT customer_delete`)
-          return NextResponse.json({
-            error: 'Cannot delete customer: other records (quotations, credit, loyalty, gift card or reservation history) still reference this customer.',
-          }, { status: 400 })
-        }
-        throw err
-      }
-
-      if (!deleted) {
+      // History (sales, vehicles, quotations, credit, loyalty...) keeps pointing at the customer:
+      // the vendor's delete only archives it (hidden from lists, pickers and the POS) and puts it in
+      // the recycle bin, where only a super admin can restore or purge it.
+      const binned = await moveToRecycleBin(db, {
+        tenantId, entityType: 'customer', entityId: id, userId: session!.user.id, userName: session!.user.name,
+      })
+      if (!binned) {
         return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
       }
 
       // Broadcast the change to connected clients
       logAndBroadcast(tenantId, 'customer', 'deleted', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/customers/[id]', error)

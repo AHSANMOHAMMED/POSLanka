@@ -3,10 +3,11 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { recipes } from '@/lib/db/schema'
-import { ilike, sql, or } from 'drizzle-orm'
+import { and, ilike, sql, or } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { recipesListSchema, createRecipeSchema } from '@/lib/validation/schemas/restaurant'
@@ -27,12 +28,14 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
       const escaped = search ? escapeLikePattern(search) : ''
+      // Recipes moved to the recycle bin are hidden (deactivated ones still show)
+      const notBinned = notInRecycleBin('recipe', recipes.id)
       const whereClause = search
-        ? or(
+        ? and(notBinned, or(
             ilike(recipes.name, `%${escaped}%`),
             ilike(recipes.description, `%${escaped}%`)
-          )
-        : undefined
+          ))
+        : notBinned
 
       // Get total count for pagination
       const [{ count: totalCount }] = await db

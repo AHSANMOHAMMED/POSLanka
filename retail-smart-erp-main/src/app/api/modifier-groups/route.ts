@@ -7,6 +7,7 @@ import { eq, and, sql, ilike } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { modifierGroupsListSchema, createModifierGroupSchema } from '@/lib/validation/schemas/restaurant'
@@ -25,7 +26,8 @@ export async function GET(request: NextRequest) {
 
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
-      const conditions = []
+      // Groups moved to the recycle bin are hidden (deactivated ones still show)
+      const conditions = [notInRecycleBin('modifier_group', modifierGroups.id)]
       if (search) {
         conditions.push(ilike(modifierGroups.name, `%${escapeLikePattern(search)}%`))
       }
@@ -50,6 +52,7 @@ export async function GET(request: NextRequest) {
         with: {
           modifiers: {
             columns: { id: true },
+            where: (m) => notInRecycleBin('modifier', m.id),
           },
           itemAssociations: {
             columns: { id: true },

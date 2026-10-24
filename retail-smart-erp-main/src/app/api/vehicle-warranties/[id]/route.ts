@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleWarrantySchema } from '@/lib/validation/schemas/vehicles'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single vehicle warranty
 export async function GET(
@@ -172,6 +173,11 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'vehicle_warranty', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
       const [deleted] = await db.delete(vehicleWarranties)
         .where(eq(vehicleWarranties.id, id))
         .returning()

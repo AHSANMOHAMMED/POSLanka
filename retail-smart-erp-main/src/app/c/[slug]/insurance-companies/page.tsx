@@ -111,14 +111,14 @@ export default function InsuranceCompaniesPage() {
       const res = await fetch(`/api/insurance-companies/${deleteConfirm.id}`, { method: 'DELETE' })
       if (res.ok) {
         fetchCompanies()
-        toast.success('Insurance company deleted')
+        toast.success('Insurance company moved to the recycle bin')
       } else {
         const data = await res.json()
-        toast.error(data.error || 'Failed to delete insurance company')
+        toast.error(data.error || 'Failed to move the insurance company to the recycle bin')
       }
     } catch (error) {
       console.error('Error deleting insurance company:', error)
-      toast.error('Failed to delete insurance company')
+      toast.error('Failed to move the insurance company to the recycle bin')
     } finally {
       setDeleteConfirm({ open: false, id: null, name: '' })
     }
@@ -258,7 +258,7 @@ export default function InsuranceCompaniesPage() {
                     </button>
                     <button
                       onClick={() => setDeleteConfirm({ open: true, id: company.id, name: company.name })}
-                      aria-label={`Delete ${company.name}`}
+                      aria-label={`Move ${company.name} to the recycle bin`}
                       className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/50 rounded ml-1 transition-colors"
                     >
                       <Trash2 size={16} />
@@ -294,9 +294,9 @@ export default function InsuranceCompaniesPage() {
         isOpen={deleteConfirm.open}
         onClose={() => setDeleteConfirm({ open: false, id: null, name: '' })}
         onConfirm={handleDelete}
-        title="Delete Insurance Company"
-        message={`Are you sure you want to delete "${deleteConfirm.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move to Recycle Bin"
+        message={`Move "${deleteConfirm.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
       />
     </ListPageLayout>

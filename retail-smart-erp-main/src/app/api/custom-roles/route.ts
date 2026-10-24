@@ -8,6 +8,7 @@ import { checkRoleRank, sanitizeRequestedPermissions, requestedPermissions, esca
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { createCustomRoleSchema } from '@/lib/validation/schemas/role-permissions'
@@ -22,7 +23,8 @@ export async function GET() {
 
     return await withTenant(session.user.tenantId, async (db) => {
       const [roles, counts] = await Promise.all([
-        db.select().from(customRoles),
+        // Roles moved to the recycle bin are hidden
+        db.select().from(customRoles).where(notInRecycleBin('custom_role', customRoles.id)),
         db.select({ customRoleId: users.customRoleId, n: sql<number>`count(*)::int` })
           .from(users)
           .where(isNotNull(users.customRoleId))

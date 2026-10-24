@@ -345,7 +345,7 @@ export default function ModifierGroupDetailPage({
         method: 'DELETE',
       })
       if (res.ok) {
-        toast.success('Modifier deleted')
+        toast.success('Modifier moved to recycle bin')
         fetchGroup()
       } else {
         const data = await res.json()
@@ -769,7 +769,7 @@ export default function ModifierGroupDetailPage({
                           setDeleteModifierConfirm({ open: true, id: modifier.id, name: modifier.name })
                         }
                         className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                        title="Delete modifier"
+                        title="Move modifier to Recycle Bin"
                       >
                         <Trash2 size={15} />
                       </button>
@@ -999,10 +999,10 @@ export default function ModifierGroupDetailPage({
         isOpen={deleteModifierConfirm.open}
         onClose={() => setDeleteModifierConfirm({ open: false, id: null, name: '' })}
         onConfirm={handleDeleteModifier}
-        title="Delete Modifier"
-        message={`Are you sure you want to delete "${deleteModifierConfirm.name}"? This action cannot be undone.`}
+        title="Move Modifier to Recycle Bin"
+        message={`Move "${deleteModifierConfirm.name}" to the recycle bin? Only the platform administrator can restore it.`}
         variant="danger"
-        confirmText="Delete"
+        confirmText="Move to recycle bin"
       />
     </div>
   )

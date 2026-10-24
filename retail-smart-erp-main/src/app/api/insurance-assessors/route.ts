@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { insuranceAssessorsListSchema, createInsuranceAssessorSchema } from '@/lib/validation/schemas/insurance'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // GET all insurance assessors for the tenant
 export async function GET(request: NextRequest) {
@@ -25,6 +26,8 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       const result = await db.query.insuranceAssessors.findMany({
+        // Rows moved to the recycle bin are hidden (deactivated ones still show)
+        where: notInRecycleBin('insurance_assessor', insuranceAssessors.id),
         with: {
           insuranceCompany: true,
         },

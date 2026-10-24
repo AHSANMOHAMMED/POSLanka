@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { financingOptionsListSchema, createFinancingOptionSchema } from '@/lib/validation/schemas/dealership'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // GET all financing options for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -27,6 +28,8 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
       const conditions = []
+      // Rows moved to the recycle bin are hidden (deactivated ones still show)
+      conditions.push(notInRecycleBin('financing_option', financingOptions.id))
       if (search) {
         conditions.push(
           ilike(financingOptions.lenderName, `%${escapeLikePattern(search)}%`)

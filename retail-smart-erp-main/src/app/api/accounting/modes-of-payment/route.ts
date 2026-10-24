@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { modesOfPaymentListSchema, createModeOfPaymentSchema } from '@/lib/validation/schemas/accounting'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 function attachAccount(rows: { accountId: string | null; accountName: string | null; accountNumber: string | null }[]) {
   return rows.map(({ accountId, accountName, accountNumber, ...rest }) => ({
@@ -24,6 +25,8 @@ export async function GET(request: NextRequest) {
     const { search, all, enabled: enabledOnly } = qp.data
 
     const conditions = []
+    // Rows moved to the recycle bin are hidden (deactivated ones still show)
+    conditions.push(notInRecycleBin('mode_of_payment', modesOfPayment.id))
     if (search) {
       conditions.push(ilike(modesOfPayment.name, `%${escapeLikePattern(search)}%`))
     }

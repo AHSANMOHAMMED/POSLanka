@@ -7,6 +7,7 @@ import { eq, and, or, ilike, desc, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { vehicleInventoryListSchema, createVehicleInventorySchema } from '@/lib/validation/schemas/vehicles'
@@ -26,7 +27,8 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
-      const conditions = []
+      // Vehicles moved to the recycle bin are hidden
+      const conditions = [notInRecycleBin('vehicle_inventory', vehicleInventory.id)]
       if (search) {
         const escaped = escapeLikePattern(search)
         conditions.push(
@@ -36,7 +38,7 @@ export async function GET(request: NextRequest) {
             ilike(vehicleInventory.trim, `%${escaped}%`),
             ilike(vehicleInventory.exteriorColor, `%${escaped}%`),
             ilike(vehicleInventory.location, `%${escaped}%`)
-          )
+          )!
         )
       }
       if (status) {

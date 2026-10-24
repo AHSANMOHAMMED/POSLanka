@@ -81,7 +81,7 @@ export default function TestDrivesPage() {
       const res = await fetch(`/api/test-drives/${deleteId}`, { method: 'DELETE' })
       if (res.ok) {
         refresh()
-        toast.success('Test drive deleted successfully')
+        toast.success('Test drive deleted successfully (copy kept in recycle bin)')
       } else {
         toast.error('Failed to delete test drive')
       }
@@ -306,7 +306,7 @@ export default function TestDrivesPage() {
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
         title="Delete Test Drive"
-        message="Are you sure you want to delete this test drive record? This action cannot be undone."
+        message="Are you sure you want to delete this test drive record? A copy is kept in the recycle bin for the platform administrator."
         confirmText="Delete"
         variant="danger"
         processing={deleting}

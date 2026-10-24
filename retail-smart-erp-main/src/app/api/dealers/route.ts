@@ -6,6 +6,7 @@ import { eq, and, or, ilike, desc, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
@@ -21,7 +22,8 @@ export async function GET(request: NextRequest) {
     const { search, status, type, page, pageSize, all } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
-      const conditions = []
+      // Dealers moved to the recycle bin are hidden (deactivated ones still show)
+      const conditions = [notInRecycleBin('dealer', dealers.id)]
       if (search) {
         const escaped = escapeLikePattern(search)
         conditions.push(or(
@@ -29,7 +31,7 @@ export async function GET(request: NextRequest) {
           ilike(dealers.code, `%${escaped}%`),
           ilike(dealers.territory, `%${escaped}%`),
           ilike(dealers.contactPerson, `%${escaped}%`)
-        ))
+        )!)
       }
       if (status) conditions.push(eq(dealers.status, status))
       if (type) conditions.push(eq(dealers.type, type))

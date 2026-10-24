@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSalaryStructureSchema } from '@/lib/validation/schemas/hr'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -163,14 +164,17 @@ export async function DELETE(
         return NextResponse.json({ error: 'Salary structure not found' }, { status: 404 })
       }
 
-      await db
-        .update(salaryStructures)
-        .set({ isActive: false, updatedAt: new Date() })
-        .where(eq(salaryStructures.id, id))
+      // Vendors never hard-delete: archive + recycle bin (only a super admin can restore or purge)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'salary_structure', entityId: id, userId: session.user.id, userName: session.user.name,
+      })
+      if (!binned) {
+        return NextResponse.json({ error: 'Salary structure not found' }, { status: 404 })
+      }
 
       logAndBroadcast(session.user.tenantId, 'salary-structure', 'updated', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/salary-structures/[id]', error)

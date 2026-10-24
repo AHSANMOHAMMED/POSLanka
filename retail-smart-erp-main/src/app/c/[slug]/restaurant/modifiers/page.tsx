@@ -261,7 +261,7 @@ export default function ModifierGroupsPage() {
     try {
       const res = await fetch(`/api/modifier-groups/${deleteGroupConfirm.id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Modifier group deleted')
+        toast.success('Modifier group moved to recycle bin')
         refresh()
         // Clean up local state
         setExpandedGroups((prev) => {
@@ -400,7 +400,7 @@ export default function ModifierGroupsPage() {
         method: 'DELETE',
       })
       if (res.ok) {
-        toast.success('Modifier deleted')
+        toast.success('Modifier moved to recycle bin')
         await fetchModifiers(groupId)
         refresh()
       } else {
@@ -597,7 +597,7 @@ export default function ModifierGroupsPage() {
                         setDeleteGroupConfirm({ open: true, id: group.id, name: group.name })
                       }}
                       className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                      title="Delete group"
+                      title="Move group to Recycle Bin"
                     >
                       <Trash2 size={15} />
                     </button>
@@ -722,7 +722,7 @@ export default function ModifierGroupsPage() {
                                   })
                                 }
                                 className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
-                                title="Delete modifier"
+                                title="Move modifier to Recycle Bin"
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -975,10 +975,10 @@ export default function ModifierGroupsPage() {
         isOpen={deleteGroupConfirm.open}
         onClose={() => setDeleteGroupConfirm({ open: false, id: null, name: '' })}
         onConfirm={handleDeleteGroup}
-        title="Delete Modifier Group"
-        message={`Are you sure you want to delete "${deleteGroupConfirm.name}"? This action cannot be undone.`}
+        title="Move Modifier Group to Recycle Bin"
+        message={`Move "${deleteGroupConfirm.name}" to the recycle bin? Only the platform administrator can restore it.`}
         variant="danger"
-        confirmText="Delete"
+        confirmText="Move to recycle bin"
       />
 
       {/* Delete Modifier Confirm */}
@@ -986,10 +986,10 @@ export default function ModifierGroupsPage() {
         isOpen={deleteModifierConfirm.open}
         onClose={() => setDeleteModifierConfirm({ open: false, id: null, groupId: null, name: '' })}
         onConfirm={handleDeleteModifier}
-        title="Delete Modifier"
-        message={`Are you sure you want to delete "${deleteModifierConfirm.name}"? This action cannot be undone.`}
+        title="Move Modifier to Recycle Bin"
+        message={`Move "${deleteModifierConfirm.name}" to the recycle bin? Only the platform administrator can restore it.`}
         variant="danger"
-        confirmText="Delete"
+        confirmText="Move to recycle bin"
       />
     </ListPageLayout>
   )

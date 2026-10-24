@@ -132,12 +132,12 @@ export default function LetterHeadsPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this letter head?')) return
+    if (!confirm('Move this letter head to the recycle bin? Only the platform administrator can restore it.')) return
     setDeleting(id)
     try {
       const res = await fetch(`/api/letter-heads/${id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Letter head deleted')
+        toast.success('Letter head moved to recycle bin')
         fetchLetterHeads()
       } else {
         toast.error('Failed to delete')
@@ -250,7 +250,7 @@ export default function LetterHeadsPage() {
                   onClick={() => handleDelete(lh.id)}
                   disabled={deleting === lh.id}
                   className="p-2 text-gray-400 hover:text-red-500 transition-colors disabled:opacity-50"
-                  title="Delete"
+                  title="Move to recycle bin"
                 >
                   <Trash2 size={16} />
                 </button>

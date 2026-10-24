@@ -16,6 +16,7 @@ import {
   PlayCircle,
   RefreshCw,
   Store,
+  Trash2,
   UserPlus,
   Users,
 } from 'lucide-react'
@@ -276,6 +277,7 @@ export default function VendorDetailPage() {
           <Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading}>Refresh</Button>
           <LinkButton href={`/sys-control/vendors/${v.id}/messaging`} icon={MessagesSquare}>SMS &amp; WhatsApp</LinkButton>
           {canImpersonate && <LinkButton href={`/sys-control/vendors/${v.id}/data`} icon={Database}>All data</LinkButton>}
+          {canImpersonate && <LinkButton href={`/sys-control/vendors/${v.id}/recycle-bin`} icon={Trash2}>Recycle bin</LinkButton>}
           {canImpersonate && <Button icon={ExternalLink} onClick={() => setDialog('impersonate')} disabled={!isActive || !owner}>Open as owner</Button>}
         </>
       }

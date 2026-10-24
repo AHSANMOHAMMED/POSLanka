@@ -35,7 +35,7 @@ export default function PriceListsPage() {
   async function handleDelete() {
     if (!deleteConfirm) return
     const res = await fetch(`/api/price-lists/${deleteConfirm.id}`, { method: 'DELETE' })
-    if (res.ok) { toast.success('Price list deleted'); refresh() } else toast.error('Failed to delete price list')
+    if (res.ok) { toast.success('Price list moved to recycle bin'); refresh() } else toast.error('Failed to delete price list')
     setDeleteConfirm(null)
   }
 
@@ -90,7 +90,7 @@ export default function PriceListsPage() {
                 <td className="px-4 py-3 text-right whitespace-nowrap">
                   <button aria-label={`Edit ${l.name}`} onClick={() => { setEditing(l); setShowModal(true) }}
                     className="p-1.5 text-gray-500 hover:text-blue-600 rounded"><Pencil size={16} /></button>
-                  <button aria-label={`Delete ${l.name}`} onClick={() => setDeleteConfirm({ id: l.id, name: l.name })}
+                  <button aria-label={`Move ${l.name} to recycle bin`} onClick={() => setDeleteConfirm({ id: l.id, name: l.name })}
                     className="p-1.5 text-gray-500 hover:text-red-600 rounded ml-1"><Trash2 size={16} /></button>
                 </td>
               </tr>
@@ -102,8 +102,8 @@ export default function PriceListsPage() {
       </div>
 
       <PriceListFormModal isOpen={showModal} editList={editing} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); refresh() }} />
-      <ConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete} title="Delete price list"
-        message={`Delete "${deleteConfirm?.name}" and all its prices? Past sales keep their prices.`} confirmText="Delete" variant="danger" />
+      <ConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete} title="Move price list to Recycle Bin"
+        message={`Move "${deleteConfirm?.name}" to the recycle bin? Past sales keep their prices. Only the platform administrator can restore it.`} confirmText="Move to recycle bin" variant="danger" />
     </ListPageLayout>
   )
 }

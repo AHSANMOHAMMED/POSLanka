@@ -30,6 +30,7 @@ export default function AdminLayout() {
       <Stack.Screen name="vendors" />
       <Stack.Screen name="vendors/[id]" />
       <Stack.Screen name="vendor-data" />
+      <Stack.Screen name="recycle-bin" />
       <Stack.Screen name="approvals" />
     </Stack>
   )

@@ -17,6 +17,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateStockTransferSchema } from '@/lib/validation/schemas/stock'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single stock transfer
 export async function GET(
@@ -264,6 +265,11 @@ export async function DELETE(
         }, { status: 400 })
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'stock_transfer', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
       // Delete items first
       await db.delete(stockTransferItems).where(eq(stockTransferItems.transferId, id))
 

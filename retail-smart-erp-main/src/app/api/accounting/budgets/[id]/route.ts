@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateBudgetSchema } from '@/lib/validation/schemas/accounting'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -175,6 +176,11 @@ export async function DELETE(
         )
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'budget', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
       // Budget items will be cascade-deleted due to onDelete: 'cascade'
       await db.delete(budgets).where(eq(budgets.id, id))
 

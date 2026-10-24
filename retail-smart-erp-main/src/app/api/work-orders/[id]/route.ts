@@ -17,6 +17,7 @@ import { findMovements, reverseMovements } from '@/lib/purchasing/stock-cost'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { restoreSaleLineBatches } from '@/lib/inventory/batches'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // Issue #24: Expanded workflow with intermediate states
 const validStatusTransitions: Record<string, string[]> = {
@@ -877,6 +878,11 @@ export async function DELETE(
           throw new Error('NOT_DRAFT')
         }
 
+        // Keep a copy in the recycle bin (super admin can restore it)
+        await moveToRecycleBin(tx, {
+          tenantId: session.user.tenantId, entityType: 'work_order', entityId: id,
+          userId: session.user.id, userName: session.user.name,
+        })
         // Issue 5: Clear workOrderId from linked appointments before deletion
         await tx.update(appointments)
           .set({ workOrderId: null, updatedAt: new Date() })

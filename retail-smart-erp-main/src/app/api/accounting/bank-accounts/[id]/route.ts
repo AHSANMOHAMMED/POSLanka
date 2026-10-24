@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { bankAccounts, bankTransactions, chartOfAccounts, accountingSettings } from '@/lib/db/schema'
-import { eq, and, sql } from 'drizzle-orm'
+import { bankAccounts, chartOfAccounts, accountingSettings, glEntries } from '@/lib/db/schema'
+import { eq, and, ne, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateBankAccountSchema } from '@/lib/validation/schemas/accounting'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -179,34 +180,30 @@ export async function DELETE(
           return NextResponse.json({ error: 'Bank account not found' }, { status: 404 })
         }
 
-        // Check if bank account has transactions
-        const [{ count }] = await tx
-          .select({ count: sql<number>`count(*)::int` })
-          .from(bankTransactions)
-          .where(eq(bankTransactions.bankAccountId, id))
-
-        if (Number(count) > 0) {
-          return NextResponse.json(
-            { error: 'Cannot delete bank account with existing transactions' },
-            { status: 400 }
-          )
+        // Transactions stay (the bank account is only archived), but money still in it must not be hidden
+        if (account.accountId) {
+          const [{ balance }] = await tx
+            .select({ balance: sql<string>`COALESCE(SUM(${glEntries.debit} - ${glEntries.credit}), 0)::text` })
+            .from(glEntries)
+            .where(eq(glEntries.accountId, account.accountId))
+          if (Math.abs(parseFloat(balance || '0')) >= 0.005) {
+            return NextResponse.json(
+              { error: `Cannot move a bank account with a balance (${parseFloat(balance).toFixed(2)}) to the recycle bin. Transfer the balance out first.` },
+              { status: 400 }
+            )
+          }
         }
 
-        const [deleted] = await tx
-          .delete(bankAccounts)
-          .where(eq(bankAccounts.id, id))
-          .returning()
-
-        if (!deleted) {
+        // Vendors never hard-delete: archive + recycle bin (only a super admin can restore or purge)
+        const binned = await moveToRecycleBin(tx, {
+          tenantId: tenantId, entityType: 'bank_account', entityId: id, userId: session!.user.id, userName: session!.user.name,
+        })
+        if (!binned) {
           return NextResponse.json({ error: 'Bank account not found' }, { status: 404 })
         }
 
-        // Delete the linked COA entry (safe — no bank transactions = no GL entries)
+        const deleted = account
         if (deleted.accountId) {
-          await tx
-            .delete(chartOfAccounts)
-            .where(eq(chartOfAccounts.id, deleted.accountId))
-
           // If this was the default bank account, reassign to next available
           const [settings] = await tx
             .select()
@@ -217,6 +214,7 @@ export async function DELETE(
             const nextBank = await tx.query.bankAccounts.findFirst({
               where: and(
                 eq(bankAccounts.isActive, true),
+                ne(bankAccounts.id, id),
               ),
             })
             await tx
@@ -225,11 +223,10 @@ export async function DELETE(
               .where(eq(accountingSettings.tenantId, tenantId))
           }
 
-          logAndBroadcast(tenantId, 'account', 'deleted', deleted.accountId)
         }
 
         logAndBroadcast(tenantId, 'bank-account', 'deleted', id)
-        return NextResponse.json({ success: true })
+        return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
       })
     })
   } catch (error) {

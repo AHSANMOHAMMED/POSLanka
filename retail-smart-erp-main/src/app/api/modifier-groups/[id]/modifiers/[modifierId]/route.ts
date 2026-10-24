@@ -6,6 +6,7 @@ import { modifiers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateModifierSchema } from '@/lib/validation/schemas/restaurant'
 import { z } from 'zod'
@@ -73,17 +74,19 @@ export async function DELETE(
     const { id: groupId, modifierId } = paramsParsed.data
 
     return await withTenant(session!.user.tenantId, async (db) => {
-      const [deleted] = await db.delete(modifiers)
-        .where(eq(modifiers.id, modifierId))
-        .returning()
+      // Vendors never hard-delete: archive + recycle bin (only a super admin restores or purges)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'modifier', entityId: modifierId,
+        userId: session!.user.id, userName: session!.user.name,
+      })
 
-      if (!deleted) {
+      if (!binned) {
         return NextResponse.json({ error: 'Modifier not found' }, { status: 404 })
       }
 
       logAndBroadcast(session!.user.tenantId, 'modifier-group', 'updated', groupId)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/modifier-groups/[id]/modifiers/[modifierId]', error)

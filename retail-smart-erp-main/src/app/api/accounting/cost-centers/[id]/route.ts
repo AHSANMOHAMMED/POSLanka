@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { costCenters, glEntries } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { costCenters } from '@/lib/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateCostCenterSchema } from '@/lib/validation/schemas/accounting'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -172,38 +173,25 @@ export async function DELETE(
       const [{ childCount }] = await db
         .select({ childCount: sql<number>`count(*)::int` })
         .from(costCenters)
-        .where(eq(costCenters.parentId, id))
+        .where(and(eq(costCenters.parentId, id), eq(costCenters.isActive, true)))
 
       if (Number(childCount) > 0) {
         return NextResponse.json(
-          { error: 'Cannot delete cost center with child cost centers' },
+          { error: 'Cannot move a cost center with active child cost centers to the recycle bin' },
           { status: 400 }
         )
       }
 
-      // Check if cost center is referenced in GL entries
-      const [{ glCount }] = await db
-        .select({ glCount: sql<number>`count(*)::int` })
-        .from(glEntries)
-        .where(eq(glEntries.costCenterId, id))
-
-      if (Number(glCount) > 0) {
-        return NextResponse.json(
-          { error: 'Cannot delete cost center with existing GL entries' },
-          { status: 400 }
-        )
-      }
-
-      const [deleted] = await db.delete(costCenters)
-        .where(eq(costCenters.id, id))
-        .returning()
-
-      if (!deleted) {
+      // Vendors never hard-delete: archive + recycle bin (only a super admin can restore or purge)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: tenantId, entityType: 'cost_center', entityId: id, userId: session!.user.id, userName: session!.user.name,
+      })
+      if (!binned) {
         return NextResponse.json({ error: 'Cost center not found' }, { status: 404 })
       }
 
       logAndBroadcast(tenantId, 'cost-center', 'deleted', id)
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/accounting/cost-centers/[id]', error)

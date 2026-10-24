@@ -178,7 +178,7 @@ export default function WarehousesPage() {
       })
 
       if (res.ok) {
-        toast.success('Warehouse deleted')
+        toast.success('Warehouse moved to recycle bin')
         fetchWarehouses()
       } else {
         const data = await res.json()
@@ -431,9 +431,9 @@ export default function WarehousesPage() {
           setDeletingId(null)
         }}
         onConfirm={handleDelete}
-        title="Delete Warehouse"
-        message={`Are you sure you want to delete "${warehouseToDelete?.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move Warehouse to Recycle Bin"
+        message={`Move "${warehouseToDelete?.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
       />
       </div>

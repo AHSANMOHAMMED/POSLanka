@@ -334,13 +334,13 @@ function CommissionRatesTab() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Are you sure you want to delete this commission rate?')) return
+    if (!confirm('Move this commission rate to the recycle bin? Only the platform administrator can restore it.')) return
 
     setDeleting(id)
     try {
       const res = await fetch(`/api/commission-rates/${id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Commission rate deleted')
+        toast.success('Commission rate moved to recycle bin')
         fetchRates()
       } else {
         const data = await res.json()
@@ -450,7 +450,7 @@ function CommissionRatesTab() {
                           onClick={() => handleDelete(rate.id)}
                           disabled={deleting === rate.id}
                           className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded"
-                          title="Delete"
+                          title="Move to recycle bin"
                         >
                           {deleting === rate.id ? (
                             <Loader2 size={16} className="animate-spin" />

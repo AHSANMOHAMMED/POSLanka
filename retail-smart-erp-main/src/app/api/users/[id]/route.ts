@@ -7,6 +7,7 @@ import { eq, and } from 'drizzle-orm'
 import { requirePermission, canModifyUser, rolePermissionsNotHeld } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validatePasswordStrength } from '@/lib/utils/validation'
 import { validateBody } from '@/lib/validation'
 import { updateUserSchema } from '@/lib/validation/schemas/users'
@@ -346,10 +347,14 @@ export async function DELETE(
         return NextResponse.json({ error: 'You do not have permission to deactivate this user' }, { status: 403 })
       }
 
-      // Soft delete - set isActive to false
-      await db.update(users)
-        .set({ isActive: false, updatedAt: new Date() })
-        .where(eq(users.id, id))
+      // Archive (is_active = false) + recycle bin: only a super admin can restore or purge the user
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'user', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
+      if (!binned) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 })
+      }
 
       // Sync to accountTenants if user has a linked account
       if (user.accountId) {
@@ -364,7 +369,7 @@ export async function DELETE(
       // Broadcast the change
       logAndBroadcast(session.user.tenantId, 'user', 'deleted', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/users/[id]', error)

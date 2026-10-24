@@ -109,7 +109,7 @@ export default function VehicleInventoryPage() {
       if (res.ok) {
         refresh()
         fetchStats()
-        toast.success('Vehicle deleted successfully')
+        toast.success('Vehicle moved to recycle bin')
       } else {
         toast.error('Failed to delete vehicle')
       }
@@ -326,9 +326,9 @@ export default function VehicleInventoryPage() {
         isOpen={!!deleteId}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
-        title="Delete Vehicle"
-        message="Are you sure you want to delete this vehicle from inventory? This action cannot be undone."
-        confirmText="Delete"
+        title="Move Vehicle to Recycle Bin"
+        message="Move this vehicle from inventory to the recycle bin? Only the platform administrator can restore it."
+        confirmText="Move to recycle bin"
         variant="danger"
         processing={deleting}
       />

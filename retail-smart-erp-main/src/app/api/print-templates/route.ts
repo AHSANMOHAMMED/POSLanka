@@ -3,6 +3,7 @@ import { withAuthTenant } from '@/lib/db'
 import { printTemplates } from '@/lib/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
@@ -15,7 +16,8 @@ export async function GET(request: NextRequest) {
   const { documentType } = parsed.data
 
   const result = await withAuthTenant(async (session, db) => {
-    const conditions = [eq(printTemplates.tenantId, session.user.tenantId)]
+    // Templates moved to the recycle bin are hidden (deactivated ones still show)
+    const conditions = [eq(printTemplates.tenantId, session.user.tenantId), notInRecycleBin('print_template', printTemplates.id)]
     if (documentType) {
       conditions.push(eq(printTemplates.documentType, documentType))
     }

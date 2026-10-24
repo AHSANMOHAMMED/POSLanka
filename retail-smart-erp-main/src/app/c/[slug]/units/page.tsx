@@ -44,10 +44,11 @@ export default function UnitsPage() {
   }
 
   async function remove(u: UnitRow) {
+    if (!confirm(`Move unit "${u.code}" to the recycle bin? Only the platform administrator can restore it.`)) return
     const res = await fetch(`/api/units/${u.id}`, { method: 'DELETE' })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) toast.error(data.error || 'Failed to delete unit')
-    else toast.success('Unit deleted')
+    else toast.success('Unit moved to recycle bin')
     load()
   }
 
@@ -87,7 +88,7 @@ export default function UnitsPage() {
                   <button onClick={() => patch(u, { isActive: !u.isActive })} title="Toggle"><StatusBadge status={u.isActive ? 'active' : 'inactive'} size="sm" /></button>
                 </td>
                 <td className="px-4 py-2 text-right">
-                  <button aria-label={`Delete ${u.code}`} onClick={() => remove(u)} className="p-1.5 text-gray-500 hover:text-red-600"><Trash2 size={16} /></button>
+                  <button aria-label={`Move ${u.code} to recycle bin`} onClick={() => remove(u)} className="p-1.5 text-gray-500 hover:text-red-600"><Trash2 size={16} /></button>
                 </td>
               </tr>
             ))}

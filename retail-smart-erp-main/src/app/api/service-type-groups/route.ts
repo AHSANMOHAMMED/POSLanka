@@ -5,6 +5,7 @@ import { serviceTypeGroups } from '@/lib/db/schema'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { createServiceTypeGroupSchema } from '@/lib/validation/schemas/service-types'
@@ -19,9 +20,11 @@ export async function GET() {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // Groups / service types moved to the recycle bin are hidden
       const result = await db.query.serviceTypeGroups.findMany({
+        where: (g) => notInRecycleBin('service_type_group', g.id),
         with: {
-          serviceTypes: true,
+          serviceTypes: { where: (st) => notInRecycleBin('service_type', st.id) },
         },
         orderBy: (serviceTypeGroups, { asc }) => [asc(serviceTypeGroups.name)],
       })

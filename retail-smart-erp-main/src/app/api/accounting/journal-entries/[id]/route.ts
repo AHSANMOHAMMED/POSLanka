@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateJournalEntrySchema } from '@/lib/validation/schemas/accounting'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -206,6 +207,11 @@ export async function DELETE(
         return NextResponse.json({ error: 'Only draft entries can be deleted' }, { status: 400 })
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'journal_entry', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
       await db.delete(journalEntries).where(eq(journalEntries.id, id))
 
       logAndBroadcast(tenantId, 'journal-entry', 'deleted', id)

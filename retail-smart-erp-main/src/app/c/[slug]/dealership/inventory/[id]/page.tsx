@@ -92,7 +92,7 @@ export default function VehicleDetailPage({ params }: { params: Promise<{ slug: 
   async function handleDelete() {
     const res = await fetch(`/api/vehicle-inventory/${id}`, { method: 'DELETE' })
     if (res.ok) {
-      toast.success('Vehicle deleted successfully')
+      toast.success('Vehicle moved to recycle bin')
       router.push(`/c/${tenantSlug}/dealership/inventory`)
     } else {
       toast.error('Failed to delete vehicle')
@@ -324,10 +324,10 @@ export default function VehicleDetailPage({ params }: { params: Promise<{ slug: 
           position: 'left',
           onClick: handleDelete,
           confirmation: {
-            title: 'Delete Vehicle',
-            message: `Are you sure you want to delete ${vehicle.year} ${vehicle.make} ${vehicle.model} (Stock # ${vehicle.stockNo})? This action cannot be undone.`,
+            title: 'Move Vehicle to Recycle Bin',
+            message: `Move ${vehicle.year} ${vehicle.make} ${vehicle.model} (Stock # ${vehicle.stockNo}) to the recycle bin? Only the platform administrator can restore it.`,
             variant: 'danger',
-            confirmText: 'Delete',
+            confirmText: 'Move to recycle bin',
           },
         })
         return a

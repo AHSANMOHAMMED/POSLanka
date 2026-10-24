@@ -144,7 +144,7 @@ export default function FiscalYearsPage() {
         method: 'DELETE',
       })
       if (res.ok) {
-        toast.success('Fiscal year deleted')
+        toast.success('Fiscal year deleted (copy kept in recycle bin)')
         setDeleteFY(null)
         refresh()
       } else {
@@ -364,7 +364,7 @@ export default function FiscalYearsPage() {
         onClose={() => setDeleteFY(null)}
         onConfirm={handleDelete}
         title="Delete Fiscal Year"
-        message={`Are you sure you want to delete "${deleteFY?.name}"? This cannot be undone.`}
+        message={`Are you sure you want to delete "${deleteFY?.name}"? A copy is kept in the recycle bin for the platform administrator.`}
         confirmText="Delete"
         variant="danger"
         processing={deleting}

@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { bankAccountsListSchema, createBankAccountSchema } from '@/lib/validation/schemas/accounting'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,6 +32,7 @@ export async function GET(request: NextRequest) {
         const accounts = await db
           .select()
           .from(bankAccounts)
+          .where(notInRecycleBin('bank_account', bankAccounts.id))
           .orderBy(desc(bankAccounts.createdAt))
           .limit(1000)
 
@@ -39,6 +41,8 @@ export async function GET(request: NextRequest) {
 
       // Build search conditions
       const conditions: ReturnType<typeof eq>[] = []
+      // Rows moved to the recycle bin are hidden (deactivated ones still show)
+      conditions.push(notInRecycleBin('bank_account', bankAccounts.id))
       if (search) {
         const escaped = escapeLikePattern(search)
         conditions.push(

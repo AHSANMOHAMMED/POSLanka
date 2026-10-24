@@ -121,7 +121,7 @@ export default function JournalEntryDetailPage() {
       method: 'DELETE',
     })
     if (res.ok) {
-      toast.success('Journal entry deleted')
+      toast.success('Journal entry deleted (copy kept in recycle bin)')
       router.push(`/c/${tenantSlug}/accounting/journal-entries`)
     } else {
       const data = await res.json()
@@ -340,7 +340,7 @@ export default function JournalEntryDetailPage() {
             onClick: handleDelete,
             confirmation: {
               title: 'Delete Journal Entry',
-              message: `Are you sure you want to delete "${entry.entryNumber}"? This action cannot be undone.`,
+              message: `Are you sure you want to delete "${entry.entryNumber}"? A copy is kept in the recycle bin for the platform administrator.`,
               variant: 'danger',
             },
           })

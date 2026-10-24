@@ -249,6 +249,13 @@ export default function AdminVendorDetailScreen() {
             </Pressable>
           ) : null}
 
+          {/* What the vendor deleted: restore or purge */}
+          {can('vendors.impersonate') ? (
+            <Pressable style={adminStyles.ghostBtn} onPress={() => router.push({ pathname: '/admin/recycle-bin', params: { vendorId: vendor.id, vendorName: vendor.name } })}>
+              <Text style={adminStyles.ghostBtnText}>🗑  Recycle bin (restore / purge)</Text>
+            </Pressable>
+          ) : null}
+
           {/* Staff: add managers / cashiers / … for this vendor */}
           <AdminVendorStaff vendorId={vendor.id} staff={staff} roles={roles} canManage={canManage} onChanged={() => load(true)} />
 

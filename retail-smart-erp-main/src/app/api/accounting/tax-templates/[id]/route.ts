@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant, withTenantTransaction } from '@/lib/db'
-import { taxTemplates, taxTemplateItems } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { taxTemplates, taxTemplateItems, items } from '@/lib/db/schema'
+import { and, eq, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -15,6 +15,7 @@ const updateWithCategorySchema = updateTaxTemplateSchema.extend({
   taxCategory: z.enum(TAX_CATEGORIES).optional(),
 })
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -146,43 +147,29 @@ export async function DELETE(
         return NextResponse.json({ error: 'Tax template not found' }, { status: 404 })
       }
 
-      // Check if tax template is referenced anywhere
-      // Check items table for tax_template_id references
-      const [{ refCount: _refCount }] = await db
-        .select({ refCount: sql<number>`count(*)::int` })
-        .from(taxTemplateItems)
-        .where(eq(taxTemplateItems.taxTemplateId, id))
+      // Items that still charge this tax must be moved to another template first
+      const [{ itemRefCount }] = await db
+        .select({ itemRefCount: sql<number>`count(*)::int` })
+        .from(items)
+        .where(and(eq(items.taxTemplateId, id), eq(items.isActive, true)))
 
-      // Note: taxTemplateItems have onDelete: 'cascade', so they'll be auto-deleted.
-      // The real concern is external references (e.g., sales, items using this template).
-      // For now, we check if the template is referenced via a generic query on known tables.
-      // Since tax templates are configuration objects, we allow deletion if no external
-      // references exist. Items with cascade delete will be cleaned up automatically.
-
-      // Check for references in items table (if items have a taxTemplateId column)
-      try {
-        const [{ itemRefCount }] = await db
-          .execute(sql`
-            SELECT count(*)::int as "itemRefCount"
-            FROM items
-            WHERE tax_template_id = ${id}
-          `) as unknown as { itemRefCount: number }[]
-
-        if (Number(itemRefCount) > 0) {
-          return NextResponse.json(
-            { error: 'Cannot delete tax template that is assigned to items' },
-            { status: 400 }
-          )
-        }
-      } catch {
-        // Column may not exist yet - skip this check
+      if (Number(itemRefCount) > 0) {
+        return NextResponse.json(
+          { error: 'Cannot move a tax template that is assigned to items to the recycle bin' },
+          { status: 400 }
+        )
       }
 
-      // Delete template (items cascade-deleted)
-      await db.delete(taxTemplates).where(eq(taxTemplates.id, id))
+      // Vendors never hard-delete: archive + recycle bin (only a super admin can restore or purge)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: tenantId, entityType: 'tax_template', entityId: id, userId: session!.user.id, userName: session!.user.name,
+      })
+      if (!binned) {
+        return NextResponse.json({ error: 'Tax template not found' }, { status: 404 })
+      }
 
       logAndBroadcast(tenantId, 'tax-template', 'deleted', id)
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/accounting/tax-templates/[id]', error)

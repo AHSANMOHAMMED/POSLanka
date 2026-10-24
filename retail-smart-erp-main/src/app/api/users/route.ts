@@ -9,6 +9,7 @@ import { requirePermission, canModifyUser, rolePermissionsNotHeld } from '@/lib/
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { requireUserSeat } from '@/lib/billing/user-limit'
 import { validateBody } from '@/lib/validation'
@@ -36,7 +37,8 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build conditions (tenantId filter handled by RLS)
-      const conditions = []
+      // Staff moved to the recycle bin are hidden (deactivated ones still show)
+      const conditions = [notInRecycleBin('user', users.id)]
       if (roleFilter) {
         conditions.push(eq(users.role, roleFilter as 'owner' | 'manager' | 'cashier' | 'technician'))
       }
@@ -236,7 +238,11 @@ export async function POST(request: NextRequest) {
     })
 
     if (existingUser) {
-      return NextResponse.json({ error: 'A user with this email already exists in this company' }, { status: 409 })
+      return NextResponse.json({
+        error: existingUser.isActive
+          ? 'A user with this email already exists in this company'
+          : 'A user with this email already exists in this company (deactivated or in the recycle bin). Reactivate them, or ask the platform administrator to restore them.',
+      }, { status: 409 })
     }
 
     // Check if a global account exists for this email (accounts table has no RLS)
