@@ -17,6 +17,7 @@ import { closeAllPools, withTenantTransaction } from '@/lib/db'
 import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { tenantToday } from '@/lib/accounting/gl'
 import { POST as postSale } from '@/app/api/sales/route'
+import { PUT as voidSale } from '@/app/api/sales/[id]/route'
 import { POST as addSalePayment } from '@/app/api/sales/[id]/payments/route'
 import { POST as addPurchasePayment } from '@/app/api/purchases/[id]/payments/route'
 import { GET as listCheques, POST as createCheque } from '@/app/api/cheques/route'
@@ -380,6 +381,18 @@ async function main() {
       check('branch filter (Kandy has none)', branch.body.totals?.count === 0, short(branch.body.totals))
       const one = await json(await getCheque(req('GET', `/api/cheques/${postDatedId}`), ctx(postDatedId)))
       check('GET one → actions [deposit, clear, bounce, cancel]', one.status === 200 && JSON.stringify(one.body.actions) === JSON.stringify(['deposit', 'clear', 'bounce', 'cancel']), short(one.body.actions))
+    })
+
+    await step('voiding a sale cancels its cheque', async () => {
+      const v = await sale({
+        customerId: f.customerId, cartItems: [line(1)], paymentMethod: 'cheque', subtotal: 2000, total: 2000, amountPaid: 2000,
+        cheque: { chequeNo: 'V00001', bankName: 'BOC', chequeDate: addDays(today, 2) },
+      })
+      const r = await json(await voidSale(req('PUT', `/api/sales/${v.body.id}`, { voidReason: 'Wrong customer' }), ctx(v.body.id)))
+      check('void the cheque sale → 200', r.status === 200, short(r.body))
+      const [c] = await chequeOf('sale_id=$2', [v.body.id])
+      check('its cheque is cancelled (settlement already reversed by the void)', c?.status === 'cancelled' && c?.settlement_reversed === true && /Sale voided/.test(c?.bounce_reason || ''), short(c))
+      check('… with no cheque GL posting of its own', (await glOf(admin, 'cheque', c.id)).length === 0)
     })
 
     // =============================================================== 6. expenses & petty cash

@@ -560,6 +560,14 @@ export async function PUT(
           .where(eq(sales.id, id))
           .returning()
 
+        // K1: cheques taken for this sale and not yet banked go back to the customer (the void
+        // above already reversed their payment in the ledger)
+        await tx.execute(sql`
+          UPDATE cheques SET status = 'cancelled', cancelled_at = now(), settlement_reversed = true,
+            bounce_reason = ${`Sale voided: ${voidReason}`.slice(0, 1000)}, updated_at = now(), updated_by = ${userId},
+            status_history = status_history || jsonb_build_array(jsonb_build_object('status', 'cancelled', 'at', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 'by', ${userId}::text, 'note', 'Sale voided'))
+          WHERE sale_id = ${id} AND status IN ('pending', 'deposited')`)
+
         // H1: cash of a closed shift's sale leaves the voiding user's current drawer
         let refundMovementNo: string | null = null
         if (refundShift && cashToRefund > 0) {
