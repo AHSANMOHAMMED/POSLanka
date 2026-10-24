@@ -122,6 +122,8 @@ const METRICS: Record<string, MetricFn> = {
         .where(and(
           eq(items.isActive, true),
           eq(items.trackStock, true),
+          // only items with a reorder level (0 means none set), same rule as the list below
+          sql`CAST(${warehouseStock.minStock} AS DECIMAL) > 0`,
           sql`CAST(${warehouseStock.currentStock} AS DECIMAL) <= CAST(${warehouseStock.minStock} AS DECIMAL)`,
         ))
       return Number(result?.count || 0)

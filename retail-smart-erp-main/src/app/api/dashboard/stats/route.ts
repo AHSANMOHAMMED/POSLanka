@@ -73,6 +73,8 @@ export async function GET() {
           .where(and(
             eq(items.isActive, true),
             eq(items.trackStock, true),
+            // only items with a reorder level (0 means none set), same rule as the owner dashboard
+            sql`CAST(${warehouseStock.minStock} AS DECIMAL) > 0`,
             sql`CAST(${warehouseStock.currentStock} AS DECIMAL) <= CAST(${warehouseStock.minStock} AS DECIMAL)`
           ))
           .then(([r]) => r)
