@@ -412,6 +412,14 @@ app.prepare().then(() => {
   process.on('SIGTERM', () => shutdown('SIGTERM'))
   process.on('SIGINT', () => shutdown('SIGINT'))
 
+  // Slow or stalled clients cannot hold sockets: headers within 20 s, a whole request (incl. body)
+  // within 120 s (imports / uploads), idle keep-alive just above a load balancer's 60 s.
+  // WebSocket and SSE upgrades are long-lived by design and are not affected by requestTimeout.
+  server.headersTimeout = Number(process.env.HTTP_HEADERS_TIMEOUT_MS || 20_000)
+  server.requestTimeout = Number(process.env.HTTP_REQUEST_TIMEOUT_MS || 120_000)
+  server.keepAliveTimeout = Number(process.env.HTTP_KEEPALIVE_TIMEOUT_MS || 65_000)
+  server.maxRequestsPerSocket = 1000
+
   server.listen(port, hostname, () => {
     log.info(`ready on http://${hostname}:${port} (WebSocket /ws, SSE /_events)`, { port, dev })
     if (dev) startDevWarmup(port)
