@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store'
 import { router } from 'expo-router'
 import { clearFeatureFlags } from './features'
+import { clearMessagingAvailability } from './messaging'
 
 declare const process: {
   env: {
@@ -187,6 +188,7 @@ export async function refreshPermissions(): Promise<AuthUser | null> {
 export async function clearSession() {
   cachedUser = null
   clearFeatureFlags()
+  clearMessagingAvailability()
   await Promise.all([
     SecureStore.deleteItemAsync(TOKEN_KEY),
     SecureStore.deleteItemAsync(USER_KEY),

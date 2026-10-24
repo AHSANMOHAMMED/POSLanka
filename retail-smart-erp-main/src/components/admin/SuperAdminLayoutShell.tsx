@@ -16,6 +16,7 @@ import {
   Mail,
   Menu,
   MessageSquare,
+  MessagesSquare,
   Monitor,
   Moon,
   PlusCircle,
@@ -73,6 +74,7 @@ const NAV: Array<{ group: string; links: NavLink[] }> = [
       { label: 'Subscriptions', href: '/sys-control/subscriptions', icon: Receipt },
       { label: 'Payments', href: '/sys-control/payments', icon: CreditCard },
       { label: 'Plans & pricing', href: '/sys-control/pricing', icon: Layers },
+      { label: 'SMS & WhatsApp', href: '/sys-control/messaging', icon: MessagesSquare },
     ],
   },
   {

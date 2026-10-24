@@ -1142,6 +1142,13 @@
       "when": 1771446415033,
       "tag": "0170_pharmacy",
       "breakpoints": true
+    },
+    {
+      "idx": 174,
+      "version": "7",
+      "when": 1771446419033,
+      "tag": "0174_messaging_subscriptions",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,7 @@ import { logError } from '@/lib/ai/error-logger'
 import type { StockChangeInput, StockChangeResult } from '@/lib/inventory/apply-stock-change'
 import { deliverAlert, type NotifyOutcome } from './notify'
 import { getAlertSettings } from './alert-settings'
+import { sendLowStockMessage } from '@/lib/messaging/actions'
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(3).replace(/0+$/, '').replace(/\.$/, ''))
 
@@ -46,21 +47,26 @@ export async function handleStockDecrease(result: StockChangeResult, input: Stoc
   const where = meta.warehouseName ? ` at ${meta.warehouseName}` : ''
   const data = { screen: 'inventory', itemId, warehouseId }
   if (type === 'out_of_stock') {
-    return deliverAlert(tenantId, 'out_of_stock', {
+    const outcome = await deliverAlert(tenantId, 'out_of_stock', {
       title: `Out of stock: ${result.itemName}`,
       body: `${result.itemName} has run out${where} (${fmt(result.after)} left).`,
       data,
       dedupeKey: `out_of_stock:${warehouseId}:${itemId}`,
       permission: 'manageInventory',
     })
+    if (outcome.skipped !== 'deduped') await sendLowStockMessage(tenantId, { item: result.itemName, qty: fmt(result.after), min: fmt(min), warehouse: meta.warehouseName, itemId })
+    return outcome
   }
-  return deliverAlert(tenantId, 'low_stock', {
+  const outcome = await deliverAlert(tenantId, 'low_stock', {
     title: `Low stock: ${result.itemName}`,
     body: `${result.itemName}: ${fmt(result.after)} left${where} (minimum ${fmt(min)}).`,
     data,
     dedupeKey: `low_stock:${warehouseId}:${itemId}`,
     permission: 'manageInventory',
   })
+  // SMS / WhatsApp to the owner's alert phone (messaging add-on), once per de-dupe window
+  if (outcome.skipped !== 'deduped') await sendLowStockMessage(tenantId, { item: result.itemName, qty: fmt(result.after), min: fmt(min), warehouse: meta.warehouseName, itemId })
+  return outcome
 }
 
 /** onStockDecreased listener: fire-and-forget, never throws. */

@@ -10,6 +10,7 @@ import {
   ExternalLink,
   KeyRound,
   Layers,
+  MessagesSquare,
   Mail,
   PauseCircle,
   PlayCircle,
@@ -272,6 +273,7 @@ export default function VendorDetailPage() {
       actions={
         <>
           <Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading}>Refresh</Button>
+          <LinkButton href={`/sys-control/vendors/${v.id}/messaging`} icon={MessagesSquare}>SMS &amp; WhatsApp</LinkButton>
           {canImpersonate && <LinkButton href={`/sys-control/vendors/${v.id}/data`} icon={Database}>All data</LinkButton>}
           {canImpersonate && <Button icon={ExternalLink} onClick={() => setDialog('impersonate')} disabled={!isActive || !owner}>Open as owner</Button>}
         </>

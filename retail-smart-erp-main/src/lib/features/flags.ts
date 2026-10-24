@@ -157,10 +157,12 @@ export const FEATURE_DEFS: FeatureDef[] = [
     hrefs: ['/appointments'], api: ['/api/appointments'] },
 
   // ------------------------------------------------------------------ Communication & platform
-  { key: 'whatsapp', group: 'Communication & platform', default: true, label: 'WhatsApp sharing',
-    description: 'Share receipts, invoices and quotations on WhatsApp.' },
+  // Both also gate the paid messaging add-on (src/lib/messaging): sending refuses while the switch is
+  // off, and turning a channel on in the vendor's messaging plan turns its switch on.
+  { key: 'whatsapp', group: 'Communication & platform', default: true, label: 'WhatsApp',
+    description: 'Share receipts, invoices and quotations on WhatsApp; WhatsApp messages from the business number when the messaging plan includes WhatsApp.' },
   { key: 'sms', group: 'Communication & platform', default: true, label: 'SMS',
-    description: 'SMS notifications to customers.', api: ['/api/sms-settings', '/api/sms-log'] },
+    description: 'SMS to customers (own gateway in Settings → SMS, or the platform’s SMS plan).', api: ['/api/sms-settings', '/api/sms-log'] },
   { key: 'staff_chat', group: 'Communication & platform', default: true, label: 'Staff chat',
     description: 'Messages between staff.', hrefs: ['/chat'], api: ['/api/chat'] },
   { key: 'api_access', group: 'Communication & platform', default: true, label: 'API keys & integrations',
