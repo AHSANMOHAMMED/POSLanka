@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import { and, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { db, withTenant, withoutTenant } from '@/lib/db'
-import { accounts, tenants, users } from '@/lib/db/schema'
+import { accountTenants, accounts, tenants, users } from '@/lib/db/schema'
 import { validateBody } from '@/lib/validation/helpers'
 import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
 import { findTenantByIdentifier } from '@/lib/tenant/business-id'
@@ -67,10 +67,16 @@ export async function POST(request: NextRequest) {
       return fail(400, { error: 'Enter your Business ID (your shop’s name, e.g. alisha-shop) to sign in with a username.', field: 'businessId' })
     }
 
-    // 2. Owner account
-    const account = await db.query.accounts.findFirst({ where: eq(accounts.email, login), columns: { passwordHash: true, isActive: true } })
-    if (account?.passwordHash && account.isActive !== false && (await bcrypt.compare(password, account.passwordHash))) {
-      return ok({ kind: 'owner' })
+    // 2. Owner account — only for people who own a business (or own none yet: a new sign-up).
+    //    A staff member whose login also has an account goes to their shop instead (step 3).
+    const account = await db.query.accounts.findFirst({ where: eq(accounts.email, login), columns: { id: true, passwordHash: true, isActive: true } })
+    const accountOk = !!account?.passwordHash && account.isActive !== false && (await bcrypt.compare(password, account.passwordHash))
+    let ownsBusiness = false
+    if (accountOk && account) {
+      const memberships = await db.select({ isOwner: accountTenants.isOwner, role: accountTenants.role })
+        .from(accountTenants).where(eq(accountTenants.accountId, account.id))
+      ownsBusiness = memberships.length === 0 || memberships.some((m) => m.isOwner || m.role === 'owner')
+      if (ownsBusiness) return ok({ kind: 'owner' })
     }
 
     // 3. Staff login by email across shops (only shops where the password matches)
@@ -82,7 +88,7 @@ export async function POST(request: NextRequest) {
       .limit(20))
     const matches: typeof rows = []
     for (const r of rows) if (await bcrypt.compare(password, r.hash)) matches.push(r)
-    if (matches.length === 0) return fail()
+    if (matches.length === 0) return accountOk ? ok({ kind: 'owner' }) : fail()
     if (matches.length === 1) {
       const m = matches[0]
       return ok({ kind: 'staff', slug: m.slug, name: m.name, landing: landingPathForRole(m.role, m.businessType) })

@@ -45,7 +45,18 @@ if (!process.env.DATABASE_URL) {
 // orchestrator (App Platform / Docker restart policy) start a clean instance. Readiness flips to
 // 503 first so the load balancer stops routing here while the error is persisted.
 let fatalExitScheduled = false
+/** A client that hung up mid-request (tab closed, phone lost signal): normal traffic, not a fault */
+function isClientAbort(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null
+  return !!e && (e.code === 'ECONNRESET' || e.code === 'EPIPE' || e.code === 'ECONNABORTED') && /aborted|socket hang up|EPIPE|ECONNRESET/i.test(String(e.message))
+}
+
 process.on('uncaughtException', (err: Error) => {
+  // One dropped connection must never take the whole server (every shop) down
+  if (isClientAbort(err)) {
+    log.warn('client aborted a request', { code: (err as { code?: string }).code })
+    return
+  }
   logError('uncaughtException', err)
   log.error('uncaught exception, exiting', { err })
   if (fatalExitScheduled) return
@@ -303,6 +314,9 @@ app.prepare().then(() => {
     // Correlation id: accept the load balancer's x-request-id or mint one; it is visible to
     // route handlers (request header), returned to the client, and attached to every log line
     // and logError() record written while this request is being handled.
+    // A client hanging up mid-body emits 'aborted' errors on these streams: handle them here
+    req.on('error', (err) => { if (!isClientAbort(err)) log.warn('request stream error', { err }) })
+    res.on('error', (err) => { if (!isClientAbort(err)) log.warn('response stream error', { err }) })
     const incoming = req.headers['x-request-id']
     const requestId = ensureRequestId(Array.isArray(incoming) ? incoming[0] : incoming)
     req.headers['x-request-id'] = requestId
