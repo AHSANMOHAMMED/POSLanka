@@ -32,8 +32,7 @@ import { POST as enforceSubs } from '@/app/api/cron/enforce-subscriptions/route'
 import { GET as getSmsSettings } from '@/app/api/sms-settings/route'
 import { GET as getCostHistory } from '@/app/api/items/[id]/cost-history/route'
 import { DELETE as deleteCollectionFile } from '@/app/api/collections/[id]/files/route'
-import { checkAdminTotp, generateTotpSecret } from '@/lib/admin/totp'
-import { authenticator } from 'otplib'
+import { checkAdminTotp, generateTotpSecret, generateTotpCode } from '@/lib/admin/totp'
 
 type J = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -367,7 +366,7 @@ async function main() {
     await admin.query(`INSERT INTO super_admins (id, email, password_hash, full_name, totp_enabled, totp_secret) VALUES ($1, $2, 'x', 'SA', true, $3)`,
       [id, `sa-${id.slice(0, 6)}@example.test`, secret])
     try {
-      const good = authenticator.generate(secret)
+      const good = generateTotpCode(secret)
       const wrong = good === '000000' ? '111111' : '000000'
       for (let i = 0; i < 5; i++) await checkAdminTotp(id, wrong)
       check('after 5 wrong codes even the correct code is refused', (await checkAdminTotp(id, good)) === 'invalid')

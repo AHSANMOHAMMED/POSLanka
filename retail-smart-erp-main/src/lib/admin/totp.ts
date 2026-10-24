@@ -63,6 +63,12 @@ function getTotpCode(secretBytes: Buffer, timeStepIndex: number): string {
   return codeInt.toString().padStart(6, '0')
 }
 
+export function generateTotpCode(secret: string): string {
+  const secretBytes = base32Decode(secret)
+  const currentStep = Math.floor(Date.now() / 1000 / 30)
+  return getTotpCode(secretBytes, currentStep)
+}
+
 export function generateTotpSecret(): string {
   return base32Encode(crypto.randomBytes(20))
 }
