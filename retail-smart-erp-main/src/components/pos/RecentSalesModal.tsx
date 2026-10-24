@@ -6,6 +6,7 @@ import { useCurrency } from '@/hooks/useCurrency'
 import { buildWhatsAppShareUrl } from '@/lib/whatsapp'
 import { useFeatureFlag } from '@/hooks/useFeatureFlag'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { SendReceiptButtons, useMessagingAvailability } from './SendReceiptButtons'
 
 export interface PastSale {
   id: string
@@ -37,6 +38,8 @@ export function RecentSalesModal({
   const { currency: currencyCode } = useCurrency()
   const [sales, setSales] = useState<PastSale[]>([])
   const whatsappOn = useFeatureFlag('whatsapp')
+  const messaging = useMessagingAvailability()
+  const hasPlan = messaging.sms || messaging.whatsapp
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [sharingSaleId, setSharingSaleId] = useState<string | null>(null)
@@ -193,8 +196,21 @@ export function RecentSalesModal({
                       <span>Print</span>
                     </button>
 
-                    {/* WhatsApp (feature switch) */}
-                    {whatsappOn && <button
+                    {/* SMS / WhatsApp through the messaging plan */}
+                    {hasPlan && (
+                      <button
+                        type="button"
+                        onClick={() => setSharingSaleId(sharingSaleId === sale.id ? null : sale.id)}
+                        className="px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                        title="Send the bill by SMS or WhatsApp"
+                      >
+                        <MessageCircle size={14} />
+                        <span>Send</span>
+                      </button>
+                    )}
+
+                    {/* WhatsApp share link (feature switch, no messaging plan) */}
+                    {!hasPlan && whatsappOn && <button
                       type="button"
                       onClick={() => {
                         if (!sale.customerPhone) {
@@ -224,8 +240,20 @@ export function RecentSalesModal({
                   </div>
                 </div>
 
+                {hasPlan && sharingSaleId === sale.id && (
+                  <div className="w-full pt-2 border-t border-gray-100 dark:border-gray-700">
+                    <SendReceiptButtons
+                      compact
+                      saleId={sale.id}
+                      defaultPhone={sale.customerPhone}
+                      availability={messaging}
+                      onShareWhatsApp={whatsappOn ? (phone) => handleShareWhatsApp(sale, phone) : undefined}
+                    />
+                  </div>
+                )}
+
                 {/* Inline WhatsApp phone prompter if needed */}
-                {sharingSaleId === sale.id && (
+                {!hasPlan && sharingSaleId === sale.id && (
                   <div className="w-full sm:col-span-2 pt-2 flex items-center gap-2 border-t border-gray-100 dark:border-gray-700">
                     <input
                       type="tel"

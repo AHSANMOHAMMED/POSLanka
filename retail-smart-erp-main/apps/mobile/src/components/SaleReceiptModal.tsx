@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Pressable,
   ActivityIndicator,
+  TextInput,
 } from 'react-native'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
@@ -13,6 +14,7 @@ import { THEME, formatLKR } from '../lib/theme'
 import { getPrinterSettings, isPrintingEnabled, printerErrorMessage, printReceipt, shareReceiptPdf, type PrinterSettings } from '../lib/printer'
 import type { SaleResultData } from './TenderModal'
 import { useFeatureFlags } from '../lib/features'
+import { FALLBACK_CODES, sendReceiptMessage, useMessagingAvailability } from '../lib/messaging'
 
 interface SaleReceiptModalProps {
   visible: boolean
@@ -32,6 +34,12 @@ export function SaleReceiptModal({
   const [sharing, setSharing] = useState(false)
   const autoPrintedFor = useRef<string | null>(null)
   const features = useFeatureFlags()
+  // SMS / WhatsApp through the business's messaging plan (online sales with a server id only)
+  const canSendViaServer = visible && !!saleData?.saleId && !saleData?.queued
+  const messaging = useMessagingAvailability(canSendViaServer)
+  const [phone, setPhone] = useState('')
+  const [askPhone, setAskPhone] = useState<'sms' | 'whatsapp' | null>(null)
+  const [msgState, setMsgState] = useState<{ status: 'idle' | 'sending' | 'done' | 'error'; text?: string }>({ status: 'idle' })
 
   const invoiceNo = saleData?.invoiceNo
   const receipt = saleData?.receipt || null
@@ -52,6 +60,9 @@ export function SaleReceiptModal({
   useEffect(() => {
     if (!visible || !saleData) return
     setPrintState({ status: 'idle' })
+    setPhone(saleData.customerPhone || '')
+    setAskPhone(null)
+    setMsgState({ status: 'idle' })
     let cancelled = false
     getPrinterSettings().then((s) => {
       if (cancelled) return
@@ -72,7 +83,27 @@ export function SaleReceiptModal({
 
   const printerReady = !!printer && isPrintingEnabled(printer)
 
-  function shareWhatsApp() {
+  async function sendViaServer(channel: 'sms' | 'whatsapp') {
+    if (!saleData?.saleId) return
+    const to = phone.trim()
+    if (!to) {
+      setAskPhone(channel)
+      return
+    }
+    setMsgState({ status: 'sending' })
+    const r = await sendReceiptMessage(saleData.saleId, channel, to)
+    if (r.ok) {
+      setMsgState({ status: 'done', text: channel === 'sms' ? 'SMS sent' : 'WhatsApp message sent' })
+      setAskPhone(null)
+    } else if (channel === 'whatsapp' && r.code && FALLBACK_CODES.includes(r.code) && features.has('whatsapp')) {
+      setMsgState({ status: 'idle' })
+      shareWhatsApp(to)
+    } else {
+      setMsgState({ status: 'error', text: r.error })
+    }
+  }
+
+  function shareWhatsApp(toPhone?: string) {
     if (!saleData) return
     const r = saleData.receipt
     const lines = r
@@ -83,7 +114,9 @@ export function SaleReceiptModal({
         saleData.isReturn ? 'Refund' : 'Total Paid'
       }: ${formatLKR(saleData.total)}\nMethod: ${saleData.tenderMethod}\n${r?.footer || 'Thank you for shopping with us!'}`
     )
-    Linking.openURL(`https://wa.me/?text=${text}`)
+    const digits = (toPhone || '').replace(/\D/g, '')
+    const waPhone = /^0\d{9}$/.test(digits) ? `94${digits.slice(1)}` : digits
+    Linking.openURL(`https://wa.me/${waPhone}?text=${text}`)
   }
 
   async function sharePdf() {
@@ -163,9 +196,45 @@ export function SaleReceiptModal({
               )
             ) : null}
 
+            {canSendViaServer && (messaging.sms || messaging.whatsapp) ? (
+              <View style={styles.sendBox}>
+                {askPhone || phone ? (
+                  <TextInput
+                    style={styles.phoneInput}
+                    value={phone}
+                    onChangeText={setPhone}
+                    placeholder="Customer mobile, e.g. 0771234567"
+                    keyboardType="phone-pad"
+                    autoFocus={!!askPhone}
+                    onSubmitEditing={() => askPhone && sendViaServer(askPhone)}
+                  />
+                ) : null}
+                <View style={styles.shareRow}>
+                  {messaging.sms ? (
+                    <Pressable style={[styles.smsBtn, { flex: 1 }]} onPress={() => sendViaServer('sms')} disabled={msgState.status === 'sending'}>
+                      <Text style={styles.whatsAppText}>✉️ Send SMS</Text>
+                    </Pressable>
+                  ) : null}
+                  {messaging.whatsapp ? (
+                    <Pressable style={[styles.whatsAppBtn, { flex: 1 }]} onPress={() => sendViaServer('whatsapp')} disabled={msgState.status === 'sending'}>
+                      <Text style={styles.whatsAppText}>💬 Send WhatsApp</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                {msgState.status !== 'idle' ? (
+                  <View style={[styles.printStatus, msgState.status === 'error' && styles.printStatusError]}>
+                    {msgState.status === 'sending' ? <ActivityIndicator size="small" color={THEME.colors.primary} /> : null}
+                    <Text style={[styles.printStatusText, msgState.status === 'error' && { color: THEME.colors.error }]} numberOfLines={3}>
+                      {msgState.status === 'sending' ? 'Sending…' : msgState.text}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
             <View style={styles.shareRow}>
-              {features.has('whatsapp') ? (
-                <Pressable style={[styles.whatsAppBtn, { flex: 1 }]} onPress={shareWhatsApp}>
+              {features.has('whatsapp') && !(canSendViaServer && messaging.whatsapp) ? (
+                <Pressable style={[styles.whatsAppBtn, { flex: 1 }]} onPress={() => shareWhatsApp(phone)}>
                   <Text style={styles.whatsAppText}>💬 WhatsApp</Text>
                 </Pressable>
               ) : null}
@@ -257,6 +326,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   whatsAppText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
+  smsBtn: { height: 48, borderRadius: 12, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  sendBox: { width: '100%', gap: 8 },
+  phoneInput: {
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    paddingHorizontal: 12,
+    fontSize: 14,
+    color: THEME.colors.text,
+    backgroundColor: THEME.colors.surfaceContainerLow,
+  },
   pdfBtn: { height: 48, borderRadius: 12, backgroundColor: THEME.colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
   pdfText: { color: THEME.colors.primary, fontSize: 14, fontWeight: '700' },
   newSaleBtn: {

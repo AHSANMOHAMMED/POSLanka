@@ -41,6 +41,10 @@ export interface SaleResultData {
   receipt?: ReceiptInput | null
   /** Cashier's choice on the tender screen; falls back to the printer setting. */
   autoPrint?: boolean
+  /** Server sale id (online sales only) — lets the receipt screen send the bill by SMS / WhatsApp */
+  saleId?: string | null
+  /** The sale's customer number, offered as the default recipient */
+  customerPhone?: string | null
 }
 
 interface TenderModalProps {
@@ -389,6 +393,8 @@ export function TenderModal({
           tenderMethod,
           receipt,
           autoPrint,
+          saleId: sale.id || null,
+          customerPhone: customer?.phone || null,
         })
         return
       }

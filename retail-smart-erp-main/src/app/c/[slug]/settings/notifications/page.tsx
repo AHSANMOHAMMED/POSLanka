@@ -96,6 +96,16 @@ export default function NotificationsPage() {
         <p className="text-gray-500 mt-1">Configure SMS and email notifications for your business</p>
       </div>
 
+      <Link href={`${basePath}/settings/notifications/messaging`} className="block">
+        <Card className="p-4 hover:border-emerald-500 transition-colors cursor-pointer flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-medium text-gray-900 dark:text-white">SMS &amp; WhatsApp plan</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400">Your messaging plan, balance, usage, delivery log and message texts</p>
+          </div>
+          <span className="text-sm font-medium text-emerald-600 dark:text-emerald-400 shrink-0">Open →</span>
+        </Card>
+      </Link>
+
       {/* Quick Links */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Link href={`${basePath}/settings/notifications/sms`}>

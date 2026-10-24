@@ -3865,6 +3865,50 @@ export const notificationLogs = pgTable('notification_logs', {
   sentBy: uuid('sent_by').references(() => users.id),
   sentAt: timestamp('sent_at'),
   deliveredAt: timestamp('delivered_at'),
+  // Platform messaging add-on (0174): who paid for the send and what it was for
+  billedVia: varchar('billed_via', { length: 20 }), // 'platform' | 'own'
+  purpose: varchar('purpose', { length: 40 }), // 'sale_receipt' | 'payment_reminder' | 'low_stock' | 'test' | 'manual'
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// Platform SMS / WhatsApp add-on, one row per vendor (super admin → vendor → Messaging). 0174.
+export const messagingSubscriptions = pgTable('messaging_subscriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }).unique(),
+  smsEnabled: boolean('sms_enabled').notNull().default(false),
+  whatsappEnabled: boolean('whatsapp_enabled').notNull().default(false),
+  useOwnSmsProvider: boolean('use_own_sms_provider').notNull().default(false),
+  senderMask: varchar('sender_mask', { length: 11 }),
+  billingMode: varchar('billing_mode', { length: 20 }).notNull().default('prepaid'), // 'prepaid' | 'monthly_quota'
+  smsMonthlyQuota: integer('sms_monthly_quota').notNull().default(0),
+  whatsappMonthlyQuota: integer('whatsapp_monthly_quota').notNull().default(0),
+  smsCredits: integer('sms_credits').notNull().default(0),
+  whatsappCredits: integer('whatsapp_credits').notNull().default(0),
+  periodMonth: date('period_month'),
+  smsUsedPeriod: integer('sms_used_period').notNull().default(0),
+  whatsappUsedPeriod: integer('whatsapp_used_period').notNull().default(0),
+  smsPrice: decimal('sms_price', { precision: 10, scale: 2 }).notNull().default('0'),
+  whatsappPrice: decimal('whatsapp_price', { precision: 10, scale: 2 }).notNull().default('0'),
+  expiresAt: date('expires_at'),
+  alertPhone: varchar('alert_phone', { length: 30 }),
+  lowStockChannel: varchar('low_stock_channel', { length: 20 }).notNull().default('off'), // 'off' | 'sms' | 'whatsapp'
+  notes: text('notes'),
+  updatedBy: uuid('updated_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+// Top-ups / adjustments / refunds of messaging credits (audit trail). 0174.
+export const messagingCreditLedger = pgTable('messaging_credit_ledger', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  channel: varchar('channel', { length: 20 }).notNull(), // 'sms' | 'whatsapp'
+  change: integer('change').notNull(),
+  balanceAfter: integer('balance_after').notNull(),
+  reason: varchar('reason', { length: 30 }).notNull(), // 'topup' | 'adjustment' | 'refund'
+  amountPaid: decimal('amount_paid', { precision: 12, scale: 2 }),
+  note: text('note'),
+  adminId: uuid('admin_id'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 

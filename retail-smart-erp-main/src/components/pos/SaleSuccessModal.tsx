@@ -1,12 +1,12 @@
 'use client'
 
-import { useState } from 'react'
-import { CheckCircle, Printer, MessageCircle, ArrowRight } from 'lucide-react'
+import { CheckCircle, Printer } from 'lucide-react'
 import { useTerminology } from '@/hooks/useTerminology'
 import { useCurrency } from '@/hooks/useCurrency'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { buildWhatsAppShareUrl } from '@/lib/whatsapp'
 import { useFeatureFlag } from '@/hooks/useFeatureFlag'
+import { SendReceiptButtons, useMessagingAvailability } from './SendReceiptButtons'
 
 interface SaleSuccessModalProps {
   lastSale: {
@@ -33,17 +33,15 @@ export function SaleSuccessModal({
 }: SaleSuccessModalProps) {
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()
-  const [customPhone, setCustomPhone] = useState('')
-  const [showPhoneInput, setShowPhoneInput] = useState(false)
   const whatsappOn = useFeatureFlag('whatsapp')
+  const messaging = useMessagingAvailability()
 
   useEscapeKey(!!lastSale, onDismiss, onDismiss)
 
   if (!lastSale) return null
 
-  const targetPhone = (customPhone || lastSale.customerPhone || '').trim()
-
-  const handleWhatsAppShare = () => {
+  // Free fallback: opens WhatsApp on this device with the bill text (no messaging plan needed)
+  const handleWhatsAppShare = (targetPhone: string) => {
     const textLines = [
       `🧾 *${shopName}*`,
       `${lastSale.isReturn ? 'Return' : 'Sale'} Receipt: *${lastSale.invoiceNo}*`,
@@ -106,42 +104,15 @@ export function SaleSuccessModal({
             </button>
           )}
 
-          {/* WhatsApp Share Button (feature switch) */}
-          {whatsappOn && <div className="space-y-1.5">
-            <button
-              onClick={() => {
-                if (!lastSale.customerPhone && !showPhoneInput) {
-                  setShowPhoneInput(true)
-                } else {
-                  handleWhatsAppShare()
-                }
-              }}
-              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold transition-all flex items-center justify-center gap-2 shadow-sm active:scale-[0.98]"
-            >
-              <MessageCircle size={18} />
-              Share via WhatsApp
-            </button>
-
-            {showPhoneInput && (
-              <div className="flex items-center gap-1.5 pt-1">
-                <input
-                  type="tel"
-                  placeholder="e.g. 0771234567"
-                  value={customPhone}
-                  onChange={(e) => setCustomPhone(e.target.value)}
-                  className="flex-1 text-xs px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg dark:bg-gray-700 dark:text-white font-mono"
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={handleWhatsAppShare}
-                  className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 flex items-center gap-1"
-                >
-                  Send <ArrowRight size={12} />
-                </button>
-              </div>
-            )}
-          </div>}
+          {/* SMS / WhatsApp through the messaging plan; free WhatsApp share link otherwise */}
+          {lastSaleId && (messaging.sms || messaging.whatsapp || whatsappOn) && (
+            <SendReceiptButtons
+              saleId={lastSaleId}
+              defaultPhone={lastSale.customerPhone}
+              availability={messaging}
+              onShareWhatsApp={whatsappOn ? handleWhatsAppShare : undefined}
+            />
+          )}
 
           <button
             onClick={onDismiss}

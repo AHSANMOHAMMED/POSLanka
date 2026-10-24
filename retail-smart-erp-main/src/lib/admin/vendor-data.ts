@@ -66,12 +66,15 @@ const READ_ONLY_TABLES = new Set([
   'account_sessions', 'alert_dedupe', 'audit_runs', 'tenant_usage', 'notification_usage', 'item_tombstones',
   'supplier_balance_audit', 'tenant_sequences', 'gl_entries', 'payment_ledger', 'serial_number_movements',
   'item_cost_history', 'storage_alerts', 'subscriptions', 'subscription_payments',
+  'messaging_subscriptions', 'messaging_credit_ledger',
 ])
 const READ_ONLY_REASON: Record<string, string> = {
   gl_entries: 'Ledger entries are written by posting documents; change the document or post a journal entry instead.',
   payment_ledger: 'Written by payments; change the payment instead.',
   subscriptions: 'Use the vendor’s Billing actions (extend, change plan).',
   subscription_payments: 'Use the Payments page.',
+  messaging_subscriptions: 'Use the vendor’s Messaging page (credits are topped up with an audit entry).',
+  messaging_credit_ledger: 'Written by messaging top-ups.',
 }
 
 const SECRET_RE = /(_hash$|^password$|token|secret|api_key$|^otp|_otp$|private_key)/i
