@@ -41,7 +41,7 @@ import { CustomerPickerModal, type Customer } from '../src/components/CustomerPi
 import { HeldSalesModal, type HeldSale } from '../src/components/HeldSalesModal'
 import { ReturnModal } from '../src/components/ReturnModal'
 import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
-import { loadBusinessInfo, type BusinessInfo } from '../src/lib/receipt'
+import { invoiceNoFromScan, loadBusinessInfo, type BusinessInfo } from '../src/lib/receipt'
 import { AlertsBell } from '../src/components/AlertsBell'
 import { useKitchenTickets } from '../src/lib/kitchenPrint'
 import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCartItems, lineTotal, scanToLine } from '../src/lib/cartMath'
@@ -434,7 +434,8 @@ export default function PosScreen() {
   }
 
   async function lookupBarcode(code: string) {
-    const trimmed = code.trim()
+    // Receipt QR with the verification link: /v/<BusinessID>/<invoiceNo>
+    const trimmed = invoiceNoFromScan(code)
     if (!trimmed) return
     if (!shift) {
       Alert.alert('No Open Shift', 'Open a shift before scanning items.')

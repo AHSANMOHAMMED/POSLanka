@@ -251,7 +251,7 @@ const large = buildReceiptEscPosFromModel({ ...model, fontSize: 'large' }, { pap
 assert(indexOfSeq(large, [0x1d, 0x21, 0x01]) >= 0, 'model receipt: large font = double height')
 
 async function htmlTests() {
-  const html = await renderReceiptHtml({ ...model, invoiceCode: { type: 'both', value: 'INV-1' } }, 80, { logoSrc: 'data:image/png;base64,AAAA' })
+  const html = await renderReceiptHtml({ ...model, invoiceCode: { type: 'both', value: 'INV-1', qrValue: 'INV-1' } }, 80, { logoSrc: 'data:image/png;base64,AAAA' })
   assert(html.includes('<img src="data:image/png;base64,AAAA"'), 'html: logo img')
   assert((html.match(/<svg/g) || []).length === 2, 'html: barcode + QR svgs')
   assert(html.includes('Test Shop (Pvt) Ltd') && html.includes('Returns within 7 days'), 'html: business + policy')

@@ -17,19 +17,12 @@ import {
   bytesToPlainText,
   EscPosBuilder,
   formatReceiptDate,
-  invoiceCodeFor,
-  money,
-  paymentLabel,
-  qtyText,
-  vatRateText,
   sanitizeAscii,
   type PaperWidth,
   type ReceiptInput,
   type ZReportInput,
 } from './escpos'
-import { code128Svg } from './code128'
-import { businessHeaderHtml, escapeHtml, zReportHtml } from './printHtml'
-import { qrSvg } from './qr'
+import { escapeHtml, receiptHtml, zReportHtml } from './printHtml'
 import { apiGet } from './api'
 import { pickStickerSetup, sanitizeStickerSetups, stickerLayout, type StickerSetup } from './label/stickerStock'
 import {
@@ -42,6 +35,9 @@ import {
   type LabelTemplateLike,
   type RawLabelLanguage,
 } from './label'
+
+/** Receipt HTML (system print / PDF) lives in ./printHtml so tests can render it under Node. */
+export { receiptHtml }
 
 export type PrinterTransport = 'none' | 'bluetooth' | 'usb' | 'network' | 'system'
 
@@ -565,83 +561,9 @@ export async function shareReceiptPdf(input: ReceiptInput): Promise<void> {
     table { width: 100%; border-collapse: collapse; } td { padding: 1px 0; vertical-align: top; }
     .r { text-align: right; white-space: nowrap; } .c { text-align: center; } .b { font-weight: bold; } .big { font-size: 1.35em; }
     hr { border: 0; border-top: 1px dashed #000; margin: 4px 0; }
-  </style></head><body>${receiptHtml(input)}</body></html>`
+  </style></head><body>${receiptHtml(input, widthMm)}</body></html>`
   const { uri } = await Print.printToFileAsync({ html })
   await Share.share(Platform.OS === 'ios' ? { url: uri } : { message: `${input.business.name} receipt ${input.invoiceNo}: ${uri}`, title: input.invoiceNo })
-}
-
-export function receiptHtml(input: ReceiptInput): string {
-  const ti = input.taxInvoice || null
-  const lines = input.lines
-    .map(
-      (l) =>
-        `<tr><td>${escapeHtml(l.name)}</td><td class="r">${escapeHtml(qtyText(l.qty))}${l.unit ? escapeHtml(l.unit) : ''}</td><td class="r">${money(l.unitPrice)}</td><td class="r">${money(l.total)}</td></tr>` +
-        (l.conversion ? `<tr><td colspan="4">&nbsp;&nbsp;${escapeHtml(l.conversion)}</td></tr>` : '') +
-        (ti && l.vatAmount ? `<tr><td colspan="3">&nbsp;&nbsp;VAT ${escapeHtml(vatRateText(l.vatRate))}%</td><td class="r">${money(l.vatAmount)}</td></tr>` : '')
-    )
-    .join('')
-  const title = ti ? (ti.kind === 'credit_note' ? 'CREDIT NOTE' : 'TAX INVOICE') : input.isReturn ? 'RETURN / CREDIT NOTE' : 'SALES RECEIPT'
-  const buyerRows = ti?.buyer
-    ? `<tr><td>Buyer</td><td class="r">${escapeHtml(ti.buyer.name)}</td></tr>` +
-      (ti.buyer.address ? `<tr><td colspan="2">${escapeHtml(ti.buyer.address)}</td></tr>` : '') +
-      (ti.buyer.vatNo ? `<tr><td>Buyer VAT No</td><td class="r">${escapeHtml(ti.buyer.vatNo)}</td></tr>` : '')
-    : input.customer?.name ? `<tr><td>Customer</td><td class="r">${escapeHtml(input.customer.name)}</td></tr>` : ''
-  const vatTotals = ti
-    ? `<tr><td>Total excl. VAT</td><td class="r">${money(ti.totalExclVat)}</td></tr><tr><td>VAT</td><td class="r">${money(ti.totalVat)}</td></tr><tr><td>Total incl. VAT</td><td class="r">${money(ti.totalInclVat)}</td></tr>`
-    : ''
-  const taxes = (input.taxLines || [])
-    .filter((t) => Math.abs(t.amount) > 0.004)
-    .map((t) => `<tr><td>${escapeHtml(t.name)}</td><td class="r">${money(t.amount)}</td></tr>`)
-    .join('')
-  const payments = (input.payments || [])
-    .map((p) => `<tr><td>${escapeHtml(paymentLabel(p.method))}${p.reference ? ` (${escapeHtml(p.reference)})` : ''}</td><td class="r">${money(p.amount)}</td></tr>`)
-    .join('')
-  const headerLines = input.headerLines?.length ? input.headerLines : input.header ? [input.header] : []
-  const footerLines = input.footerLines?.length ? input.footerLines : [input.footer || 'Thank you for shopping with us!']
-  const code = invoiceCodeFor(input)
-  const codes = [
-    code.barcode ? `<div class="c" style="margin:6px auto 0;width:85%">${code128Svg(code.value, { height: 40 })}</div>` : '',
-    code.qr ? `<div class="c" style="margin-top:6px">${receiptQrSvg(code.value)}</div>` : '',
-  ].join('')
-  return `
-    ${businessHeaderHtml(input.business, input.logo)}
-    ${headerLines.map((h) => `<div class="c">${escapeHtml(h).replace(/\n/g, '<br>')}</div>`).join('')}
-    <hr>
-    <div class="b">${title}</div>
-    <table>
-      <tr><td>${ti ? (ti.kind === 'credit_note' ? 'Credit Note' : 'Invoice No') : 'Invoice'}</td><td class="r">${escapeHtml(input.invoiceNo)}</td></tr>
-      <tr><td>Date</td><td class="r">${escapeHtml(formatReceiptDate(input.dateTime))}</td></tr>
-      ${ti?.originalInvoiceNo ? `<tr><td>Against Inv</td><td class="r">${escapeHtml(ti.originalInvoiceNo)}</td></tr>` : ''}
-      ${input.counter ? `<tr><td>Counter</td><td class="r">${escapeHtml(input.counter)}</td></tr>` : ''}
-      ${input.cashier ? `<tr><td>Cashier</td><td class="r">${escapeHtml(input.cashier)}</td></tr>` : ''}
-      ${buyerRows}
-    </table>
-    <hr>
-    <table><tr class="b"><td>Item</td><td class="r">Qty</td><td class="r">Price</td><td class="r">Total</td></tr>${lines}</table>
-    <hr>
-    <table>
-      <tr><td>Subtotal</td><td class="r">${money(input.subtotal)}</td></tr>
-      ${input.discount && Math.abs(input.discount) > 0.004 ? `<tr><td>Discount</td><td class="r">-${money(Math.abs(input.discount))}</td></tr>` : ''}
-      ${taxes}
-      <tr class="b big"><td>${input.isReturn ? 'REFUND' : 'TOTAL'}</td><td class="r">LKR ${money(input.total)}</td></tr>
-      ${vatTotals}
-    </table>
-    <hr>
-    <table>${payments}${input.change && input.change > 0.004 ? `<tr><td>Change</td><td class="r">${money(input.change)}</td></tr>` : ''}</table>
-    <br>
-    ${footerLines.map((f) => `<div class="c">${escapeHtml(f).replace(/\n/g, '<br>')}</div>`).join('')}
-    ${input.returnPolicy ? `<div class="c" style="margin-top:6px;font-size:10px">${escapeHtml(input.returnPolicy)}</div>` : ''}
-    ${codes}
-    <div class="c" style="margin-top:6px">Powered by skyERPOS</div>`
-}
-
-/** Real QR (SVG) for HTML / PDF receipts; falls back to the plain value when it cannot be encoded. */
-function receiptQrSvg(value: string): string {
-  try {
-    return qrSvg(value, 110)
-  } catch {
-    return `<div style="font-size:10px">${escapeHtml(value)}</div>`
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -651,7 +573,7 @@ export async function printReceipt(input: ReceiptInput, settingsOverride?: Print
   const s = settingsOverride || (await getPrinterSettings())
   if (s.transport === 'none') throw new PrinterError('No printer configured. Open Printer settings to set one up.', 'not_configured')
   if (s.transport === 'system') {
-    await printHtml(receiptHtml(input), s)
+    await printHtml(receiptHtml(input, s.paperWidth), s)
     return
   }
   await printBytes(buildReceipt(input, { paperWidth: s.paperWidth, drawerKick: s.drawerKick }), s)

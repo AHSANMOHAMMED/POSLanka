@@ -5,8 +5,8 @@
 // printed offline keep the logo, tax numbers and layout. Header/footer can be
 // overridden per counter by the shift's POS profile.
 import * as FileSystem from 'expo-file-system'
-import { apiGet, getUser } from './api'
-import type { InvoiceCodeType, ReceiptInput, ReceiptLine, ReceiptLogo, ReceiptPayment, ReceiptTaxInvoice, ZReportInput } from './escpos'
+import { apiGet, getApiBase, getUser } from './api'
+import type { InvoiceCodeType, ReceiptFormat, ReceiptInput, ReceiptLine, ReceiptLogo, ReceiptPayment, ReceiptTaxInvoice, ZReportInput } from './escpos'
 import { getPrinterSettings } from './printer'
 import { shiftCounterName, type Shift } from './shift'
 import { lineUnit } from './unitConversion'
@@ -29,6 +29,14 @@ export interface ReceiptSettingsLite {
   showCashier: boolean
   showCounter: boolean
   showCustomer: boolean
+  showItemSku: boolean
+  showItemBarcode: boolean
+  fontSize: 'small' | 'normal' | 'large'
+  itemLayout: 'two_line' | 'one_line'
+  itemSeparator: 'none' | 'dashed' | 'solid'
+  qrContent: 'invoice_no' | 'verify_url'
+  logoAlign: 'center' | 'left' | 'right'
+  showPoweredBy: boolean
 }
 
 export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettingsLite = {
@@ -48,10 +56,40 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettingsLite = {
   showCashier: true,
   showCounter: true,
   showCustomer: true,
+  showItemSku: false,
+  showItemBarcode: false,
+  fontSize: 'normal',
+  itemLayout: 'two_line',
+  itemSeparator: 'none',
+  qrContent: 'invoice_no',
+  logoAlign: 'center',
+  showPoweredBy: true,
+}
+
+/** Public receipt verification link (same as web src/lib/print/invoice-verify.ts). */
+export function buildInvoiceVerifyUrl(baseUrl: string, businessId: string, invoiceNo: string, total: number): string {
+  const base = baseUrl.replace(/\/+$/, '')
+  return `${base}/v/${encodeURIComponent(businessId)}/${encodeURIComponent(invoiceNo)}?a=${Math.abs(Number(total) || 0).toFixed(2)}`
+}
+
+/** Invoice number from a scanned receipt code: a bare number (INV-...) or a verification URL. */
+export function invoiceNoFromScan(text: string): string {
+  const t = (text || '').trim()
+  const m = /\/v\/[A-Za-z0-9-]+\/([^/?#\s]+)/.exec(t)
+  if (m) {
+    try {
+      return decodeURIComponent(m[1])
+    } catch {
+      return m[1]
+    }
+  }
+  return t
 }
 
 export interface BusinessInfo {
   name: string
+  /** Permanent Business ID (receipt verification links). */
+  businessId?: string | null
   legalName?: string | null
   address?: string | null
   phone?: string | null
@@ -100,6 +138,7 @@ async function writeCachedBusiness(b: BusinessInfo): Promise<void> {
 
 interface TenantResponse {
   name?: string
+  businessId?: string | null
   legalName?: string | null
   address?: string | null
   phone?: string | null
@@ -131,6 +170,7 @@ export async function loadBusinessInfo(force = false): Promise<BusinessInfo> {
     const t = res.data
     const info: BusinessInfo = {
       name: t.name || fallback.name,
+      businessId: t.businessId || null,
       legalName: t.legalName || null,
       address: t.address || null,
       phone: t.phone || null,
@@ -148,7 +188,7 @@ export async function loadBusinessInfo(force = false): Promise<BusinessInfo> {
     if (info.logoUrl && settings.showLogo !== false) {
       const paper = (await getPrinterSettings()).paperWidth
       const dots = paper === 80 ? 576 : 384
-      const pct = Math.min(100, Math.max(40, Math.round(settings.logoWidthPct || 60)))
+      const pct = Math.min(100, Math.max(20, Math.round(settings.logoWidthPct || 60)))
       const raster = await apiGet<{ width: number; height: number; data: string; pngBase64?: string }>(
         `/api/settings/logo/raster?width=${dots}&pct=${pct}`
       )
@@ -215,7 +255,8 @@ export interface SaleResponseLike {
     /** Base units per 1 `uom` (sale_items.uom_factor) and the item's base unit name */
     uomFactor?: string | number | null
     baseUnit?: string | null
-    item?: { unit?: string | null } | null
+    item?: { unit?: string | null; sku?: string | null; barcode?: string | null } | null
+    sku?: string | null
     promotions?: Array<{ label: string; amount: string | number; cart?: boolean }> | null
   }>
   payments?: Array<{ method?: string; paymentMethod?: string; amount: string | number; reference?: string | null }>
@@ -281,6 +322,8 @@ export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): Mo
     const { conversion } = lineUnit({ uom: i.uom, uomFactor: i.uomFactor, baseUnit: i.baseUnit ?? i.item?.unit ?? null })
     return {
       name: promo.length ? `${name} (${promo.map((p) => `${p.label} -${num(p.amount).toFixed(2)}`).join(', ')})` : name,
+      sku: i.sku || i.item?.sku || null,
+      barcode: i.item?.barcode || null,
       qty,
       unit: i.uom || i.unit || null,
       conversion,
@@ -367,12 +410,35 @@ export function receiptFromSale(sale: SaleResponseLike, ctx: ReceiptContext): Mo
     payments,
     change: ctx.change && ctx.change > 0 ? ctx.change : undefined,
     isReturn,
-    // The barcode / QR carries the invoice number (INV-, RTN- or offline OFF- refs) so a
-    // later return can be started by scanning the slip.
-    qrPayload: sale.invoiceNo || null,
+    // The barcode carries the invoice number (INV-, RTN- or offline OFF- refs) so a later return can
+    // be started by scanning the slip; the QR the same, or the public verification link.
+    qrPayload: receiptQrPayload(sale.invoiceNo, total, settings, b),
+    barcodePayload: sale.invoiceNo || null,
     invoiceCode: settings.invoiceCode,
     taxInvoice,
+    format: receiptFormat(settings),
   }
+}
+
+/** Receipt look from the settings (font size, item layout, separators, codes, powered-by). */
+export function receiptFormat(s: ReceiptSettingsLite): ReceiptFormat {
+  return {
+    fontSize: s.fontSize === 'small' || s.fontSize === 'large' ? s.fontSize : 'normal',
+    itemLayout: s.itemLayout === 'one_line' ? 'one_line' : 'two_line',
+    itemSeparator: s.itemSeparator === 'dashed' || s.itemSeparator === 'solid' ? s.itemSeparator : 'none',
+    showItemSku: !!s.showItemSku,
+    showItemBarcode: !!s.showItemBarcode,
+    poweredBy: s.showPoweredBy !== false,
+    logoAlign: s.logoAlign === 'left' || s.logoAlign === 'right' ? s.logoAlign : 'center',
+  }
+}
+
+function receiptQrPayload(invoiceNo: string, total: number, s: ReceiptSettingsLite, b: BusinessInfo): string | null {
+  if (!invoiceNo) return null
+  if (s.qrContent !== 'verify_url' || !b.businessId || /^OFF-/i.test(invoiceNo)) return invoiceNo
+  const base = getApiBase()
+  if (!/^https?:\/\//i.test(base)) return invoiceNo
+  return buildInvoiceVerifyUrl(base, b.businessId, invoiceNo, total)
 }
 
 export interface ShiftCloseLike {

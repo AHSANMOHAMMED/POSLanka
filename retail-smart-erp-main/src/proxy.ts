@@ -342,7 +342,8 @@ export async function proxy(request: NextRequest) {
     // Allowed paths for app domain
     const allowedPaths = [
       '/account', '/login', '/register', '/reset-password', '/forgot-password',
-      '/verify-email', '/setup', '/billing', '/plans', '/team', '/settings'
+      '/verify-email', '/setup', '/billing', '/plans', '/team', '/settings',
+      '/v', // public receipt verification (receipt QR)
     ]
 
     const isAllowed = allowedPaths.some(allowed =>

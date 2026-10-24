@@ -75,6 +75,7 @@ import {
 } from '@/lib/print/kitchen-delta'
 import { fetchLogoRaster, loadReceiptModel, buildLocalReceiptModel, type SaleForReceipt } from '@/lib/print/receipt-loader'
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
+import { invoiceNoFromScan } from '@/lib/print/invoice-verify'
 import type { PaperSize } from '@/lib/print/types'
 import { useCurrency } from '@/hooks/useCurrency'
 import { roundCurrency } from '@/lib/utils/currency'
@@ -436,7 +437,8 @@ export default function POSPage() {
 
   useUnsavedChangesWarning(cart.length > 0, 'You have items in your cart. Are you sure you want to leave?')
 
-  const debouncedReturnSearchQuery = useDebouncedValue(returnSearchQuery, 300)
+  // A scanned receipt QR may carry the verification link (/v/<BusinessID>/<invoiceNo>)
+  const debouncedReturnSearchQuery = useDebouncedValue(returnSearchQuery.includes('/v/') ? invoiceNoFromScan(returnSearchQuery) : returnSearchQuery, 300)
   const debouncedItemSearch = useDebouncedValue(search, 300)
 
   // ─── Data Fetchers ────────────────────────────────────────────

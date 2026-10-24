@@ -15,6 +15,8 @@ import { resolveReceiptSettings, type LegacyProfileReceiptFields, type ReceiptSe
 
 export interface TenantReceiptInfo extends ReceiptTenantInfo {
   id?: string
+  /** Permanent Business ID (receipt verification links). */
+  businessId?: string | null
   taxInclusive?: boolean
   /** Effective tenant-level settings (defaults merged). */
   receiptSettings?: Partial<ReceiptSettings> | null
@@ -50,6 +52,22 @@ export async function fetchTenantInfo(force = false): Promise<TenantReceiptInfo>
     /* ignore */
   }
   return {}
+}
+
+/**
+ * Base URL of the public receipt verification page (/v/...). Tenant subdomains
+ * rewrite every path into the workspace, so in production the link points at
+ * the app domain; on localhost / IP / platform hosts it is this origin.
+ */
+export function receiptVerifyBaseUrl(): string | null {
+  if (typeof window === 'undefined') return null
+  const appDomain = process.env.NEXT_PUBLIC_APP_DOMAIN
+  const baseDomain = (process.env.NEXT_PUBLIC_BASE_DOMAIN || '').split(':')[0].toLowerCase()
+  const host = window.location.hostname.toLowerCase()
+  if (appDomain && baseDomain && (host === baseDomain || host.endsWith(`.${baseDomain}`))) {
+    return `${window.location.protocol}//${appDomain}`
+  }
+  return window.location.origin
 }
 
 export function invalidateTenantInfo() {
@@ -204,6 +222,8 @@ function modelFromSale(sale: SaleForReceipt, tenant: TenantReceiptInfo, opts: Lo
     counter: opts.counter ?? null,
     copyLabel: opts.copyLabel ?? null,
     lineNotes,
+    verifyBaseUrl: receiptVerifyBaseUrl(),
+    businessId: tenant.businessId ?? null,
   })
   return { model, sale, tenant, settings }
 }

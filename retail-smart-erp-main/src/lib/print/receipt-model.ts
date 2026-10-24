@@ -9,7 +9,18 @@
  *
  * Pure module: no DOM, no server imports.
  */
-import { DEFAULT_FOOTER_LINE, DEFAULT_RECEIPT_SETTINGS, type InvoiceCodeType, type ReceiptSettings } from './receipt-settings'
+import {
+  DEFAULT_FOOTER_LINE,
+  DEFAULT_RECEIPT_SETTINGS,
+  POWERED_BY_LINE,
+  type InvoiceCodeType,
+  type ReceiptAlign,
+  type ReceiptFontSize,
+  type ReceiptItemLayout,
+  type ReceiptItemSeparator,
+  type ReceiptSettings,
+} from './receipt-settings'
+import { buildInvoiceVerifyUrl } from './invoice-verify'
 
 type Num = string | number | null | undefined
 
@@ -35,7 +46,8 @@ export interface ReceiptSaleItemSource {
   discount?: Num
   unit?: string | null
   sku?: string | null
-  item?: { sku?: string | null; unit?: string | null } | null
+  barcode?: string | null
+  item?: { sku?: string | null; unit?: string | null; barcode?: string | null } | null
   /** Line VAT (sale_items.tax_amount / tax_rate) — printed per line on tax invoices. */
   taxAmount?: Num
   taxRate?: Num
@@ -85,6 +97,8 @@ export interface ReceiptSaleSource {
 export interface ReceiptModelLine {
   name: string
   sku: string | null
+  /** Item barcode (printed when showItemBarcode is on). */
+  barcode: string | null
   qty: number
   qtyText: string
   unit: string | null
@@ -121,7 +135,7 @@ export interface ReceiptModel {
     /** Extra lines under the name, already filtered by the settings toggles. */
     lines: string[]
   }
-  logo: { show: boolean; widthPct: number; url: string | null }
+  logo: { show: boolean; widthPct: number; url: string | null; align: ReceiptAlign }
   headerLines: string[]
   /** e.g. "*** RETURN ***" */
   title: string | null
@@ -136,9 +150,15 @@ export interface ReceiptModel {
   extras: { label: string; value: string }[]
   footerLines: string[]
   returnPolicy: string | null
-  invoiceCode: { type: InvoiceCodeType; value: string }
-  fontSize: 'normal' | 'large'
+  /** value = invoice number (barcode); qrValue = invoice number or the verification URL (QR). */
+  invoiceCode: { type: InvoiceCodeType; value: string; qrValue: string }
+  fontSize: ReceiptFontSize
   showItemSku: boolean
+  showItemBarcode: boolean
+  itemLayout: ReceiptItemLayout
+  itemSeparator: ReceiptItemSeparator
+  /** Small last line ("Powered by skyERPOS") or null. */
+  poweredBy: string | null
   decimals: number
   invoiceNo: string
   isReturn: boolean
@@ -157,6 +177,19 @@ export interface BuildReceiptModelArgs {
   /** Override date formatting (defaults to toLocaleString()). */
   formatDate?: (d: Date) => string
   decimals?: number
+  /**
+   * Public verification page base (e.g. https://app.example.com). With the
+   * Business ID it makes the QR carry the verification URL when the settings
+   * ask for it (qrContent = verify_url). Offline (OFF-) receipts keep the number.
+   */
+  verifyBaseUrl?: string | null
+  businessId?: string | null
+}
+
+/** Body font size (px) of HTML receipts: one scale for every renderer (web + mobile HTML). */
+export const RECEIPT_FONT_PX: Record<58 | 80, Record<ReceiptFontSize, number>> = {
+  58: { small: 9, normal: 10, large: 12 },
+  80: { small: 10, normal: 11, large: 13 },
 }
 
 export const num = (v: Num): number => {
@@ -231,7 +264,7 @@ export function buildBusinessBlock(
   return {
     name,
     lines,
-    logo: { show: s.showLogo && !!tenant.logoUrl, widthPct: s.logoWidthPct, url: tenant.logoUrl || null },
+    logo: { show: s.showLogo && !!tenant.logoUrl, widthPct: s.logoWidthPct, url: tenant.logoUrl || null, align: s.logoAlign || 'center' },
   }
 }
 
@@ -313,6 +346,7 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
     return {
       name: it.itemName,
       sku: clean(it.sku ?? it.item?.sku) || null,
+      barcode: clean(it.barcode ?? it.item?.barcode) || null,
       qty,
       qtyText: formatQty(qty),
       unit: it.uom || (it.unit ?? null),
@@ -370,9 +404,13 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
     extras,
     footerLines,
     returnPolicy: clean(s.returnPolicy) || null,
-    invoiceCode: { type: s.invoiceCode, value: sale.invoiceNo },
+    invoiceCode: { type: s.invoiceCode, value: sale.invoiceNo, qrValue: qrValueFor(sale, s, args) },
     fontSize: s.fontSize,
     showItemSku: s.showItemSku,
+    showItemBarcode: s.showItemBarcode,
+    itemLayout: s.itemLayout,
+    itemSeparator: s.itemSeparator,
+    poweredBy: s.showPoweredBy ? POWERED_BY_LINE : null,
     decimals: args.decimals ?? 2,
     invoiceNo: sale.invoiceNo,
     isReturn: !!sale.isReturn,
@@ -388,6 +426,12 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
         }
       : null,
   }
+}
+
+function qrValueFor(sale: ReceiptSaleSource, s: ReceiptSettings, args: BuildReceiptModelArgs): string {
+  if (s.qrContent !== 'verify_url' || !args.verifyBaseUrl || !args.businessId) return sale.invoiceNo
+  if (/^OFF-/i.test(sale.invoiceNo)) return sale.invoiceNo // not on the server yet
+  return buildInvoiceVerifyUrl(args.verifyBaseUrl, args.businessId, sale.invoiceNo, num(sale.total))
 }
 
 /** Sample VAT tax invoice (registered seller, B2B buyer) for previews and tests. */
