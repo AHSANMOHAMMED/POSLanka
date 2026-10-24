@@ -194,7 +194,22 @@ export default function SalaryComponentsPage() {
       const res = await fetch(`/api/salary-components/${component.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isActive: !component.isActive }),
+        // The update takes the whole component (name, type, flags …): send it back with the new status
+        body: JSON.stringify({
+          name: component.name,
+          abbreviation: component.abbreviation,
+          componentType: component.componentType,
+          formulaExpression: component.formulaExpression,
+          defaultAmount: component.defaultAmount,
+          isStatutory: component.isStatutory,
+          isFlexibleBenefit: component.isFlexibleBenefit,
+          dependsOnPaymentDays: component.dependsOnPaymentDays,
+          doNotIncludeInTotal: component.doNotIncludeInTotal,
+          isPayableByEmployer: component.isPayableByEmployer,
+          description: component.description,
+          sortOrder: component.sortOrder,
+          isActive: !component.isActive,
+        }),
       })
       if (!res.ok) {
         const err = await res.json()

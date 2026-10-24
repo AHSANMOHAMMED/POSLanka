@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { logActivity } from '@/lib/utils/activity-log'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
@@ -83,7 +84,7 @@ export async function PUT(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, updateCommissionSchema)
     if (!parsed.success) return parsed.response
-    const { status } = parsed.data
+    const { status, cancellationReason } = parsed.data
 
     // Execute with RLS tenant context
     return await withTenant(session!.user.tenantId, async (db) => {
@@ -132,6 +133,13 @@ export async function PUT(
 
       // Broadcast the change
       logAndBroadcast(session!.user.tenantId, 'commission', 'updated', id)
+      if (status === 'cancelled') {
+        await logActivity({
+          tenantId: session!.user.tenantId, userId, action: 'cancel', entityType: 'commission', entityId: id,
+          description: `Cancelled commission${cancellationReason ? `: ${cancellationReason}` : ''}`,
+          metadata: { status, cancellationReason: cancellationReason ?? null },
+        })
+      }
 
       return NextResponse.json(updated)
     })

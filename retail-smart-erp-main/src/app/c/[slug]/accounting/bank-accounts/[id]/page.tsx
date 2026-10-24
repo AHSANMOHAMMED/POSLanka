@@ -392,8 +392,11 @@ export default function BankAccountDetailPage() {
   async function handleReconcileMatched() {
     setReconciling(true)
     try {
-      const res = await fetch(`/api/accounting/bank-accounts/${id}/reconciliation/reconcile`, {
+      // "Reconcile matched" = every matched transaction of this account, whatever its date
+      const res = await fetch(`/api/accounting/bank-accounts/${id}/reconciliation`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromDate: '1900-01-01', toDate: '9999-12-31' }),
       })
 
       if (res.ok) {

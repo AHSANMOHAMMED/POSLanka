@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, use } from 'react'
+import { useState, useCallback, use, useEffect, useRef } from 'react'
 import { useRealtimeDataMultiple } from '@/hooks'
 import Link from 'next/link'
 import {
@@ -153,6 +153,15 @@ export default function SubscriptionPage({
   useRealtimeDataMultiple([fetchSubscription, fetchWalletBalance], {
     entityType: ['account-subscription', 'account-wallet'],
   })
+
+  // Arriving from Plans (?tier=…): open that plan's preview once the subscription has loaded
+  const tierFromUrl = useRef<string | null>(typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('tier') : null)
+  useEffect(() => {
+    if (!data?.canManage || !tierFromUrl.current) return
+    const tier = tierFromUrl.current
+    tierFromUrl.current = null
+    void handlePreviewChange(tier)
+  }, [data?.canManage]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Preview proration when user clicks on a tier
   const handlePreviewChange = async (tierId: string) => {

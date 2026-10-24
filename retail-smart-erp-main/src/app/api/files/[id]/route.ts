@@ -69,7 +69,7 @@ export async function PUT(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, updateFileSchema)
     if (!parsed.success) return parsed.response
-    const { fileName, folderId, description, category, isPrivate } = parsed.data
+    const { fileName, folderId, description, category, isPrivate, tags } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
       const existing = await db.query.files.findFirst({
@@ -86,6 +86,7 @@ export async function PUT(
       if (folderId !== undefined) updateData.folderId = folderId || null
       if (description !== undefined) updateData.description = description || null
       if (category !== undefined) updateData.category = category || null
+      if (tags !== undefined) updateData.tags = Array.from(new Set(tags))
 
       // Handle private/public toggle - re-upload to new R2 path
       if (isPrivate !== undefined && isPrivate !== existing.isPrivate && !existing.isFolder) {

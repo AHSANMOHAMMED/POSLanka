@@ -65,7 +65,7 @@ export default function GeneralLedgerPage() {
   useEffect(() => {
     async function fetchAccounts() {
       try {
-        const res = await fetch('/api/chart-of-accounts?all=true')
+        const res = await fetch('/api/accounting/accounts?all=true')
         if (res.ok) {
           const result = await res.json()
           const list = Array.isArray(result) ? result : result.data || []

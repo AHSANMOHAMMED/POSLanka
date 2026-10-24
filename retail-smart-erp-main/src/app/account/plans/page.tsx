@@ -123,20 +123,11 @@ export default function PlansPage() {
   const handleSelectPlan = async () => {
     if (!selectedTier || !selectedCompany) return
 
+    // Plan changes (upgrade / downgrade, proration, payment) happen on the company's subscription
+    // page; it opens with this plan's price preview
     setUpdating(true)
     try {
-      const res = await fetch(`/api/account/subscriptions/${selectedCompany}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tierId: selectedTier }),
-      })
-
-      if (res.ok) {
-        router.push(`/account/payments?plan=${selectedTier}&company=${selectedCompany}`)
-      } else {
-        const data = await res.json()
-        alert(data.error || 'Failed to select plan')
-      }
+      router.push(`/account/subscription/${selectedCompany}?tier=${encodeURIComponent(selectedTier)}`)
     } catch (error) {
       console.error('Failed to select plan:', error)
       alert('Failed to select plan')

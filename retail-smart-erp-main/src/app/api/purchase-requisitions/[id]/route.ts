@@ -107,6 +107,22 @@ export async function PUT(
       .for('update')
 
     if (!existing) return { error: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
+
+    // Cancel (with a reason) — open requisitions only; ordered / closed ones stay as they are
+    if (body.status === 'cancelled') {
+      if (!['draft', 'pending_approval', 'approved', 'partially_ordered'].includes(existing.status)) {
+        return { error: NextResponse.json({ error: `A ${existing.status.replace(/_/g, ' ')} requisition cannot be cancelled` }, { status: 400 }) }
+      }
+      const [cancelled] = await tx.update(purchaseRequisitions)
+        .set({ status: 'cancelled', cancellationReason: body.cancellationReason || null, cancelledAt: new Date(), updatedAt: new Date() })
+        .where(eq(purchaseRequisitions.id, id))
+        .returning()
+      logAndBroadcast(session.user.tenantId, 'purchase-requisition', 'updated', id)
+      return { data: cancelled }
+    }
+    if (body.status !== undefined && body.status !== existing.status) {
+      return { error: NextResponse.json({ error: 'Use submit / approve / reject to change the status' }, { status: 400 }) }
+    }
     if (existing.status !== 'draft') {
       return { error: NextResponse.json({ error: 'Only draft requisitions can be edited' }, { status: 400 }) }
     }

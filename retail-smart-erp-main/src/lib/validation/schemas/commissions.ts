@@ -83,6 +83,8 @@ export const createCommissionPayoutSchema = z.object({
 // PUT /api/commissions/[id]
 export const updateCommissionSchema = z.object({
   status: z.enum(['approved', 'cancelled']),
+  /** Why it was cancelled — kept in the activity log */
+  cancellationReason: z.string().trim().max(1000).optional(),
 })
 
 // PUT /api/commission-rates/[id]
@@ -109,7 +111,7 @@ const matrixRateEntrySchema = z.object({
 })
 export const commissionRateMatrixUpdateSchema = z.object({
   userId: uuidSchema,
-  rates: z.array(matrixRateEntrySchema).min(1, 'At least one rate entry is required').max(100),
+  rates: z.array(matrixRateEntrySchema).min(1, 'At least one rate entry is required').max(2000),
 })
 
 // PUT /api/commission-payouts/[id]

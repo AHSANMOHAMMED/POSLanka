@@ -329,6 +329,8 @@ export const updatePurchaseRequisitionSchema = z.object({
   purpose: z.string().max(1000).optional(),
   notes: z.string().max(2000).optional(),
   status: purchaseRequisitionStatusSchema.optional(),
+  /** With status 'cancelled' */
+  cancellationReason: z.string().trim().max(1000).optional(),
 })
 
 // PUT /api/supplier-quotations/[id]

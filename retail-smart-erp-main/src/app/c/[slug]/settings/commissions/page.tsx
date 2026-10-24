@@ -1719,37 +1719,22 @@ function RateMatrixTab() {
     if (!selectedUserId) return
     setSaving(true)
     try {
-      const entries: Array<{
-        userId: string
-        categoryId?: string
-        serviceTypeId?: string
-        rate: number
-        rateType: string
-      }> = []
-
+      // Every cell: a rate sets it, an empty / zero cell removes it (rate: null)
+      const rates: Array<{ categoryId?: string; serviceTypeId?: string; rate: number | null; rateType: string }> = []
       for (const [key, cell] of Object.entries(matrixData)) {
-        if (!cell.rate || Number(cell.rate) === 0) continue
-        if (key.startsWith('cat-')) {
-          entries.push({
-            userId: selectedUserId,
-            categoryId: key.replace('cat-', ''),
-            rate: Number(cell.rate),
-            rateType: cell.rateType,
-          })
-        } else if (key.startsWith('svc-')) {
-          entries.push({
-            userId: selectedUserId,
-            serviceTypeId: key.replace('svc-', ''),
-            rate: Number(cell.rate),
-            rateType: cell.rateType,
-          })
-        }
+        const rate = cell.rate && Number(cell.rate) !== 0 ? Number(cell.rate) : null
+        if (key.startsWith('cat-')) rates.push({ categoryId: key.replace('cat-', ''), rate, rateType: cell.rateType })
+        else if (key.startsWith('svc-')) rates.push({ serviceTypeId: key.replace('svc-', ''), rate, rateType: cell.rateType })
+      }
+      if (rates.length === 0) {
+        toast.info('Nothing to save')
+        return
       }
 
       const res = await fetch('/api/commission-rates/matrix', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: selectedUserId, entries }),
+        body: JSON.stringify({ userId: selectedUserId, rates }),
       })
       if (res.ok) {
         toast.success('Rates saved')

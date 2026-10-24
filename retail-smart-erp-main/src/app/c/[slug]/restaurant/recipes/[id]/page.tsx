@@ -318,11 +318,11 @@ export default function RecipeDetailPage({ params }: { params: Promise<{ slug: s
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          itemId: ingredientForm.itemId,
+          // Cost per unit comes from the item's cost on the server
+          ingredientItemId: ingredientForm.itemId,
           quantity: parseFloat(ingredientForm.quantity),
           unit: ingredientForm.unit,
-          wastePercent: parseFloat(ingredientForm.wastePercent) || 0,
-          costPerUnit: parseFloat(ingredientForm.costPerUnit) || 0,
+          wastePercentage: parseFloat(ingredientForm.wastePercent) || 0,
         }),
       })
 
