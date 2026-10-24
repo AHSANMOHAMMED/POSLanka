@@ -49,6 +49,8 @@ export default function LoginScreen() {
   const [useSlug, setUseSlug] = useState(false)
   const insets = useSafeAreaInsets()
   const { width } = useWindowDimensions()
+  // Wave header: full screen width, the artwork's proportions (1080 × 880) plus the status bar
+  const heroHeight = Math.round(width * 0.815) + insets.top
   const [busy, setBusy] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   // This build's sign-in: platform admins (skyERPOS Admin app) or shop staff (skyERPOS app)
@@ -214,7 +216,8 @@ export default function LoginScreen() {
       <ImageBackground
         source={require('../assets/login-hero.png')}
         resizeMode="stretch"
-        style={[styles.hero, { height: Math.round(width * 0.815) + insets.top, paddingTop: 28 + insets.top }]}
+        style={[styles.hero, { width, height: heroHeight, paddingTop: 28 + insets.top }]}
+        imageStyle={{ width, height: heroHeight }}
       >
         <View style={styles.logoCard}>
           <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="skyERPOS" />
@@ -367,7 +370,7 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: THEME.colors.background },
-  hero: { width: '100%', alignItems: 'center', paddingHorizontal: 24 },
+  hero: { alignItems: 'center', paddingHorizontal: 24 },
   logoCard: { backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 18, paddingVertical: 10, marginBottom: 14, elevation: 3, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
   logo: { width: 190, height: 87 },
   heroPill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5 },
