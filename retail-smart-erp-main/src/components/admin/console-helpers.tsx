@@ -20,7 +20,8 @@ export async function adminFetch<T>(url: string, init?: RequestInit & { json?: u
   const body = await res.json().catch(() => ({}))
   if (!res.ok) {
     const details = Array.isArray(body?.details) ? body.details.map((d: { message?: string }) => d.message).filter(Boolean).join(' ') : ''
-    throw new Error(body?.error ? `${body.error}${details ? ` — ${details}` : ''}` : `Request failed (${res.status})`)
+    // status / body ride along so forms can point at the field the server named
+    throw Object.assign(new Error(body?.error ? `${body.error}${details ? ` — ${details}` : ''}` : `Request failed (${res.status})`), { status: res.status, body })
   }
   return body as T
 }

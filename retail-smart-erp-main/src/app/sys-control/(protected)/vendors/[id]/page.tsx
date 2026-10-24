@@ -6,6 +6,7 @@ import {
   Archive,
   CalendarPlus,
   CreditCard,
+  Database,
   ExternalLink,
   KeyRound,
   Layers,
@@ -29,6 +30,7 @@ import {
   Field,
   Input,
   KeyValueList,
+  LinkButton,
   SegmentedControl,
   Select,
   Skeleton,
@@ -269,6 +271,7 @@ export default function VendorDetailPage() {
       actions={
         <>
           <Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading}>Refresh</Button>
+          {canImpersonate && <LinkButton href={`/sys-control/vendors/${v.id}/data`} icon={Database}>All data</LinkButton>}
           {canImpersonate && <Button icon={ExternalLink} onClick={() => setDialog('impersonate')} disabled={!isActive || !owner}>Open as owner</Button>}
         </>
       }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { View, Text, ScrollView, Pressable, Switch, Alert, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native'
-import { useLocalSearchParams } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router'
 import { adminGet, adminPut, useAdminUser } from '../../../src/lib/adminApi'
 import { THEME, formatLKR } from '../../../src/lib/theme'
 import { ErrorView, InlineNotice, LoadingView } from '../../../src/components/StateViews'
@@ -245,6 +245,13 @@ export default function AdminVendorDetailScreen() {
                 </>
               ) : null}
             </>
+          ) : null}
+
+          {/* Every table of this vendor: view, search, add / edit / delete */}
+          {can('vendors.impersonate') ? (
+            <Pressable style={adminStyles.ghostBtn} onPress={() => router.push({ pathname: '/admin/vendor-data', params: { vendorId: vendor.id, vendorName: vendor.name } })}>
+              <Text style={adminStyles.ghostBtnText}>🗄  All data (items, sales, customers…)</Text>
+            </Pressable>
           ) : null}
 
           {/* Staff: add managers / cashiers / … for this vendor */}
