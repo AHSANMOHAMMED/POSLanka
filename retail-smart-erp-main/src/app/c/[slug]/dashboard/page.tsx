@@ -10,6 +10,8 @@ import { useRealtimeData, useDateFormat } from '@/hooks'
 import { AlertTriangle, Clock } from 'lucide-react'
 import { AIInsightsWidget } from '@/components/dashboard/AIInsightsWidget'
 import { OnboardingChecklist } from '@/components/account/OnboardingChecklist'
+import { OwnerDashboardWidgets } from '@/components/dashboard/OwnerDashboardWidgets'
+import { PermissionGuard } from '@/components/auth/PermissionGuard'
 
 interface ExpiringItem {
   id: string
@@ -165,6 +167,11 @@ export default function DashboardPage() {
       <ErrorBoundary>
         <WorkspaceRenderer workspaceKey="dashboard" />
       </ErrorBoundary>
+      <PermissionGuard permission="viewReports" fallback={<></>}>
+        <ErrorBoundary>
+          <OwnerDashboardWidgets />
+        </ErrorBoundary>
+      </PermissionGuard>
       <AIInsightsWidget />
       {(businessType === 'supermarket' || businessType === 'pharmacy') && <ExpiringItemsWidget />}
     </div>

@@ -488,6 +488,17 @@ async function main() {
       const gl3 = await glOf(admin, 'expense', claim3.body.id)
       check('accounts pay a claim by bank: Dr expense 1200 / Cr Bank 1200', p3.status === 200 && net(gl3, f.acc.expense) === 1200 && net(gl3, f.acc.bank) === -1200, short([p3.body, gl3]))
 
+      // the owner's own approved claim is visible to the cashier, who pays it from the till
+      const claim4 = await json(await createExpense(req('POST', '/api/expenses', { kind: 'reimbursement', amount: 200, description: 'Parking' })))
+      await json(await patchExpense(req('PATCH', `/api/expenses/${claim4.body.id}`, { action: 'approve' }), ctx(claim4.body.id)))
+      setTestSession(session(f, 'cashier'))
+      const toPay = await json(await listExpenses(req('GET', '/api/expenses?kind=reimbursement&status=approved')))
+      check('cashier lists approved claims of others to pay from the till', toPay.status === 200 && toPay.body.data.some((x: J) => x.id === claim4.body.id), short(toPay.body))
+      const p4 = await json(await patchExpense(req('PATCH', `/api/expenses/${claim4.body.id}`, { action: 'pay', paidFrom: 'drawer' }), ctx(claim4.body.id)))
+      check('… and pays it → paid', p4.status === 200 && p4.body.status === 'paid', short(p4.body))
+      setTestSession(session(f, 'owner'))
+      await json(await patchExpense(req('PATCH', `/api/expenses/${claim4.body.id}`, { action: 'void', reason: 'test' }), ctx(claim4.body.id)))
+
       // lists & totals
       setTestSession(session(f, 'cashier'))
       const mine = await json(await listExpenses(req('GET', '/api/expenses')))
@@ -497,7 +508,7 @@ async function main() {
       // paid expenses: 450 + 1500 (drawer) + 300 (office cash) = 2250; bank 2500 void; cheque 3000 approved (unpaid)
       check('expense totals: paid 2250, unpaid (approved) 3000, from drawer 1950', exp.body.totals.paid === 2250 && exp.body.totals.approved === 3000 && exp.body.totals.fromDrawer === 1950, short(exp.body.totals))
       const claims = await json(await listExpenses(req('GET', '/api/expenses?kind=reimbursement')))
-      check('claim totals: paid 750 + 1200 = 1950', claims.body.totals.paid === 1950 && claims.body.totals.count === 3, short(claims.body.totals))
+      check('claim totals: paid 750 + 1200 = 1950 (4 claims incl. rejected and void)', claims.body.totals.paid === 1950 && claims.body.totals.count === 4, short(claims.body.totals))
       const byCat = await json(await listExpenses(req('GET', `/api/expenses?status=paid&categoryId=${teaId}`)))
       check('filter by category: tea paid = 450 + 1500 + 750 = 2700', byCat.body.totals.paid === 2700, short(byCat.body.totals))
       const created = await json(await createCategory(req('POST', '/api/expense-categories', { name: 'Security', accountId: f.acc.expense })))

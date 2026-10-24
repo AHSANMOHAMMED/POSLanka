@@ -127,6 +127,8 @@ export const createPosProfileSchema = z.object({
   allowRateChange: z.boolean().default(true),
   allowDiscountChange: z.boolean().default(true),
   maxDiscountPercent: z.coerce.number().min(0).max(100).default(100),
+  /** K1: drawer expenses a cashier may record without a supervisor (null = always approve) */
+  expenseLimit: z.coerce.number().min(0).max(100_000_000).nullish(),
   allowNegativeStock: z.boolean().default(false),
   validateStockOnSave: z.boolean().default(true),
   // Display
@@ -167,6 +169,7 @@ export const updatePosProfileSchema = z.object({
   allowRateChange: z.boolean().optional(),
   allowDiscountChange: z.boolean().optional(),
   maxDiscountPercent: z.coerce.number().min(0).max(100).optional(),
+  expenseLimit: z.coerce.number().min(0).max(100_000_000).nullish(),
   allowNegativeStock: z.boolean().optional(),
   validateStockOnSave: z.boolean().optional(),
   hideUnavailableItems: z.boolean().optional(),

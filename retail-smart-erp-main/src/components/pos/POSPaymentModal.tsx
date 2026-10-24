@@ -1,11 +1,11 @@
 'use client'
 
 import { useEffect, useMemo } from 'react'
-import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle, RotateCcw } from 'lucide-react'
+import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle, RotateCcw, FileText } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
 import { getCurrencyNotes } from '@/lib/utils/countries'
-import type { Customer, PaymentMethodConfig, LoyaltyProgram, GiftCardInfo } from './types'
+import type { Customer, PaymentMethodConfig, LoyaltyProgram, GiftCardInfo, ChequeFormValue } from './types'
 
 const PAYMENT_METHOD_META: Record<string, { icon: typeof Banknote; label: string }> = {
   cash: { icon: Banknote, label: 'Cash' },
@@ -13,6 +13,7 @@ const PAYMENT_METHOD_META: Record<string, { icon: typeof Banknote; label: string
   bank_transfer: { icon: Building2, label: 'Transfer' },
   credit: { icon: Wallet, label: 'Credit' },
   gift_card: { icon: Gift, label: 'Gift Card' },
+  cheque: { icon: FileText, label: 'Cheque' },
   mobile_payment: { icon: Smartphone, label: 'Mobile' },
   original: { icon: RotateCcw, label: 'Original methods' },
 }
@@ -65,6 +66,10 @@ interface POSPaymentModalProps {
   setSplitSecondMethod?: (method: string) => void
   splitSecondAmount?: string
   setSplitSecondAmount?: (value: string) => void
+
+  /** K1: cheque details (shown when the tender or the second split is a cheque) */
+  chequeDetails?: ChequeFormValue
+  setChequeDetails?: (value: ChequeFormValue) => void
 }
 
 export function POSPaymentModal({
@@ -107,10 +112,20 @@ export function POSPaymentModal({
   setSplitSecondMethod,
   splitSecondAmount = '',
   setSplitSecondAmount,
+  chequeDetails,
+  setChequeDetails,
 }: POSPaymentModalProps) {
   const { currency: currencyCode } = useCurrency()
 
+  const needsCheque = !isReturnMode && (paymentMethod === 'cheque' || (splitEnabled && splitSecondMethod === 'cheque'))
+  const chequeIncomplete = needsCheque && (!chequeDetails?.chequeNo.trim() || !chequeDetails?.bankName.trim() || !chequeDetails?.chequeDate)
+  const todayStr = new Date().toLocaleDateString('en-CA')
+  const chequeDays = chequeDetails?.chequeDate
+    ? Math.round((Date.parse(`${chequeDetails.chequeDate}T00:00:00Z`) - Date.parse(`${todayStr}T00:00:00Z`)) / 86400000)
+    : 0
+
   const completeDisabled = processing
+    || chequeIncomplete
     || (isReturnMode && refundMethod === 'credit' && !selectedCustomer)
     || (!isReturnMode && paymentMethod === 'credit' && !selectedCustomer)
     || (!isReturnMode && paymentMethod === 'gift_card' && (!giftCardInfo || giftCardInfo.status !== 'active'))
@@ -465,6 +480,62 @@ export function POSPaymentModal({
                   />
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Cheque details (K1) */}
+          {needsCheque && chequeDetails && setChequeDetails && (
+            <div className="bg-indigo-50 border-2 border-indigo-200 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <FileText className="text-indigo-600" size={20} />
+                <span className="font-medium text-indigo-800">Cheque details</span>
+                {chequeDays > 0 && (
+                  <span className="ml-auto text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">
+                    Post-dated · {chequeDays} day{chequeDays === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <FormInput
+                  type="text"
+                  inputSize="md"
+                  value={chequeDetails.chequeNo}
+                  onChange={(e) => setChequeDetails({ ...chequeDetails, chequeNo: e.target.value.replace(/[^0-9A-Za-z-]/g, '').slice(0, 50) })}
+                  placeholder="Cheque no. *"
+                  aria-label="Cheque number"
+                />
+                <FormInput
+                  type="date"
+                  inputSize="md"
+                  value={chequeDetails.chequeDate}
+                  onChange={(e) => setChequeDetails({ ...chequeDetails, chequeDate: e.target.value })}
+                  aria-label="Cheque date"
+                />
+                <FormInput
+                  type="text"
+                  inputSize="md"
+                  value={chequeDetails.bankName}
+                  onChange={(e) => setChequeDetails({ ...chequeDetails, bankName: e.target.value.slice(0, 100) })}
+                  placeholder="Bank *"
+                  list="pos-cheque-banks"
+                  aria-label="Bank"
+                />
+                <FormInput
+                  type="text"
+                  inputSize="md"
+                  value={chequeDetails.branchName}
+                  onChange={(e) => setChequeDetails({ ...chequeDetails, branchName: e.target.value.slice(0, 100) })}
+                  placeholder="Branch"
+                  aria-label="Branch"
+                />
+              </div>
+              <datalist id="pos-cheque-banks">
+                {['Bank of Ceylon', "People's Bank", 'Commercial Bank', 'Hatton National Bank', 'Sampath Bank', 'Seylan Bank', 'NDB Bank', 'DFCC Bank', 'Nations Trust Bank', 'Pan Asia Bank', 'Union Bank', 'National Savings Bank', 'Cargills Bank', 'Amana Bank']
+                  .map((b) => <option key={b} value={b} />)}
+              </datalist>
+              <p className="text-xs text-indigo-700">
+                The cheque amount is the {splitEnabled && splitSecondMethod === 'cheque' ? 'second tender' : 'amount received'}; no change is given on a cheque.
+              </p>
             </div>
           )}
 

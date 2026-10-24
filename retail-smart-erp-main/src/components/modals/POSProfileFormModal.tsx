@@ -56,6 +56,7 @@ interface POSProfile {
   allowRateChange: boolean
   allowDiscountChange: boolean
   maxDiscountPercent: string
+  expenseLimit?: string | null
   allowNegativeStock: boolean
   validateStockOnSave: boolean
   hideUnavailableItems: boolean
@@ -88,6 +89,7 @@ const PAYMENT_METHOD_OPTIONS = [
   { value: 'bank_transfer', label: 'Bank Transfer' },
   { value: 'credit', label: 'Store Credit' },
   { value: 'gift_card', label: 'Gift Card' },
+  { value: 'cheque', label: 'Cheque' },
   { value: 'mobile_payment', label: 'Mobile Payment' },
 ]
 
@@ -107,6 +109,7 @@ const initialFormData = {
   allowRateChange: true,
   allowDiscountChange: true,
   maxDiscountPercent: '100',
+  expenseLimit: '',
   allowNegativeStock: false,
   validateStockOnSave: true,
   hideUnavailableItems: true,
@@ -175,6 +178,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
           allowRateChange: editProfile.allowRateChange,
           allowDiscountChange: editProfile.allowDiscountChange,
           maxDiscountPercent: editProfile.maxDiscountPercent,
+          expenseLimit: editProfile.expenseLimit ?? '',
           allowNegativeStock: editProfile.allowNegativeStock,
           validateStockOnSave: editProfile.validateStockOnSave,
           hideUnavailableItems: editProfile.hideUnavailableItems,
@@ -348,6 +352,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
           costCenterId: formData.costCenterId || null,
           code: formData.code || null,
           maxDiscountPercent: parseFloat(formData.maxDiscountPercent) || 100,
+          expenseLimit: formData.expenseLimit === '' || formData.expenseLimit == null ? null : Math.max(0, parseFloat(formData.expenseLimit) || 0),
           receiptHeader: formData.receiptHeader || null,
           receiptFooter: formData.receiptFooter || null,
           receiptSettings: {
@@ -525,6 +530,20 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
                     min="0"
                     max="100"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-gray-300">Cashier expense limit (per expense)</label>
+                  <input
+                    type="number"
+                    value={formData.expenseLimit ?? ''}
+                    onChange={(e) => setFormData({ ...formData, expenseLimit: e.target.value })}
+                    className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                    min="0"
+                    step="0.01"
+                    placeholder="Empty = every drawer expense needs a supervisor"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Petty expenses paid from this counter&apos;s drawer up to this amount need no supervisor PIN.</p>
                 </div>
 
                 <div className="space-y-2">

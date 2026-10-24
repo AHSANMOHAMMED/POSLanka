@@ -120,6 +120,7 @@ export async function POST(request: NextRequest) {
       allowRateChange,
       allowDiscountChange,
       maxDiscountPercent,
+      expenseLimit,
       allowNegativeStock,
       validateStockOnSave,
       // Display
@@ -175,6 +176,7 @@ export async function POST(request: NextRequest) {
         allowRateChange,
         allowDiscountChange,
         maxDiscountPercent: String(maxDiscountPercent),
+        expenseLimit: expenseLimit != null ? String(expenseLimit) : null,
         allowNegativeStock,
         validateStockOnSave,
         hideUnavailableItems,

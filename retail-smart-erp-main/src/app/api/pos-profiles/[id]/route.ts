@@ -102,6 +102,7 @@ export async function PUT(
         allowRateChange,
         allowDiscountChange,
         maxDiscountPercent,
+        expenseLimit,
         allowNegativeStock,
         validateStockOnSave,
         hideUnavailableItems,
@@ -144,6 +145,7 @@ export async function PUT(
       if (allowRateChange !== undefined) updateData.allowRateChange = allowRateChange
       if (allowDiscountChange !== undefined) updateData.allowDiscountChange = allowDiscountChange
       if (maxDiscountPercent !== undefined) updateData.maxDiscountPercent = String(maxDiscountPercent)
+      if (expenseLimit !== undefined) updateData.expenseLimit = expenseLimit != null ? String(expenseLimit) : null
       if (allowNegativeStock !== undefined) updateData.allowNegativeStock = allowNegativeStock
       if (validateStockOnSave !== undefined) updateData.validateStockOnSave = validateStockOnSave
       if (hideUnavailableItems !== undefined) updateData.hideUnavailableItems = hideUnavailableItems

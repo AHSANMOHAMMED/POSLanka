@@ -36,7 +36,10 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       const claimant = alias(users, 'claimant')
       const conds: SQL[] = []
-      if (!viewAll || q.mine) conds.push(or(eq(expenses.createdBy, me), eq(expenses.claimantId, me))!)
+      // Cashiers may list the approved claims they can pay out of their drawer
+      const payableClaims = q.kind === 'reimbursement' && q.status === 'approved'
+        && hasPermission(session.user.role, 'createSales', session.user.tenantId, session.user.customRoleId)
+      if ((!viewAll && !payableClaims) || q.mine) conds.push(or(eq(expenses.createdBy, me), eq(expenses.claimantId, me))!)
       if (q.kind) conds.push(eq(expenses.kind, q.kind))
       if (q.status) {
         const wanted = q.status.split(',').filter((s): s is typeof STATUSES[number] => (STATUSES as readonly string[]).includes(s))

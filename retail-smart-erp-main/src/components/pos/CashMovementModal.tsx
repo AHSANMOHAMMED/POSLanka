@@ -37,6 +37,9 @@ interface CashMovement {
   createdAt: string
 }
 
+interface ExpenseCategory { id: string; name: string; isActive: boolean }
+interface ApprovedClaim { id: string; expenseNo: string; amount: string; description: string | null; claimantName: string | null }
+
 interface PendingApproval {
   scopes: string[]
   message: string
@@ -62,6 +65,13 @@ export function CashMovementModal({ isOpen, onClose, shift, cashierName, onChang
   const [totals, setTotals] = useState<{ paidIn: number; paidOut: number; net: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [pending, setPending] = useState<PendingApproval | null>(null)
+  // K1: a petty expense is recorded as an expense (category, payee, receipt) paid from the drawer
+  const [expenseCategories, setExpenseCategories] = useState<ExpenseCategory[]>([])
+  const [expenseCategoryId, setExpenseCategoryId] = useState('')
+  const [payee, setPayee] = useState('')
+  const [receiptNo, setReceiptNo] = useState('')
+  const [claims, setClaims] = useState<ApprovedClaim[]>([])
+  const isExpense = type === 'paid_out' && category === 'petty_expense'
 
   const load = useCallback(async () => {
     if (!shift?.id) return
@@ -78,13 +88,89 @@ export function CashMovementModal({ isOpen, onClose, shift, cashierName, onChang
     }
   }, [shift?.id])
 
+  const loadExpenseData = useCallback(async () => {
+    try {
+      const [cats, approved] = await Promise.all([
+        fetch('/api/expense-categories').then((r) => (r.ok ? r.json() : { data: [] })),
+        fetch('/api/expenses?kind=reimbursement&status=approved&pageSize=20').then((r) => (r.ok ? r.json() : { data: [] })),
+      ])
+      setExpenseCategories((cats.data || []).filter((c: ExpenseCategory) => c.isActive))
+      setClaims(approved.data || [])
+    } catch {
+      // expenses are optional here: the plain paid-out still works
+    }
+  }, [])
+
   useEffect(() => {
-    if (isOpen) load()
-  }, [isOpen, load])
+    if (isOpen) {
+      load()
+      loadExpenseData()
+    }
+  }, [isOpen, load, loadExpenseData])
 
   function reset() {
     setAmount('')
     setNote('')
+    setPayee('')
+    setReceiptNo('')
+  }
+
+  async function submitExpense(approvalToken?: string) {
+    if (!shift) return
+    const value = parseFloat(amount)
+    if (!(value > 0)) {
+      toast.error('Enter an amount greater than zero')
+      return
+    }
+    if (!expenseCategoryId && !note.trim()) {
+      toast.error('Choose a category or describe the expense')
+      return
+    }
+    setSaving(true)
+    try {
+      const res = await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'expense', paidFrom: 'drawer', openingEntryId: shift.id, amount: value,
+          categoryId: expenseCategoryId || undefined, payee: payee.trim() || undefined, receiptNo: receiptNo.trim() || undefined,
+          description: note.trim() || undefined, approvalToken,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.status === 403 && data.code === 'APPROVAL_REQUIRED') {
+        setPending({ scopes: data.scopes || ['cash_paid_out'], message: data.error, amount: value, retry: (token) => submitExpense(token) })
+        return
+      }
+      if (!res.ok) {
+        toast.error(data.error || 'Failed to record the expense')
+        return
+      }
+      toast.success(`Expense ${data.expenseNo} paid from the drawer: ${formatCurrency(value)}`)
+      reset()
+      await load()
+      onChanged?.()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function payClaim(c: ApprovedClaim) {
+    if (!shift) return
+    if (!window.confirm(`Pay ${c.expenseNo} (${formatCurrency(parseFloat(c.amount))}) to ${c.claimantName || 'the claimant'} from the drawer?`)) return
+    const res = await fetch(`/api/expenses/${c.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'pay', paidFrom: 'drawer', openingEntryId: shift.id }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      toast.error(data.error || 'Failed to pay the claim')
+      return
+    }
+    toast.success(`${c.expenseNo} paid`)
+    await Promise.all([load(), loadExpenseData()])
+    onChanged?.()
   }
 
   async function submit(approvalToken?: string) {
@@ -202,6 +288,41 @@ export function CashMovementModal({ isOpen, onClose, shift, cashierName, onChang
               />
             </div>
           </div>
+          {isExpense && (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-sm font-medium mb-1 dark:text-gray-300">Expense type</label>
+                <select
+                  value={expenseCategoryId}
+                  onChange={(e) => setExpenseCategoryId(e.target.value)}
+                  className="w-full px-3 py-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                >
+                  <option value="">— Choose —</option>
+                  {expenseCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1 dark:text-gray-300">Paid to</label>
+                <input
+                  value={payee}
+                  onChange={(e) => setPayee(e.target.value)}
+                  maxLength={255}
+                  className="w-full px-3 py-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                  placeholder="Shop / person"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1 dark:text-gray-300">Receipt no.</label>
+                <input
+                  value={receiptNo}
+                  onChange={(e) => setReceiptNo(e.target.value)}
+                  maxLength={100}
+                  className="w-full px-3 py-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium mb-1 dark:text-gray-300">Note{category === 'other' ? ' (required)' : ''}</label>
             <input
@@ -213,19 +334,39 @@ export function CashMovementModal({ isOpen, onClose, shift, cashierName, onChang
             />
           </div>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Paid-outs need a supervisor PIN. The amount is taken into account in the expected drawer cash at shift close.
+            {isExpense
+              ? 'Expenses up to this counter\'s limit are recorded without a supervisor; above it a supervisor PIN is needed. The amount is taken into account in the expected drawer cash at shift close.'
+              : 'Paid-outs need a supervisor PIN. The amount is taken into account in the expected drawer cash at shift close.'}
           </p>
           <div className="flex justify-end">
             <button
               type="button"
               disabled={saving || !shift}
-              onClick={() => submit()}
+              onClick={() => (isExpense ? submitExpense() : submit())}
               className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
             >
               {saving && <Loader2 size={16} className="animate-spin" />}
-              Record {type === 'paid_out' ? 'Paid Out' : 'Paid In'}
+              {isExpense ? 'Record Expense' : `Record ${type === 'paid_out' ? 'Paid Out' : 'Paid In'}`}
             </button>
           </div>
+
+          {claims.length > 0 && (
+            <div className="border-t pt-3 dark:border-gray-700">
+              <p className="text-sm font-medium mb-2 dark:text-gray-300">Approved expense claims to pay</p>
+              <ul className="divide-y dark:divide-gray-700 max-h-40 overflow-y-auto">
+                {claims.map((c) => (
+                  <li key={c.id} className="py-2 flex items-center gap-3 text-sm">
+                    <span className="font-mono dark:text-gray-200">{c.expenseNo}</span>
+                    <span className="flex-1 truncate text-gray-600 dark:text-gray-400">{c.claimantName || '—'}{c.description ? ` — ${c.description}` : ''}</span>
+                    <span className="dark:text-gray-200">{formatCurrency(parseFloat(c.amount))}</span>
+                    <button type="button" onClick={() => payClaim(c)} className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700">
+                      Pay from drawer
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div className="border-t pt-3 dark:border-gray-700">
             <div className="flex justify-between text-sm mb-2 dark:text-gray-300">

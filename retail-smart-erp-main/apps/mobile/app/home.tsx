@@ -13,7 +13,7 @@ interface Tile {
   icon: string
   title: string
   subtitle: string
-  href: '/pos' | '/shifts' | '/summary' | '/inventory' | '/intake' | '/approvals' | '/staff' | '/labels' | '/printer' | '/alerts'
+  href: '/pos' | '/shifts' | '/summary' | '/inventory' | '/intake' | '/approvals' | '/staff' | '/labels' | '/printer' | '/alerts' | '/money'
   /** Any of these permissions shows the tile; empty = every signed-in user. */
   anyOf: Permission[]
 }
@@ -22,6 +22,7 @@ interface Tile {
 const TILES: Tile[] = [
   { key: 'pos', icon: '🛒', title: 'Register', subtitle: 'Sell, returns, held bills', href: '/pos', anyOf: ['createSales'] },
   { key: 'shifts', icon: '🕒', title: 'Shift', subtitle: 'Open / close, cash in & out', href: '/shifts', anyOf: ['createSales'] },
+  { key: 'money', icon: '💸', title: 'Money out', subtitle: 'Expenses & cheques received', href: '/money', anyOf: ['createSales'] },
   { key: 'summary', icon: '📊', title: 'Summary', subtitle: 'Today’s sales figures', href: '/summary', anyOf: ['viewReports', 'managePOS', 'createSales'] },
   { key: 'inventory', icon: '📦', title: 'Stock', subtitle: 'Stock movements ledger', href: '/inventory', anyOf: ['manageInventory'] },
   { key: 'intake', icon: '📥', title: 'Stock intake', subtitle: 'Scan goods received', href: '/intake', anyOf: ['submitStockIntake'] },

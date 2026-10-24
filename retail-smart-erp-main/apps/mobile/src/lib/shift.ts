@@ -11,11 +11,14 @@ export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = {
   bank_transfer: 'Bank / LankaQR',
   credit: 'Customer Credit',
   gift_card: 'Gift Card',
+  cheque: 'Cheque',
 }
 
 export function isPaymentMethod(value: unknown): value is PaymentMethod {
   return typeof value === 'string' && (PAYMENT_METHODS as string[]).includes(value)
 }
+// 'cheque' is taken on the web POS (it needs the cheque's details); the app records cheques
+// received on the Money out & cheques screen, so it is not a tender here.
 
 export function paymentMethodLabel(method: string): string {
   return isPaymentMethod(method) ? PAYMENT_METHOD_LABELS[method] : method
