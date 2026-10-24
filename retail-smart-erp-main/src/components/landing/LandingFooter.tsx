@@ -29,7 +29,7 @@ const companyLinks = [
   { name: 'About Us', href: '/about' },
   { name: 'Contact', href: '/contact' },
   { name: 'Log In', href: '/login' },
-  { name: 'Register', href: '/register' },
+  { name: 'Register', href: '/contact' },
 ]
 
 export default function LandingFooter() {

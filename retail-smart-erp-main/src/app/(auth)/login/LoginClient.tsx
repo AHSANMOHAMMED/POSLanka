@@ -59,7 +59,6 @@ function CompanyAvatar({ name, logoUrl }: { name: string; logoUrl: string | null
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const registered = searchParams.get('registered') === 'true'
   // Remembered company (per browser); null during SSR so the markup stays stable
   const recentRaw = useSyncExternalStore(noopSubscribe, readRecentRaw, () => null)
   const [recentDismissed, setRecentDismissed] = useState(false)
@@ -171,8 +170,8 @@ function LoginForm() {
     <AuthShell
       footer={
         <>
-          New to skyERPOS?{' '}
-          <Link href="/register" className="font-medium text-adm-primary hover:underline">Create an account</Link>
+          New business?{' '}
+          <Link href="/contact" className="font-medium text-adm-primary hover:underline">Contact skyERPOS</Link> to get set up.
         </>
       }
     >
@@ -182,7 +181,6 @@ function LoginForm() {
       />
 
       <div className="space-y-5">
-        {registered && <Alert tone="success" title="Account created">Sign in to add your first business.</Alert>}
         {error && <Alert tone="danger">{error}</Alert>}
 
         {choices && (

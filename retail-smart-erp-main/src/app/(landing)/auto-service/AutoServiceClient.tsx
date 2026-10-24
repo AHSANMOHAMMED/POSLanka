@@ -158,7 +158,7 @@ export default function AutoServiceClient() {
               <BlurFadeIn delay={0.3}>
                 <div className="mt-8 flex flex-wrap gap-4">
                   <Link
-                    href="/register"
+                    href="/contact"
                     className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-violet-500 to-pink-500 hover:from-violet-600 hover:to-pink-600 rounded-md transition-all shadow-lg shadow-violet-500/25 hover:shadow-violet-500/40 hover:-translate-y-0.5"
                   >
                     Get Started Free

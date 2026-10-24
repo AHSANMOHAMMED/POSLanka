@@ -17,7 +17,7 @@ export default function CTASection({
   title = 'Ready to transform your business?',
   subtitle = 'Start managing your business with skyERPOS. Your first company is free forever — no credit card, no expiry.',
   ctaText = 'Get Started Free',
-  ctaHref = '/register',
+  ctaHref = '/contact',
   secondaryText = 'Schedule a Demo',
   secondaryHref = '/contact',
 }: CTASectionProps) {

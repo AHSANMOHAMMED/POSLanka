@@ -426,8 +426,8 @@ export async function proxy(request: NextRequest) {
 
         return response
       } else {
-        // Tenant not found - redirect to signup
-        return NextResponse.redirect(`${protocol}://${APP_DOMAIN}/register?subdomain=${subdomain}`)
+        // Tenant not found - send to sign-in (businesses are created by skyERPOS, no self sign-up)
+        return NextResponse.redirect(`${protocol}://${APP_DOMAIN}/`)
       }
     } catch (error) {
       // Database/network error - fail gracefully

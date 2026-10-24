@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Pencil, Trash2, Car } from 'lucide-react'
 import { VehicleInventoryFormModal } from '@/components/modals/VehicleInventoryFormModal'
@@ -98,7 +98,7 @@ export default function VehicleInventoryPage() {
   }, [])
 
   // Fetch stats on mount and on data changes
-  useState(() => { fetchStats() })
+  useEffect(() => { void fetchStats() }, [fetchStats])
 
   async function handleDelete() {
     if (!deleteId) return

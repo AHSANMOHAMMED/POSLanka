@@ -136,7 +136,7 @@ export default function RetailClient() {
               <BlurFadeIn delay={0.3}>
                 <div className="mt-8 flex flex-wrap gap-4">
                   <Link
-                    href="/register"
+                    href="/contact"
                     className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-600 hover:to-blue-700 rounded-md transition-all shadow-lg shadow-sky-600/30 hover:shadow-sky-600/50 hover:-translate-y-0.5"
                   >
                     Get Started Free

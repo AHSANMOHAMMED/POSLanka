@@ -158,7 +158,7 @@ export default function DealershipClient() {
               <BlurFadeIn delay={0.3}>
                 <div className="mt-8 flex flex-wrap gap-4">
                   <Link
-                    href="/register"
+                    href="/contact"
                     className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-600 hover:to-teal-600 rounded-md transition-all shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:-translate-y-0.5"
                   >
                     Get Started Free

@@ -91,7 +91,7 @@ export default function PricingCard({
       </ul>
 
       <Link
-        href={isCustom ? '/contact' : '/register'}
+        href={isCustom ? '/contact' : '/contact'}
         className={`block w-full py-3 text-center text-sm font-semibold rounded-md transition-all ${
           popular
             ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:from-emerald-700 hover:to-emerald-600 shadow-lg shadow-emerald-600/25'

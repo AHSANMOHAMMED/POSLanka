@@ -162,7 +162,7 @@ export default function RestaurantClient() {
               <BlurFadeIn delay={0.3}>
                 <div className="mt-8 flex flex-wrap gap-4">
                   <Link
-                    href="/register"
+                    href="/contact"
                     className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 rounded-md transition-all shadow-lg shadow-orange-500/25 hover:shadow-orange-500/40 hover:-translate-y-0.5"
                   >
                     Get Started Free

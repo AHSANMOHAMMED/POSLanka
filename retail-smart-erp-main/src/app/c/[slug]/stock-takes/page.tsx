@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Home, ChevronRight, Plus, ClipboardCheck, Loader2 } from 'lucide-react'
@@ -77,7 +77,7 @@ export default function StockTakesPage() {
     }
   }, [])
 
-  useState(() => { fetchWarehouses() })
+  useEffect(() => { void fetchWarehouses() }, [fetchWarehouses])
 
   async function handleCreate() {
     if (!createWarehouseId) {
