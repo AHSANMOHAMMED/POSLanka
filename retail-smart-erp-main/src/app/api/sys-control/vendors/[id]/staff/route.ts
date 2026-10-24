@@ -6,7 +6,7 @@ import { db, withTenant } from '@/lib/db'
 import { tenants, users } from '@/lib/db/schema'
 import { adminAuthError, adminAudit, validateAdminSession, withRateLimit, STRICT_LIMIT } from '@/lib/admin'
 import { validateBody, validateParams } from '@/lib/validation'
-import { emailSchema, idParamSchema, passwordSchema, userRoleSchema } from '@/lib/validation/schemas/common'
+import { idParamSchema, passwordSchema, staffLoginSchema, userRoleSchema } from '@/lib/validation/schemas/common'
 import { logError } from '@/lib/ai/error-logger'
 import { requireUserSeat } from '@/lib/billing/user-limit'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
@@ -21,7 +21,7 @@ const blank = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefi
 const createSchema = z.object({
   fullName: z.string().trim().min(2, 'Enter the staff member’s name').max(255),
   role: userRoleSchema.refine((r) => r !== 'owner', 'A vendor has one owner; choose another role'),
-  email: z.preprocess(blank, emailSchema.optional()),
+  email: z.preprocess(blank, staffLoginSchema.optional()),
   password: z.preprocess(blank, passwordSchema.optional()),
   pin: z.preprocess(blank, z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 digits').optional()),
 })

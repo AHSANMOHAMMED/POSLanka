@@ -26,6 +26,7 @@ import { useAdminCan } from '@/components/admin/AdminRoleContext'
 import { CopyButton, adminFetch, fmtBytes } from '@/components/admin/console-helpers'
 import { formatBusinessId } from '@/lib/tenant/business-id-format'
 import { cn } from '@/lib/utils'
+import { displayLogin } from '@/lib/users/display-login'
 
 interface Tier {
   id: string
@@ -174,7 +175,7 @@ function CreateVendorForm() {
       if (!tierId) e.tier = 'Choose a plan.'
       if (ownerName.trim() && ownerName.trim().length < 2) e.ownerName = 'At least 2 characters, or leave blank.'
       if (ownerEmail.trim() && !EMAIL_RE.test(ownerEmail.trim())) e.ownerEmail = 'Enter a valid email address.'
-      if (access === 'password' && ownerPassword && ownerPassword.length < 8) e.ownerPassword = 'At least 8 characters, or leave blank to generate one.'
+      if (access === 'password' && ownerPassword && ownerPassword.length < 4) e.ownerPassword = 'At least 4 characters, or leave blank to generate one.'
       if (access === 'invite' && !ownerEmail.trim() && !email.trim()) e.ownerEmail = 'An invitation needs an email address.'
     }
     return e
@@ -229,13 +230,15 @@ function CreateVendorForm() {
 
   /* ------------------------------------------------------------------ success */
   if (result) {
+    // Staff type the shop's name-based Business ID (its web address); the PL number works too
+    const shopId = result.vendor.slug
     const bid = formatBusinessId(result.businessId)
     const instructions = [
       `${result.vendor.name} is ready on skyERPOS.`,
       '',
       `1. Open ${result.signInUrl}`,
-      `2. Choose “Staff sign-in” and enter Business ID: ${bid}`,
-      `3. Sign in with ${result.owner.email}${access === 'invite' ? ' after accepting the emailed invitation' : result.generatedPassword ? ` and the password ${result.generatedPassword}` : ' and the password you were given'}.`,
+      `2. Choose “Staff sign-in” and enter Business ID: ${shopId}  (or ${bid})`,
+      `3. Sign in with ${displayLogin(result.owner.email)}${access === 'invite' ? ' after accepting the emailed invitation' : result.generatedPassword ? ` and the password ${result.generatedPassword}` : ' and the password you were given'}.`,
       '',
       `Direct link: ${result.loginUrl}`,
     ].join('\n')
@@ -252,15 +255,16 @@ function CreateVendorForm() {
               </span>
               <div>
                 <h2 className="text-[17px] font-semibold text-adm-fg">{result.vendor.name}</h2>
-                <p className="text-[13.5px] text-adm-muted">On the {result.plan.name} plan · owner {result.owner.email}</p>
+                <p className="text-[13.5px] text-adm-muted">On the {result.plan.name} plan · owner {displayLogin(result.owner.email)}</p>
               </div>
             </div>
             <div className="rounded-lg border border-adm-border bg-adm-surface-2 px-4 py-2.5">
-              <p className="text-[12px] font-medium text-adm-subtle">Business ID</p>
+              <p className="text-[12px] font-medium text-adm-subtle">Business ID (staff type this)</p>
               <div className="flex items-center gap-1">
-                <span className="adm-num text-[24px] font-semibold tracking-[0.04em] text-adm-fg">{bid}</span>
-                <CopyButton text={bid} label="Copy Business ID" />
+                <span className="text-[24px] font-semibold text-adm-fg">{shopId}</span>
+                <CopyButton text={shopId} label="Copy Business ID" />
               </div>
+              <p className="adm-num text-[12px] text-adm-subtle">Also works: {bid}</p>
             </div>
           </div>
         </AdminCard>
@@ -268,7 +272,7 @@ function CreateVendorForm() {
         {result.generatedPassword && (
           <Alert tone="warning" title="Owner password (shown once)">
             <span className="inline-flex flex-wrap items-center gap-2">
-              Login <span className="font-mono">{result.owner.email}</span> · password <span className="font-mono font-semibold">{result.generatedPassword}</span>
+              Login <span className="font-mono">{displayLogin(result.owner.email)}</span> · password <span className="font-mono font-semibold">{result.generatedPassword}</span>
               <CopyButton text={result.generatedPassword} label="Copy password" />
             </span>
             <span className="mt-1 block">Hand it to the owner now — it is not stored anywhere readable. They can change it after signing in.</span>

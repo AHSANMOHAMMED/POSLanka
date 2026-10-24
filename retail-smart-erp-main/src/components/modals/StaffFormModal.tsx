@@ -126,8 +126,8 @@ export function StaffFormModal({ isOpen, onClose, onSaved, editUser, currentUser
       setError('Password is required for new users')
       return
     }
-    if (formData.password && formData.password.length < 8) {
-      setError('Password must be at least 8 characters')
+    if (formData.password && formData.password.length < 4) {
+      setError('Password must be at least 4 characters')
       return
     }
 
@@ -244,11 +244,11 @@ export function StaffFormModal({ isOpen, onClose, onSaved, editUser, currentUser
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
-              minLength={8}
+              minLength={4}
               required={!editUser}
               placeholder={editUser ? 'Leave blank to keep current' : ''}
             />
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Minimum 8 characters</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Minimum 4 characters</p>
           </div>
           <div>
             <label className="block text-sm font-medium mb-1 dark:text-gray-300">Role *</label>

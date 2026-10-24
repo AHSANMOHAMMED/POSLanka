@@ -151,7 +151,7 @@ const createVendorSchema = z
     featureFlags: z.record(z.string(), z.boolean()).optional(),
     ownerName: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(2).max(255).optional()),
     ownerEmail: z.preprocess((v) => (v === '' ? undefined : v), z.string().trim().email().max(255).optional()),
-    ownerPassword: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).max(128).optional()),
+    ownerPassword: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(4).max(128).optional()),
     sendInvite: z.boolean().optional(),
   })
   .refine((d) => d.sendInvite !== true || !!(d.ownerEmail || d.email), {

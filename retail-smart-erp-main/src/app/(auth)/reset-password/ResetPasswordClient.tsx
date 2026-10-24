@@ -17,8 +17,8 @@ function ResetPasswordForm() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setError('')
-    if (newPassword.length < 8) {
-      setError('Use at least 8 characters.')
+    if (newPassword.length < 4) {
+      setError('Use at least 4 characters.')
       return
     }
     if (newPassword !== confirmPassword) {
@@ -64,11 +64,11 @@ function ResetPasswordForm() {
 
   return (
     <>
-      <AuthHeading title="Set a new password" description="Choose a password with at least 8 characters." />
+      <AuthHeading title="Set a new password" description="Choose a password with at least 4 characters." />
       {error && <Alert tone="danger" className="mb-4">{error}</Alert>}
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="New password" htmlFor="new-password">
-          <PasswordInput id="new-password" leftIcon={Lock} size="lg" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" required minLength={8} autoFocus />
+          <PasswordInput id="new-password" leftIcon={Lock} size="lg" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" required minLength={4} autoFocus />
         </Field>
         <Field label="Confirm new password" htmlFor="confirm-password">
           <PasswordInput id="confirm-password" leftIcon={Lock} size="lg" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" required invalid={!!confirmPassword && confirmPassword !== newPassword} />

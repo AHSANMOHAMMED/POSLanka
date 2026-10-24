@@ -18,8 +18,8 @@ export function SecurityTab() {
       return
     }
 
-    if (passwords.new.length < 8) {
-      setPasswordError('Password must be at least 8 characters')
+    if (passwords.new.length < 4) {
+      setPasswordError('Password must be at least 4 characters')
       return
     }
 
@@ -50,7 +50,7 @@ export function SecurityTab() {
 
   const passwordFields = [
     { key: 'current' as const, label: 'Current Password' },
-    { key: 'new' as const, label: 'New Password', hint: 'Minimum 8 characters' },
+    { key: 'new' as const, label: 'New Password', hint: 'Minimum 4 characters' },
     { key: 'confirm' as const, label: 'Confirm New Password' },
   ]
 

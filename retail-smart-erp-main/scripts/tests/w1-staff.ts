@@ -112,7 +112,7 @@ async function main() {
   check('system_manager can create stock_manager', sysMadeStock.role === 'stock_manager')
 
   console.log('\nValidation')
-  await expectStaffError('weak password rejected (400)', 400, () => create(A.tenantId, 'owner', { password: 'password' }))
+  await expectStaffError('password under 4 characters rejected (400)', 400, () => create(A.tenantId, 'owner', { password: 'abc' }))
   await expectStaffError('bad PIN rejected (400)', 400, () => create(A.tenantId, 'owner', { pin: '12' }))
   await expectStaffError('counter from another tenant rejected (400)', 400, () =>
     create(A.tenantId, 'owner', { posProfileIds: [B.warehouses[0].counters[0]] }))
@@ -123,7 +123,7 @@ async function main() {
   const minimal = await create(A.tenantId, 'owner', { email: undefined, password: undefined, fullName: 'Ruwan Jayasinghe' })
   const tSlug = (await pool.query(`SELECT slug FROM tenants WHERE id = $1`, [A.tenantId])).rows[0].slug
   check('no email → login from the name and the web address', minimal.email === `ruwan.jayasinghe@${tSlug}.poslanka.local`, minimal.email)
-  check('no password → generated one passes the strength rules', typeof minimal.generatedPassword === 'string' && /[a-z]/.test(minimal.generatedPassword!) && /[A-Z]/.test(minimal.generatedPassword!) && /\d/.test(minimal.generatedPassword!))
+  check('no password → a simple 6-digit one is generated', typeof minimal.generatedPassword === 'string' && /^\d{6}$/.test(minimal.generatedPassword!))
   const minRow = (await pool.query(`SELECT password_hash FROM users WHERE id = $1`, [minimal.id])).rows[0]
   check('generated password verifies', await bcrypt.compare(minimal.generatedPassword!, minRow.password_hash))
   const minimal2 = await create(A.tenantId, 'owner', { email: null, password: null, fullName: 'Ruwan Jayasinghe' })

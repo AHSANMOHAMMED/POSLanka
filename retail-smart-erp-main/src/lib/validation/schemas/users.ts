@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { receiptSettingsPatchSchema } from '@/lib/print/receipt-settings'
 import {
-  emailSchema, passwordSchema, userRoleSchema, businessTypeSchema,
+  emailSchema, passwordSchema, staffLoginSchema, userRoleSchema, businessTypeSchema,
   optimisticLockSchema,
 } from './common'
 
@@ -35,7 +35,7 @@ const blankToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === 
 // no email → a login is made from the name; no password → one is generated and returned once.
 export const createStaffSchema = z.object({
   mode: z.literal('create'),
-  email: z.preprocess(blankToUndefined, emailSchema.optional()),
+  email: z.preprocess(blankToUndefined, staffLoginSchema.optional()),
   fullName: z.string().trim().min(1, 'Full name is required').max(255),
   role: userRoleSchema,
   /** Optional custom role; its base role overrides `role` */

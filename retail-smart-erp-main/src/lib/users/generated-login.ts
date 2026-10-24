@@ -3,7 +3,7 @@
  * creation, staff created by name only). They sign in with Business ID + this login + password.
  * The .poslanka.local domain never receives mail, so email senders skip it.
  */
-import { randomBytes } from 'crypto'
+import { randomInt } from 'crypto'
 
 export const PLACEHOLDER_LOGIN_DOMAIN = 'poslanka.local'
 
@@ -22,21 +22,7 @@ export function loginLocalPart(name: string): string {
   return s.length >= 2 ? s : 'staff'
 }
 
-const UPPER = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
-const LOWER = 'abcdefghijkmnpqrstuvwxyz'
-const DIGIT = '23456789'
-const ALL = UPPER + LOWER + DIGIT
-
-/** Readable 12-character password (no 0/O/1/l/I) with an upper, a lower and a digit — passes validatePasswordStrength */
-export function generateReadablePassword(length = 12): string {
-  const bytes = randomBytes(length * 2)
-  const pick = (set: string, i: number) => set[bytes[i] % set.length]
-  const chars = [pick(UPPER, 0), pick(LOWER, 1), pick(DIGIT, 2)]
-  for (let i = 3; i < length; i++) chars.push(pick(ALL, i))
-  // Shuffle so the classes are not always in front
-  for (let i = chars.length - 1; i > 0; i--) {
-    const j = bytes[length + i] % (i + 1)
-    ;[chars[i], chars[j]] = [chars[j], chars[i]]
-  }
-  return chars.join('')
+/** Simple 6-digit password (e.g. 482915) for people created without one — easy to read out; shown once */
+export function generateReadablePassword(length = 6): string {
+  return Array.from({ length }, () => String(randomInt(0, 10))).join('')
 }

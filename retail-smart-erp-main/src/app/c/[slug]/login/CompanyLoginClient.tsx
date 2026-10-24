@@ -277,18 +277,19 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <Field label="Email" htmlFor="email">
+          <Field label="Username or email" htmlFor="email">
             <Input
               id="email"
               name="email"
-              type="email"
+              type="text"
               leftIcon={Mail}
               size="lg"
-              placeholder="you@example.com"
+              placeholder="e.g. cashier1"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              autoComplete="email"
+              autoComplete="username"
+              autoCapitalize="none"
               autoFocus={!accountUser}
             />
           </Field>

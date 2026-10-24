@@ -11,6 +11,7 @@ import { usePermission } from '@/hooks/usePermission'
 import { BusinessIdBadge } from '@/components/settings/BusinessIdBadge'
 import { PermissionGuard } from '@/components/auth/PermissionGuard'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
+import { displayLogin } from '@/lib/users/display-login'
 
 interface User {
   id: string
@@ -56,13 +57,10 @@ interface UserPermissionsView {
 /** Role <select> value: a built-in role, or "custom:<id>" for a custom role */
 const CUSTOM_PREFIX = 'custom:'
 
-const PASSWORD_RULE = 'At least 8 characters with an uppercase letter, a lowercase letter and a number'
+const PASSWORD_RULE = 'At least 4 characters — simple is fine (e.g. 1234)'
 
 function passwordProblem(pw: string): string | null {
-  if (pw.length < 8) return 'Password must be at least 8 characters'
-  if (!/[a-z]/.test(pw)) return 'Password must contain a lowercase letter'
-  if (!/[A-Z]/.test(pw)) return 'Password must contain an uppercase letter'
-  if (!/[0-9]/.test(pw)) return 'Password must contain a number'
+  if (pw.length < 4) return 'Password must be at least 4 characters'
   return null
 }
 
@@ -705,7 +703,7 @@ export default function StaffPage() {
             <div>
               <p className="font-semibold">{newLogin.name} can sign in{newLogin.password ? ' (password shown once)' : ''}</p>
               <p className="mt-1">
-                Login <span className="font-mono">{newLogin.email}</span>
+                Login <span className="font-mono">{displayLogin(newLogin.email)}</span>
                 {newLogin.password && <> · password <span className="font-mono font-semibold">{newLogin.password}</span></>}
               </p>
               <p className="mt-1 text-amber-800">They sign in with the Business ID, this login and password, and can change the password afterwards.</p>
@@ -714,7 +712,7 @@ export default function StaffPage() {
               <button
                 type="button"
                 className="rounded border border-amber-400 px-2 py-1 text-xs font-medium hover:bg-amber-100"
-                onClick={() => { navigator.clipboard?.writeText(`Login: ${newLogin.email}${newLogin.password ? `\nPassword: ${newLogin.password}` : ''}`).then(() => toast.success('Copied'), () => undefined) }}
+                onClick={() => { navigator.clipboard?.writeText(`Login: ${displayLogin(newLogin.email)}${newLogin.password ? `\nPassword: ${newLogin.password}` : ''}`).then(() => toast.success('Copied'), () => undefined) }}
               >
                 Copy
               </button>
@@ -837,7 +835,7 @@ export default function StaffPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-600">
-                    {user.email}
+                    {displayLogin(user.email)}
                   </td>
                   <td className="px-4 py-3">
                     {user.customRoleId ? (
@@ -1079,14 +1077,15 @@ export default function StaffPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Email {createMode === 'invite' ? '*' : '(optional)'}
+                      {createMode === 'invite' ? 'Email *' : 'Username or email (optional)'}
                     </label>
                     <input
-                      type="email"
+                      type={createMode === 'invite' ? 'email' : 'text'}
+                      autoCapitalize="none"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder={createMode === 'create' ? 'Blank = a login is made from the name' : 'colleague@example.com'}
+                      placeholder={createMode === 'create' ? 'e.g. cashier1 — blank = made from the name' : 'colleague@example.com'}
                       required={createMode === 'invite'}
                     />
                   </div>

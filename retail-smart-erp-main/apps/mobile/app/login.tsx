@@ -121,17 +121,18 @@ export default function LoginScreen() {
       await onAdminLogin(url)
       return
     }
-    const bid = normalizeBusinessId(businessId)
+    // Business ID: the shop's name (e.g. alisha-shop) or its PL number — the server resolves both
+    const bid = normalizeBusinessId(businessId) || businessId.trim()
     if (useSlug && !slug) {
       Alert.alert('Company Slug', 'Enter your company slug (subdomain).')
       return
     }
     if (!useSlug && !bid) {
-      Alert.alert('Business ID', 'Enter your Business ID — it looks like PL-123456. Ask your manager or owner, it is shown on the Staff page.')
+      Alert.alert('Business ID', 'Enter your Business ID — your shop’s name, e.g. alisha-shop. Ask your manager or owner.')
       return
     }
     if (!email.trim() || !password) {
-      Alert.alert('Required Fields', 'Please enter your email and password.')
+      Alert.alert('Required Fields', 'Please enter your username and password.')
       return
     }
 
@@ -164,13 +165,11 @@ export default function LoginScreen() {
       await setUser(res.data.user)
       setPassword('')
       // Remember what the server resolved so next time the Business ID is pre-filled.
+      // Next time the shop's name-based Business ID (e.g. alisha-shop) is pre-filled
       if (res.data.user?.businessId || res.data.user?.tenantSlug) {
-        await saveSettings({
-          apiUrl: url,
-          tenantSlug: res.data.user.tenantSlug || slug,
-          ...(res.data.user.businessId ? { businessId: res.data.user.businessId } : {}),
-        })
-        if (res.data.user.businessId) setBusinessId(formatBusinessId(res.data.user.businessId))
+        const remembered = res.data.user.tenantSlug || res.data.user.businessId || ''
+        await saveSettings({ apiUrl: url, tenantSlug: res.data.user.tenantSlug || slug, businessId: remembered })
+        setBusinessId(formatBusinessId(remembered))
       }
 
       // Push registration (permission prompt + POST /api/account/devices); never blocks login.
@@ -226,19 +225,19 @@ export default function LoginScreen() {
             <Text style={styles.label}>Business ID</Text>
             <TextInput
               style={[styles.input, styles.businessIdInput]}
-              placeholder="PL-123456"
+              placeholder="e.g. alisha-shop"
               placeholderTextColor={THEME.colors.textSubtle}
-              autoCapitalize="characters"
+              autoCapitalize="none"
               autoCorrect={false}
-              maxLength={12}
+              maxLength={100}
               value={businessId}
-              onChangeText={(v) => setBusinessId(v.toUpperCase())}
+              onChangeText={setBusinessId}
               onBlur={() => {
                 const n = normalizeBusinessId(businessId)
                 if (n) setBusinessId(formatBusinessId(n))
               }}
             />
-            <Text style={styles.hint}>Ask your manager or owner — it’s on the Staff page.</Text>
+            <Text style={styles.hint}>Your shop’s name (the PL-123456 number works too). Ask your manager or owner.</Text>
           </>
         )}
         {!IS_ADMIN_APP && useSlug && (
@@ -258,14 +257,14 @@ export default function LoginScreen() {
 
         {!(IS_ADMIN_APP && needsTotp) && (
           <>
-            <Text style={styles.label}>{IS_ADMIN_APP ? 'Admin email' : 'Email or username'}</Text>
+            <Text style={styles.label}>{IS_ADMIN_APP ? 'Admin email' : 'Username or email'}</Text>
             <TextInput
               style={styles.input}
-              placeholder={IS_ADMIN_APP ? 'admin@company.lk' : 'you@company.lk'}
+              placeholder={IS_ADMIN_APP ? 'admin@company.lk' : 'e.g. cashier1'}
               placeholderTextColor={THEME.colors.textSubtle}
               autoCapitalize="none"
               autoCorrect={false}
-              keyboardType="email-address"
+              keyboardType={IS_ADMIN_APP ? 'email-address' : 'default'}
               value={email}
               onChangeText={setEmail}
             />
@@ -401,7 +400,7 @@ const styles = StyleSheet.create({
     color: THEME.colors.text,
     marginBottom: 14,
   },
-  businessIdInput: { fontFamily: 'monospace', fontSize: 18, letterSpacing: 2, marginBottom: 4 },
+  businessIdInput: { fontSize: 17, fontWeight: '600', marginBottom: 4 },
   totpInput: { fontFamily: 'monospace', fontSize: 22, letterSpacing: 6, textAlign: 'center' },
   hint: { fontSize: 11.5, color: THEME.colors.textMuted, marginBottom: 14 },
   passwordRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },

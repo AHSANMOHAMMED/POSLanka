@@ -5,6 +5,7 @@ import { View, Text, TextInput, Pressable, Alert, ActivityIndicator, Share, Styl
 import { adminApi, adminPost } from '../../lib/adminApi'
 import { THEME } from '../../lib/theme'
 import { Card, ListRow, Pill, SectionTitle, adminStyles, timeAgo } from './AdminShell'
+import { displayLogin } from '../../lib/displayLogin'
 
 export interface AdminStaffRow {
   id: string
@@ -60,7 +61,7 @@ export function AdminVendorStaff({ vendorId, staff, roles, canManage, onChanged 
     if (!res.ok) return Alert.alert('Could not add staff', res.error)
     setAdding(false)
     resetForm()
-    showLogin('Staff added', res.data.user.fullName, res.data.user.email, res.data.generatedPassword)
+    showLogin('Staff added', res.data.user.fullName, displayLogin(res.data.user.email), res.data.generatedPassword)
     onChanged()
   }
 
@@ -72,13 +73,13 @@ export function AdminVendorStaff({ vendorId, staff, roles, canManage, onChanged 
     })
     setBusyId(null)
     if (!res.ok) return Alert.alert('Update failed', res.error)
-    if (res.data.temporaryPassword) showLogin('New password', u.fullName, res.data.email, res.data.temporaryPassword)
+    if (res.data.temporaryPassword) showLogin('New password', u.fullName, displayLogin(res.data.email), res.data.temporaryPassword)
     onChanged()
   }
 
   function openRow(u: AdminStaffRow) {
     if (!canManage || u.role === 'owner') return
-    Alert.alert(u.fullName, `${ROLE_LABEL[u.role] ?? u.role} · ${u.email}`, [
+    Alert.alert(u.fullName, `${ROLE_LABEL[u.role] ?? u.role} · ${displayLogin(u.email)}`, [
       { text: 'New password', onPress: () => act(u, 'reset_password') },
       u.isActive
         ? { text: 'Deactivate', style: 'destructive', onPress: () => act(u, 'deactivate') }
@@ -110,8 +111,8 @@ export function AdminVendorStaff({ vendorId, staff, roles, canManage, onChanged 
               </Pressable>
             ))}
           </ScrollView>
-          <Text style={styles.label}>Email (optional)</Text>
-          <TextInput style={adminStyles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="Blank = login made from the name" />
+          <Text style={styles.label}>Username or email (optional)</Text>
+          <TextInput style={adminStyles.input} value={email} onChangeText={setEmail} autoCapitalize="none" placeholder="e.g. cashier1 — blank = made from the name" />
           <Text style={styles.label}>Password (optional)</Text>
           <TextInput style={adminStyles.input} value={password} onChangeText={setPassword} autoCapitalize="none" secureTextEntry placeholder="Blank = generated and shown once" />
           <Text style={styles.label}>POS PIN (optional, 4–6 digits)</Text>
@@ -132,7 +133,7 @@ export function AdminVendorStaff({ vendorId, staff, roles, canManage, onChanged 
           <ListRow
             key={u.id}
             title={u.fullName}
-            subtitle={`${ROLE_LABEL[u.role] ?? u.role} • ${u.email}${u.lastLoginAt ? ` • ${timeAgo(u.lastLoginAt)}` : ' • never signed in'}`}
+            subtitle={`${ROLE_LABEL[u.role] ?? u.role} • ${displayLogin(u.email)}${u.lastLoginAt ? ` • ${timeAgo(u.lastLoginAt)}` : ' • never signed in'}`}
             right={busyId === u.id ? <ActivityIndicator size="small" color={THEME.colors.primary} /> : <Pill text={u.isActive ? 'active' : 'off'} tone={u.isActive ? 'ok' : 'muted'} />}
             onPress={canManage && u.role !== 'owner' ? () => openRow(u) : undefined}
           />

@@ -3,17 +3,19 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { withTenant } from '@/lib/db'
 import { users } from '@/lib/db/schema'
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { validateBody } from '@/lib/validation/helpers'
 import { isAccountActive } from '@/lib/auth/live-user'
 import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
 import { findTenantByIdentifier, normalizeBusinessId } from '@/lib/tenant/business-id'
+import { findLoginUser } from '@/lib/auth/login-identity'
 import { getEffectivePermissions } from '@/lib/auth/roles'
 
 // Business ID (preferred, e.g. "PL-985633") or the legacy company slug (older app installs).
 const schema = z.object({
-  email: z.string().email(),
+  /** Email or username (see findLoginUser) */
+  email: z.string().trim().min(1).max(255),
   password: z.string().min(1),
   businessId: z.string().trim().min(1).max(32).optional(),
   tenantSlug: z.string().trim().min(1).max(100).optional(),
@@ -58,11 +60,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
-  const user = await withTenant(tenant.id, async (tdb) =>
-    tdb.query.users.findFirst({
-      where: and(eq(users.email, email), eq(users.tenantId, tenant.id), eq(users.isActive, true)),
-    })
-  )
+  const user = await withTenant(tenant.id, (tdb) => findLoginUser(tdb, tenant, email, { activeOnly: true }))
   if (!user) {
     await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })

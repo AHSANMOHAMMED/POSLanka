@@ -239,8 +239,8 @@ export default function ProfilePage() {
       return
     }
 
-    if (passwordData.newPassword.length < 8) {
-      setPasswordError('Password must be at least 8 characters')
+    if (passwordData.newPassword.length < 4) {
+      setPasswordError('Password must be at least 4 characters')
       return
     }
 
@@ -520,7 +520,7 @@ export default function ProfilePage() {
               </button>
             </div>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-              Must be at least 8 characters
+              Must be at least 4 characters
             </p>
           </div>
 

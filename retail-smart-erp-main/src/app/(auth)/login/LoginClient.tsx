@@ -113,7 +113,7 @@ function LoginForm() {
     const rawBizId = identifier.trim()
     const rawEmail = staffEmail.trim()
     if (!rawBizId) {
-      setLookupError('Enter your Business ID (e.g. PL-123456 or company code)')
+      setLookupError('Enter your Business ID — your shop’s name, e.g. alisha-shop')
       return
     }
     if (!rawEmail) {
@@ -270,7 +270,7 @@ function LoginForm() {
             <Field
               label="Business ID"
               htmlFor="business-id"
-              hint="Looks like PL-123456 or your company slug (e.g. demo-retail)."
+              hint="Your shop’s name, e.g. alisha-shop (the PL-123456 number works too)."
             >
               <Input
                 id="business-id"
@@ -278,9 +278,9 @@ function LoginForm() {
                 size="lg"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="PL-123456"
+                placeholder="e.g. alisha-shop"
                 autoComplete="organization"
-                autoCapitalize="characters"
+                autoCapitalize="none"
                 spellCheck={false}
                 autoFocus={!recent}
                 invalid={!!lookupError}
@@ -288,15 +288,15 @@ function LoginForm() {
               />
             </Field>
 
-            <Field label="Staff Email or Username" htmlFor="staff-email">
+            <Field label="Username or email" htmlFor="staff-email">
               <Input
                 id="staff-email"
-                type="email"
+                type="text"
                 leftIcon={Mail}
                 size="lg"
                 value={staffEmail}
                 onChange={(e) => setStaffEmail(e.target.value)}
-                placeholder="cashier@demo.poslanka.lk"
+                placeholder="e.g. cashier1"
                 autoComplete="username"
                 required
               />

@@ -22,6 +22,7 @@ import { THEME } from '../src/lib/theme'
 import { LoadingView, EmptyView, ErrorView, InlineNotice } from '../src/components/StateViews'
 import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
+import { displayLogin } from '../src/lib/displayLogin'
 
 interface StaffRow {
   id: string
@@ -64,13 +65,10 @@ interface RoleChoice {
   customRoleId: string
 }
 
-const PASSWORD_RULE = 'Min 8 characters with upper-case, lower-case and a number'
+const PASSWORD_RULE = 'At least 4 characters — simple is fine (e.g. 1234)'
 
 function passwordProblem(pw: string): string | null {
-  if (pw.length < 8) return 'Password must be at least 8 characters'
-  if (!/[a-z]/.test(pw)) return 'Password must contain a lowercase letter'
-  if (!/[A-Z]/.test(pw)) return 'Password must contain an uppercase letter'
-  if (!/[0-9]/.test(pw)) return 'Password must contain a number'
+  if (pw.length < 4) return 'Password must be at least 4 characters'
   return null
 }
 
@@ -263,7 +261,7 @@ export default function StaffScreen() {
       return
     }
     setCreateOpen(false)
-    showNewLogin(res.data.user?.fullName || 'The staff member', res.data.user?.email || form.email.trim(), res.data.generatedPassword || null)
+    showNewLogin(res.data.user?.fullName || 'The staff member', displayLogin(res.data.user?.email || form.email.trim()), res.data.generatedPassword || null)
     load(true)
   }
 
@@ -408,7 +406,7 @@ export default function StaffScreen() {
                         {s.fullName}
                         {isSelf ? <Text style={styles.muted}> (you)</Text> : null}
                       </Text>
-                      <Text style={styles.muted} numberOfLines={1}>{s.email}</Text>
+                      <Text style={styles.muted} numberOfLines={1}>{displayLogin(s.email)}</Text>
                     </View>
                     <View style={styles.rolePill}>
                       <Text style={styles.rolePillText} numberOfLines={1}>{s.customRoleName ? `★ ${s.customRoleName}` : roleLabel(s.role)}</Text>
@@ -487,14 +485,14 @@ export default function StaffScreen() {
             <ScrollView contentContainerStyle={{ paddingBottom: 24 + bottomPad }} keyboardShouldPersistTaps="handled">
               <Text style={styles.label}>Full name *</Text>
               <TextInput style={styles.input} value={form.fullName} onChangeText={(v) => setForm({ ...form, fullName: v })} placeholder="e.g. Nimal Perera" />
-              <Text style={styles.label}>Email (sign-in, optional)</Text>
+              <Text style={styles.label}>Username or email (optional)</Text>
               <TextInput
                 style={styles.input}
                 value={form.email}
                 onChangeText={(v) => setForm({ ...form, email: v })}
                 autoCapitalize="none"
                 keyboardType="email-address"
-                placeholder="Blank = login made from the name"
+                placeholder="e.g. cashier1 — blank = made from the name"
               />
               <Text style={styles.label}>Role *</Text>
               {renderRolePicker({ role: form.role, customRoleId: form.customRoleId }, (v) => setForm({ ...form, role: v.role, customRoleId: v.customRoleId }))}

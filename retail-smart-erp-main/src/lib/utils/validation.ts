@@ -108,17 +108,10 @@ export function validateField(
  * Returns null if valid, or an error message string.
  */
 export function validatePasswordStrength(password: string): string | null {
-  if (!password || password.length < 8) {
-    return 'Password must be at least 8 characters long'
+  // Simple passwords are allowed for shop staff and owners (same rule as passwordSchema)
+  if (!password || password.length < 4) {
+    return 'Password must be at least 4 characters'
   }
-  if (!/[a-z]/.test(password)) {
-    return 'Password must contain at least one lowercase letter'
-  }
-  if (!/[A-Z]/.test(password)) {
-    return 'Password must contain at least one uppercase letter'
-  }
-  if (!/[0-9]/.test(password)) {
-    return 'Password must contain at least one number'
-  }
+  if (password.length > 128) return 'Password is too long'
   return null
 }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { findTenantByIdentifier } from '@/lib/tenant/business-id'
 import { db } from '@/lib/db'
 import { users, tenants, accounts, accountTenants } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
@@ -122,7 +123,8 @@ async function lookupByIdentifier(request: NextRequest, raw: string, startTime: 
   const MIN_RESPONSE_TIME = 200
   const ip = clientIp(request)
   const businessId = normalizeBusinessId(raw)
-  const slug = businessId ? null : raw.toLowerCase()
+  // Shop name as typed ("Alisha Shop") counts as its web address for rate limiting
+  const slug = businessId ? null : raw.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
   if (!businessId && !/^[a-z0-9][a-z0-9-]{0,98}[a-z0-9]$/.test(slug!)) {
     await padResponse(startTime, MIN_RESPONSE_TIME)
     return NextResponse.json({ tenant: null })
@@ -140,10 +142,8 @@ async function lookupByIdentifier(request: NextRequest, raw: string, startTime: 
     )
   }
 
-  const tenant = await db.query.tenants.findFirst({
-    where: and(businessId ? eq(tenants.businessId, businessId) : eq(tenants.slug, slug!), eq(tenants.status, 'active')),
-    columns: { slug: true, name: true, logoUrl: true },
-  })
+  const found = await findTenantByIdentifier(raw)
+  const tenant = found && found.status === 'active' ? found : null
 
   await padResponse(startTime, MIN_RESPONSE_TIME)
   return NextResponse.json({

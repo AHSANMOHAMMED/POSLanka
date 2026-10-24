@@ -201,7 +201,7 @@ async function main() {
       check('name + phone + address only → 200', min.status === 200, min)
       check('web address generated from the name', min.body.vendor?.slug === `i3-min-${tag}`, min.body.vendor?.slug)
       check('owner login generated from the web address', min.body.owner?.email === `owner@i3-min-${tag}.poslanka.local`, min.body.owner?.email)
-      check('owner password generated and returned once', typeof min.body.generatedPassword === 'string' && min.body.generatedPassword.length === 12)
+      check('owner password generated and returned once', typeof min.body.generatedPassword === 'string' && /^\d{6}$/.test(min.body.generatedPassword))
       const minOwner = (await pg.query(`SELECT full_name, password_hash FROM users WHERE tenant_id = $1 AND role = 'owner'`, [min.body.vendor?.id])).rows[0]
       check('owner name defaults to the business name', minOwner?.full_name === `I3 Min ${tag}`, minOwner?.full_name)
       check('generated password signs in', !!minOwner && await bcrypt.compare(min.body.generatedPassword || '', minOwner.password_hash))
@@ -341,7 +341,7 @@ async function main() {
       const c1 = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${vendorId}/staff`, { fullName: 'Kamal Silva', role: 'cashier' }), ctx(vendorId!)))
       check('name + role only → 201', c1.status === 201, c1)
       check('login made from the name and the web address', c1.body.user?.email === `kamal.silva@${slug}.poslanka.local`, c1.body.user?.email)
-      check('password generated and returned once', typeof c1.body.generatedPassword === 'string' && c1.body.generatedPassword.length === 12)
+      check('password generated and returned once', typeof c1.body.generatedPassword === 'string' && /^\d{6}$/.test(c1.body.generatedPassword))
       const row = (await pg.query(`SELECT role, is_active, password_hash FROM users WHERE id = $1`, [c1.body.user?.id])).rows[0]
       check('cashier stored for this vendor and the generated password signs in',
         row?.role === 'cashier' && row?.is_active === true && await bcrypt.compare(c1.body.generatedPassword || '', row.password_hash), row?.role)
@@ -364,6 +364,27 @@ async function main() {
       const other = await json(await updateVendorStaff(req('PATCH', `/api/sys-control/vendors/${vendorId}/staff`, { userId: c1.body.user?.id, action: 'activate' }), ctx(randomUUID())))
       check('staff of another vendor id → 404', other.status === 404, other.status)
       check('staff changes audited', (await pg.query(`SELECT 1 FROM admin_audit_logs WHERE resource = 'tenant_user' AND details->>'tenantId' = $1`, [vendorId])).rowCount! >= 3)
+    })
+
+    // ============================================================ shop-name Business ID, usernames, simple passwords
+    await step('sign in with the shop name, a username and a simple password', async () => {
+      asAdmin()
+      const shop = await json(await createVendor(req('POST', '/api/sys-control/vendors', { name: `Alisha Shop ${tag}`, phone: '+94771234599', address: 'Galle' })))
+      const shopSlug = shop.body.vendor?.slug as string
+      if (shop.body.vendor?.id) tenantIds.push(shop.body.vendor.id)
+      check('shop gets a name-based web address', shopSlug === `alisha-shop-${tag}`, shopSlug)
+      const st = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${shop.body.vendor.id}/staff`, { fullName: 'Till One', role: 'cashier', email: 'cashier1', password: '1234' }), ctx(shop.body.vendor.id)))
+      check('staff with username "cashier1" and password "1234" → 201', st.status === 201 && st.body.user?.email === `cashier1@${shopSlug}.poslanka.local`, st.body)
+      const bad = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${shop.body.vendor.id}/staff`, { fullName: 'Bad', role: 'cashier', email: 'no spaces allowed', password: '1234' }), ctx(shop.body.vendor.id)))
+      check('username with spaces → 400', bad.status === 400, bad.status)
+      const short = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${shop.body.vendor.id}/staff`, { fullName: 'Short', role: 'cashier', email: 'short1', password: '123' }), ctx(shop.body.vendor.id)))
+      check('password under 4 characters → 400', short.status === 400, short.status)
+      for (const typed of [`Alisha Shop ${tag}`, `alishashop${tag}`, `ALISHA-SHOP-${tag}`, shopSlug, `${shop.body.businessId}`]) {
+        check(`app sign-in with Business ID "${typed}" + cashier1 / 1234`, (await login(typed, 'cashier1', '1234')) === 200)
+      }
+      check('wrong simple password → 401', (await login(shopSlug, 'cashier1', '9999')) === 401)
+      check('owner signs in with the username "owner"', (await login(shopSlug, 'owner', shop.body.generatedPassword)) === 200)
+      check('generated owner password is 6 digits', /^\d{6}$/.test(shop.body.generatedPassword || ''), shop.body.generatedPassword)
     })
 
     // ============================================================ CSV export

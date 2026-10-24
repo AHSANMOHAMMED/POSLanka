@@ -185,8 +185,11 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
   if (pwError) throw new StaffError(pwError, 400)
   if (input.pin && !PIN_RE.test(input.pin)) throw new StaffError('PIN must be 4-6 digits', 400)
 
-  const email = input.email?.trim()
-    ? input.email.trim().toLowerCase()
+  // Email as given; a plain username becomes the shop's own login (cashier1@<slug>.poslanka.local);
+  // nothing → one made from the name
+  const given = input.email?.trim().toLowerCase()
+  const email = given
+    ? given.includes('@') ? given : placeholderLogin(given, await tenantSlug(tx, tenantId))
     : await freePlaceholderLogin(tx, tenantId, fullName)
 
   const dup = await tx.select({ id: users.id, isActive: users.isActive }).from(users)
@@ -256,9 +259,14 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
 }
 
 /** First unused nimal.perera@<slug>.poslanka.local, nimal.perera2@…, … in this tenant */
-async function freePlaceholderLogin(tx: Tx, tenantId: string, fullName: string): Promise<string> {
+async function tenantSlug(tx: Tx, tenantId: string): Promise<string> {
   const [t] = await tx.select({ slug: tenants.slug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1)
   if (!t) throw new StaffError('Business not found', 404)
+  return t.slug
+}
+
+async function freePlaceholderLogin(tx: Tx, tenantId: string, fullName: string): Promise<string> {
+  const t = { slug: await tenantSlug(tx, tenantId) }
   const local = loginLocalPart(fullName)
   const taken = new Set(
     (await tx.select({ email: users.email }).from(users)

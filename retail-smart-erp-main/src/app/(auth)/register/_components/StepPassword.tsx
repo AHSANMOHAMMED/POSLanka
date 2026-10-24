@@ -31,7 +31,7 @@ export function StepPassword({ onSubmit, loading, error, onBack }: StepPasswordP
 
   const strength = password ? getPasswordStrength(password) : null
   const passwordsMatch = password && confirmPassword && password === confirmPassword
-  const canSubmit = password.length >= 8 && passwordsMatch && !loading
+  const canSubmit = password.length >= 4 && passwordsMatch && !loading
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -40,7 +40,7 @@ export function StepPassword({ onSubmit, loading, error, onBack }: StepPasswordP
 
   return (
     <div>
-      <AuthHeading title="Choose a password" description="At least 8 characters. A longer password with numbers and symbols is stronger." />
+      <AuthHeading title="Choose a password" description="At least 4 characters. A longer password with numbers and symbols is stronger." />
       {error && <Alert tone="danger" className="mb-4">{error}</Alert>}
 
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -60,7 +60,7 @@ export function StepPassword({ onSubmit, loading, error, onBack }: StepPasswordP
             ) : undefined
           }
         >
-          <PasswordInput id="password" leftIcon={Lock} size="lg" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 8 characters" minLength={8} autoComplete="new-password" required autoFocus />
+          <PasswordInput id="password" leftIcon={Lock} size="lg" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="At least 4 characters" minLength={4} autoComplete="new-password" required autoFocus />
         </Field>
         <Field label="Confirm password" htmlFor="confirmPassword" error={confirmPassword && !passwordsMatch ? 'The passwords don’t match.' : undefined}>
           <PasswordInput id="confirmPassword" leftIcon={Lock} size="lg" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Type it again" autoComplete="new-password" required invalid={!!confirmPassword && !passwordsMatch} />

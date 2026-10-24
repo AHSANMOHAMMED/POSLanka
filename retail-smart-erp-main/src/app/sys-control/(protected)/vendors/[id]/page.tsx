@@ -47,6 +47,7 @@ import {
   type AdminColumn,
 } from '@/components/admin/kit'
 import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import { displayLogin } from '@/lib/users/display-login'
 import {
   CopyButton,
   LOCK_REASON_LABEL,
@@ -503,7 +504,7 @@ function StaffTab({ staff, vendorId, businessType, canManage, onChanged }: {
       cell: (u) => (
         <div className="min-w-0">
           <p className="font-medium text-adm-fg">{u.fullName}</p>
-          <p className="truncate text-[12.5px] text-adm-subtle">{u.email}</p>
+          <p className="truncate text-[12.5px] text-adm-subtle">{displayLogin(u.email)}</p>
         </div>
       ),
     },
@@ -530,8 +531,8 @@ function StaffTab({ staff, vendorId, businessType, canManage, onChanged }: {
       {result && (
         <Alert tone="warning" title={`${result.title} (shown once)`}>
           <span className="inline-flex flex-wrap items-center gap-2">
-            Login <span className="font-mono">{result.email}</span> · password <span className="font-mono font-semibold">{result.password}</span>
-            <CopyButton text={`Login: ${result.email}\nPassword: ${result.password}`} label="Copy login and password" />
+            Login <span className="font-mono">{displayLogin(result.email)}</span> · password <span className="font-mono font-semibold">{result.password}</span>
+            <CopyButton text={`Login: ${displayLogin(result.email)}\nPassword: ${result.password}`} label="Copy login and password" />
           </span>
           <span className="mt-1 block">They sign in with the Business ID, this login and password, and can change the password afterwards.</span>
         </Alert>
@@ -594,7 +595,7 @@ function AddStaffDialog({ vendorId, businessType, onClose, onCreated }: {
       open
       onClose={onClose}
       title="Add staff"
-      description="Only the name and role are needed. Leave the email blank to get a login made from the name, and the password blank to get one generated."
+      description="Only the name and role are needed. Give a simple username (e.g. cashier1) or leave it blank to make one from the name; leave the password blank to get a 6-digit one."
       footer={<><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" icon={UserPlus} onClick={save} loading={busy} disabled={!nameOk}>Add staff</Button></>}
     >
       {error && <Alert tone="danger" className="mb-3">{error}</Alert>}
@@ -607,10 +608,10 @@ function AddStaffDialog({ vendorId, businessType, onClose, onCreated }: {
             {roles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r] ?? r}</option>)}
           </Select>
         </Field>
-        <Field label="Email (login)" htmlFor="st-email" hint="Optional.">
-          <Input id="st-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nimal@example.lk" />
+        <Field label="Username or email" htmlFor="st-email" hint="Optional — e.g. cashier1. Blank = made from the name.">
+          <Input id="st-email" type="text" autoCapitalize="none" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="cashier1" />
         </Field>
-        <Field label="Password" htmlFor="st-pass" hint="Optional. 8+ characters with upper, lower case and a number.">
+        <Field label="Password" htmlFor="st-pass" hint="Optional — any 4+ characters (e.g. 1234).">
           <Input id="st-pass" type="text" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Generated if blank" />
         </Field>
         <Field label="POS PIN" htmlFor="st-pin" hint="Optional, 4–6 digits, for the POS lock screen.">

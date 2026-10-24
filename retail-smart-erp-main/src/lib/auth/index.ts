@@ -10,6 +10,8 @@ import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMI
 import { getLiveCompanyUser, isAccountActive } from '@/lib/auth/live-user'
 import { sessionValidationKey, getSessionValidation, setSessionValidation, deleteSessionValidation } from './session-validation-cache'
 import { consumeImpersonationToken } from '@/lib/auth/impersonation-token'
+import { findTenantByIdentifier } from '@/lib/tenant/business-id'
+import { findLoginUser } from './login-identity'
 
 // ---------------------------------------------------------------------------
 // Brute-force rate limiter (database-backed)
@@ -93,12 +95,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         try {
           // Users-first flow: authenticate directly via users table
           // 1. Find tenant by slug or businessId
-          const cleanBizId = rawBusinessId ? rawBusinessId.toUpperCase().replace(/\s+/g, '') : null
-          const tenant = await db.query.tenants.findFirst({
-            where: cleanBizId
-              ? eq(tenants.businessId, cleanBizId)
-              : eq(tenants.slug, tenantSlug!),
-          })
+          // Business ID, web address or shop name (see findTenantByIdentifier)
+          const tenant = await findTenantByIdentifier(rawBusinessId || tenantSlug!)
 
           if (!tenant) {
             await recordFailedAttempt(email)
@@ -115,15 +113,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             throw new Error('Invalid credentials')
           }
 
-          // 2. Find user in users table by email + tenantId
-          const user = await withTenant(tenant.id, async (tdb) => {
-            return tdb.query.users.findFirst({
-              where: and(
-                eq(users.email, email),
-                eq(users.tenantId, tenant.id)
-              ),
-            })
-          })
+          // 2. Find the user by email or username (see findLoginUser)
+          const user = await withTenant(tenant.id, (tdb) => findLoginUser(tdb, tenant, email))
 
           if (!user) {
             await recordFailedAttempt(email)

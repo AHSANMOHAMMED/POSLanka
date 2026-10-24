@@ -85,11 +85,18 @@ export const longTextSchema = z.string().trim().max(5000)
 export const sortOrderSchema = z.enum(['asc', 'desc']).default('desc')
 
 /** Password with strength requirements (matches validatePasswordStrength in validation.ts) */
+// Shop staff and owners: simple passwords are allowed (e.g. 1234); sign-in is rate limited.
+// Platform admins have their own, stricter rule (src/lib/admin).
+export const PASSWORD_MIN_LENGTH = 4
+
+/** Staff login: an email, or a simple username (cashier1, nimal.perera) stored as the shop's own login */
+export const staffLoginSchema = z.string().trim().toLowerCase().max(255).refine(
+  (v) => (v.includes('@') ? z.string().email().safeParse(v).success : /^[a-z0-9][a-z0-9._-]{1,39}$/.test(v)),
+  'Use an email, or a username of letters, numbers, dots or dashes (e.g. cashier1)',
+)
 export const passwordSchema = z.string()
-  .min(8, 'Password must be at least 8 characters long')
-  .regex(/[a-z]/, 'Password must contain at least one lowercase letter')
-  .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
-  .regex(/[0-9]/, 'Password must contain at least one number')
+  .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)
+  .max(128, 'Password is too long')
 
 // ==================== COMPOSITE SCHEMAS ====================
 

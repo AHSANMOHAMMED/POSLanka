@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Check, Copy, KeyRound } from 'lucide-react'
 import { sharedJson } from '@/lib/client/shared-fetch'
+import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 
 /** PL985633 → PL-985633 (same as formatBusinessId in lib/tenant/business-id, which is server-only) */
 export function formatBusinessId(id: string | null | undefined): string {
@@ -37,9 +38,12 @@ interface BusinessIdBadgeProps {
  */
 export function BusinessIdBadge({ businessId: given, variant = 'banner', className = '' }: BusinessIdBadgeProps) {
   const businessId = useBusinessId(given)
+  // Staff type the shop's name-based ID (its web address, e.g. alisha-shop); the PL number works too
+  const shopId = useCompanyOptional()?.tenantSlug || null
   const [copied, setCopied] = useState(false)
-  if (!businessId) return null
-  const display = formatBusinessId(businessId)
+  if (!businessId && !shopId) return null
+  const display = shopId || formatBusinessId(businessId)
+  const alt = shopId && businessId ? formatBusinessId(businessId) : null
 
   async function copy() {
     try {
@@ -70,6 +74,7 @@ export function BusinessIdBadge({ businessId: given, variant = 'banner', classNa
           {display}
         </span>
         {copyButton}
+        {alt && <span className="text-xs text-gray-500">or {alt}</span>}
       </div>
     )
   }
@@ -80,6 +85,7 @@ export function BusinessIdBadge({ businessId: given, variant = 'banner', classNa
       <span className="min-w-0">
         Staff sign in with Business ID{' '}
         <span className="font-mono font-semibold tracking-wider select-all">{display}</span>
+        {alt && <span className="text-blue-700/80 dark:text-blue-300/80"> (or {alt})</span>}
       </span>
       {copyButton}
     </div>

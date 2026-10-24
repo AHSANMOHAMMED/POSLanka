@@ -89,8 +89,8 @@ export default function InviteAcceptPage({
         setError('Please enter your mobile number')
         return
       }
-      if (formData.password.length < 8) {
-        setError('Password must be at least 8 characters')
+      if (formData.password.length < 4) {
+        setError('Password must be at least 4 characters')
         return
       }
       if (formData.password !== formData.confirmPassword) {
@@ -219,8 +219,8 @@ export default function InviteAcceptPage({
           <Field label="Mobile number" htmlFor="phone">
             <Input id="phone" type="tel" leftIcon={Phone} size="lg" value={formData.phone} onChange={(e) => setFormData((prev) => ({ ...prev, phone: e.target.value }))} placeholder="+94 77 123 4567" autoComplete="tel" required />
           </Field>
-          <Field label="Password" htmlFor="password" hint="At least 8 characters.">
-            <PasswordInput id="password" leftIcon={Lock} size="lg" value={formData.password} onChange={(e) => setFormData((prev) => ({ ...prev, password: e.target.value }))} placeholder="Create a password" autoComplete="new-password" required minLength={8} />
+          <Field label="Password" htmlFor="password" hint="At least 4 characters.">
+            <PasswordInput id="password" leftIcon={Lock} size="lg" value={formData.password} onChange={(e) => setFormData((prev) => ({ ...prev, password: e.target.value }))} placeholder="Create a password" autoComplete="new-password" required minLength={4} />
           </Field>
           <Field label="Confirm password" htmlFor="confirmPassword">
             <PasswordInput id="confirmPassword" leftIcon={Lock} size="lg" value={formData.confirmPassword} onChange={(e) => setFormData((prev) => ({ ...prev, confirmPassword: e.target.value }))} placeholder="Type it again" autoComplete="new-password" required invalid={!!formData.confirmPassword && formData.confirmPassword !== formData.password} />
