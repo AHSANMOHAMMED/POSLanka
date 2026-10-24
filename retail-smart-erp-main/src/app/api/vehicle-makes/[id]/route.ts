@@ -1,13 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { auth } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
 import { db } from '@/lib/db'
 import { vehicleMakes } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
-import { logAndBroadcast } from '@/lib/websocket/broadcast'
-import { validateBody, validateParams } from '@/lib/validation/helpers'
-import { updateVehicleMakeSchema } from '@/lib/validation/schemas/vehicles'
+import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 
 export async function GET(
@@ -43,81 +40,18 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    const permError = requirePermission(session, 'manageVehicleTypes')
-    if (permError) return permError
-
-    const paramsParsed = validateParams(await params, idParamSchema)
-    if (!paramsParsed.success) return paramsParsed.response
-    const { id } = paramsParsed.data
-    const parsed = await validateBody(request, updateVehicleMakeSchema)
-    if (!parsed.success) return parsed.response
-    const { name, country, isActive } = parsed.data
-
-    const existing = await db.query.vehicleMakes.findFirst({
-      where: eq(vehicleMakes.id, id),
-    })
-
-    if (!existing) {
-      return NextResponse.json({ error: 'Vehicle make not found' }, { status: 404 })
-    }
-
-    const updateData: Record<string, unknown> = {}
-    if (name !== undefined) updateData.name = name
-    if (country !== undefined) updateData.country = country
-    if (isActive !== undefined) updateData.isActive = isActive
-
-    const [updated] = await db.update(vehicleMakes)
-      .set(updateData)
-      .where(eq(vehicleMakes.id, id))
-      .returning()
-
-    if (session.user.tenantId) {
-      logAndBroadcast(session.user.tenantId, 'vehicle-make', 'updated', updated.id, { userId: session.user.id, entityName: updated.name })
-    }
-    return NextResponse.json(updated)
-  } catch (error) {
-    logError('api/vehicle-makes/[id]', error)
-    return NextResponse.json({ error: 'Failed to update vehicle make' }, { status: 500 })
-  }
+  // Vehicle makes are one list shared by every business: a vendor may add new ones, but editing
+  // or switching one off would change it for all vendors. Platform staff maintain the list.
+  void request; void params
+  return NextResponse.json({ error: 'Vehicle makes are shared by all businesses and can only be changed by skyERPOS support. Add a new one instead.', code: 'SHARED_CATALOG' }, { status: 403 })
 }
 
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const session = await auth()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    const permError = requirePermission(session, 'manageVehicleTypes')
-    if (permError) return permError
-
-    const paramsParsed = validateParams(await params, idParamSchema)
-    if (!paramsParsed.success) return paramsParsed.response
-    const { id } = paramsParsed.data
-
-    // Soft delete by setting isActive to false
-    const [updated] = await db.update(vehicleMakes)
-      .set({ isActive: false })
-      .where(eq(vehicleMakes.id, id))
-      .returning()
-
-    if (!updated) {
-      return NextResponse.json({ error: 'Vehicle make not found' }, { status: 404 })
-    }
-
-    if (session.user.tenantId) {
-      logAndBroadcast(session.user.tenantId, 'vehicle-make', 'deleted', id, { userId: session.user.id })
-    }
-    return NextResponse.json({ success: true })
-  } catch (error) {
-    logError('api/vehicle-makes/[id]', error)
-    return NextResponse.json({ error: 'Failed to delete vehicle make' }, { status: 500 })
-  }
+  // Vehicle makes are one list shared by every business: a vendor may add new ones, but editing
+  // or switching one off would change it for all vendors. Platform staff maintain the list.
+  void request; void params
+  return NextResponse.json({ error: 'Vehicle makes are shared by all businesses and can only be changed by skyERPOS support. Add a new one instead.', code: 'SHARED_CATALOG' }, { status: 403 })
 }
