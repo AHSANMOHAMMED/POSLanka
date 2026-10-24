@@ -53,6 +53,8 @@ interface CreateResult {
   inviteEmailFailed: boolean
   /** Set when no password was given and no invite sent — shown once */
   generatedPassword?: string | null
+  /** Added to an owner who already had an account: they keep their current password */
+  existingOwner?: boolean
 }
 
 type Step = 0 | 1 | 2
@@ -237,8 +239,10 @@ function CreateVendorForm() {
       `${result.vendor.name} is ready on skyERPOS.`,
       '',
       `1. Open ${result.signInUrl}`,
-      `2. Choose “Staff sign-in” and enter Business ID: ${shopId}  (or ${bid})`,
-      `3. Sign in with ${displayLogin(result.owner.email)}${access === 'invite' ? ' after accepting the emailed invitation' : result.generatedPassword ? ` and the password ${result.generatedPassword}` : ' and the password you were given'}.`,
+      result.existingOwner
+        ? `2. Sign in with ${displayLogin(result.owner.email)} and your usual password: ${result.vendor.name} is now listed on your account next to your other businesses.`
+        : `2. Sign in with ${displayLogin(result.owner.email)}${access === 'invite' ? ' after accepting the emailed invitation' : result.generatedPassword ? ` and the password ${result.generatedPassword}` : ' and the password you were given'}.`,
+      `3. Staff sign in on the same page with their username, password and Business ID: ${shopId}  (or ${bid})`,
       '',
       `Direct link: ${result.loginUrl}`,
     ].join('\n')
@@ -268,6 +272,12 @@ function CreateVendorForm() {
             </div>
           </div>
         </AdminCard>
+
+        {result.existingOwner && (
+          <Alert tone="info" title="Added to an existing owner">
+            {displayLogin(result.owner.email)} already had a skyERPOS account, so this business was added to it. They sign in with their current password and see it next to their other businesses.
+          </Alert>
+        )}
 
         {result.generatedPassword && (
           <Alert tone="warning" title="Owner password (shown once)">
@@ -458,7 +468,7 @@ function CreateVendorForm() {
               <Field label="Owner name" htmlFor="o-name" error={errors.ownerName} hint={!ownerName ? `Leave blank to use ${name.trim() || 'the business name'}.` : undefined}>
                 <Input id="o-name" value={ownerName} onChange={(e) => setOwnerName(e.target.value)} placeholder={name.trim() || 'Nimal Perera'} />
               </Field>
-              <Field label="Owner email" htmlFor="o-email" error={errors.ownerEmail} hint={!ownerEmail ? (email.trim() ? `Leave blank to use ${email.trim()}.` : 'Optional. Without any email the owner signs in with a login made from the web address.') : undefined}>
+              <Field label="Owner email" htmlFor="o-email" error={errors.ownerEmail} hint={!ownerEmail ? (email.trim() ? `Leave blank to use ${email.trim()}.` : 'Optional. Without any email the owner signs in with a login made from the web address. For another business of an existing owner, enter their email: it is added to their account.') : 'If this owner already has a skyERPOS account, the business is added to it (same sign-in, same password).'}>
                 <Input id="o-email" type="email" value={ownerEmail} onChange={(e) => setOwnerEmail(e.target.value)} placeholder={email || 'owner@example.lk'} />
               </Field>
               <div className="space-y-3 md:col-span-2">

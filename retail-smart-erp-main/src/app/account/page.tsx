@@ -7,7 +7,6 @@ import Link from 'next/link'
 import Image from 'next/image'
 import {
   Building2,
-  Plus,
   ArrowUpRight,
   CreditCard,
   Loader2,
@@ -33,7 +32,7 @@ import {
 } from 'lucide-react'
 import { formatCurrencyWithSymbol } from '@/lib/utils/currency'
 import { toast } from '@/components/ui/toast'
-import { BUSINESS_TYPES, getBusinessTypeLabel, getBusinessTypeEmoji } from '@/lib/constants/business-types'
+import { getBusinessTypeLabel, getBusinessTypeEmoji } from '@/lib/constants/business-types'
 import { PageSkeleton } from '@/components/ui/skeleton'
 
 interface Company {
@@ -813,35 +812,15 @@ export default function AccountDashboard() {
           <p className="text-xl text-gray-500 dark:text-gray-400">Let&apos;s get your business up and running</p>
         </div>
 
-        {/* Business Type Selection */}
-        <div className="bg-white dark:bg-gray-800 rounded-3xl border border-gray-100 dark:border-gray-700 shadow-sm p-8 mb-8">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-6 text-center">
-            What type of business are you running?
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-            {BUSINESS_TYPES.map((type) => (
-              <Link
-                key={type.value}
-                href={`/account/companies/new?type=${type.value}`}
-                className="group p-6 rounded-2xl border-2 border-gray-100 dark:border-gray-700 hover:border-blue-500 hover:shadow-lg transition-all text-center"
-              >
-                <div className="text-4xl mb-3">{type.emoji}</div>
-                <p className="font-semibold text-gray-900 dark:text-white group-hover:text-blue-600 transition-colors">{type.label}</p>
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{type.description}</p>
-              </Link>
-            ))}
-          </div>
-        </div>
-
-        {/* Free Plan Banner */}
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl p-8 text-white text-center">
-          <div className="flex items-center justify-center gap-3 mb-3">
-            <Zap className="w-6 h-6" />
-            <h3 className="text-xl font-semibold">Free Forever</h3>
-          </div>
-          <p className="text-blue-100 max-w-md mx-auto">
-            Every new business gets full access to all features. No credit card required to start.
+        <div className="bg-white dark:bg-gray-800 rounded-3xl border border-gray-100 dark:border-gray-700 shadow-sm p-8 text-center">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">Your business is being set up</h2>
+          <p className="text-gray-500 dark:text-gray-400 max-w-lg mx-auto">
+            skyERPOS sets up each business and its staff for you. Once yours is ready it appears here.
+            Need another business? Contact skyERPOS and we add it to this account.
           </p>
+          <Link href="/contact" className="inline-flex items-center gap-2 mt-5 px-5 py-2.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium">
+            Contact skyERPOS
+          </Link>
         </div>
       </div>
     )
@@ -858,13 +837,6 @@ export default function AccountDashboard() {
             </h1>
             <p className="text-gray-400 text-lg">Manage your businesses and track performance</p>
           </div>
-          <Link
-            href="/account/companies/new"
-            className="inline-flex items-center gap-2 px-6 py-3 bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors font-medium shadow-lg"
-          >
-            <Plus className="w-5 h-5" />
-            New Company
-          </Link>
         </div>
       </div>
 
@@ -901,12 +873,8 @@ export default function AccountDashboard() {
       <div>
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Your Companies</h2>
-          <Link
-            href="/account/companies/new"
-            className="text-sm font-medium text-blue-600 hover:text-blue-700 flex items-center gap-1"
-          >
-            <Plus className="w-4 h-4" />
-            Add New
+          <Link href="/contact" className="text-sm font-medium text-blue-600 hover:text-blue-700">
+            Need another business? Contact skyERPOS
           </Link>
         </div>
         <div className="grid gap-4 sm:gap-6 md:grid-cols-2 lg:grid-cols-3">

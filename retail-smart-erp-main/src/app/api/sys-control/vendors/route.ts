@@ -215,11 +215,18 @@ export async function POST(request: NextRequest) {
       ? normalizeFeatureFlags(featureFlags as Partial<FeatureFlagsMap>)
       : DEFAULT_VENDOR_FEATURE_FLAGS
 
+    // Another business for an owner who already has a skyERPOS account: it is added to that
+    // account and the owner keeps signing in with their current password (no new password)
+    const existingOwner = await db.query.accounts.findFirst({
+      where: eq(accounts.email, ownerLoginEmail),
+      columns: { id: true, passwordHash: true },
+    })
+
     // Password: provided; random for an invite (the owner sets their own on accept); otherwise a
     // generated one that is returned once so the admin can hand it over
-    const generatedPassword = !ownerPassword && !sendInvite ? generateReadablePassword() : null
+    const generatedPassword = !existingOwner && !ownerPassword && !sendInvite ? generateReadablePassword() : null
     const effectivePassword = ownerPassword || generatedPassword || randomBytes(24).toString('base64url')
-    const passwordHash = await bcrypt.hash(effectivePassword, 12)
+    const passwordHash = existingOwner && !ownerPassword ? existingOwner.passwordHash : await bcrypt.hash(effectivePassword, 12)
 
     const result = await db.transaction(async (tx) => {
       const [conflict] = await tx
@@ -398,6 +405,8 @@ export async function POST(request: NextRequest) {
       owner: { id: result.owner.id, email: result.owner.email },
       /** Only when the admin gave no password and sent no invite — shown once */
       generatedPassword,
+      /** Added to an owner who already has an account: they sign in with their current password */
+      existingOwner: !!existingOwner,
       plan: { id: tier.id, name: tier.displayName },
       loginUrl: companyLoginUrl,
       signInUrl: loginUrl,

@@ -516,13 +516,13 @@ export default function PlansPage() {
             <Building2 className="w-8 h-8 text-amber-600 dark:text-amber-400" />
           </div>
           <p className="text-amber-800 dark:text-amber-300 font-medium">
-            You need to create a company first before selecting a plan.
+            Your business has not been set up yet. skyERPOS sets businesses up for you.
           </p>
           <Link
-            href="/account/companies/new"
+            href="/contact"
             className="inline-flex items-center gap-2 mt-4 px-5 py-2.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 transition-colors font-medium"
           >
-            Create Company
+            Contact skyERPOS
           </Link>
         </div>
       )}
