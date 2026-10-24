@@ -1,24 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { db as rawDb, withTenant, withTenantTransaction } from '@/lib/db'
-import { posCashMovements, posOpeningEntries, posOpeningBalances, posProfiles, tenants } from '@/lib/db/schema'
-import { and, eq, sql } from 'drizzle-orm'
+import { posOpeningEntries, tenants } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import { hasPermission, requirePermission } from '@/lib/auth/roles'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { createPosCashMovementSchema, posCashMovementListSchema } from '@/lib/validation/schemas/pos'
-import { postPosCashMovementToGL } from '@/lib/accounting/auto-post'
-import { tenantToday } from '@/lib/accounting/gl'
 import { broadcastChange } from '@/lib/websocket/broadcast'
 import { logActivity } from '@/lib/utils/activity-log'
 import { logError } from '@/lib/ai/error-logger'
-import { roundCurrency, parseCurrency } from '@/lib/utils/currency'
-import {
-  ApprovalError, consumeApprovals, coverScopes, verifyApprovalTokens, type ApprovalScope,
-} from '@/lib/auth/approval-token'
+import { roundCurrency } from '@/lib/utils/currency'
+import { ApprovalError, type ApprovalScope } from '@/lib/auth/approval-token'
 import {
   CASH_MOVEMENT_CATEGORY_LABELS, DEFAULT_PAID_IN_APPROVAL_THRESHOLD, listShiftCashMovements, shiftCashMovementTotals,
 } from '@/lib/pos/shift-report'
+import { recordCashMovement } from '@/lib/pos/cash-movement'
 
 // GET /api/pos-cash-movements?openingEntryId=… — paid-ins / paid-outs of a shift
 export async function GET(request: NextRequest) {
@@ -78,100 +75,28 @@ export async function POST(request: NextRequest) {
     const posSettings = ((tenantRow?.settings as Record<string, unknown> | null)?.pos || {}) as Record<string, unknown>
     const paidInThreshold = Number(posSettings.paidInApprovalThreshold) > 0 ? Number(posSettings.paidInApprovalThreshold) : DEFAULT_PAID_IN_APPROVAL_THRESHOLD
 
+    const needed: ApprovalScope[] = []
+    if (body.type === 'paid_out') needed.push('cash_paid_out')
+    if (body.type === 'paid_in' && amount >= paidInThreshold) needed.push('cash_paid_in')
     const result = await withTenantTransaction(tenantId, async (db) => {
-      // Row lock: movements of one shift are numbered and checked against the drawer one at a time
-      const [shift] = await db.select().from(posOpeningEntries)
-        .where(eq(posOpeningEntries.id, body.openingEntryId))
-        .for('update')
-      if (!shift) return { error: NextResponse.json({ error: 'Shift not found' }, { status: 404 }) }
-      if (shift.status !== 'open') {
-        return { error: NextResponse.json({ error: 'Cash can only be paid in or out during an open shift', code: 'SHIFT_NOT_OPEN' }, { status: 400 }) }
-      }
-      if (shift.userId !== userId && !isSupervisor) {
-        return { error: NextResponse.json({ error: 'You can only record cash movements on your own shift', code: 'SHIFT_NOT_YOURS' }, { status: 403 }) }
-      }
-
-      // Supervisor approval
-      const needed: ApprovalScope[] = []
-      if (body.type === 'paid_out') needed.push('cash_paid_out')
-      if (body.type === 'paid_in' && amount >= paidInThreshold) needed.push('cash_paid_in')
-      const approvals = isSupervisor ? [] : verifyApprovalTokens(body.approvalToken ? [body.approvalToken] : [], { tenantId, requesterId: session.user.id })
-      const cover = coverScopes(needed, approvals)
-      if (!isSupervisor && cover.missing.length > 0) {
-        return {
-          error: NextResponse.json({
-            error: body.type === 'paid_out'
-              ? 'A supervisor must approve cash paid out of the drawer'
-              : `A supervisor must approve cash paid in of ${paidInThreshold} or more`,
-            code: 'APPROVAL_REQUIRED',
-            scopes: cover.missing,
-          }, { status: 403 }),
-        }
-      }
-
-      // A paid-out cannot take more than the drawer should hold
-      if (body.type === 'paid_out') {
-        const [opening] = await db.select({ amount: sql<string>`COALESCE(SUM(${posOpeningBalances.openingAmount}), 0)` })
-          .from(posOpeningBalances)
-          .where(and(eq(posOpeningBalances.openingEntryId, shift.id), eq(posOpeningBalances.paymentMethod, 'cash')))
-        const cashRows = await db.execute(sql`
-          SELECT COALESCE(SUM(CASE WHEN s.is_return THEN -ABS(p.amount) ELSE ABS(p.amount) END), 0) AS cash
-          FROM payments p JOIN sales s ON s.id = p.sale_id
-          WHERE s.pos_opening_entry_id = ${shift.id} AND s.status <> 'void' AND p.method = 'cash'`)
-        const salesCash = parseCurrency(((cashRows as unknown as { rows?: Array<{ cash: string }> }).rows || [])[0]?.cash)
-        const movements = await shiftCashMovementTotals(db, shift.id)
-        const drawer = roundCurrency(parseCurrency(opening?.amount) + salesCash + movements.net)
-        if (amount > drawer + 0.001) {
-          return {
-            error: NextResponse.json({
-              error: `Only ${drawer.toFixed(2)} should be in the drawer; cannot pay out ${amount.toFixed(2)}`,
-              code: 'INSUFFICIENT_DRAWER_CASH',
-              drawerCash: drawer,
-            }, { status: 400 }),
-          }
-        }
-      }
-
-      const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(posCashMovements)
-        .where(eq(posCashMovements.openingEntryId, shift.id))
-      const movementNo = `${shift.entryNumber}-CM${String(n + 1).padStart(2, '0')}`
-      const approvedBy = cover.used[0]?.approverId || (isSupervisor && needed.length > 0 ? userId : null)
-
-      const [movement] = await db.insert(posCashMovements).values({
+      const r = await recordCashMovement(db, {
         tenantId,
-        movementNo,
-        openingEntryId: shift.id,
-        posProfileId: shift.posProfileId,
-        type: body.type,
-        category: body.category,
-        amount: String(amount),
-        accountId: body.accountId || null,
-        note: body.note || null,
-        createdBy: userId,
-        approvedBy,
-      }).returning()
-
-      if (cover.used.length > 0) {
-        await consumeApprovals(db, {
-          tenantId, usedBy: userId, entityType: 'pos_cash_movement', entityId: movement.id,
-          approvals: cover.used, scopesFor: (a) => needed.filter((s) => a.scopes.includes(s)),
-        })
-      }
-
-      const profile = await db.query.posProfiles.findFirst({ where: eq(posProfiles.id, shift.posProfileId), columns: { costCenterId: true } })
-      await postPosCashMovementToGL(db, tenantId, {
-        movementId: movement.id,
-        movementNo,
-        postingDate: await tenantToday(tenantId),
+        userId,
+        isSupervisor,
+        openingEntryId: body.openingEntryId,
         type: body.type,
         category: body.category,
         amount,
         accountId: body.accountId || null,
-        costCenterId: profile?.costCenterId || null,
-        notes: `${movementNo} ${CASH_MOVEMENT_CATEGORY_LABELS[body.category] || body.category}${body.note ? `: ${body.note}` : ''}`,
+        note: body.note || null,
+        needed,
+        approvalToken: body.approvalToken,
+        approvalMessage: body.type === 'paid_out'
+          ? 'A supervisor must approve cash paid out of the drawer'
+          : `A supervisor must approve cash paid in of ${paidInThreshold} or more`,
       })
-
-      return { movement, shift }
+      if ('failure' in r) return { error: NextResponse.json(r.failure.body, { status: r.failure.status }) }
+      return { movement: r.movement, shift: r.shift }
     })
 
     if ('error' in result) return result.error

@@ -14,6 +14,8 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addSalePaymentSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { ChequeError, chequeAmountFor, insertCheque } from '@/lib/cheques/cheques'
+import { getTenantFeatureFlags } from '@/lib/features/check'
 
 // GET payments for a sale
 export async function GET(
@@ -180,6 +182,16 @@ export async function POST(
     const parsed = await validateBody(request, addSalePaymentSchema)
     if (!parsed.success) return parsed.response
     const { amount, method, reference, creditAmount, addOverpaymentToCredit } = parsed.data
+    const chequeDetails = parsed.data.cheque
+    if (amount > 0 && method === 'cheque') {
+      if (!chequeDetails) {
+        return NextResponse.json({ error: 'Enter the cheque number, bank and date', code: 'CHEQUE_DETAILS_REQUIRED' }, { status: 400 })
+      }
+      const flags = await getTenantFeatureFlags(session.user.tenantId)
+      if (!flags.cheques) {
+        return NextResponse.json({ error: 'Cheques are turned off for this business.', code: 'FEATURE_DISABLED', feature: 'cheques' }, { status: 403 })
+      }
+    }
 
     // Store credit is paid through creditAmount (it deducts the customer's balance); a gift card
     // must be redeemed through the POS / gift-card flow, which draws the card down. Recording
@@ -281,14 +293,29 @@ export async function POST(
 
         // Create cash/card payment record
         if (cashCardAmount > 0) {
-          await tx.insert(payments).values({
+          const [paymentRow] = await tx.insert(payments).values({
             tenantId: session.user.tenantId,
             saleId,
             amount: String(cashCardAmount),
             method: method || 'cash',
-            reference: reference || null,
+            reference: reference || (method === 'cheque' ? chequeDetails?.chequeNo : null) || null,
             receivedBy: userId,
-          })
+          }).returning({ id: payments.id })
+          // K1: register the cheque (a bounce re-opens this invoice)
+          if (method === 'cheque' && chequeDetails) {
+            await insertCheque(tx, {
+              tenantId: session.user.tenantId,
+              direction: 'received',
+              details: chequeDetails,
+              amount: chequeAmountFor(chequeDetails, cashCardAmount),
+              userId,
+              customerId: sale.customerId,
+              saleId,
+              paymentId: paymentRow.id,
+              warehouseId: sale.warehouseId,
+              partyName: sale.customerName,
+            })
+          }
         }
 
         // Create credit payment record
@@ -413,6 +440,9 @@ export async function POST(
       return NextResponse.json(result)
     })
   } catch (error) {
+    if (error instanceof ChequeError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
+    }
     const message = error instanceof Error ? error.message : ''
     if (message === 'NOT_FOUND') {
       return NextResponse.json({ error: 'Sale not found' }, { status: 404 })

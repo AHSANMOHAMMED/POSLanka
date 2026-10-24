@@ -1,7 +1,7 @@
 import { apiGet, isNetworkError, type ApiResult } from './api'
 import { getBundle, patchBundle } from './localdb'
 
-export type PaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card'
+export type PaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | 'cheque'
 
 export const PAYMENT_METHODS: PaymentMethod[] = ['cash', 'card', 'bank_transfer', 'credit', 'gift_card']
 

@@ -182,7 +182,7 @@ export const userRoleValues = [
 ] as const
 export const userRoleSchema = z.enum(userRoleValues) // schema.ts: userRoleEnum
 
-export const paymentMethodValues = ['cash', 'card', 'bank_transfer', 'credit', 'gift_card'] as const
+export const paymentMethodValues = ['cash', 'card', 'bank_transfer', 'credit', 'gift_card', 'cheque'] as const
 export const paymentMethodSchema = z.enum(paymentMethodValues) // schema.ts: paymentMethodEnum
 
 export const saleStatusValues = ['pending', 'partial', 'completed', 'void'] as const

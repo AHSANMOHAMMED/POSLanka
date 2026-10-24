@@ -12,6 +12,8 @@ import { authWithCompany } from '@/lib/auth'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addPurchasePaymentSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { insertCheque } from '@/lib/cheques/cheques'
+import { getTenantFeatureFlags } from '@/lib/features/check'
 
 // GET payments for a purchase
 export async function GET(
@@ -144,7 +146,7 @@ export async function POST(
 
   const parsed = await validateBody(request, addPurchasePaymentSchema)
   if (!parsed.success) return parsed.response
-  const { amount, paymentMethod, paymentReference, notes } = parsed.data
+  const { amount, paymentMethod, paymentReference, notes, cheque: chequeDetails } = parsed.data
 
   const preSession = await authWithCompany()
   if (!preSession) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -155,6 +157,10 @@ export async function POST(
   // Pre-validate accounting config before starting transaction
   const acctError = await requireAccountingConfig(rawDb, preSession.user.tenantId, 'payment')
   if (acctError) return acctError
+
+  if (paymentMethod === 'cheque' && !(await getTenantFeatureFlags(preSession.user.tenantId)).cheques) {
+    return NextResponse.json({ error: 'Cheques are turned off for this business.', code: 'FEATURE_DISABLED', feature: 'cheques' }, { status: 403 })
+  }
 
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'managePurchases')
@@ -198,8 +204,11 @@ export async function POST(
 
     // Clamp to remaining if very close (due to floating point)
     const effectiveAmount = Math.min(paymentAmount, remaining)
-    const effectiveMethod = (paymentMethod || 'cash') as 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card'
-    const effectiveReference = effectiveMethod === 'cash' ? null : (paymentReference || null)
+    const effectiveMethod = (paymentMethod || 'cash') as 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | 'cheque'
+    const effectiveReference = effectiveMethod === 'cash' ? null : (paymentReference || (effectiveMethod === 'cheque' ? chequeDetails?.chequeNo : null) || null)
+    if (effectiveMethod === 'cheque' && chequeDetails?.amount !== undefined && Math.abs(Math.round(chequeDetails.amount * 100) / 100 - effectiveAmount) > 0.004) {
+      return { error: NextResponse.json({ error: `Cheque amount ${chequeDetails.amount.toFixed(2)} does not match the payment ${effectiveAmount.toFixed(2)}`, code: 'CHEQUE_AMOUNT_MISMATCH' }, { status: 400 }) }
+    }
 
     const [payment] = await tx.insert(purchasePayments).values({
       tenantId: session.user.tenantId,
@@ -210,6 +219,21 @@ export async function POST(
       notes: notes || null,
       createdBy: session.user.id,
     }).returning()
+
+    // K1: register the issued cheque (a bounce re-opens this purchase)
+    if (effectiveMethod === 'cheque' && chequeDetails) {
+      await insertCheque(tx, {
+        tenantId: session.user.tenantId,
+        direction: 'issued',
+        details: chequeDetails,
+        amount: effectiveAmount,
+        userId: session.user.id,
+        supplierId: purchase.supplierId,
+        purchaseId: id,
+        purchasePaymentId: payment.id,
+        warehouseId: purchase.warehouseId,
+      })
+    }
 
     // Update purchase paidAmount and status
     const newPaidAmount = Math.round((currentPaid + effectiveAmount) * 100) / 100

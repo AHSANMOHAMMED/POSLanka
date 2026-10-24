@@ -6,6 +6,7 @@ import {
   purchaseReceiptStatusSchema, sortOrderSchema, optimisticLockSchema,
   paymentMethodSchema,
 } from './common'
+import { chequeDetailsSchema } from './cheques'
 
 // ==================== SHARED PURCHASE ITEM SCHEMAS ====================
 
@@ -254,6 +255,10 @@ export const addPurchasePaymentSchema = z.object({
   paymentMethod: paymentMethodSchema.default('cash'),
   paymentReference: z.string().max(255).optional(),
   notes: z.string().max(2000).optional(),
+  /** K1: issued cheque details when paymentMethod is 'cheque' */
+  cheque: chequeDetailsSchema.optional(),
+}).superRefine((d, ctx) => {
+  if (d.paymentMethod === 'cheque' && !d.cheque) ctx.addIssue({ code: 'custom', path: ['cheque'], message: 'Enter the cheque details' })
 })
 
 // POST /api/purchases/[id]/return

@@ -83,6 +83,8 @@ export type EntityType =
   | 'salary-slip'
   | 'payroll-run'
   | 'employee-advance'
+  | 'cheque'
+  | 'expense'
   | 'module-access'
   | 'letter-head'
   | 'print-template'
@@ -269,6 +271,8 @@ export const tableToEntityMap: Record<string, EntityType> = {
   salary_slips: 'salary-slip',
   payroll_runs: 'payroll-run',
   employee_advances: 'employee-advance',
+  cheques: 'cheque',
+  expenses: 'expense',
   module_access: 'module-access',
   staff_chat_messages: 'staff-chat',
   recurring_journal_templates: 'recurring-entry',

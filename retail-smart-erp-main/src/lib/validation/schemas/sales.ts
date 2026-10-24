@@ -5,6 +5,7 @@ import {
   salesOrderStatusSchema, optimisticLockSchema,
 } from './common'
 import { prescriptionInputSchema } from './pharmacy'
+import { chequeDetailsSchema } from './cheques'
 
 // ==================== SALES ====================
 
@@ -105,6 +106,8 @@ export const createSaleSchema = z.object({
   offlineRefAlias: z.string().trim().min(1).max(40).optional(),
   /** Pharmacy: prescription for prescription / controlled medicines in the cart (src/lib/pharmacy) */
   prescription: prescriptionInputSchema.optional(),
+  /** K1: details of the cheque taken when paymentMethod (or one split) is 'cheque' */
+  cheque: chequeDetailsSchema.optional(),
   /** Returns: reason code (required for returns without an original invoice) */
   returnReason: z.string().trim().max(50).optional(),
   returnNotes: z.string().max(1000).optional(),
@@ -182,6 +185,8 @@ export const addSalePaymentSchema = z.object({
   reference: z.string().max(255).optional(),
   creditAmount: z.coerce.number().min(0).default(0),
   addOverpaymentToCredit: z.boolean().optional().default(false),
+  /** K1: cheque details when method is 'cheque' */
+  cheque: chequeDetailsSchema.optional(),
 })
 
 // PUT /api/sales-orders/[id]

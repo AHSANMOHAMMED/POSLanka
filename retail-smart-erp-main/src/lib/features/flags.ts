@@ -24,6 +24,7 @@ export const FEATURE_FLAGS = [
   'sales_orders',
   'layaways',
   'commissions',
+  'cheques',
   // Stock
   'multi_warehouse',
   'stock_takes',
@@ -96,6 +97,9 @@ export const FEATURE_DEFS: FeatureDef[] = [
   { key: 'commissions', group: 'Sales & POS', default: true, label: 'Sales commissions',
     description: 'Commission rates and payouts for staff.',
     hrefs: ['/settings/commissions'], api: ['/api/commissions', '/api/commission-rates', '/api/commission-payouts'] },
+  { key: 'cheques', group: 'Sales & POS', default: true, label: 'Cheques',
+    description: 'Take and issue cheques (post-dated too): cheque payments at the POS, against credit and to suppliers; cheques register with deposit / clear / bounce and due reminders.',
+    hrefs: ['/accounting/cheques'], api: ['/api/cheques'] },
 
   // ------------------------------------------------------------------ Stock
   { key: 'multi_warehouse', group: 'Stock', default: false, label: 'Multiple branches / warehouses',

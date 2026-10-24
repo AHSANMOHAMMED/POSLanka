@@ -5,6 +5,8 @@
  *                                      expiring items / batches; housekeeping of the inbox.
  *   runSubscriptionReminders daily   — trial / period ends in 7 and 1 days → company owners.
  *   runImportMaintenance     15 min  — resume interrupted import jobs, delete jobs finished > 30 days ago.
+ *   runChequeReminders       hourly  — per owner / manager / accounts at their local digest hour:
+ *                                      cheques to bank / presented today and tomorrow, overdue ones.
  */
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db, withTenant } from '@/lib/db'
@@ -167,6 +169,101 @@ async function stockAlertsForTenant(tenantId: string, tenantTz: string, now: Dat
       summary.outcomes.push({ tenantId, userId: d.userId, type: 'expiring_stock', outcome })
       if (outcome.inApp.length) summary.expiring++
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cheque reminders (K1)
+// ---------------------------------------------------------------------------
+
+export interface ChequeDueRow { id: string; direction: 'received' | 'issued'; chequeNo: string; bankName: string; chequeDate: string; amount: number; party: string | null }
+
+export interface ChequeRemindersSummary {
+  tenants: number
+  dueUsers: number
+  sent: number
+  outcomes: Array<{ tenantId: string; userId: string; outcome: NotifyOutcome }>
+}
+
+export async function runChequeReminders(opts: TenantFilter = {}): Promise<ChequeRemindersSummary> {
+  const now = opts.now || new Date()
+  const summary: ChequeRemindersSummary = { tenants: 0, dueUsers: 0, sent: 0, outcomes: [] }
+  for (const t of await activeTenants(opts.tenantIds)) {
+    summary.tenants++
+    try {
+      await chequeRemindersForTenant(t.id, t.timezone, now, summary)
+    } catch (error) {
+      logError('cron/cheque-reminders', error, { tenantId: t.id })
+    }
+  }
+  return summary
+}
+
+const fmtMoney = (n: number) => n.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+async function chequeRemindersForTenant(tenantId: string, tenantTz: string, now: Date, summary: ChequeRemindersSummary) {
+  const due = await withTenant(tenantId, async (tdb) => {
+    const candidates = await tdb.select({ id: users.id, role: users.role, customRoleId: users.customRoleId })
+      .from(users).where(and(eq(users.tenantId, tenantId), eq(users.isActive, true)))
+    const managers = candidates.filter((u) => hasPermission(u.role, 'viewAccounting', tenantId, u.customRoleId))
+    if (managers.length === 0) return []
+    const prefRows = await tdb.select().from(notificationPreferences)
+      .where(and(eq(notificationPreferences.tenantId, tenantId), inArray(notificationPreferences.userId, managers.map((m) => m.id))))
+    const prefBy = new Map(prefRows.map((p) => [p.userId, toPreferences(p)]))
+    const out: Array<{ userId: string; date: string }> = []
+    for (const m of managers) {
+      const prefs = prefBy.get(m.id) || toPreferences(null)
+      if (prefs.digestHour === null || !wantsType(prefs, 'cheque_due')) continue
+      const local = localParts(now, prefs.timezone || tenantTz)
+      if (local.hour !== prefs.digestHour) continue
+      out.push({ userId: m.id, date: local.date })
+    }
+    return out
+  })
+  if (due.length === 0) return
+  summary.dueUsers += due.length
+
+  const today = due[0].date
+  const list = await withTenant(tenantId, async (tdb) => rows<{
+    id: string; direction: 'received' | 'issued'; cheque_no: string; bank_name: string; cheque_date: string; amount: string; party: string | null
+  }>(await tdb.execute(sql`
+    SELECT c.id, c.direction, c.cheque_no, c.bank_name, c.cheque_date::text AS cheque_date, c.amount,
+           COALESCE(cu.name, su.name, c.party_name) AS party
+    FROM cheques c
+    LEFT JOIN customers cu ON cu.id = c.customer_id
+    LEFT JOIN suppliers su ON su.id = c.supplier_id
+    WHERE c.tenant_id = ${tenantId} AND c.status = 'pending' AND c.cheque_date <= ${today}::date + 1
+    ORDER BY c.cheque_date, c.cheque_no
+    LIMIT 200
+  `)))
+  const cheques: ChequeDueRow[] = list.map((r) => ({
+    id: r.id, direction: r.direction, chequeNo: r.cheque_no, bankName: r.bank_name, chequeDate: r.cheque_date, amount: Number(r.amount), party: r.party,
+  }))
+  if (cheques.length === 0) return
+
+  for (const d of due) {
+    const tomorrow = new Date(Date.parse(`${d.date}T00:00:00Z`) + 86400000).toISOString().slice(0, 10)
+    const recToday = cheques.filter((c) => c.direction === 'received' && c.chequeDate === d.date)
+    const recTomorrow = cheques.filter((c) => c.direction === 'received' && c.chequeDate === tomorrow)
+    const issued = cheques.filter((c) => c.direction === 'issued' && c.chequeDate >= d.date)
+    const overdue = cheques.filter((c) => c.direction === 'received' && c.chequeDate < d.date)
+    const total = (l: ChequeDueRow[]) => fmtMoney(l.reduce((s, c) => s + c.amount, 0))
+    const parts = [
+      recToday.length ? `${recToday.length} to bank today (${total(recToday)})` : '',
+      recTomorrow.length ? `${recTomorrow.length} to bank tomorrow (${total(recTomorrow)})` : '',
+      issued.length ? `${issued.length} of ours presented today / tomorrow (${total(issued)}) — keep funds in the bank` : '',
+      overdue.length ? `${overdue.length} overdue, not yet banked (${total(overdue)})` : '',
+    ].filter(Boolean)
+    if (parts.length === 0) continue
+    const outcome = await deliverAlert(tenantId, 'cheque_due', {
+      title: `Cheques: ${parts[0]}${parts.length > 1 ? ` +${parts.length - 1} more` : ''}`,
+      body: parts.join('; '),
+      data: { screen: 'cheques', count: cheques.length, cheques: cheques.slice(0, 20) },
+      dedupeKey: `cheque_due:${d.userId}:${d.date}`,
+      userIds: [d.userId],
+    }, now)
+    summary.outcomes.push({ tenantId, userId: d.userId, outcome })
+    if (outcome.inApp.length) summary.sent++
   }
 }
 

@@ -486,6 +486,7 @@ cron-job.org) works the same way:
 | Route | Schedule | Purpose |
 |---|---|---|
 | `stock-alerts` | hourly | low-stock digest + expiring stock at each stock manager's local digest hour; inbox housekeeping |
+| `cheque-reminders` | hourly | cheques to bank / presented today and tomorrow and overdue ones → owners, managers, accounts (push + in-app) at their local digest hour |
 | `import-maintenance` | every 15 min | resume interrupted bulk imports (stale heartbeat); delete import jobs finished > 30 days ago |
 | `enforce-subscriptions` | every 6 h | first activates PayHere payments recorded as paid but not yet applied (`activated_at` NULL), then trial / subscription lockouts |
 | `subscription-reminders` | daily | trial / plan ending in 7 and 1 days → company owners (push + in-app) |

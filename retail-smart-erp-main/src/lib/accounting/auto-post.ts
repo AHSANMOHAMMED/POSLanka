@@ -132,7 +132,7 @@ async function resolveReceiptAccount(tx: DbOrTx, tenantId: string, config: Accou
   const modeAccount = await resolvePaymentAccountFromMode(tx, tenantId, method)
   if (modeAccount) return modeAccount
   if (method === 'cash') return config.defaultCashAccountId!
-  if (method === 'bank_transfer' || method === 'card') return config.defaultBankAccountId || config.defaultCashAccountId!
+  if (method === 'bank_transfer' || method === 'card' || method === 'cheque') return config.defaultBankAccountId || config.defaultCashAccountId!
   console.warn(`[GL] No Mode of Payment found for method "${method}" (tenant: ${tenantId}). Falling back to default Cash account.`)
   return config.defaultCashAccountId!
 }
@@ -223,7 +223,7 @@ export async function postSaleToGL(
       const modeAccount = await resolvePaymentAccountFromMode(tx, tenantId, method)
       if (modeAccount) return modeAccount
       if (method === 'cash') return config.defaultCashAccountId!
-      if (method === 'bank_transfer' || method === 'card') return config.defaultBankAccountId || config.defaultCashAccountId!
+      if (method === 'bank_transfer' || method === 'card' || method === 'cheque') return config.defaultBankAccountId || config.defaultCashAccountId!
       if (method !== 'credit') {
         console.warn(`[GL] No Mode of Payment found for method "${method}" (tenant: ${tenantId}). Using Accounts Receivable for refund.`)
       }
@@ -339,7 +339,7 @@ export async function postSaleToGL(
           resolvedPaymentAccountId = modeAccount
         } else if (data.paymentMethod === 'cash') {
           resolvedPaymentAccountId = config.defaultCashAccountId
-        } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card') {
+        } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card' || data.paymentMethod === 'cheque') {
           resolvedPaymentAccountId = config.defaultBankAccountId || config.defaultCashAccountId
         } else {
           console.warn(`[GL] No Mode of Payment found for method "${data.paymentMethod}" (tenant: ${tenantId}). Falling back to default Cash account.`)
@@ -724,7 +724,7 @@ export async function postPurchaseToGL(
         paymentAccountId = modeAccount
       } else if (data.paymentMethod === 'cash') {
         paymentAccountId = config.defaultCashAccountId
-      } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card') {
+      } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card' || data.paymentMethod === 'cheque') {
         paymentAccountId = config.defaultBankAccountId || config.defaultCashAccountId
       } else {
         console.warn(`[GL] No Mode of Payment found for purchase method "${data.paymentMethod}" (tenant: ${tenantId}). Falling back to default Cash account.`)
@@ -814,7 +814,7 @@ export async function postPaymentToGL(
     paymentAccountId = modeAccount
   } else if (data.paymentMethod === 'cash') {
     paymentAccountId = config.defaultCashAccountId
-  } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card') {
+  } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card' || data.paymentMethod === 'cheque') {
     paymentAccountId = config.defaultBankAccountId || config.defaultCashAccountId
   } else if (data.paymentMethod === 'gift_card' && config.defaultGiftCardLiabilityAccountId) {
     paymentAccountId = config.defaultGiftCardLiabilityAccountId
@@ -1284,7 +1284,7 @@ export async function postGiftCardSaleToGL(
     paymentAccountId = modeAccount
   } else if (data.paymentMethod === 'cash') {
     paymentAccountId = config.defaultCashAccountId
-  } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card') {
+  } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card' || data.paymentMethod === 'cheque') {
     paymentAccountId = config.defaultBankAccountId || config.defaultCashAccountId
   } else {
     console.warn(`[GL] No Mode of Payment found for method "${data.paymentMethod}" (tenant: ${tenantId}). Falling back to default Cash account.`)
@@ -1366,7 +1366,7 @@ export async function postGiftCardReloadToGL(
     paymentAccountId = modeAccount
   } else if (paymentMethod === 'cash') {
     paymentAccountId = config.defaultCashAccountId
-  } else if (paymentMethod === 'bank_transfer' || paymentMethod === 'card') {
+  } else if (paymentMethod === 'bank_transfer' || paymentMethod === 'card' || paymentMethod === 'cheque') {
     paymentAccountId = config.defaultBankAccountId || config.defaultCashAccountId
   } else {
     console.warn(`[GL] No Mode of Payment found for method "${paymentMethod}" (tenant: ${tenantId}). Falling back to default Cash account.`)
@@ -1450,7 +1450,7 @@ export async function postCustomerCreditToGL(
       cashAccountId = modeAccount
     } else if (method === 'cash') {
       cashAccountId = config.defaultCashAccountId
-    } else if (method === 'bank_transfer' || method === 'card') {
+    } else if (method === 'bank_transfer' || method === 'card' || method === 'cheque') {
       cashAccountId = config.defaultBankAccountId || config.defaultCashAccountId
     } else {
       console.warn(`[GL] No Mode of Payment found for customer credit method "${method}" (tenant: ${tenantId}). Falling back to default Cash account.`)
@@ -1881,7 +1881,7 @@ export async function postLayawayPaymentToGL(
     paymentAccountId = modeAccount
   } else if (data.paymentMethod === 'cash') {
     paymentAccountId = config.defaultCashAccountId
-  } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card') {
+  } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card' || data.paymentMethod === 'cheque') {
     paymentAccountId = config.defaultBankAccountId || config.defaultCashAccountId
   } else {
     console.warn(`[GL] No Mode of Payment found for layaway method "${data.paymentMethod}" (tenant: ${tenantId}). Falling back to default Cash account.`)
@@ -2021,7 +2021,7 @@ export async function postCommissionPayoutToGL(
     paymentAccountId = modeAccount
   } else if (data.paymentMethod === 'cash') {
     paymentAccountId = config.defaultCashAccountId
-  } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card') {
+  } else if (data.paymentMethod === 'bank_transfer' || data.paymentMethod === 'card' || data.paymentMethod === 'cheque') {
     paymentAccountId = config.defaultBankAccountId || config.defaultCashAccountId
   } else {
     console.warn(`[GL] No Mode of Payment found for commission payout method "${data.paymentMethod}" (tenant: ${tenantId}). Falling back to default Cash account.`)
@@ -2109,5 +2109,150 @@ export async function postGiftCardBreakageToGL(
     voucherNumber: data.cardNumber,
     fiscalYearId: config.currentFiscalYearId,
     entries,
+  })
+}
+
+// ─── K1: Cheques & expenses ─────────────────────────────────────
+
+/**
+ * Account a cheque payment was posted to when it was received / issued: the 'cheque' Mode of
+ * Payment (seeded on the bank account; a business may point it at a "Cheques in hand" account),
+ * else the default bank account. Null when accounting is not set up.
+ */
+export async function resolveChequeAccount(tx: DbOrTx, tenantId: string): Promise<string | null> {
+  return resolvePosTenderAccount(tx, tenantId, 'cheque')
+}
+
+/**
+ * Cheque cleared into a bank account other than the one it was posted to:
+ *   Dr deposit bank / Cr cheque account   (voucher type 'cheque')
+ */
+export async function postChequeTransferToGL(tx: DbOrTx, tenantId: string, data: {
+  chequeId: string
+  voucherNumber: string
+  postingDate: string
+  amount: number
+  fromAccountId: string
+  toAccountId: string
+  remarks?: string
+}): Promise<string[] | null> {
+  const amount = roundCurrency(data.amount)
+  if (!(amount > 0) || data.fromAccountId === data.toAccountId) return null
+  const config = await getAccountingConfig(tx, tenantId)
+  if (!config || !config.currentFiscalYearId) return null
+  const remarks = data.remarks || 'Cheque cleared'
+  return createGLEntries(tx, {
+    tenantId,
+    postingDate: data.postingDate,
+    voucherType: 'cheque',
+    voucherId: data.chequeId,
+    voucherNumber: data.voucherNumber,
+    fiscalYearId: config.currentFiscalYearId,
+    entries: [
+      { accountId: data.toAccountId, debit: amount, costCenterId: config.defaultCostCenterId, remarks },
+      { accountId: data.fromAccountId, credit: amount, costCenterId: config.defaultCostCenterId, remarks },
+    ],
+  })
+}
+
+/**
+ * A bounced / cancelled cheque that settled an invoice re-opens the party balance:
+ *   received: Dr Accounts Receivable (customer) / Cr account the cheque sits in
+ *   issued:   Dr account the cheque was drawn on / Cr Accounts Payable (supplier)
+ */
+export async function postChequeReversalToGL(tx: DbOrTx, tenantId: string, data: {
+  chequeId: string
+  voucherNumber: string
+  postingDate: string
+  direction: 'received' | 'issued'
+  amount: number
+  /** where the cheque money sits now (cheque mode account, or the bank it cleared into) */
+  accountId: string
+  partyId?: string | null
+  costCenterId?: string | null
+  remarks?: string
+}): Promise<string[] | null> {
+  const amount = roundCurrency(data.amount)
+  if (!(amount > 0)) return null
+  const config = await getAccountingConfig(tx, tenantId)
+  if (!config) return null
+  if (!config.currentFiscalYearId) {
+    throw new Error('No active fiscal year configured. Please set a current fiscal year in Accounting Settings.')
+  }
+  const costCenterId = data.costCenterId || config.defaultCostCenterId || null
+  const remarks = data.remarks || (data.direction === 'received' ? 'Cheque returned unpaid' : 'Issued cheque returned unpaid')
+  const entries: GLEntryInput[] = []
+  if (data.direction === 'received') {
+    if (!config.defaultReceivableAccountId) throw new Error('GL_ACCOUNTS_MISSING: Cannot reverse cheque — missing Accounts Receivable account. Configure in Settings → Accounting.')
+    entries.push(
+      { accountId: config.defaultReceivableAccountId, debit: amount, ...(data.partyId ? { partyType: 'customer' as const, partyId: data.partyId } : {}), costCenterId, remarks },
+      { accountId: data.accountId, credit: amount, costCenterId, remarks },
+    )
+  } else {
+    if (!config.defaultPayableAccountId) throw new Error('GL_ACCOUNTS_MISSING: Cannot reverse cheque — missing Accounts Payable account. Configure in Settings → Accounting.')
+    entries.push(
+      { accountId: data.accountId, debit: amount, costCenterId, remarks },
+      { accountId: config.defaultPayableAccountId, credit: amount, ...(data.partyId ? { partyType: 'supplier' as const, partyId: data.partyId } : {}), costCenterId, remarks },
+    )
+  }
+  return createGLEntries(tx, {
+    tenantId,
+    postingDate: data.postingDate,
+    voucherType: 'cheque',
+    voucherId: data.chequeId,
+    voucherNumber: data.voucherNumber,
+    fiscalYearId: config.currentFiscalYearId,
+    entries,
+  })
+}
+
+/** Default expense account (accounting settings); configured = accounting is set up. */
+export async function getDefaultExpenseAccount(tx: DbOrTx, tenantId: string): Promise<{ configured: boolean; accountId: string | null }> {
+  const [settings] = await tx.select().from(accountingSettings).where(eq(accountingSettings.tenantId, tenantId)).limit(1)
+  return { configured: !!settings, accountId: settings?.defaultExpenseAccountId || null }
+}
+
+/**
+ * Expense paid outside the POS drawer (office cash, bank, card, cheque):
+ *   Dr expense account / Cr cash | bank | cheque account   (voucher type 'expense')
+ * Drawer expenses post through their pos_cash_movement instead.
+ */
+export async function postExpenseToGL(tx: DbOrTx, tenantId: string, data: {
+  expenseId: string
+  expenseNo: string
+  postingDate: string
+  amount: number
+  expenseAccountId: string | null
+  paymentMethod: string
+  costCenterId?: string | null
+  remarks?: string
+}): Promise<string[] | null> {
+  const amount = roundCurrency(data.amount)
+  if (!(amount > 0)) return null
+  const config = await getAccountingConfig(tx, tenantId)
+  if (!config) return null
+  if (!config.currentFiscalYearId) {
+    throw new Error('No active fiscal year configured. Please set a current fiscal year in Accounting Settings.')
+  }
+  if (!config.defaultCashAccountId) {
+    throw new Error('GL_ACCOUNTS_MISSING: Cannot post expense — missing Cash account. Configure in Settings → Accounting.')
+  }
+  if (!data.expenseAccountId) {
+    throw new Error('GL_ACCOUNTS_MISSING: Cannot post expense — choose an account for the category or set the default expense account in Settings → Accounting.')
+  }
+  const payAccount = await resolveReceiptAccount(tx, tenantId, config, data.paymentMethod)
+  const costCenterId = data.costCenterId || config.defaultCostCenterId || null
+  const remarks = data.remarks || `Expense ${data.expenseNo}`
+  return createGLEntries(tx, {
+    tenantId,
+    postingDate: data.postingDate,
+    voucherType: 'expense',
+    voucherId: data.expenseId,
+    voucherNumber: data.expenseNo,
+    fiscalYearId: config.currentFiscalYearId,
+    entries: [
+      { accountId: data.expenseAccountId, debit: amount, costCenterId, remarks },
+      { accountId: payAccount, credit: amount, costCenterId, remarks },
+    ],
   })
 }
