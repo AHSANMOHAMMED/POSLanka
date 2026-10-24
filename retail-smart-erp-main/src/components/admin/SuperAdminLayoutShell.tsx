@@ -31,6 +31,7 @@ import {
 import { useTheme } from '@/components/providers/ThemeProvider'
 import { cn } from '@/lib/utils'
 import { AdminSessionTimer, signOutAdmin } from './AdminSessionTimer'
+import { TextSizeControl, useTextScale } from '@/components/ui/text-size-control'
 import { AdminHealthProvider, useAdminHealth } from './AdminHealth'
 import { StatusDot } from './kit'
 import { LogoMark } from './kit/LogoMark'
@@ -106,6 +107,8 @@ export function SuperAdminLayoutShell(props: SuperAdminLayoutShellProps) {
 
 function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellProps) {
   const pathname = usePathname()
+  // Apply this admin's text size (zoom of the main area)
+  useTextScale('admin', adminEmail || null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [mobileSearch, setMobileSearch] = useState(false)
 
@@ -376,6 +379,9 @@ function UserMenu({ email, name }: { email?: string; name?: string }) {
             {email && <p className="truncate text-[12.5px] text-adm-muted">{email}</p>}
             <p className="mt-0.5 text-[12px] text-adm-subtle">Role: {ADMIN_ROLE_LABELS[role]}</p>
           </div>
+          <div className="my-1 h-px bg-adm-border" />
+          {/* Text size: zooms the console's main area (the admin kit is px-based) */}
+          <TextSizeControl scope="admin" userId={email || null} className="px-2.5 py-2" />
           <div className="my-1 h-px bg-adm-border" />
           <Link
             role="menuitem"

@@ -15,6 +15,7 @@ import { useSidebar } from './Sidebar'
 import { GlobalSearch } from './GlobalSearch'
 import { ConnectionDot } from '@/components/ui/connection-status'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
+import { TextSizeControl, useTextScale } from '@/components/ui/text-size-control'
 import { CompanySwitcher } from './CompanySwitcher'
 import { LanguageSwitcher } from './LanguageSwitcher'
 import { broadcastAuthEvent } from '@/lib/auth/events'
@@ -44,6 +45,8 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
   const pathname = usePathname()
   const { data: session } = useSession()
   const company = useCompanyOptional()
+  // The signed-in user's text size (90%..140%), per user on this device
+  useTextScale('app', session?.user?.id || null)
   const { mobileOpen, setMobileOpen } = useSidebar()
   const { isModuleEnabled } = useModuleAccess()
   // Server-effective permissions (custom roles, overrides, module toggles); role defaults until loaded
@@ -469,6 +472,10 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
                   </span>
                 )}
               </div>
+              {/* Text size */}
+              <div className="px-3 py-2.5 border-b border-gray-100 dark:border-gray-700">
+                <TextSizeControl scope="app" userId={session?.user?.id || null} />
+              </div>
               {/* Menu items */}
               <div className="py-1">
                 <Link
@@ -595,6 +602,9 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
                   <div>
                     <ThemeToggle onThemeChange={handleThemeChange} />
                   </div>
+                </div>
+                <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-700">
+                  <TextSizeControl scope="app" userId={session?.user?.id || null} />
                 </div>
 
                 {/* Mobile menu items */}

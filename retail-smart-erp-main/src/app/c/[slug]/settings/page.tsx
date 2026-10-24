@@ -1,5 +1,6 @@
 'use client'
 
+import { TextSizeControl } from '@/components/ui/text-size-control'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { toast } from '@/components/ui/toast'
@@ -308,6 +309,10 @@ export default function SettingsPage() {
               }
             />
           </FieldGrid>
+          <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700 max-w-xs">
+            {/* Per-user, this device (also in the top-bar user menu) */}
+            <TextSizeControl scope="app" userId={session?.user?.id || null} variant="field" />
+          </div>
         </SectionCard>
 
         {/* Right column: AI Features + Subscription */}

@@ -266,22 +266,23 @@ html, body, [data-theme] {
 /* Base body styles */
 body {
   font-family: var(--font-inter, 'Inter', system-ui, -apple-system, sans-serif);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-text-scale, 1));
   background-color: var(--page-bg);
   color: hsl(var(--foreground));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Compact sizing for all elements */
+/* Compact sizing for all elements. --ui-text-scale is the user's text size
+   (90%..140%, src/lib/ui/text-scale.ts); rem-based sizes scale with it. */
 html {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-text-scale, 1));
 }
 
 /* Cashier POS: ~10% larger text (set by the POS page while it is open) */
 html.pos-large-text,
 html.pos-large-text body {
-  font-size: 15.5px;
+  font-size: calc(15.5px * var(--ui-text-scale, 1));
 }
 
 /* Compact table styles */
@@ -1628,19 +1629,19 @@ button:active:not(:disabled) {
 /* Base mobile styles (applies to all screens) */
 /* Font size scaling for mobile */
 html {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-text-scale, 1));
 }
 
 /* On tablet and desktop, keep compact 14px base (Odoo-like density) */
 @media (min-width: 768px) {
   html {
-    font-size: 14px;
+    font-size: calc(14px * var(--ui-text-scale, 1));
   }
 }
 
 @media (min-width: 1024px) {
   html {
-    font-size: 14px;
+    font-size: calc(14px * var(--ui-text-scale, 1));
   }
 }
 
