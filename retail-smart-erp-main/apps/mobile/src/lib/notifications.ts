@@ -54,7 +54,7 @@ async function ensureAndroidChannel() {
       name: 'skyERPOS alerts',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#0F766E',
+      lightColor: '#0050C0',
     })
   } catch {
     // Expo Go without notification support: ignore.

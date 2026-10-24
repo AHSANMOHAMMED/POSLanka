@@ -5,13 +5,15 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { startAutoSync } from '../src/lib/offlineQueue'
 import { startIntakeAutoSync } from '../src/lib/intakeStore'
 import { installNotificationHandlers } from '../src/lib/notifications'
+import { IS_ADMIN_APP } from '../src/lib/appVariant'
 
 export default function RootLayout() {
   useEffect(() => {
-    // Replays queued offline sales whenever connectivity returns.
-    startAutoSync()
-    // Uploads stock intake scans saved while offline.
-    startIntakeAutoSync()
+    // Shop app only: replays queued offline sales and uploads stock intake scans saved offline
+    if (!IS_ADMIN_APP) {
+      startAutoSync()
+      startIntakeAutoSync()
+    }
     // Foreground notification toasts + deep links (data.screen).
     return installNotificationHandlers()
   }, [])

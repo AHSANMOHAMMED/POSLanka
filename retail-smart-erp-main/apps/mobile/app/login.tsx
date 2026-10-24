@@ -8,7 +8,6 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
-  Switch,
   Image,
 } from 'react-native'
 import { router } from 'expo-router'
@@ -31,6 +30,7 @@ import { fetchCurrentShift } from '../src/lib/shift'
 import { THEME } from '../src/lib/theme'
 import { adminLogin, setAdminSession, type AdminUser } from '../src/lib/adminApi'
 import { registerPushToken } from '../src/lib/notifications'
+import { IS_ADMIN_APP } from '../src/lib/appVariant'
 
 interface LoginResponse {
   token: string
@@ -48,8 +48,10 @@ export default function LoginScreen() {
   const insets = useSafeAreaInsets()
   const [busy, setBusy] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
-  // Platform admin (super-admin console) mode: separate endpoint, separate token.
-  const [adminMode, setAdminMode] = useState(false)
+  // This build's sign-in: platform admins (skyERPOS Admin app) or shop staff (skyERPOS app)
+  const adminMode = IS_ADMIN_APP
+  const [showPassword, setShowPassword] = useState(false)
+  const [showServer, setShowServer] = useState(false)
   const [totpCode, setTotpCode] = useState('')
   const [needsTotp, setNeedsTotp] = useState(false)
 
@@ -195,51 +197,33 @@ export default function LoginScreen() {
     }
   }
 
+  const title = IS_ADMIN_APP ? (needsTotp ? 'Two-step verification' : 'Admin sign in') : 'Staff sign in'
+  const subtitle = IS_ADMIN_APP
+    ? needsTotp ? 'Enter the 6-digit code from your authenticator app.' : 'Platform console for skyERPOS administrators.'
+    : 'Sign in with your company’s Business ID.'
+
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={[styles.content, { paddingTop: 24 + insets.top, paddingBottom: 24 + insets.bottom }]}
+      contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 + insets.bottom }}
       keyboardShouldPersistTaps="handled"
     >
-      <View style={styles.brandBox}>
-        <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="skyERPOS" />
-        <Text style={styles.sub}>All-in-one POS & ERP</Text>
+      {/* Brand header in the logo blue */}
+      <View style={[styles.hero, { paddingTop: 36 + insets.top }]}>
+        <View style={styles.logoCard}>
+          <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="skyERPOS" />
+        </View>
+        <Text style={styles.heroTitle}>{IS_ADMIN_APP ? 'Admin Console' : 'Point of Sale'}</Text>
+        <Text style={styles.heroSub}>{IS_ADMIN_APP ? 'Vendors, sales and approvals across the platform' : 'Powerful. Reliable. Complete POS solution.'}</Text>
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardHeader}>{adminMode ? 'Platform Admin Console' : 'Staff Sign In'}</Text>
+        <Text style={styles.cardTitle}>{title}</Text>
+        <Text style={styles.cardSub}>{subtitle}</Text>
 
-        <View style={styles.modeRow}>
-          <View style={{ flex: 1, marginRight: 12 }}>
-            <Text style={styles.modeTitle}>Platform admin</Text>
-            <Text style={styles.modeSub}>Super-admin companion: pulse, live feed, vendors, approvals</Text>
-          </View>
-          <Switch
-            value={adminMode}
-            onValueChange={(v) => {
-              setAdminMode(v)
-              setNeedsTotp(false)
-              setTotpCode('')
-            }}
-            trackColor={{ false: THEME.colors.border, true: THEME.colors.primary }}
-          />
-        </View>
-
-        <Text style={styles.label}>SERVER API ENDPOINT</Text>
-        <TextInput
-          style={styles.input}
-          placeholder={DEFAULT_API_URL}
-          placeholderTextColor={THEME.colors.textSubtle}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          value={apiUrl}
-          onChangeText={setApiUrl}
-        />
-
-        {!adminMode && !useSlug && (
+        {!IS_ADMIN_APP && !useSlug && (
           <>
-            <Text style={styles.label}>BUSINESS ID</Text>
+            <Text style={styles.label}>Business ID</Text>
             <TextInput
               style={[styles.input, styles.businessIdInput]}
               placeholder="PL-123456"
@@ -254,12 +238,12 @@ export default function LoginScreen() {
                 if (n) setBusinessId(formatBusinessId(n))
               }}
             />
-            <Text style={styles.hint}>Your company&apos;s Business ID — shown to the owner on the Staff page.</Text>
+            <Text style={styles.hint}>Ask your manager or owner — it’s on the Staff page.</Text>
           </>
         )}
-        {!adminMode && useSlug && (
+        {!IS_ADMIN_APP && useSlug && (
           <>
-            <Text style={styles.label}>COMPANY SLUG (SUBDOMAIN)</Text>
+            <Text style={styles.label}>Company web address</Text>
             <TextInput
               style={styles.input}
               placeholder="e.g. lanka-super"
@@ -271,38 +255,44 @@ export default function LoginScreen() {
             />
           </>
         )}
-        {!adminMode && (
-          <Pressable onPress={() => setUseSlug((v) => !v)} style={styles.linkBtn} hitSlop={8}>
-            <Text style={styles.linkText}>
-              {useSlug ? 'Use Business ID instead' : 'Use company slug instead (older setups)'}
-            </Text>
-          </Pressable>
+
+        {!(IS_ADMIN_APP && needsTotp) && (
+          <>
+            <Text style={styles.label}>{IS_ADMIN_APP ? 'Admin email' : 'Email or username'}</Text>
+            <TextInput
+              style={styles.input}
+              placeholder={IS_ADMIN_APP ? 'admin@company.lk' : 'you@company.lk'}
+              placeholderTextColor={THEME.colors.textSubtle}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              value={email}
+              onChangeText={setEmail}
+            />
+
+            <Text style={styles.label}>Password</Text>
+            <View style={styles.passwordRow}>
+              <TextInput
+                style={[styles.input, { flex: 1, marginBottom: 0, paddingRight: 64 }]}
+                placeholder="Password"
+                placeholderTextColor={THEME.colors.textSubtle}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                value={password}
+                onChangeText={setPassword}
+                onSubmitEditing={onLogin}
+                returnKeyType="go"
+              />
+              <Pressable style={styles.showBtn} onPress={() => setShowPassword((v) => !v)} hitSlop={8}>
+                <Text style={styles.showBtnText}>{showPassword ? 'Hide' : 'Show'}</Text>
+              </Pressable>
+            </View>
+          </>
         )}
 
-        <Text style={styles.label}>{adminMode ? 'ADMIN EMAIL' : 'STAFF EMAIL'}</Text>
-        <TextInput
-          style={styles.input}
-          placeholder={adminMode ? 'admin@poslanka.lk' : 'you@company.lk'}
-          placeholderTextColor={THEME.colors.textSubtle}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
-        />
-
-        <Text style={styles.label}>PASSCODE / PASSWORD</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="••••••••"
-          placeholderTextColor={THEME.colors.textSubtle}
-          secureTextEntry
-          value={password}
-          onChangeText={setPassword}
-        />
-
-        {adminMode && needsTotp && (
+        {IS_ADMIN_APP && needsTotp && (
           <>
-            <Text style={styles.label}>AUTHENTICATOR CODE (6 DIGITS)</Text>
+            <Text style={styles.label}>Authenticator code</Text>
             <TextInput
               style={[styles.input, styles.totpInput]}
               placeholder="123456"
@@ -314,105 +304,127 @@ export default function LoginScreen() {
               onChangeText={(v) => setTotpCode(v.replace(/[^0-9]/g, ''))}
               onSubmitEditing={onLogin}
             />
+            <Pressable onPress={() => { setNeedsTotp(false); setTotpCode('') }} style={styles.linkBtn} hitSlop={8}>
+              <Text style={styles.linkText}>‹ Back to email and password</Text>
+            </Pressable>
           </>
         )}
 
         <Pressable
-          style={[styles.button, busy && { opacity: 0.6 }]}
+          style={[styles.button, (busy || !settingsLoaded) && { opacity: 0.6 }]}
           onPress={onLogin}
           disabled={busy || !settingsLoaded}
+          accessibilityRole="button"
         >
           {busy || !settingsLoaded ? (
             <ActivityIndicator color="#FFF" />
           ) : (
-            <Text style={styles.buttonText}>{adminMode ? (needsTotp ? 'Verify Code & Open Console →' : 'Sign In to Admin Console →') : 'Sign In →'}</Text>
+            <Text style={styles.buttonText}>{IS_ADMIN_APP ? (needsTotp ? 'Verify and continue' : 'Sign in to console') : 'Sign in'}</Text>
           )}
         </Pressable>
 
-        <View style={styles.footerNote}>
-          <Text style={styles.footerNoteText}>
-            Server address and Business ID are remembered on this device.
-          </Text>
-        </View>
+        {/* Server address (and the old company-slug sign-in) — set once, rarely changed */}
+        <Pressable onPress={() => setShowServer((v) => !v)} style={styles.settingsToggle} hitSlop={8}>
+          <Text style={styles.settingsToggleText}>{showServer ? '▾' : '▸'} Server settings</Text>
+          {!showServer && <Text style={styles.settingsValue} numberOfLines={1}>{apiUrl.replace(/^https?:\/\//, '')}</Text>}
+        </Pressable>
+        {showServer && (
+          <View style={styles.settingsBox}>
+            <Text style={styles.label}>Server address</Text>
+            <TextInput
+              style={styles.input}
+              placeholder={DEFAULT_API_URL}
+              placeholderTextColor={THEME.colors.textSubtle}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+              value={apiUrl}
+              onChangeText={setApiUrl}
+            />
+            {!IS_ADMIN_APP && (
+              <Pressable onPress={() => setUseSlug((v) => !v)} style={styles.linkBtn} hitSlop={8}>
+                <Text style={styles.linkText}>{useSlug ? 'Sign in with Business ID' : 'Sign in with company web address (older setups)'}</Text>
+              </Pressable>
+            )}
+            <Text style={styles.hint}>Remembered on this device.</Text>
+          </View>
+        )}
       </View>
+
+      <Text style={styles.footer}>© {new Date().getFullYear()} skyERPOS</Text>
     </ScrollView>
   )
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: THEME.colors.background },
-  content: { padding: 24, justifyContent: 'center', minHeight: '100%', width: '100%', maxWidth: 520, alignSelf: 'center' },
-  businessIdInput: { fontFamily: 'monospace', fontSize: 18, letterSpacing: 2, marginBottom: 4 },
-  hint: { fontSize: 11, color: THEME.colors.textSubtle, marginBottom: 10 },
-  linkBtn: { alignSelf: 'flex-start', marginBottom: 14 },
-  linkText: { fontSize: 12, fontWeight: '700', color: THEME.colors.primary },
-  brandBox: { alignItems: 'center', marginBottom: 28 },
-  logo: { width: 230, height: 105, marginBottom: 4 },
-  sub: { marginTop: 4, color: THEME.colors.textMuted, fontSize: 13, fontWeight: '500' },
+  hero: {
+    backgroundColor: THEME.colors.primary,
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingBottom: 64,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+  },
+  logoCard: { backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 18, paddingVertical: 10, marginBottom: 14, elevation: 3, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+  logo: { width: 190, height: 87 },
+  heroTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800' },
+  heroSub: { color: 'rgba(255,255,255,0.8)', fontSize: 13, marginTop: 4, textAlign: 'center' },
   card: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
+    borderRadius: 20,
     padding: 22,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+    marginHorizontal: 20,
+    marginTop: -40,
+    width: '90%',
+    maxWidth: 480,
+    alignSelf: 'center',
+    borderTopWidth: 4,
+    borderTopColor: THEME.colors.secondaryAmber,
+    shadowColor: '#0B2A66',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.12,
+    shadowRadius: 14,
+    elevation: 5,
   },
-  cardHeader: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: THEME.colors.text,
-    marginBottom: 18,
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.colors.border,
-    paddingBottom: 10,
-  },
-  label: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: THEME.colors.textMuted,
-    letterSpacing: 0.5,
-    marginBottom: 6,
-  },
+  cardTitle: { fontSize: 20, fontWeight: '800', color: THEME.colors.text },
+  cardSub: { fontSize: 13, color: THEME.colors.textMuted, marginTop: 4, marginBottom: 18 },
+  label: { fontSize: 12, fontWeight: '700', color: THEME.colors.text, marginBottom: 6 },
   input: {
     borderWidth: 1,
     borderColor: THEME.colors.border,
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 11,
-    fontSize: 14,
+    paddingVertical: 12,
+    fontSize: 15,
     color: THEME.colors.text,
     marginBottom: 14,
   },
+  businessIdInput: { fontFamily: 'monospace', fontSize: 18, letterSpacing: 2, marginBottom: 4 },
+  totpInput: { fontFamily: 'monospace', fontSize: 22, letterSpacing: 6, textAlign: 'center' },
+  hint: { fontSize: 11.5, color: THEME.colors.textMuted, marginBottom: 14 },
+  passwordRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
+  showBtn: { position: 'absolute', right: 12, paddingVertical: 6, paddingHorizontal: 6 },
+  showBtnText: { color: THEME.colors.primary, fontWeight: '700', fontSize: 13 },
+  linkBtn: { alignSelf: 'flex-start', marginBottom: 12 },
+  linkText: { fontSize: 12.5, fontWeight: '700', color: THEME.colors.primary },
   button: {
     backgroundColor: THEME.colors.primary,
     borderRadius: 12,
-    paddingVertical: 14,
+    paddingVertical: 15,
     alignItems: 'center',
-    marginTop: 6,
+    marginTop: 4,
     shadowColor: THEME.colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 6,
     elevation: 4,
   },
-  buttonText: { color: '#FFF', fontWeight: '800', fontSize: 15 },
-  modeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 16,
-  },
-  modeTitle: { fontSize: 13, fontWeight: '800', color: THEME.colors.text },
-  modeSub: { fontSize: 11, color: THEME.colors.textMuted, marginTop: 1 },
-  totpInput: { fontFamily: 'monospace', fontSize: 22, letterSpacing: 6, textAlign: 'center' },
-  footerNote: { marginTop: 16, alignItems: 'center' },
-  footerNoteText: { fontSize: 11, color: THEME.colors.textSubtle, textAlign: 'center' },
+  buttonText: { color: '#FFF', fontWeight: '800', fontSize: 16 },
+  settingsToggle: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 18 },
+  settingsToggleText: { fontSize: 12.5, fontWeight: '700', color: THEME.colors.textMuted },
+  settingsValue: { flex: 1, fontSize: 12, color: THEME.colors.textSubtle, textAlign: 'right' },
+  settingsBox: { marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: THEME.colors.border },
+  footer: { textAlign: 'center', color: THEME.colors.textSubtle, fontSize: 11.5, marginTop: 24 },
 })

@@ -1,20 +1,20 @@
-// Stitch "Operational Velocity" Design System Tokens for skyERPOS Mobile
+// skyERPOS mobile design tokens: logo blue (#0050C0) and orange (#F87000)
 
 export const THEME = {
   colors: {
-    primary: '#0F766E', // Deep Teal - authoritative action & active state
-    primaryDark: '#005C55',
-    primaryLight: '#E6F4F2',
-    primaryContainer: '#0F766E',
+    primary: '#0050C0', // skyERPOS blue (logo) - actions & active state
+    primaryDark: '#003C91',
+    primaryLight: '#E8EFFB',
+    primaryContainer: '#0050C0',
     onPrimary: '#FFFFFF',
-    onPrimaryContainer: '#A3FAEF',
+    onPrimaryContainer: '#CFE0FF',
 
-    secondary: '#855300', // Warm Amber
-    secondaryAmber: '#F59E0B',
-    secondaryContainer: '#FEA619',
-    secondaryLight: '#FEF3C7',
+    secondary: '#C25700', // skyERPOS orange (logo #F87000) - highlights & attention
+    secondaryAmber: '#F87000',
+    secondaryContainer: '#FF9A3D',
+    secondaryLight: '#FFF1E6',
     onSecondary: '#FFFFFF',
-    onSecondaryContainer: '#684000',
+    onSecondaryContainer: '#7A3300',
 
     tertiary: '#16A34A', // Emerald - payment verified, live sync
     tertiaryContainer: '#007A33',
@@ -25,12 +25,12 @@ export const THEME = {
     errorLight: '#FEE2E2',
     onError: '#FFFFFF',
 
-    background: '#FAF8FF',
-    surface: '#FAF8FF',
-    surfaceContainerLow: '#F2F3FF',
-    surfaceContainer: '#EAEDFF',
-    surfaceContainerHigh: '#E2E7FF',
-    surfaceContainerHighest: '#DAE2FD',
+    background: '#F5F8FD',
+    surface: '#F5F8FD',
+    surfaceContainerLow: '#EEF3FB',
+    surfaceContainer: '#E6EDF9',
+    surfaceContainerHigh: '#DCE6F7',
+    surfaceContainerHighest: '#D1DEF4',
     card: '#FFFFFF',
 
     outline: '#CBD5E1',

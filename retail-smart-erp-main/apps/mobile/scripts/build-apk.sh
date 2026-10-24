@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build a standalone, release-signed Android APK locally (no Expo account needed).
 #
-#   npm run build:apk                                   # server: https://app.poslanka.lk
+#   npm run build:apk                                   # skyERPOS (shop staff POS app)
+#   APP_VARIANT=admin npm run build:apk                 # skyERPOS Admin (platform super admins)
 #   API_URL=http://192.168.1.10:3000 npm run build:apk  # default server for a local test build
 #
 # The server address is only the default: it can be changed on the app's sign-in screen.
@@ -14,6 +15,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 API_URL="${API_URL:-https://app.poslanka.lk}"
+# vendor = skyERPOS (lk.poslanka.app), admin = skyERPOS Admin (lk.poslanka.admin) — see app.config.js
+APP_VARIANT="${APP_VARIANT:-vendor}"
+export APP_VARIANT EXPO_PUBLIC_APP_VARIANT="$APP_VARIANT"
 KEY_DIR="${POSLANKA_KEY_DIR:-$HOME/.poslanka-keys}"
 KEYSTORE="$KEY_DIR/poslanka-release.jks"
 PASSFILE="$KEY_DIR/poslanka-release.password"
@@ -33,7 +37,7 @@ if [ ! -f "$KEYSTORE" ]; then
 fi
 PASS="$(cat "$PASSFILE")"
 
-echo "› Generating the native Android project (default server $API_URL)"
+echo "› Generating the native Android project for the $APP_VARIANT app (default server $API_URL)"
 CI=1 EXPO_PUBLIC_API_URL="$API_URL" npx expo prebuild --platform android --clean --no-install
 
 echo "› Building release APK for $ABIS"
@@ -58,6 +62,6 @@ cd ..
 
 VERSION="$(node -p "require('./app.json').expo.version")"
 mkdir -p dist
-OUT="dist/skyERPOS-${VERSION}.apk"
+if [ "$APP_VARIANT" = "admin" ]; then OUT="dist/skyERPOS-Admin-${VERSION}.apk"; else OUT="dist/skyERPOS-${VERSION}.apk"; fi
 cp android/app/build/outputs/apk/release/app-release.apk "$OUT"
 echo "✔ $OUT ($(du -h "$OUT" | cut -f1))"

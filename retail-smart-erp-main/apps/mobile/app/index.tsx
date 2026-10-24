@@ -6,6 +6,7 @@ import { hasPermission } from '../src/lib/roles'
 import { getAdminToken } from '../src/lib/adminApi'
 import { registerPushToken } from '../src/lib/notifications'
 import { fetchCurrentShift } from '../src/lib/shift'
+import { IS_ADMIN_APP } from '../src/lib/appVariant'
 
 export default function Index() {
   const [target, setTarget] = useState<'/login' | '/pos' | '/shifts' | '/home' | '/admin/pulse' | null>(null)
@@ -14,11 +15,15 @@ export default function Index() {
     let cancelled = false
     ;(async () => {
       await loadSavedSettings()
-      const token = await getToken()
-      if (!token) {
-        // A platform-admin session (separate token) goes straight to the admin console.
+      // skyERPOS Admin app: platform console only
+      if (IS_ADMIN_APP) {
         const adminToken = await getAdminToken()
         if (!cancelled) setTarget(adminToken ? '/admin/pulse' : '/login')
+        return
+      }
+      const token = await getToken()
+      if (!token) {
+        if (!cancelled) setTarget('/login')
         return
       }
       // Re-register the push token on every cold start (tokens rotate); ignores 404 / Expo Go.
