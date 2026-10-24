@@ -154,9 +154,9 @@ jobs:
             npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
           done
           npx tsx scripts/tests/gG-mobile.ts
-      - name: POS cash controls, Sri Lanka VAT, procure-to-pay, pricing & catalog
+      - name: POS cash controls, Sri Lanka VAT, procure-to-pay, pricing & catalog, pharmacy & feature switches
         run: |
-          for t in h1-pos-controls h2-tax h3-inventory-purchasing h5-pricing-catalog; do
+          for t in h1-pos-controls h2-tax h3-inventory-purchasing h5-pricing-catalog j1-pharmacy-features; do
             npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
           done
       - name: Platform (offline sync, backup, API keys, dashboard, read permissions)
@@ -165,7 +165,7 @@ jobs:
         run: |
           npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/i2-roles.ts
           npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/i5-nonfunctional.ts
-      - name: Super-admin console (vendors, platform, roles, coupons, refunds, push)
+      - name: Super-admin console (vendors, staff, vendor data, platform, roles, coupons, refunds, push)
         env:
           NEXTAUTH_SECRET: i3-test-secret
           PAYHERE_MERCHANT_ID: '1211111'
@@ -173,6 +173,7 @@ jobs:
         run: |
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i3-admin-vendors.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i4-admin-platform.ts
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i5-vendor-data.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i6-finish.ts
 
   build:
