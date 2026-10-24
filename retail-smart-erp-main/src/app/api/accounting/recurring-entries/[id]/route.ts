@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateRecurringEntrySchema } from '@/lib/validation/schemas/accounting'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 function calculateNextRunDate(currentDate: string, pattern: string): string {
   const date = new Date(currentDate + 'T00:00:00')
@@ -270,10 +271,16 @@ export async function DELETE(
         return NextResponse.json({ error: 'Recurring entry template not found' }, { status: 404 })
       }
 
-      await db.delete(recurringJournalTemplates).where(eq(recurringJournalTemplates.id, id))
+      // Vendors never hard-delete: archive + recycle bin (only a super admin can restore or purge)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: tenantId, entityType: 'recurring_journal_template', entityId: id, userId: session!.user.id, userName: session!.user.name,
+      })
+      if (!binned) {
+        return NextResponse.json({ error: 'Recurring entry template not found' }, { status: 404 })
+      }
 
       logAndBroadcast(tenantId, 'recurring-entry', 'deleted', id)
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/accounting/recurring-entries/[id]', error)

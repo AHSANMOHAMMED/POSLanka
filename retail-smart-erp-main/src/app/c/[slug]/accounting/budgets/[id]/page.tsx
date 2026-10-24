@@ -262,7 +262,7 @@ export default function BudgetDetailPage() {
   async function handleDelete() {
     const res = await fetch(`/api/accounting/budgets/${id}`, { method: 'DELETE' })
     if (res.ok) {
-      toast.success('Budget deleted')
+      toast.success('Budget deleted (copy kept in recycle bin)')
       router.push(`/c/${slug}/accounting/budgets`)
     } else {
       const data = await res.json()
@@ -563,7 +563,7 @@ export default function BudgetDetailPage() {
             onClick: handleDelete,
             confirmation: {
               title: 'Delete Budget',
-              message: `Are you sure you want to delete "${budget.name}"? This will also remove all budget items. This action cannot be undone.`,
+              message: `Are you sure you want to delete "${budget.name}"? This will also remove all budget items. A copy is kept in the recycle bin for the platform administrator.`,
               variant: 'danger',
               confirmText: 'Delete',
             },

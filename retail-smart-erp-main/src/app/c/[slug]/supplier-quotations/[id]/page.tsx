@@ -193,7 +193,7 @@ export default function SupplierQuotationDetailPage({ params }: { params: Promis
   async function handleDelete() {
     const res = await fetch(`/api/supplier-quotations/${id}`, { method: 'DELETE' })
     if (res.ok) {
-      toast.success('Deleted')
+      toast.success('Deleted (copy kept in recycle bin)')
       router.push(`/c/${tenantSlug}/supplier-quotations`)
     } else {
       toast.error('Failed to delete')

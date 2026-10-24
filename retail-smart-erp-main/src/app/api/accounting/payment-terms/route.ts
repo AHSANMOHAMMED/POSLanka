@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { paymentTermsListSchema, createPaymentTermSchema } from '@/lib/validation/schemas/accounting'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(request: NextRequest) {
   const qp = validateSearchParams(request, paymentTermsListSchema)
@@ -17,6 +18,8 @@ export async function GET(request: NextRequest) {
     const { search, all, active: activeOnly } = qp.data
 
     const conditions = []
+    // Rows moved to the recycle bin are hidden (deactivated ones still show)
+    conditions.push(notInRecycleBin('payment_term', paymentTerms.id))
     if (search) conditions.push(ilike(paymentTerms.name, `%${escapeLikePattern(search)}%`))
     if (activeOnly) conditions.push(eq(paymentTerms.isActive, true))
     const where = conditions.length > 0 ? and(...conditions) : undefined

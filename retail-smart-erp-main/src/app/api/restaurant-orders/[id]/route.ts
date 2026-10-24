@@ -23,6 +23,7 @@ import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 import { billableOrderItems } from '@/lib/restaurant/order-totals'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // Status workflow: open -> closed -> completed OR cancelled
 const validStatusTransitions: Record<string, string[]> = {
@@ -679,6 +680,11 @@ export async function DELETE(
           throw new Error('CANNOT_DELETE_WITH_ITEMS')
         }
 
+        // Keep a copy in the recycle bin (super admin can restore it)
+        await moveToRecycleBin(tx, {
+          tenantId: session.user.tenantId, entityType: 'restaurant_order', entityId: id,
+          userId: session.user.id, userName: session.user.name,
+        })
         // Delete kitchen order first (cascade)
         const kitchenOrder = await tx.query.kitchenOrders.findFirst({
           where: eq(kitchenOrders.restaurantOrderId, id),

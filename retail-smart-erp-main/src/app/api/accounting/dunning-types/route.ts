@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { dunningTypesListSchema, createDunningTypeSchema } from '@/lib/validation/schemas/accounting'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(request: NextRequest) {
   const qp = validateSearchParams(request, dunningTypesListSchema)
@@ -20,6 +21,8 @@ export async function GET(request: NextRequest) {
     const { search, all, page, pageSize } = qp.data
 
     const conditions = []
+    // Rows moved to the recycle bin are hidden (deactivated ones still show)
+    conditions.push(notInRecycleBin('dunning_type', dunningTypes.id))
     if (search) conditions.push(ilike(dunningTypes.name, `%${escapeLikePattern(search)}%`))
     const where = conditions.length > 0 ? and(...conditions) : undefined
 

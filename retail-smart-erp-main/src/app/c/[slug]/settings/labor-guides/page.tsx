@@ -236,7 +236,7 @@ export default function LaborGuidesPage() {
     try {
       const res = await fetch(`/api/labor-guides/${deleteConfirm.id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Labor guide deleted')
+        toast.success('Labor guide deleted (copy kept in recycle bin)')
         refresh()
       } else {
         const data = await res.json()
@@ -578,7 +578,7 @@ export default function LaborGuidesPage() {
         onClose={() => setDeleteConfirm({ open: false, id: null, name: '' })}
         onConfirm={handleDelete}
         title="Delete Labor Guide"
-        message={`Are you sure you want to delete the labor guide for "${deleteConfirm.name}"? This action cannot be undone.`}
+        message={`Are you sure you want to delete the labor guide for "${deleteConfirm.name}"? A copy is kept in the recycle bin for the platform administrator.`}
         confirmText="Delete"
         variant="danger"
       />

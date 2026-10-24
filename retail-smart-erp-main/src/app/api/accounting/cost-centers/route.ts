@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { costCentersListSchema, createCostCenterSchema } from '@/lib/validation/schemas/accounting'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 interface CostCenterTreeNode {
   id: string
@@ -73,6 +74,7 @@ export async function GET(request: NextRequest) {
         const items = await db
           .select()
           .from(costCenters)
+          .where(notInRecycleBin('cost_center', costCenters.id))
           .orderBy(asc(costCenters.name))
 
         const treeData = buildTree(items)
@@ -84,6 +86,7 @@ export async function GET(request: NextRequest) {
         const items = await db
           .select()
           .from(costCenters)
+          .where(notInRecycleBin('cost_center', costCenters.id))
           .orderBy(asc(costCenters.name))
           .limit(1000)
 
@@ -92,6 +95,8 @@ export async function GET(request: NextRequest) {
 
       // Build search conditions
       const conditions: ReturnType<typeof eq>[] = []
+      // Rows moved to the recycle bin are hidden (deactivated ones still show)
+      conditions.push(notInRecycleBin('cost_center', costCenters.id))
       if (search) {
         conditions.push(ilike(costCenters.name, `%${escapeLikePattern(search)}%`))
       }

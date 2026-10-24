@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { insuranceCompanies } from '@/lib/db/schema'
-import { or, ilike, sql } from 'drizzle-orm'
+import { and, or, ilike, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { requirePermission } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { insuranceCompaniesListSchema, createInsuranceCompanySchema } from '@/lib/validation/schemas/insurance'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // GET all insurance companies for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -39,14 +40,15 @@ export async function GET(request: NextRequest) {
       const [{ count: totalCount }] = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(insuranceCompanies)
-        .where(whereClause)
+        .where(and(notInRecycleBin('insurance_company', insuranceCompanies.id), whereClause))
 
       // Calculate pagination
       const limit = all ? 1000 : Math.min(pageSize, 100) // Max 100 per page
       const offset = all ? undefined : (page - 1) * pageSize
 
       const result = await db.query.insuranceCompanies.findMany({
-        where: whereClause,
+        // Rows moved to the recycle bin are hidden (deactivated ones still show)
+        where: and(notInRecycleBin('insurance_company', insuranceCompanies.id), whereClause),
         orderBy: (insuranceCompanies, { asc }) => [asc(insuranceCompanies.name)],
         limit,
         offset,

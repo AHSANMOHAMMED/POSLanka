@@ -195,7 +195,7 @@ function AccountTreeNode({
             {!account.isSystemAccount && (
               <button
                 onClick={() => onDelete(account)}
-                aria-label={`Delete ${account.name}`}
+                aria-label={`Move ${account.name} to the recycle bin`}
                 className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
               >
                 <Trash2 size={16} />
@@ -361,7 +361,7 @@ export default function ChartOfAccountsPage() {
         method: 'DELETE',
       })
       if (res.ok) {
-        toast.success('Account deleted')
+        toast.success('Account moved to the recycle bin')
         setDeleteAccount(null)
         refresh()
       } else {
@@ -658,9 +658,9 @@ export default function ChartOfAccountsPage() {
         isOpen={!!deleteAccount}
         onClose={() => setDeleteAccount(null)}
         onConfirm={handleDelete}
-        title="Delete Account"
-        message={`Are you sure you want to delete "${deleteAccount?.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move to Recycle Bin"
+        message={`Move "${deleteAccount?.name}" to the recycle bin? Its history is kept. Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
         processing={deleting}
       />

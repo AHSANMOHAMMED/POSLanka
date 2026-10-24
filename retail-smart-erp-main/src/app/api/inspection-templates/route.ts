@@ -10,6 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { inspectionTemplatesListSchema, createInspectionTemplateSchema } from '@/lib/validation/schemas/service-types'
 import { applyHiddenDefaults, getHiddenDefaultIds } from '@/lib/defaults/hidden-defaults'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // GET all inspection templates (system defaults + tenant custom)
 export async function GET(request: NextRequest) {
@@ -51,6 +52,8 @@ export async function GET(request: NextRequest) {
           whereClause,
           eq(inspectionTemplates.isActive, true)
         )
+      } else {
+        whereClause = and(whereClause, notInRecycleBin('inspection_template', inspectionTemplates.id))
       }
 
       const result = await db.query.inspectionTemplates.findMany({

@@ -121,7 +121,7 @@ export default function ServiceTypesPage() {
       const res = await fetch(`/api/service-types/${deleteServiceConfirm.id}`, { method: 'DELETE' })
       if (res.ok) {
         fetchServiceTypes()
-        toast.success('Service type deleted')
+        toast.success('Service type moved to recycle bin')
       } else {
         const data = await res.json()
         toast.error(data.error || 'Failed to delete service type')
@@ -150,7 +150,7 @@ export default function ServiceTypesPage() {
       const res = await fetch(`/api/service-type-groups/${deleteGroupConfirm.id}`, { method: 'DELETE' })
       if (res.ok) {
         setGroups(groups.filter(g => g.id !== deleteGroupConfirm.id))
-        toast.success('Group deleted')
+        toast.success('Group moved to recycle bin')
       } else {
         const data = await res.json()
         toast.error(data.error || 'Failed to delete group')
@@ -336,7 +336,7 @@ export default function ServiceTypesPage() {
                             </button>
                             <button
                               onClick={() => setDeleteServiceConfirm({ open: true, id: st.id, name: st.name })}
-                              aria-label={`Delete ${st.name}`}
+                              aria-label={`Move ${st.name} to recycle bin`}
                               className="p-1 text-red-600 hover:bg-red-50 rounded ml-2"
                             >
                               <Trash2 size={18} />
@@ -411,7 +411,7 @@ export default function ServiceTypesPage() {
                           </button>
                           <button
                             onClick={() => setDeleteServiceConfirm({ open: true, id: st.id, name: st.name })}
-                            aria-label={`Delete ${st.name}`}
+                            aria-label={`Move ${st.name} to recycle bin`}
                             className="p-1 text-red-600 hover:bg-red-50 rounded ml-2"
                           >
                             <Trash2 size={18} />
@@ -506,9 +506,9 @@ export default function ServiceTypesPage() {
         isOpen={deleteServiceConfirm.open}
         onClose={() => setDeleteServiceConfirm({ open: false, id: null, name: '' })}
         onConfirm={handleDeleteService}
-        title="Delete Service Type"
-        message={`Are you sure you want to delete "${deleteServiceConfirm.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move Service Type to Recycle Bin"
+        message={`Move "${deleteServiceConfirm.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
       />
 
@@ -516,9 +516,9 @@ export default function ServiceTypesPage() {
         isOpen={deleteGroupConfirm.open}
         onClose={() => setDeleteGroupConfirm({ open: false, id: null, name: '' })}
         onConfirm={handleDeleteGroup}
-        title="Delete Group"
-        message={`Are you sure you want to delete the group "${deleteGroupConfirm.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move Group to Recycle Bin"
+        message={`Move the group "${deleteGroupConfirm.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
       />
 

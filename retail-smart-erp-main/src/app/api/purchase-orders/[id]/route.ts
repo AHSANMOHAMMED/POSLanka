@@ -8,6 +8,7 @@ import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchas
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseOrderSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // Valid status transitions
 // Note: 'partially_received' and 'fully_received' are set by the /receive endpoint, not direct status changes
@@ -316,6 +317,11 @@ export async function DELETE(
       return { error: NextResponse.json({ error: 'Only draft orders can be deleted. Cancel the order instead.' }, { status: 400 }) }
     }
 
+    // Keep a copy in the recycle bin (super admin can restore it)
+    await moveToRecycleBin(tx, {
+      tenantId: session.user.tenantId, entityType: 'purchase_order', entityId: id,
+      userId: session.user.id, userName: session.user.name,
+    })
     // Delete items first
     await tx.delete(purchaseOrderItems)
       .where(eq(purchaseOrderItems.purchaseOrderId, id))

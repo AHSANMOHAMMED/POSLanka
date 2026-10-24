@@ -6,6 +6,7 @@ import { posProfiles, posProfileUsers, posProfilePaymentMethods, warehouses } fr
 import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { createPosProfileSchema } from '@/lib/validation/schemas/pos'
@@ -28,7 +29,9 @@ export async function GET(request: NextRequest) {
       if (all) {
         const canManage = ['owner', 'manager', 'system_manager'].includes(session.user.role)
         if (canManage) {
+          // Profiles moved to the recycle bin are hidden (deactivated ones still show)
           const allProfiles = await db.query.posProfiles.findMany({
+            where: (p) => notInRecycleBin('pos_profile', p.id),
             with: {
               warehouse: true,
               paymentMethods: true,
@@ -44,8 +47,9 @@ export async function GET(request: NextRequest) {
       }
 
       // Get all profiles the user has access to
+      // (profiles moved to the recycle bin are never offered to the POS)
       const userProfiles = await db.query.posProfileUsers.findMany({
-        where: eq(posProfileUsers.userId, session.user.id),
+        where: and(eq(posProfileUsers.userId, session.user.id), notInRecycleBin('pos_profile', posProfileUsers.posProfileId)),
         with: {
           posProfile: {
             with: {

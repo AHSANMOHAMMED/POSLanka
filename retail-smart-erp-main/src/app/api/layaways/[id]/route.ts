@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { layaways, layawayItems, layawayPayments, customers, customerCreditTransactions, users, items as itemsTable } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { parseCurrency, roundCurrency } from '@/lib/utils/currency'
-import { reverseGLEntries } from '@/lib/accounting/gl'
-import { getTenantTimezone, localParts } from '@/lib/notifications/alert-settings'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateLayawaySchema } from '@/lib/validation/schemas/layaways'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -305,29 +304,26 @@ export async function DELETE(
       return { error: NextResponse.json({ error: 'Only active layaways can be deleted' }, { status: 400 }) }
     }
 
-    // Check if there are payments beyond the initial deposit
+    // A deposit / payment is posted money (Dr Cash / Cr Customer Advance): a layaway that has any
+    // is cancelled (the paid amount moves to store credit), never deleted by the vendor.
     const paymentsResult = await tx
       .select({ id: layawayPayments.id, amount: layawayPayments.amount })
       .from(layawayPayments)
       .where(eq(layawayPayments.layawayId, id))
-
-    // Calculate total payments
     const totalPayments = paymentsResult.reduce((sum, p) => sum + parseCurrency(p.amount), 0)
-    const depositAmount = parseCurrency(currentLayaway.depositAmount)
-
-    // Allow deletion only if payments equal the deposit (no additional payments)
-    if (totalPayments > depositAmount + 0.01) {
+    if (totalPayments > 0.005) {
       return {
         error: NextResponse.json({
-          error: 'Cannot delete layaway with payments beyond the initial deposit. Cancel or forfeit instead.'
+          error: 'This layaway has payments. Cancel it instead (the paid amount moves to store credit).'
         }, { status: 400 })
       }
     }
 
-    // The deposit was posted Dr Cash / Cr Customer Advance. Deleting the layaway erases the
-    // deposit record, so it must also leave the books (deposit handed back / entered in error).
-    await reverseGLEntries(tx, session.user.tenantId, 'layaway_payment', id,
-      localParts(new Date(), await getTenantTimezone(session.user.tenantId)).date)
+    // Keep a copy in the recycle bin (super admin can restore it)
+    await moveToRecycleBin(tx, {
+      tenantId: session.user.tenantId, entityType: 'layaway', entityId: id,
+      userId: session.user.id, userName: session.user.name,
+    })
 
     // Delete payments
     await tx.delete(layawayPayments)

@@ -58,7 +58,7 @@ export default function TemplatesPage() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this template?')) return
+    if (!confirm('Move this template to the recycle bin? Only the platform administrator can restore it.')) return
 
     try {
       const res = await fetch(`/api/notification-templates/${id}`, {
@@ -209,7 +209,7 @@ export default function TemplatesPage() {
                       onClick={() => handleDelete(template.id)}
                       className="text-red-600 hover:text-red-700"
                     >
-                      Delete
+                      Move to recycle bin
                     </Button>
                   </div>
                 </div>

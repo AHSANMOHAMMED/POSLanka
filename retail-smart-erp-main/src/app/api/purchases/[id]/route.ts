@@ -26,6 +26,7 @@ import { planGrnClearing, reversePriceVariance } from '@/lib/purchasing/srbnb'
 import { evaluateThreeWayMatch, matchBlockedMessage } from '@/lib/purchasing/three-way-match'
 import { activeLandedCostFor } from '@/lib/purchasing/landed-cost'
 import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single purchase with items
 export async function GET(
@@ -861,8 +862,9 @@ export async function DELETE(
         return { error: NextResponse.json({ error: 'Purchase not found' }, { status: 404 }) }
       }
 
-      if (currentPurchase.status !== 'draft' && currentPurchase.status !== 'pending') {
-        return { error: NextResponse.json({ error: 'Only draft or pending purchases can be deleted. Cancel the purchase instead.' }, { status: 400 }) }
+      // A submitted purchase is a posted document (stock, payable, GL): vendors cancel it, never delete it
+      if (currentPurchase.status !== 'draft') {
+        return { error: NextResponse.json({ error: 'Only draft purchases can be deleted. Cancel the purchase instead.' }, { status: 400 }) }
       }
 
       if (parseFloat(currentPurchase.paidAmount) > 0) {
@@ -951,6 +953,11 @@ export async function DELETE(
         }
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(tx, {
+        tenantId: session.user.tenantId, entityType: 'purchase', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
       // Delete items
       await tx.delete(purchaseItems)
         .where(eq(purchaseItems.purchaseId, id))

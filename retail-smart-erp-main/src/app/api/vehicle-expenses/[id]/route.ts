@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleExpenseSchema } from '@/lib/validation/schemas/vehicles'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function recalcTotalExpenses(db: any, vehicleInventoryId: string) {
@@ -108,6 +109,11 @@ export async function DELETE(
       const [existing] = await db.select().from(vehicleExpenses).where(eq(vehicleExpenses.id, id))
       if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'vehicle_expense', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
       await db.delete(vehicleExpenses).where(eq(vehicleExpenses.id, id))
       await recalcTotalExpenses(db, existing.vehicleInventoryId)
 

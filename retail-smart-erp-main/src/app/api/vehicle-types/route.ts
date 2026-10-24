@@ -12,6 +12,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { createVehicleTypeSchema } from '@/lib/validation/schemas/vehicles'
 import { applyHiddenDefaults, getHiddenDefaultIds } from '@/lib/defaults/hidden-defaults'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // GET all vehicle types (system defaults + tenant custom)
 export async function GET(request: NextRequest) {
@@ -41,6 +42,8 @@ export async function GET(request: NextRequest) {
           whereClause,
           eq(vehicleTypes.isActive, true)
         )
+      } else {
+        whereClause = and(whereClause, notInRecycleBin('vehicle_type', vehicleTypes.id))
       }
 
       const result = await tenantDb.query.vehicleTypes.findMany({

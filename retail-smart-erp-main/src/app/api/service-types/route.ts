@@ -3,10 +3,11 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { serviceTypes } from '@/lib/db/schema'
-import { sql, or, ilike } from 'drizzle-orm'
+import { and, sql, or, ilike } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { serviceTypesListSchema, createServiceTypeSchema } from '@/lib/validation/schemas/service-types'
@@ -26,13 +27,14 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
-      let whereClause = undefined
+      // Service types moved to the recycle bin are hidden (deactivated ones still show)
+      let whereClause = notInRecycleBin('service_type', serviceTypes.id)
       if (search) {
         const escaped = escapeLikePattern(search)
-        whereClause = or(
+        whereClause = and(whereClause, or(
           ilike(serviceTypes.name, `%${escaped}%`),
           ilike(serviceTypes.description, `%${escaped}%`)
-        )
+        ))!
       }
 
       // Get total count for pagination

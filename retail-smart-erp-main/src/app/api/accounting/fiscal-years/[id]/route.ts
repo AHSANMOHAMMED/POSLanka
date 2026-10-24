@@ -16,6 +16,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateFiscalYearSchema } from '@/lib/validation/schemas/accounting'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 type RouteContext = { params: Promise<{ id: string }> }
 
@@ -187,6 +188,11 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
         }, { status: 400 })
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'fiscal_year', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
       const [deleted] = await db.delete(fiscalYears).where(eq(fiscalYears.id, id)).returning()
       if (!deleted) {
         return NextResponse.json({ error: 'Fiscal year not found' }, { status: 404 })

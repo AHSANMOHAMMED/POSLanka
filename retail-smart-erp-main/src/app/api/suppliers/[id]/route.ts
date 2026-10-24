@@ -3,13 +3,14 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { requireAnyPermission, SUPPLIER_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { withTenant } from '@/lib/db'
-import { suppliers, items, purchaseOrders, purchases } from '@/lib/db/schema'
+import { suppliers, purchaseOrders, purchases } from '@/lib/db/schema'
 import { eq, and, ne, notInArray } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSupplierSchema } from '@/lib/validation/schemas/suppliers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single supplier
 export async function GET(
@@ -130,91 +131,61 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
-      // Check if supplier has items (RLS scopes the query)
-      const itemsFromSupplier = await db.query.items.findFirst({
-        where: eq(items.supplierId, id),
-      })
-
-      if (itemsFromSupplier) {
-        return NextResponse.json(
-          { error: 'Cannot delete supplier that has items. Please reassign or delete the items first.' },
-          { status: 400 }
-        )
+      const current = await db.query.suppliers.findFirst({ where: eq(suppliers.id, id) })
+      if (!current) {
+        return NextResponse.json({ error: 'Supplier not found' }, { status: 404 })
       }
 
-      // Check if supplier has active purchase orders (RLS scopes)
+      // Open work and money owed must be settled first (the archived supplier is hidden everywhere)
       const activePO = await db.query.purchaseOrders.findFirst({
         where: and(
           eq(purchaseOrders.supplierId, id),
           notInArray(purchaseOrders.status, ['cancelled', 'invoice_created'])
         ),
       })
-
       if (activePO) {
         return NextResponse.json(
-          { error: 'Cannot delete supplier that has active purchase orders. Please complete or cancel them first.' },
+          { error: 'Cannot move a supplier with active purchase orders to the recycle bin. Please complete or cancel them first.' },
           { status: 400 }
         )
       }
 
-      // Check if supplier has unpaid purchases (RLS scopes)
       const unpaidPurchase = await db.query.purchases.findFirst({
         where: and(
           eq(purchases.supplierId, id),
           notInArray(purchases.status, ['cancelled', 'paid'])
         ),
       })
-
       if (unpaidPurchase) {
         return NextResponse.json(
-          { error: 'Cannot delete supplier that has unpaid purchases. Please complete payments or cancel them first.' },
+          { error: 'Cannot move a supplier with unpaid purchases to the recycle bin. Please complete payments or cancel them first.' },
           { status: 400 }
         )
       }
 
-      // Supplier ledger must be settled, and documents keep their supplier: anything that
-      // references it (purchases incl. cancelled ones, any PO) blocks the delete — deactivate
-      // the supplier instead. (Without this the FK makes the delete fail with a 500.)
-      const current = await db.query.suppliers.findFirst({ where: eq(suppliers.id, id) })
-      if (!current) {
-        return NextResponse.json({ error: 'Supplier not found' }, { status: 404 })
-      }
       if (Math.abs(parseFloat(current.balance || '0')) >= 0.005) {
         return NextResponse.json(
-          { error: `Cannot delete supplier with an outstanding balance (${parseFloat(current.balance || '0').toFixed(2)}). Settle it or deactivate the supplier instead.` },
-          { status: 400 }
-        )
-      }
-      const anyPurchase = await db.query.purchases.findFirst({ where: eq(purchases.supplierId, id) })
-      const anyPO = anyPurchase ? null : await db.query.purchaseOrders.findFirst({ where: eq(purchaseOrders.supplierId, id) })
-      if (anyPurchase || anyPO) {
-        return NextResponse.json(
-          { error: 'Cannot delete supplier with purchase history. Deactivate the supplier instead.' },
+          { error: `Cannot move a supplier with an outstanding balance (${parseFloat(current.balance || '0').toFixed(2)}) to the recycle bin. Settle it first.` },
           { status: 400 }
         )
       }
 
-      const [deleted] = await db.delete(suppliers)
-        .where(eq(suppliers.id, id))
-        .returning()
-
-      if (!deleted) {
+      // Vendors never hard-delete: archive + recycle bin (history keeps pointing at the supplier;
+      // only a super admin can restore or purge it)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'supplier', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
+      if (!binned) {
         return NextResponse.json({ error: 'Supplier not found' }, { status: 404 })
       }
 
       // Broadcast the change to connected clients
       logAndBroadcast(session.user.tenantId, 'supplier', 'deleted', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
-    const code = (error as { code?: string; cause?: { code?: string } })?.code ?? (error as { cause?: { code?: string } })?.cause?.code
-    if (code === '23503') {
-      return NextResponse.json(
-        { error: 'Cannot delete supplier: it is referenced by other records (quotations, costs, history). Deactivate the supplier instead.' },
-        { status: 400 }
-      )
-    }
     logError('api/suppliers/[id]', error)
     return NextResponse.json({ error: 'Failed to delete supplier' }, { status: 500 })
   }

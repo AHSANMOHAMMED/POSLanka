@@ -23,7 +23,10 @@ export async function GET(request: NextRequest) {
         ))
         .orderBy(desc(labelTemplates.createdAt))
 
-      if (list.length === 0) {
+      // Seed presets only for a company that never had templates (not after moving them all to the bin)
+      const anyTemplate = list.length > 0 || (await db.select({ id: labelTemplates.id }).from(labelTemplates)
+        .where(eq(labelTemplates.tenantId, session.user.tenantId)).limit(1)).length > 0
+      if (!anyTemplate) {
         // Auto-seed default label presets (Zebra 50x30, 40x25, scale labels, hang tags, etc.)
         const businessType = (session.user as { businessType?: string }).businessType || 'retail'
         const presets = getPresetsForBusinessType(businessType)

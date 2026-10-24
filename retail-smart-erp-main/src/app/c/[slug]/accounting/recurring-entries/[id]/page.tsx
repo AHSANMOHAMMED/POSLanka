@@ -464,7 +464,7 @@ export default function RecurringEntryDetailPage() {
   async function handleDelete() {
     const res = await fetch(`/api/accounting/recurring-entries/${id}`, { method: 'DELETE' })
     if (res.ok) {
-      toast.success('Recurring entry template deleted')
+      toast.success('Recurring entry template moved to the recycle bin')
       router.push(`/c/${tenantSlug}/accounting/recurring-entries`)
     } else {
       const data = await res.json()
@@ -1017,16 +1017,16 @@ export default function RecurringEntryDetailPage() {
         }
         a.push({
           key: 'delete',
-          label: 'Delete',
+          label: 'Move to recycle bin',
           icon: <Trash2 size={14} />,
           variant: 'danger',
           position: 'left',
           onClick: handleDelete,
           confirmation: {
-            title: 'Delete Recurring Entry Template',
-            message: `Are you sure you want to delete "${template.name}"? This action cannot be undone.`,
+            title: 'Move to Recycle Bin',
+            message: `Move "${template.name}" to the recycle bin? It will stop generating entries. Only the platform administrator can restore it.`,
             variant: 'danger',
-            confirmText: 'Delete',
+            confirmText: 'Move to recycle bin',
           },
         })
         a.push({

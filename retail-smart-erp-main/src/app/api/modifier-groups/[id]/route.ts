@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { modifierGroups, modifiers } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { modifierGroups } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateModifierGroupSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -30,6 +32,7 @@ export async function GET(
         where: eq(modifierGroups.id, id),
         with: {
           modifiers: {
+            where: (m) => notInRecycleBin('modifier', m.id),
             orderBy: (m, { asc }) => [asc(m.sortOrder), asc(m.name)],
           },
           itemAssociations: {
@@ -115,30 +118,19 @@ export async function DELETE(
     const { id } = paramsParsed.data
 
     return await withTenant(session!.user.tenantId, async (db) => {
-      // Check for associated modifiers
-      const [modifierCount] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(modifiers)
-        .where(eq(modifiers.groupId, id))
+      // Vendors never hard-delete: archive + recycle bin (only a super admin restores or purges)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'modifier_group', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
 
-      if (modifierCount?.count > 0) {
-        return NextResponse.json({
-          error: `Cannot delete modifier group. It has ${modifierCount.count} modifier(s). Remove them first or deactivate the group instead.`,
-          suggestion: 'deactivate',
-        }, { status: 400 })
-      }
-
-      const [deleted] = await db.delete(modifierGroups)
-        .where(eq(modifierGroups.id, id))
-        .returning()
-
-      if (!deleted) {
+      if (!binned) {
         return NextResponse.json({ error: 'Modifier group not found' }, { status: 404 })
       }
 
       logAndBroadcast(session!.user.tenantId, 'modifier-group', 'deleted', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/modifier-groups/[id]', error)

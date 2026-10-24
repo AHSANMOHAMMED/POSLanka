@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateLaborGuideSchema } from '@/lib/validation/schemas/service-types'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single labor guide
 export async function GET(
@@ -114,6 +115,11 @@ export async function DELETE(
     const { id } = paramsParsed.data
 
     return await withTenant(session!.user.tenantId, async (db) => {
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'labor_guide', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
       const [deleted] = await db.delete(laborGuides)
         .where(eq(laborGuides.id, id))
         .returning()

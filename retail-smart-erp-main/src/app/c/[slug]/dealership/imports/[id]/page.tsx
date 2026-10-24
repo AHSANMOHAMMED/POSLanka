@@ -149,7 +149,7 @@ export default function ImportDetailPage({ params }: { params: Promise<{ slug: s
   async function handleDelete() {
     const res = await fetch(`/api/vehicle-imports/${id}`, { method: 'DELETE' })
     if (res.ok) {
-      toast.success('Import record deleted')
+      toast.success('Import record deleted (copy kept in recycle bin)')
       router.push(`/c/${tenantSlug}/dealership/imports`)
     } else {
       const err = await res.json()
@@ -259,7 +259,7 @@ export default function ImportDetailPage({ params }: { params: Promise<{ slug: s
             onClick: handleDelete,
             confirmation: {
               title: 'Delete Import Record',
-              message: `Are you sure you want to delete import ${data.importNo}? This action cannot be undone.`,
+              message: `Are you sure you want to delete import ${data.importNo}? A copy is kept in the recycle bin for the platform administrator.`,
               variant: 'danger',
               confirmText: 'Delete',
             },

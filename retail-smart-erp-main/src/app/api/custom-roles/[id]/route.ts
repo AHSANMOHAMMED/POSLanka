@@ -8,6 +8,7 @@ import { checkRoleRank, isOwnerActor, sanitizeRequestedPermissions, requestedPer
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateCustomRoleSchema } from '@/lib/validation/schemas/role-permissions'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -164,18 +165,18 @@ export async function DELETE(
         columns: { id: true },
       })
       if (assignedUser) {
-        return { error: 'Cannot delete a custom role that has users assigned to it. Reassign users first.' }
+        return { error: 'Cannot move a custom role that has users assigned to it to the recycle bin. Reassign users first.' }
       }
 
-      // Delete permission overrides (CASCADE should handle this, but be explicit)
-      await db.delete(rolePermissionOverrides).where(
-        eq(rolePermissionOverrides.customRoleId, id)
-      )
+      // Vendors never hard-delete: archive (permission overrides kept) + recycle bin; only a super
+      // admin restores or purges
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'custom_role', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
+      if (!binned) return { error: 'Custom role not found', status: 404 }
 
-      // Delete the custom role
-      await db.delete(customRoles).where(eq(customRoles.id, id))
-
-      return { success: true }
+      return { success: true, archived: true, recycleBinId: binned.binId }
     })
 
     if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -186,7 +187,7 @@ export async function DELETE(
     invalidatePermissionCache(session.user.tenantId)
     logAndBroadcast(session.user.tenantId, 'settings', 'updated', 'role-permissions', { userId: session.user.id })
 
-    return NextResponse.json({ success: true })
+    return NextResponse.json(result)
   } catch (error) {
     logError('api/custom-roles/[id]', error)
     return NextResponse.json({ error: 'Failed to delete custom role' }, { status: 500 })

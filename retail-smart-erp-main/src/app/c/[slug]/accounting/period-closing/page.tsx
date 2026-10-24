@@ -182,7 +182,7 @@ export default function PeriodClosingPage() {
       })
 
       if (res.ok) {
-        toast.success('Period closing voucher deleted')
+        toast.success('Period closing voucher deleted (copy kept in recycle bin)')
         refresh()
       } else {
         const data = await res.json()
@@ -428,7 +428,7 @@ export default function PeriodClosingPage() {
         onClose={() => setConfirmAction(null)}
         onConfirm={() => confirmAction && handleDelete(confirmAction.id)}
         title="Delete Period Closing"
-        message="Are you sure you want to delete this draft period closing voucher? This action cannot be undone."
+        message="Are you sure you want to delete this draft period closing voucher? A copy is kept in the recycle bin for the platform administrator."
         confirmText="Delete"
         variant="danger"
         processing={processing}

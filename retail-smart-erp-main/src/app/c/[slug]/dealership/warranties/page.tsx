@@ -81,7 +81,7 @@ export default function VehicleWarrantiesPage() {
       const res = await fetch(`/api/vehicle-warranties/${deleteId}`, { method: 'DELETE' })
       if (res.ok) {
         refresh()
-        toast.success('Warranty record deleted')
+        toast.success('Warranty record deleted (copy kept in recycle bin)')
       } else {
         toast.error('Failed to delete warranty record')
       }
@@ -228,7 +228,7 @@ export default function VehicleWarrantiesPage() {
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
         title="Delete Warranty Record"
-        message="Are you sure you want to delete this warranty record? This action cannot be undone."
+        message="Are you sure you want to delete this warranty record? A copy is kept in the recycle bin for the platform administrator."
         confirmText="Delete"
         variant="danger"
         processing={deleting}

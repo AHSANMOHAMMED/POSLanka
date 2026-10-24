@@ -9,6 +9,7 @@ import { createUnitSchema } from '@/lib/validation/schemas/pricing'
 import { ensureDefaultUnits } from '@/lib/pricing/catalog'
 import { isUniqueViolation } from '@/lib/db/errors'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // GET /api/units — units of measure (seeds pcs/kg/g/l/ml/box/pack/dozen for a new company)
 export async function GET() {
@@ -21,7 +22,7 @@ export async function GET() {
       const rows = await db.select({
         id: units.id, code: units.code, name: units.name, allowFraction: units.allowFraction, isActive: units.isActive,
         inUse: sql<number>`(SELECT count(*)::int FROM item_uoms iu WHERE iu.tenant_id = ${tenantId}::uuid AND lower(iu.uom) = lower("units"."code"))`,
-      }).from(units).orderBy(asc(units.code))
+      }).from(units).where(notInRecycleBin('unit', units.id)).orderBy(asc(units.code))
       return NextResponse.json(rows)
     })
   } catch (error) {

@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseRequisitionSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -170,6 +171,11 @@ export async function DELETE(
       return { error: NextResponse.json({ error: 'Only draft requisitions can be deleted' }, { status: 400 }) }
     }
 
+    // Keep a copy in the recycle bin (super admin can restore it)
+    await moveToRecycleBin(tx, {
+      tenantId: session.user.tenantId, entityType: 'purchase_requisition', entityId: id,
+      userId: session.user.id, userName: session.user.name,
+    })
     await tx.delete(purchaseRequisitions).where(eq(purchaseRequisitions.id, id))
     logAndBroadcast(session.user.tenantId, 'purchase-requisition', 'deleted', id)
     return { success: true }

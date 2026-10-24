@@ -3,12 +3,13 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { chartOfAccounts, glEntries } from '@/lib/db/schema'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateAccountSchema } from '@/lib/validation/schemas/accounting'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -181,15 +182,15 @@ export async function DELETE(
         )
       }
 
-      // Check if account has any GL entries
-      const [{ count }] = await db
-        .select({ count: sql<number>`count(*)::int` })
+      // GL history stays (the account is only archived), but money still on it must not be hidden
+      const [{ balance }] = await db
+        .select({ balance: sql<string>`COALESCE(SUM(${glEntries.debit} - ${glEntries.credit}), 0)::text` })
         .from(glEntries)
         .where(eq(glEntries.accountId, id))
 
-      if (Number(count) > 0) {
+      if (Math.abs(parseFloat(balance || '0')) >= 0.005) {
         return NextResponse.json(
-          { error: 'Cannot delete account with existing GL entries' },
+          { error: `Cannot move an account with a balance (${parseFloat(balance).toFixed(2)}) to the recycle bin. Bring the balance to zero first.` },
           { status: 400 }
         )
       }
@@ -198,25 +199,25 @@ export async function DELETE(
       const [{ childCount }] = await db
         .select({ childCount: sql<number>`count(*)::int` })
         .from(chartOfAccounts)
-        .where(eq(chartOfAccounts.parentId, id))
+        .where(and(eq(chartOfAccounts.parentId, id), eq(chartOfAccounts.isActive, true)))
 
       if (Number(childCount) > 0) {
         return NextResponse.json(
-          { error: 'Cannot delete account with child accounts' },
+          { error: 'Cannot move an account with active child accounts to the recycle bin' },
           { status: 400 }
         )
       }
 
-      const [deleted] = await db.delete(chartOfAccounts)
-        .where(eq(chartOfAccounts.id, id))
-        .returning()
-
-      if (!deleted) {
+      // Vendors never hard-delete: archive + recycle bin (only a super admin can restore or purge)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: tenantId, entityType: 'account', entityId: id, userId: session!.user.id, userName: session!.user.name,
+      })
+      if (!binned) {
         return NextResponse.json({ error: 'Account not found' }, { status: 404 })
       }
 
       logAndBroadcast(tenantId, 'account', 'deleted', id)
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/accounting/accounts/[id]', error)

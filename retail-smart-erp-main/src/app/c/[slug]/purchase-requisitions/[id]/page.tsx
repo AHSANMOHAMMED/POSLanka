@@ -264,7 +264,7 @@ export default function PurchaseRequisitionDetailPage({ params }: { params: Prom
   async function handleDelete() {
     const res = await fetch(`/api/purchase-requisitions/${id}`, { method: 'DELETE' })
     if (res.ok) {
-      toast.success('Deleted')
+      toast.success('Deleted (copy kept in recycle bin)')
       router.push(`/c/${tenantSlug}/purchase-requisitions`)
     } else {
       toast.error('Failed to delete')

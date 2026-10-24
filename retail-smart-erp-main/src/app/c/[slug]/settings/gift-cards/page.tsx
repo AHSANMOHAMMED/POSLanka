@@ -327,7 +327,7 @@ export default function GiftCardsPage() {
       })
 
       if (res.ok) {
-        toast.success('Gift card deleted')
+        toast.success('Gift card deleted (copy kept in recycle bin)')
         refresh()
         if (selectedCard?.id === deleteConfirm.id) {
           closeDetailModal()
@@ -912,7 +912,7 @@ export default function GiftCardsPage() {
         onClose={() => setDeleteConfirm({ open: false, id: null, cardNumber: '' })}
         onConfirm={handleDelete}
         title="Delete Gift Card"
-        message={`Are you sure you want to delete gift card "${deleteConfirm.cardNumber}"? This action cannot be undone. Note: Cards with transaction history cannot be deleted.`}
+        message={`Are you sure you want to delete gift card "${deleteConfirm.cardNumber}"? A copy is kept in the recycle bin for the platform administrator. Note: Cards with transaction history cannot be deleted.`}
         confirmText="Delete"
         variant="danger"
       />

@@ -157,7 +157,7 @@ export function CollectionSidebar({ activeCollectionId, onSelectCollection, onRe
         method: 'DELETE',
       })
       if (res.ok) {
-        toast.success('Collection deleted')
+        toast.success('Collection deleted (copy kept in recycle bin)')
         if (activeCollectionId === id) {
           onSelectCollection(null)
         }

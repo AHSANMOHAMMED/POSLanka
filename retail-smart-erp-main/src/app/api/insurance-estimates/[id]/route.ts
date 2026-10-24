@@ -13,6 +13,7 @@ import { getAvailableStock } from '@/lib/dealership/work-orders'
 import { updateInsuranceEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // E12: Valid status transitions for estimates
 // Issue 10: Allow cancellation from more statuses
@@ -580,6 +581,11 @@ export async function DELETE(
           throw new Error('NOT_DRAFT')
         }
 
+        // Keep a copy in the recycle bin (super admin can restore it)
+        await moveToRecycleBin(tx, {
+          tenantId: session.user.tenantId, entityType: 'insurance_estimate', entityId: id,
+          userId: session.user.id, userName: session.user.name,
+        })
         // Delete attachments first
         await tx.delete(insuranceEstimateAttachments)
           .where(eq(insuranceEstimateAttachments.estimateId, id))

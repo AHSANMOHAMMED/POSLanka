@@ -212,14 +212,14 @@ export default function RolePermissionsPage() {
   }, [isCustomRole, selectedRole, fetchData])
 
   const handleDeleteCustomRole = useCallback(async (roleId: string) => {
-    if (!confirm('Delete this custom role? This action cannot be undone.')) return
+    if (!confirm('Move this custom role to the recycle bin? Only the platform administrator can restore it.')) return
     try {
       const res = await fetch(`/api/custom-roles/${roleId}`, { method: 'DELETE' })
       if (!res.ok) {
         const err = await res.json()
         throw new Error(err.error || 'Failed to delete')
       }
-      toast.success('Custom role deleted')
+      toast.success('Custom role moved to recycle bin')
       setSelectedRole('manager')
       setIsCustomRole(false)
       fetchData()
@@ -439,7 +439,7 @@ export default function RolePermissionsPage() {
                       className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                     >
                       <Trash2 size={14} />
-                      Delete
+                      Move to recycle bin
                     </button>
                   )}
                   {/* Save */}

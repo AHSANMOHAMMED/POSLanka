@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant } from '@/lib/db'
 import { letterHeads } from '@/lib/db/schema'
-import { eq, desc } from 'drizzle-orm'
+import { and, eq, desc } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
@@ -11,8 +12,9 @@ import { createLetterHeadSchema } from '@/lib/validation/schemas/settings'
 
 export async function GET() {
   const result = await withAuthTenant(async (session, db) => {
+    // Letter heads moved to the recycle bin are hidden
     return db.select().from(letterHeads)
-      .where(eq(letterHeads.tenantId, session.user.tenantId))
+      .where(and(eq(letterHeads.tenantId, session.user.tenantId), notInRecycleBin('letter_head', letterHeads.id)))
       .orderBy(desc(letterHeads.createdAt))
   })
 

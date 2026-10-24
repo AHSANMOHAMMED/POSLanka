@@ -12,6 +12,7 @@ import { validateBody, validateSearchParams } from '@/lib/validation'
 import { taxTemplatesListSchema, createTaxTemplateSchema } from '@/lib/validation/schemas/accounting'
 import { TAX_CATEGORIES } from '@/lib/utils/tax-category'
 import { z } from 'zod'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // H2: VAT treatment of the template (standard / zero_rated / exempt / out_of_scope)
 const createWithCategorySchema = createTaxTemplateSchema.extend({
@@ -36,6 +37,7 @@ export async function GET(request: NextRequest) {
       // All mode: return flat list with items (for dropdowns)
       if (all) {
         const templates = await db.query.taxTemplates.findMany({
+          where: notInRecycleBin('tax_template', taxTemplates.id),
           with: {
             items: {
               with: {
@@ -52,6 +54,8 @@ export async function GET(request: NextRequest) {
 
       // Build search conditions
       const conditions: ReturnType<typeof eq>[] = []
+      // Rows moved to the recycle bin are hidden (deactivated ones still show)
+      conditions.push(notInRecycleBin('tax_template', taxTemplates.id))
       if (search) {
         conditions.push(ilike(taxTemplates.name, `%${escapeLikePattern(search)}%`))
       }

@@ -154,10 +154,10 @@ export default function PrintTemplatesPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this template?')) return
+    if (!confirm('Move this template to the recycle bin? Only the platform administrator can restore it.')) return
     try {
       const res = await fetch(`/api/print-templates/${id}`, { method: 'DELETE' })
-      if (res.ok) { toast.success('Deleted'); fetchData() }
+      if (res.ok) { toast.success('Moved to recycle bin'); fetchData() }
     } catch { toast.error('Error deleting') }
   }
 
@@ -267,7 +267,7 @@ export default function PrintTemplatesPage() {
                   <button onClick={() => openEdit(t)} className="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="Edit">
                     <Pencil size={16} />
                   </button>
-                  <button onClick={() => handleDelete(t.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Delete">
+                  <button onClick={() => handleDelete(t.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Move to recycle bin">
                     <Trash2 size={16} />
                   </button>
                 </div>

@@ -6,6 +6,7 @@ import { dealers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { updateDealerSchema } from '@/lib/validation/schemas/dealership'
@@ -91,18 +92,20 @@ export async function DELETE(
       const [record] = await db.select().from(dealers).where(eq(dealers.id, id))
       if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-      // Soft delete - deactivate instead of hard delete
-      const [updated] = await db.update(dealers)
-        .set({ isActive: false, status: 'inactive', updatedAt: new Date() })
-        .where(eq(dealers.id, id))
-        .returning()
+      // Vendors never hard-delete: archive (is_active = false) + recycle bin; only a super admin
+      // restores or purges
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'dealer', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
+      if (!binned) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
       logAndBroadcast(session.user.tenantId, 'dealer', 'deleted', id, {
         userId: session.user.id,
-        description: `Deactivated dealer ${record.name}`,
+        description: `Moved dealer ${record.name} to the recycle bin`,
       })
 
-      return NextResponse.json(updated)
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('DELETE /api/dealers/[id]', error)

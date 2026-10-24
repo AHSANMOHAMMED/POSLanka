@@ -9,6 +9,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { updateSavedReportSchema } from '@/lib/validation/schemas/settings'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   _request: NextRequest,
@@ -109,6 +110,11 @@ export async function DELETE(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'saved_report', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
       const [deleted] = await db.delete(savedReports)
         .where(and(
           eq(savedReports.id, id),

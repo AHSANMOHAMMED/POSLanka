@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant, withTenantTransaction } from '@/lib/db'
@@ -24,11 +25,12 @@ export async function GET(request: NextRequest) {
     const { search, page, pageSize, all, includeInactive } = parsed.data
 
     return await withTenant(session!.user.tenantId, async (db) => {
-      const conditions = []
+      // Promotions moved to the recycle bin are hidden (deactivated ones still show)
+      const conditions = [notInRecycleBin('promotion', promotions.id)]
       if (!includeInactive && !all) conditions.push(eq(promotions.isActive, true))
       if (search) {
         const s = `%${escapeLikePattern(search)}%`
-        conditions.push(or(ilike(promotions.name, s), ilike(promotions.couponCode, s)))
+        conditions.push(or(ilike(promotions.name, s), ilike(promotions.couponCode, s))!)
       }
       const where = conditions.length ? and(...conditions) : undefined
       const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(promotions).where(where)

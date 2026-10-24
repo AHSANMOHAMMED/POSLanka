@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleImportSchema } from '@/lib/validation/schemas/vehicles'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -139,6 +140,11 @@ export async function DELETE(
         return NextResponse.json({ error: 'Cannot delete cleared or registered imports' }, { status: 400 })
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'vehicle_import', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
       await db.delete(vehicleImports).where(eq(vehicleImports.id, id))
 
       logAndBroadcast(session.user.tenantId, 'vehicle-import', 'deleted', id, {

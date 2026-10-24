@@ -118,7 +118,7 @@ function CostCenterTreeNode({
             </button>
             <button
               onClick={() => onDelete(costCenter)}
-              aria-label={`Delete ${costCenter.name}`}
+              aria-label={`Move ${costCenter.name} to the recycle bin`}
               className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
             >
               <Trash2 size={16} />
@@ -273,7 +273,7 @@ export default function CostCentersPage() {
         method: 'DELETE',
       })
       if (res.ok) {
-        toast.success('Cost center deleted')
+        toast.success('Cost center moved to the recycle bin')
         setDeleteCostCenter(null)
         refresh()
       } else {
@@ -454,9 +454,9 @@ export default function CostCentersPage() {
         isOpen={!!deleteCostCenter}
         onClose={() => setDeleteCostCenter(null)}
         onConfirm={handleDelete}
-        title="Delete Cost Center"
-        message={`Are you sure you want to delete "${deleteCostCenter?.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move to Recycle Bin"
+        message={`Move "${deleteCostCenter?.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
         processing={deleting}
       />

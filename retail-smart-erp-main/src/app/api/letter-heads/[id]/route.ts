@@ -5,6 +5,7 @@ import { withAuthTenant } from '@/lib/db'
 import { letterHeads } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -106,19 +107,22 @@ export async function DELETE(
   if (!paramsParsed.success) return paramsParsed.response
   const { id } = paramsParsed.data
 
+  // Vendors never hard-delete: archive + recycle bin (only a super admin restores or purges)
   const result = await withAuthTenant(async (session, db) => {
-    const [deleted] = await db.delete(letterHeads)
-      .where(and(eq(letterHeads.id, id), eq(letterHeads.tenantId, session.user.tenantId)))
-      .returning()
-    return deleted || undefined
+    const binned = await moveToRecycleBin(db, {
+      tenantId: session.user.tenantId, entityType: 'letter_head', entityId: id,
+      userId: session.user.id, userName: session.user.name,
+    })
+    return binned ? { ...binned, tenantId: session.user.tenantId } : undefined
   })
 
   if (result === null) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  if (result) {
-    logAndBroadcast(result.tenantId, 'letter-head', 'deleted', result.id, { userId: session!.user.id, entityName: result.name })
+  if (!result) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
-  return NextResponse.json({ success: true })
+  logAndBroadcast(result.tenantId, 'letter-head', 'deleted', id, { userId: session!.user.id, entityName: result.displayName })
+  return NextResponse.json({ success: true, archived: true, recycleBinId: result.binId })
 }

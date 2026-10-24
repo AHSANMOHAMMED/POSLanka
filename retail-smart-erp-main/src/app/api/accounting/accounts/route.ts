@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { accountsListSchema, createAccountSchema } from '@/lib/validation/schemas/accounting'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 interface AccountTreeNode {
   id: string
@@ -103,6 +104,7 @@ export async function GET(request: NextRequest) {
         const accounts = await db
           .select()
           .from(chartOfAccounts)
+          .where(notInRecycleBin('account', chartOfAccounts.id))
           .orderBy(asc(chartOfAccounts.accountNumber))
 
         const treeData = buildTree(accounts)
@@ -114,6 +116,7 @@ export async function GET(request: NextRequest) {
         const accounts = await db
           .select()
           .from(chartOfAccounts)
+          .where(notInRecycleBin('account', chartOfAccounts.id))
           .orderBy(asc(chartOfAccounts.accountNumber))
           .limit(1000)
 
@@ -122,6 +125,8 @@ export async function GET(request: NextRequest) {
 
       // Build search conditions
       const conditions: ReturnType<typeof eq>[] = []
+      // Rows moved to the recycle bin are hidden (deactivated ones still show)
+      conditions.push(notInRecycleBin('account', chartOfAccounts.id))
       if (search) {
         const escaped = escapeLikePattern(search)
         conditions.push(

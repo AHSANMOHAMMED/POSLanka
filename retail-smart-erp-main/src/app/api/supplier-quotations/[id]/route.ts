@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSupplierQuotationSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 export async function GET(
   request: NextRequest,
@@ -151,6 +152,11 @@ export async function DELETE(
       return { error: NextResponse.json({ error: 'Only draft quotations can be deleted' }, { status: 400 }) }
     }
 
+    // Keep a copy in the recycle bin (super admin can restore it)
+    await moveToRecycleBin(tx, {
+      tenantId: session.user.tenantId, entityType: 'supplier_quotation', entityId: id,
+      userId: session.user.id, userName: session.user.name,
+    })
     await tx.delete(supplierQuotations).where(eq(supplierQuotations.id, id))
     logAndBroadcast(session.user.tenantId, 'supplier-quotation', 'deleted', id)
     return { success: true }

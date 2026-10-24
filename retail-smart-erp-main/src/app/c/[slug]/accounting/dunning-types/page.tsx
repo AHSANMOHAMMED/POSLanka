@@ -120,12 +120,12 @@ export default function DunningTypesPage() {
   }
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this dunning type?')) return
+    if (!confirm('Move this dunning type to the recycle bin? Only the platform administrator can restore it.')) return
     setDeleting(id)
     try {
       const res = await fetch(`/api/accounting/dunning-types/${id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Dunning type deleted')
+        toast.success('Dunning type moved to the recycle bin')
         refresh()
       } else {
         const data = await res.json()
@@ -213,7 +213,7 @@ export default function DunningTypesPage() {
                         onClick={() => handleDelete(dt.id)}
                         disabled={deleting === dt.id}
                         className="p-1 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors disabled:opacity-50"
-                        title="Delete"
+                        title="Move to recycle bin"
                       >
                         {deleting === dt.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                       </button>

@@ -83,12 +83,12 @@ export default function SavedReportsPage() {
   useEffect(() => { fetchReports() }, [fetchReports])
 
   async function handleDelete(id: string) {
-    if (!confirm('Delete this saved report?')) return
+    if (!confirm('Delete this saved report? A copy is kept in the recycle bin for the platform administrator.')) return
     try {
       const res = await fetch(`/api/saved-reports/${id}`, { method: 'DELETE' })
       if (res.ok) {
         setReports((prev) => prev.filter((r) => r.id !== id))
-        toast.success('Report deleted')
+        toast.success('Report deleted (copy kept in recycle bin)')
       } else {
         toast.error('Failed to delete report')
       }

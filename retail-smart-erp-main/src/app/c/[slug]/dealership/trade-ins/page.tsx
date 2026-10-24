@@ -76,7 +76,7 @@ export default function TradeInsPage() {
       const res = await fetch(`/api/trade-ins/${deleteId}`, { method: 'DELETE' })
       if (res.ok) {
         refresh()
-        toast.success('Trade-in valuation deleted')
+        toast.success('Trade-in valuation deleted (copy kept in recycle bin)')
       } else {
         toast.error('Failed to delete trade-in valuation')
       }
@@ -256,7 +256,7 @@ export default function TradeInsPage() {
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
         title="Delete Trade-In Valuation"
-        message="Are you sure you want to delete this trade-in valuation? This action cannot be undone."
+        message="Are you sure you want to delete this trade-in valuation? A copy is kept in the recycle bin for the platform administrator."
         confirmText="Delete"
         variant="danger"
         processing={deleting}

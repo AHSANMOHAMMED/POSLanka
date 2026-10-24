@@ -221,7 +221,7 @@ export default function AppointmentsPage() {
       const res = await fetch(`/api/appointments/${deleteConfirm.id}`, { method: 'DELETE' })
       if (res.ok) {
         fetchAppointments()
-        toast.success('Appointment deleted')
+        toast.success('Appointment deleted (copy kept in recycle bin)')
       } else {
         const data = await res.json()
         toast.error(data.error || 'Failed to delete appointment')
@@ -619,7 +619,7 @@ export default function AppointmentsPage() {
       onClose={() => setDeleteConfirm({ open: false, id: null })}
       onConfirm={handleDelete}
       title="Delete Appointment"
-      message="Are you sure you want to delete this appointment? This action cannot be undone."
+      message="Are you sure you want to delete this appointment? A copy is kept in the recycle bin for the platform administrator."
       confirmText="Delete"
       variant="danger"
     />

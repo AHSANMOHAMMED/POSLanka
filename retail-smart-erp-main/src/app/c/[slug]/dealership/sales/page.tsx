@@ -76,7 +76,7 @@ export default function VehicleSalesPage() {
       const res = await fetch(`/api/vehicle-sales/${deleteId}`, { method: 'DELETE' })
       if (res.ok) {
         refresh()
-        toast.success('Vehicle sale deleted')
+        toast.success('Vehicle sale deleted (copy kept in recycle bin)')
       } else {
         toast.error('Failed to delete vehicle sale')
       }
@@ -274,7 +274,7 @@ export default function VehicleSalesPage() {
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
         title="Delete Vehicle Sale"
-        message="Are you sure you want to delete this sale record? This action cannot be undone."
+        message="Are you sure you want to delete this sale record? A copy is kept in the recycle bin for the platform administrator."
         confirmText="Delete"
         variant="danger"
         processing={deleting}

@@ -4,7 +4,8 @@ import { requirePermission } from '@/lib/auth/roles'
 import { requireAnyPermission, SUPPLIER_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { withTenant } from '@/lib/db'
 import { suppliers } from '@/lib/db/schema'
-import { ilike, sql } from 'drizzle-orm'
+import { and, ilike, sql } from 'drizzle-orm'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -30,7 +31,9 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
-      const whereClause = search ? ilike(suppliers.name, `%${escapeLikePattern(search)}%`) : undefined
+      // Suppliers moved to the recycle bin are hidden (deactivated ones still show)
+      const notBinned = notInRecycleBin('supplier', suppliers.id)
+      const whereClause = search ? and(notBinned, ilike(suppliers.name, `%${escapeLikePattern(search)}%`)) : notBinned
 
       // Return all suppliers (for dropdowns)
       if (all) {

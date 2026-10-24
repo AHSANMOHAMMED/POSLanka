@@ -11,6 +11,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { notificationTemplatesListSchema, createNotificationTemplateSchema } from '@/lib/validation/schemas/settings'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 
 // GET - List notification templates
 export async function GET(request: Request) {
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
 
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions
-      const conditions = [eq(notificationTemplates.tenantId, session.user.tenantId)]
+      const conditions = [eq(notificationTemplates.tenantId, session.user.tenantId), notInRecycleBin('notification_template', notificationTemplates.id)]
 
       if (search) {
         const escaped = escapeLikePattern(search)

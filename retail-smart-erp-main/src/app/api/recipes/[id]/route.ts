@@ -6,6 +6,7 @@ import { recipes } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateRecipeSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -139,18 +140,20 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(tenantId, async (db) => {
-      const [deleted] = await db.delete(recipes)
-        .where(eq(recipes.id, id))
-        .returning()
+      // Vendors never hard-delete: archive + recycle bin (only a super admin restores or purges)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: tenantId, entityType: 'recipe', entityId: id,
+        userId: session!.user.id, userName: session!.user.name,
+      })
 
-      if (!deleted) {
+      if (!binned) {
         return NextResponse.json({ error: 'Recipe not found' }, { status: 404 })
       }
 
       // Broadcast the change to connected clients
       logAndBroadcast(tenantId, 'recipe', 'deleted', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/recipes/[id]', error)

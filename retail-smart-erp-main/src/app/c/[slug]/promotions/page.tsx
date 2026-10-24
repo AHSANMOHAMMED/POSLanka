@@ -36,8 +36,8 @@ export default function PromotionsPage() {
     if (!deleteConfirm) return
     const res = await fetch(`/api/promotions/${deleteConfirm.id}`, { method: 'DELETE' })
     const body = await res.json().catch(() => ({}))
-    if (res.ok) { toast.success(body.deactivated ? 'Promotion was used before — deactivated instead' : 'Promotion deleted'); refresh() }
-    else toast.error('Failed to delete promotion')
+    if (res.ok) { toast.success('Promotion moved to recycle bin'); refresh() }
+    else toast.error(body.error || 'Failed to delete promotion')
     setDeleteConfirm(null)
   }
 
@@ -92,7 +92,7 @@ export default function PromotionsPage() {
                 <td className="px-4 py-3 text-right whitespace-nowrap">
                   <button aria-label={`Edit ${p.name}`} onClick={() => { setEditing(p); setShowModal(true) }}
                     className="p-1.5 text-gray-500 hover:text-blue-600 rounded"><Pencil size={16} /></button>
-                  <button aria-label={`Delete ${p.name}`} onClick={() => setDeleteConfirm({ id: p.id, name: p.name })}
+                  <button aria-label={`Move ${p.name} to recycle bin`} onClick={() => setDeleteConfirm({ id: p.id, name: p.name })}
                     className="p-1.5 text-gray-500 hover:text-red-600 rounded ml-1"><Trash2 size={16} /></button>
                 </td>
               </tr>
@@ -104,8 +104,8 @@ export default function PromotionsPage() {
       </div>
 
       <PromotionFormModal isOpen={showModal} edit={editing} onClose={() => setShowModal(false)} onSaved={() => { setShowModal(false); refresh() }} />
-      <ConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete} title="Delete promotion"
-        message={`Delete "${deleteConfirm?.name}"? A promotion that was already used is deactivated instead.`} confirmText="Delete" variant="danger" />
+      <ConfirmModal isOpen={!!deleteConfirm} onClose={() => setDeleteConfirm(null)} onConfirm={handleDelete} title="Move promotion to Recycle Bin"
+        message={`Move "${deleteConfirm?.name}" to the recycle bin? Its usage history is kept. Only the platform administrator can restore it.`} confirmText="Move to recycle bin" variant="danger" />
     </ListPageLayout>
   )
 }

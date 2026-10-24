@@ -156,7 +156,7 @@ export default function ModesOfPaymentPage() {
     try {
       const res = await fetch(`/api/accounting/modes-of-payment/${deleteMode.id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Mode of payment deleted')
+        toast.success('Mode of payment moved to the recycle bin')
         setDeleteMode(null)
         refresh()
       } else {
@@ -364,9 +364,9 @@ export default function ModesOfPaymentPage() {
         isOpen={!!deleteMode}
         onClose={() => setDeleteMode(null)}
         onConfirm={handleDelete}
-        title="Delete Mode of Payment"
-        message={`Are you sure you want to delete "${deleteMode?.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move to Recycle Bin"
+        message={`Move "${deleteMode?.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
         processing={deleting}
       />

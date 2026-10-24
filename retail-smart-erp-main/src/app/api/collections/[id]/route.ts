@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams, validateBody, validateParams } from '@/lib/validation/helpers'
 import { collectionDetailSchema, updateCollectionSchema } from '@/lib/validation/schemas/files'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET collection with files
 export async function GET(
@@ -165,6 +166,11 @@ export async function DELETE(
         return NextResponse.json({ error: 'Collection not found' }, { status: 404 })
       }
 
+      // Keep a copy in the recycle bin (super admin can restore it)
+      await moveToRecycleBin(db, {
+        tenantId: session.user.tenantId, entityType: 'collection', entityId: id,
+        userId: session.user.id, userName: session.user.name,
+      })
       // Delete collection (cascade deletes collection_files entries)
       await db.delete(collections).where(eq(collections.id, id))
 

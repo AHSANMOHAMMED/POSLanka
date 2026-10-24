@@ -9,6 +9,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { updatePriceListSchema } from '@/lib/validation/schemas/pricing'
 import { isUniqueViolation } from '@/lib/db/errors'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET /api/price-lists/[id] — header + rules (with item code / name / base price)
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -80,10 +81,13 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
     if (permError) return permError
     const p = validateParams(await params, idParamSchema)
     if (!p.success) return p.response
-    const [row] = await withTenantTransaction(session!.user.tenantId, (tx) =>
-      tx.delete(priceLists).where(eq(priceLists.id, p.data.id)).returning({ id: priceLists.id }))
-    if (!row) return NextResponse.json({ error: 'Price list not found' }, { status: 404 })
-    return NextResponse.json({ success: true })
+    // Vendors never hard-delete: archive + recycle bin (only a super admin restores or purges)
+    const binned = await withTenantTransaction(session!.user.tenantId, (tx) => moveToRecycleBin(tx, {
+      tenantId: session!.user.tenantId, entityType: 'price_list', entityId: p.data.id,
+      userId: session!.user.id, userName: session!.user.name,
+    }))
+    if (!binned) return NextResponse.json({ error: 'Price list not found' }, { status: 404 })
+    return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
   } catch (error) {
     logError('api/price-lists/[id]', error)
     return NextResponse.json({ error: 'Failed to delete price list' }, { status: 500 })

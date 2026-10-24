@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateFinancingOptionSchema } from '@/lib/validation/schemas/dealership'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single financing option
 export async function GET(
@@ -116,23 +117,18 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session!.user.tenantId, async (db) => {
-      // Soft delete - set isActive to false
-      const [updated] = await db.update(financingOptions)
-        .set({
-          isActive: false,
-          updatedAt: new Date(),
-        })
-        .where(eq(financingOptions.id, id))
-        .returning()
-
-      if (!updated) {
+      // Vendors never hard-delete: archive + recycle bin (only a super admin can restore or purge)
+      const binned = await moveToRecycleBin(db, {
+        tenantId: session!.user.tenantId, entityType: 'financing_option', entityId: id, userId: session!.user.id, userName: session!.user.name,
+      })
+      if (!binned) {
         return NextResponse.json({ error: 'Financing option not found' }, { status: 404 })
       }
 
       // Broadcast the change to connected clients
       logAndBroadcast(session!.user.tenantId, 'financing-option', 'deleted', id)
 
-      return NextResponse.json({ success: true })
+      return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })
   } catch (error) {
     logError('api/financing-options/[id]', error)

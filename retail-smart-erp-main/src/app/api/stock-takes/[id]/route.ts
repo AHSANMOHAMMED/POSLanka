@@ -11,6 +11,7 @@ import { completeStockTake, StockTakeCompletionError } from '@/lib/inventory/com
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import { toApiError } from '@/lib/db/errors'
 import { logError } from '@/lib/ai/error-logger'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET - Single stock take with all items
 export async function GET(
@@ -194,6 +195,11 @@ export async function DELETE(
       return { error: NextResponse.json({ error: 'Only draft stock takes can be deleted' }, { status: 400 }) }
     }
 
+    // Keep a copy in the recycle bin (super admin can restore it)
+    await moveToRecycleBin(tx, {
+      tenantId: session.user.tenantId, entityType: 'stock_take', entityId: id,
+      userId: session.user.id, userName: session.user.name,
+    })
     // Items cascade-delete via FK
     await tx.delete(stockTakes).where(eq(stockTakes.id, id))
     logAndBroadcast(session.user.tenantId, 'stock-take', 'deleted', id)

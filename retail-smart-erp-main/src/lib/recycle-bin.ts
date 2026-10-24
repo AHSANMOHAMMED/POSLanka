@@ -73,8 +73,6 @@ export const RECYCLE_ENTITIES = {
   restaurant_table: A('restaurant_tables', 'Restaurant table'),
   salary_component: A('salary_components', 'Salary component'),
   salary_structure: A('salary_structures', 'Salary structure'),
-  vehicle_make: A('vehicle_makes', 'Vehicle make'),
-  vehicle_model: A('vehicle_models', 'Vehicle model'),
   vehicle_type: A('vehicle_types', 'Vehicle type'),
   vehicle_inventory: A('vehicle_inventory', 'Vehicle (stock)', ['stock_no', 'registration_no', 'description']),
   account: A('chart_of_accounts', 'Account', ['name', 'account_number']),
@@ -100,11 +98,12 @@ export const RECYCLE_ENTITIES = {
   stock_transfer: D('stock_transfers', 'Stock transfer (draft)', ['transfer_no'], [{ table: 'stock_transfer_items', fk: 'transfer_id' }]),
   journal_entry: D('journal_entries', 'Journal entry (draft)', ['entry_number'], [{ table: 'journal_entry_items', fk: 'journal_entry_id' }]),
   budget: D('budgets', 'Budget (draft)', ['name'], [{ table: 'budget_items', fk: 'budget_id' }]),
-  period_closing_voucher: D('period_closing_vouchers', 'Period closing (draft)', ['id']),
+  period_closing_voucher: D('period_closing_vouchers', 'Period closing (draft)', ['closing_date', 'id']),
   fiscal_year: D('fiscal_years', 'Fiscal year', ['name']),
   insurance_estimate: D('insurance_estimates', 'Insurance estimate (draft)', ['estimate_no', 'claim_number'], [
     { table: 'insurance_estimate_items', fk: 'estimate_id' }, { table: 'insurance_estimate_attachments', fk: 'estimate_id' }]),
-  work_order: D('work_orders', 'Work order (draft)', ['order_no', 'customer_name']),
+  work_order: D('work_orders', 'Work order (draft)', ['order_no', 'customer_name'], [
+    { table: 'work_order_parts', fk: 'work_order_id' }, { table: 'work_order_services', fk: 'work_order_id' }]),
   restaurant_order: D('restaurant_orders', 'Restaurant order (empty)', ['order_no']),
   layaway: D('layaways', 'Layaway (no payments)', ['layaway_no'], [{ table: 'layaway_items', fk: 'layaway_id' }]),
   appointment: D('appointments', 'Appointment', ['customer_name', 'service_name']),
@@ -113,7 +112,7 @@ export const RECYCLE_ENTITIES = {
   collection: D('collections', 'Collection', ['name'], [{ table: 'collection_files', fk: 'collection_id' }]),
   labor_guide: D('labor_guides', 'Labor guide', ['id']),
   vehicle: D('vehicles', 'Customer vehicle', ['license_plate', 'make', 'model']),
-  test_drive: D('test_drives', 'Test drive', ['customer_name']),
+  test_drive: D('test_drives', 'Test drive', ['customer_name', 'scheduled_date']),
   trade_in: D('trade_in_vehicles', 'Trade-in', ['make', 'model']),
   vehicle_import: D('vehicle_imports', 'Vehicle import', ['import_no']),
   vehicle_document: D('vehicle_documents', 'Vehicle document', ['name', 'document_no']),
@@ -164,7 +163,7 @@ export interface RecycleOptions {
  *  - archive entities: hides the row and records it. Returns null when the row does not exist.
  *  - delete entities: only records row + children; call it BEFORE the route's own delete.
  */
-export async function moveToRecycleBin(db: TenantDb, opts: RecycleOptions): Promise<{ binId: string; displayName: string } | null> {
+export async function moveToRecycleBin(db: Pick<TenantDb, 'execute'>, opts: RecycleOptions): Promise<{ binId: string; displayName: string } | null> {
   const def = recycleEntityDef(opts.entityType)
   if (!def) throw new Error(`Unknown recycle-bin entity: ${opts.entityType}`)
   const table = sql.identifier(def.table)
@@ -211,7 +210,7 @@ export async function moveToRecycleBin(db: TenantDb, opts: RecycleOptions): Prom
     INSERT INTO recycle_bin (tenant_id, entity_type, entity_table, entity_id, display_name, mode, snapshot, children, deleted_by, deleted_by_name)
     VALUES (${opts.tenantId}::uuid, ${opts.entityType}, ${def.table}, ${opts.entityId}::uuid, ${displayName}, ${def.mode},
             ${JSON.stringify(snapshot)}::jsonb, ${children ? JSON.stringify(children) : null}::jsonb,
-            ${opts.userId ?? null}::uuid, ${opts.userName ?? null})
+            (SELECT u.id FROM users u WHERE u.id = ${opts.userId ?? null}::uuid), ${opts.userName ?? null})
     RETURNING id
   `))
   return { binId: ins.id, displayName }

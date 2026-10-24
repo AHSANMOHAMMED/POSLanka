@@ -521,7 +521,7 @@ export default function PurchaseDetailPage() {
     try {
       const res = await fetch(`/api/purchases/${id}`, { method: 'DELETE' })
       if (res.ok) {
-        toast.success('Purchase invoice deleted')
+        toast.success('Purchase invoice deleted (copy kept in recycle bin)')
         router.push(tenantSlug ? `/c/${tenantSlug}/purchases` : '/purchases')
       } else {
         const data = await res.json()
@@ -1802,7 +1802,7 @@ export default function PurchaseDetailPage() {
         onClose={() => setShowDeleteConfirm(false)}
         onConfirm={() => { setShowDeleteConfirm(false); handleDelete() }}
         title="Delete Purchase Invoice"
-        message={`Are you sure you want to delete Purchase Invoice ${purchase.purchaseNo}? This action cannot be undone.`}
+        message={`Are you sure you want to delete Purchase Invoice ${purchase.purchaseNo}? A copy is kept in the recycle bin for the platform administrator.`}
         confirmText="Delete"
         variant="danger"
         processing={saving}

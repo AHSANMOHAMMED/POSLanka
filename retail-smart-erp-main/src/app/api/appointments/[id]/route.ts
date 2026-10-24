@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { resolveUserId } from '@/lib/auth/resolve-user'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { appointments, workOrders, workOrderServices, customers, vehicles, serviceTypes, warehouses, tenants } from '@/lib/db/schema'
@@ -532,6 +533,14 @@ export async function DELETE(
           }, { status: 400 }) }
         }
       }
+    }
+
+    // Keep a copy of the appointment and each recurring child in the recycle bin (restore the parent first)
+    for (const apptId of [id, ...childAppointments.map((c) => c.id)]) {
+      await moveToRecycleBin(tx, {
+        tenantId: session.user.tenantId, entityType: 'appointment', entityId: apptId,
+        userId: userId || null, userName: session.user.name,
+      })
     }
 
     // Delete all child appointments first

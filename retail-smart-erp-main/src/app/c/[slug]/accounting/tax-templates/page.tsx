@@ -280,7 +280,7 @@ export default function TaxTemplatesPage() {
         method: 'DELETE',
       })
       if (res.ok) {
-        toast.success('Tax template deleted')
+        toast.success('Tax template moved to the recycle bin')
         setDeleteTemplate(null)
         refresh()
       } else {
@@ -423,7 +423,7 @@ export default function TaxTemplatesPage() {
                       </button>
                       <button
                         onClick={() => setDeleteTemplate(template)}
-                        aria-label={`Delete ${template.name}`}
+                        aria-label={`Move ${template.name} to the recycle bin`}
                         className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                       >
                         <Trash2 size={16} />
@@ -627,9 +627,9 @@ export default function TaxTemplatesPage() {
         isOpen={!!deleteTemplate}
         onClose={() => setDeleteTemplate(null)}
         onConfirm={handleDelete}
-        title="Delete Tax Template"
-        message={`Are you sure you want to delete "${deleteTemplate?.name}"? This will also remove all associated tax items. This action cannot be undone.`}
-        confirmText="Delete"
+        title="Move to Recycle Bin"
+        message={`Move "${deleteTemplate?.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
         processing={deleting}
       />

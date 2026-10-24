@@ -8,6 +8,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSalesOrderSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 /** Stock problem while confirming: thrown so the whole transaction (earlier reservations) rolls back. */
 class SalesOrderStockError extends Error {}
@@ -502,6 +503,11 @@ export async function DELETE(
       return { error: NextResponse.json({ error: 'Only draft orders can be deleted. Cancel the order instead.' }, { status: 400 }) }
     }
 
+    // Keep a copy in the recycle bin (super admin can restore it)
+    await moveToRecycleBin(tx, {
+      tenantId: session.user.tenantId, entityType: 'sales_order', entityId: id,
+      userId: session.user.id, userName: session.user.name,
+    })
     // Delete items first
     await tx.delete(salesOrderItems)
       .where(eq(salesOrderItems.salesOrderId, id))
