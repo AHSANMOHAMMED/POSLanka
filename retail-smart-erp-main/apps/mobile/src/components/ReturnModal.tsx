@@ -247,7 +247,7 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
       const receipt = receiptFromSale(
         { ...sale, invoiceNo: sale.invoiceNo || 'Return recorded', total: sale.total ?? total, items: sale.items?.length ? sale.items : cartItems.map((c, i) => ({ itemName: c.name, quantity: c.quantity, unitPrice: c.unitPrice, total: c.total, uom: lineUoms[i] ?? null })), isReturn: true },
         {
-          business: business || { name: 'POSLanka' },
+          business: business || { name: 'skyERPOS' },
           shift,
           cashier: cashierName,
           customerName: selected.customerName || undefined,

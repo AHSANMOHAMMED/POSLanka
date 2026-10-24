@@ -82,12 +82,12 @@ function TermsContent() {
 
       <section>
         <h3 className="text-base font-semibold text-adm-fg mt-6 mb-2">1. Acceptance of Terms</h3>
-        <p>By creating an account or using POSLanka, you agree to be bound by these Terms of Service and our Privacy Policy. If you do not agree to these terms, do not use our services.</p>
+        <p>By creating an account or using skyERPOS, you agree to be bound by these Terms of Service and our Privacy Policy. If you do not agree to these terms, do not use our services.</p>
       </section>
 
       <section>
         <h3 className="text-base font-semibold text-adm-fg mt-6 mb-2">2. Service Description</h3>
-        <p>POSLanka is a multi-tenant cloud-based business management platform providing Point of Sale, inventory management, accounting, HR, restaurant management, auto service management, and AI-powered analytics for retail, restaurant, supermarket, and auto service businesses.</p>
+        <p>skyERPOS is a multi-tenant cloud-based business management platform providing Point of Sale, inventory management, accounting, HR, restaurant management, auto service management, and AI-powered analytics for retail, restaurant, supermarket, and auto service businesses.</p>
       </section>
 
       <section>
@@ -182,7 +182,7 @@ function TermsContent() {
 
       <section>
         <h3 className="text-base font-semibold text-adm-fg mt-6 mb-2">12. Intellectual Property</h3>
-        <p>POSLanka, its brand, design, code, and documentation are our intellectual property. You are granted a non-exclusive, non-transferable license to use the platform for your business operations.</p>
+        <p>skyERPOS, its brand, design, code, and documentation are our intellectual property. You are granted a non-exclusive, non-transferable license to use the platform for your business operations.</p>
       </section>
 
       <section>
@@ -193,7 +193,7 @@ function TermsContent() {
       <section>
         <h3 className="text-base font-semibold text-adm-fg mt-6 mb-2">14. Limitation of Liability</h3>
         <ul className="list-disc pl-5 space-y-1.5">
-          <li>POSLanka is provided &quot;as is&quot; without warranties of any kind</li>
+          <li>skyERPOS is provided &quot;as is&quot; without warranties of any kind</li>
           <li>Total liability is limited to amounts paid in the preceding 12 months</li>
           <li>For Free plan users, maximum liability is limited to LKR 5,000</li>
         </ul>
@@ -349,7 +349,7 @@ function PrivacyContent() {
 
       <section>
         <h3 className="text-base font-semibold text-adm-fg mt-6 mb-2">10. Children&apos;s Privacy</h3>
-        <p>POSLanka is intended for users aged 18 and above. We do not knowingly collect information from children under 18.</p>
+        <p>skyERPOS is intended for users aged 18 and above. We do not knowingly collect information from children under 18.</p>
       </section>
 
       <section>

@@ -1,91 +1,52 @@
 /**
- * POSLanka Logo Component
+ * skyERPOS logo (artwork: public/brand/skyerpos-logo.png, square icon: public/icons/icon-*.png).
  *
  * Usage:
- *   <Logo />                        — Icon only, default 32px
- *   <Logo variant="full" />         — Icon + "POSLanka" text
- *   <Logo size={48} />              — Custom size
- *   <Logo onDark />                 — White text for dark backgrounds
+ *   <Logo />                        — square icon, default 32px
+ *   <Logo variant="full" />         — the skyERPOS wordmark (height = size)
+ *   <Logo onDark />                 — wordmark on a white badge for dark backgrounds
  *   <Logo variant="full" subtitle="Point of Sale System" />
  */
 
 interface LogoProps {
-  /** "icon" = mark only, "full" = mark + wordmark */
+  /** "icon" = square icon, "full" = wordmark */
   variant?: 'icon' | 'full'
-  /** Icon size in pixels (text scales proportionally) */
+  /** Height in pixels */
   size?: number
-  /** Use white text (for dark/image backgrounds) */
+  /** Dark / image background: the wordmark sits on a white badge so its blue stays readable */
   onDark?: boolean
-  /** Optional subtitle below the name */
+  /** Optional subtitle below the logo */
   subtitle?: string
   className?: string
 }
 
-/** The SVG icon mark — a stylized storefront with a smart pulse */
-function LogoMark({ size = 32 }: { size?: number }) {
+/** The wordmark image; width follows the artwork's aspect ratio (403 × 184). */
+export function BrandWordmark({ height = 32, onDark = false, className = '' }: { height?: number; onDark?: boolean; className?: string }) {
+  const img = (
+    // eslint-disable-next-line @next/next/no-img-element -- static brand asset, sized by height
+    <img
+      src="/brand/skyerpos-logo.png"
+      srcSet="/brand/skyerpos-logo.png 1x, /brand/skyerpos-logo@2x.png 2x"
+      alt="skyERPOS"
+      height={height}
+      width={Math.round((height * 403) / 184)}
+      style={{ height, width: 'auto' }}
+      className={onDark ? undefined : className}
+      draggable={false}
+    />
+  )
+  return onDark ? <span className={`inline-flex items-center rounded-lg bg-white px-2 py-1 shadow-sm ${className}`}>{img}</span> : img
+}
+
+/** The square app icon (favicon / launcher artwork). */
+export function LogoMark({ size = 32, className = '' }: { size?: number; className?: string }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 64 64"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      {/* Rounded square background */}
-      <rect width="64" height="64" rx="16" fill="url(#logo-grad)" />
-
-      {/* Storefront awning */}
-      <path
-        d="M14 28c0-2 1-4 4-4h28c3 0 4 2 4 4v1c0 3-2.5 5-5.5 5S40 32 40 29c0 3-2.5 5-5.5 5S30 31 30 29c0 3-3 5-6 5s-6-2-6-5v-1z"
-        fill="rgba(255,255,255,0.95)"
-      />
-
-      {/* Store body */}
-      <rect x="18" y="33" width="28" height="16" rx="2" fill="rgba(255,255,255,0.85)" />
-
-      {/* Door */}
-      <rect x="27" y="38" width="10" height="11" rx="1.5" fill="url(#logo-grad)" opacity="0.7" />
-
-      {/* Window left */}
-      <rect x="20.5" y="36" width="5" height="5" rx="1" fill="url(#logo-grad)" opacity="0.35" />
-
-      {/* Smart pulse / signal arcs (top-right) — represents "smart" */}
-      <path
-        d="M44 18a8 8 0 0 1 0 8"
-        stroke="rgba(255,255,255,0.9)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <path
-        d="M48 15a13 13 0 0 1 0 14"
-        stroke="rgba(255,255,255,0.55)"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-      />
-
-      {/* Dot for signal origin */}
-      <circle cx="43" cy="22" r="2" fill="rgba(255,255,255,0.95)" />
-
-      <defs>
-        <linearGradient id="logo-grad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#0d9488" />
-          <stop offset="1" stopColor="#0f766e" />
-        </linearGradient>
-      </defs>
-    </svg>
+    // eslint-disable-next-line @next/next/no-img-element -- static brand asset
+    <img src="/icons/icon-192.png" alt="" aria-hidden="true" width={size} height={size} className={`rounded-[22%] ${className}`} draggable={false} />
   )
 }
 
-export function Logo({
-  variant = 'icon',
-  size = 32,
-  onDark = false,
-  subtitle,
-  className = '',
-}: LogoProps) {
+export function Logo({ variant = 'icon', size = 32, onDark = false, subtitle, className = '' }: LogoProps) {
   if (variant === 'icon') {
     return (
       <span className={className}>
@@ -93,24 +54,11 @@ export function Logo({
       </span>
     )
   }
-
-  // Full variant — icon + wordmark
-  const textSize = size >= 40 ? 'text-xl' : size >= 32 ? 'text-base' : 'text-sm'
   const subSize = size >= 40 ? 'text-sm' : 'text-xs'
-
   return (
-    <span className={`inline-flex items-center gap-2.5 ${className}`}>
-      <LogoMark size={size} />
-      <span className="flex flex-col leading-tight">
-        <span className={`font-bold tracking-tight ${textSize} ${onDark ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
-          POSLanka
-        </span>
-        {subtitle && (
-          <span className={`${subSize} ${onDark ? 'text-white/60' : 'text-slate-500 dark:text-slate-400'}`}>
-            {subtitle}
-          </span>
-        )}
-      </span>
+    <span className={`inline-flex flex-col items-start gap-1 ${className}`}>
+      <BrandWordmark height={size} onDark={onDark} />
+      {subtitle && <span className={`${subSize} ${onDark ? 'text-white/70' : 'text-slate-500 dark:text-slate-400'}`}>{subtitle}</span>}
     </span>
   )
 }

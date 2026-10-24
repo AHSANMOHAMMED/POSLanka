@@ -917,7 +917,7 @@ export function buildTestPageEscPos(opts: {
   if (opts.drawerKick) b.drawerKick(2)
   b.selectCodePage()
   b.align('center')
-  b.styledLine(opts.businessName || 'POSLanka', { bold: true, size: 2, align: 'center' })
+  b.styledLine(opts.businessName || 'skyERPOS', { bold: true, size: 2, align: 'center' })
   b.styledLine('Printer test page', { align: 'center' })
   b.align('left')
   b.hr()

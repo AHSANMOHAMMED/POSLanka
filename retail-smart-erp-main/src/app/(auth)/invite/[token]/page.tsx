@@ -206,7 +206,7 @@ export default function InviteAcceptPage({
 
       {invite?.hasExistingAccount ? (
         <div className="space-y-4">
-          <p className="text-[14px] text-adm-muted">You already have a POSLanka account, so accepting just adds these companies to it.</p>
+          <p className="text-[14px] text-adm-muted">You already have a skyERPOS account, so accepting just adds these companies to it.</p>
           <Button variant="primary" size="lg" fullWidth onClick={handleAccept} loading={accepting}>
             {accepting ? 'Accepting…' : 'Accept invite'}
           </Button>

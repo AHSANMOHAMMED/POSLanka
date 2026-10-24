@@ -123,7 +123,7 @@ export async function loadBusinessInfo(force = false): Promise<BusinessInfo> {
     if (!cachedBusiness.logo || cachedBusiness.logoPaperDots === dots) return cachedBusiness
   }
   const user = await getUser()
-  const fallback: BusinessInfo = { name: user?.tenantName || 'POSLanka', address: null, phone: null }
+  const fallback: BusinessInfo = { name: user?.tenantName || 'skyERPOS', address: null, phone: null }
   const previous = cachedBusiness || (await readCachedBusiness())
 
   const res = await apiGet<TenantResponse>('/api/tenant')

@@ -98,10 +98,11 @@ export default function BarChart({ labels, datasets, height = 300, color = 'blue
         style={{ overflow: 'visible' }}
       >
         {/* Gridlines */}
-        {yTicks.map((tick) => {
+        {yTicks.map((tick, i) => {
           const y = paddingTop + chartHeight - (tick / maxValue) * chartHeight
+          // Rounded ticks repeat on small scales (max 2 → 0, 0, 1, 1, 2): key by position
           return (
-            <g key={`grid-${tick}`}>
+            <g key={`grid-${i}`}>
               <line
                 x1={paddingLeft}
                 y1={y}

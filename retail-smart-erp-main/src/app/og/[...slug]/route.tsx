@@ -6,7 +6,7 @@ import { NextRequest } from 'next/server'
 
 const pageConfig: Record<string, { title: string; subtitle: string; gradient: string }> = {
   home: {
-    title: 'RetailSmart ERP',
+    title: 'skyERPOS',
     subtitle: 'AI-Powered POS & Business Management Platform',
     gradient: 'linear-gradient(135deg, #064e3b, #059669, #f59e0b)',
   },
@@ -88,7 +88,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             R
           </div>
           <span style={{ fontSize: '28px', fontWeight: 700, color: 'white', letterSpacing: '-0.02em' }}>
-            RetailSmart ERP
+            skyERPOS
           </span>
         </div>
 

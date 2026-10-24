@@ -341,7 +341,7 @@ export default function StaffScreen() {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.storeName} numberOfLines={1}>
-            {user?.tenantName || 'POSLanka'}
+            {user?.tenantName || 'skyERPOS'}
           </Text>
           <Text style={styles.branchSub} numberOfLines={1}>Staff accounts</Text>
         </View>

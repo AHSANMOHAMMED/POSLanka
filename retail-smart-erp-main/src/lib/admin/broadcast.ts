@@ -7,7 +7,7 @@
  *   in_app   vendor app inbox (in_app_notifications, live "inbox-notification" event)
  *   account  account portal notifications (account_notifications, live "account-notification" event)
  *   email    system email transport (Resend); without RESEND_API_KEY the mail is only logged
- *   push     phones running the POSLanka app (Expo push, user_devices) of each vendor's owners and
+ *   push     phones running the skyERPOS app (Expo push, user_devices) of each vendor's owners and
  *            managers (pushScope 'owners_managers', default) or all active staff; sent in batches
  *            of 100 with per-vendor delivery counts
  * Every send is stored in platform_broadcasts with per-recipient delivery rows.
@@ -232,7 +232,7 @@ function esc(s: string): string {
 }
 
 export function renderBroadcastEmail(input: { title: string; body: string; link?: string | null; baseUrl: string }): { html: string; text: string } {
-  const app = process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka'
+  const app = process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
   const href = input.link ? (input.link.startsWith('/') ? `${input.baseUrl.replace(/\/$/, '')}${input.link}` : input.link) : null
   const paragraphs = input.body.split(/\n{2,}/).map((p) => `<p style="margin:0 0 14px;">${esc(p).replace(/\n/g, '<br>')}</p>`).join('')
   const html = `

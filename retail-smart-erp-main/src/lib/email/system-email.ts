@@ -31,7 +31,7 @@ export async function sendSystemEmail(options: {
   }
 
   const senderEmail = process.env.SYSTEM_EMAIL_FROM || 'noreply@poslanka.lk'
-  const senderName = process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka'
+  const senderName = process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
 
   const res = await fetchWithTimeout('https://api.resend.com/emails', {
     method: 'POST',
@@ -64,7 +64,7 @@ export async function sendStaffInviteEmail(options: {
   role: string
   inviteUrl: string
 }) {
-  const appName = process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka'
+  const appName = process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
   const { email, inviterName, companyName, role, inviteUrl } = options
 
   // Escape user-provided values to prevent HTML injection in emails
@@ -141,7 +141,7 @@ export async function sendStaffInviteEmail(options: {
 }
 
 export async function sendOtpEmail(email: string, otp: string) {
-  const appName = process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka'
+  const appName = process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
   const digits = otp.split('')
 
   return sendSystemEmail({

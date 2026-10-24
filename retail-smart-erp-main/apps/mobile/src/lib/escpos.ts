@@ -553,7 +553,7 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
     b.line()
     b.align('center').qr(code.value, { size: cols >= 48 ? 6 : 4 }).align('left')
   }
-  b.align('center').line('Powered by POSLanka').align('left')
+  b.align('center').line('Powered by skyERPOS').align('left')
   b.partialCut()
   return b.bytes()
 }
@@ -698,7 +698,7 @@ export function buildZReport(input: ZReportInput, opts: { paperWidth: PaperWidth
   b.line()
   b.line('Signature: ____________________')
   b.line()
-  b.align('center').line('Powered by POSLanka').align('left')
+  b.align('center').line('Powered by skyERPOS').align('left')
   b.partialCut()
   return b.bytes()
 }

@@ -1,12 +1,12 @@
 /**
- * POSLanka product branding — driven by env with safe defaults.
+ * skyERPOS product branding — driven by env with safe defaults.
  */
 
-export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka'
-export const APP_SHORT_NAME = process.env.NEXT_PUBLIC_APP_SHORT_NAME || 'POSLanka'
+export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
+export const APP_SHORT_NAME = process.env.NEXT_PUBLIC_APP_SHORT_NAME || 'skyERPOS'
 export const APP_TAGLINE =
   process.env.NEXT_PUBLIC_APP_TAGLINE ||
-  'Sri Lanka POS & Light ERP for shops and mini-supermarkets'
+  'Powerful. Reliable. Complete POS solution for your business.'
 
 export const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'poslanka.lk'
 export const LANDING_DOMAIN =

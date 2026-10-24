@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
     const resetUrl = `${appUrl}/c/${tenantSlug}/forgot-password?token=${token}`
 
     // Send password reset email
-    const appName = process.env.NEXT_PUBLIC_APP_NAME || 'Retail Smart POS'
+    const appName = process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
     const safeName = (user.fullName || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
     await sendSystemEmail({

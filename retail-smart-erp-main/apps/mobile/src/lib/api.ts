@@ -289,7 +289,7 @@ export async function api<T = any>(
       data: null,
       error: aborted
         ? 'The server took too long to respond. Check your connection and try again.'
-        : 'Cannot reach the POSLanka server. Check your connection and the server URL.',
+        : 'Cannot reach the skyERPOS server. Check your connection and the server URL.',
     }
   }
 

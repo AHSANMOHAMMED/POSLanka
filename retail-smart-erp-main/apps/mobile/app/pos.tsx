@@ -663,7 +663,7 @@ export default function PosScreen() {
         <View style={styles.headerLeft}>
           <View style={styles.breadcrumbRow}>
             <Text style={styles.breadcrumbText} numberOfLines={1}>
-              {user?.tenantName || 'POSLanka'} ▸ {shiftWarehouseName(shift) || '—'} ▸ {shiftCounterName(shift) || 'No shift'}
+              {user?.tenantName || 'skyERPOS'} ▸ {shiftWarehouseName(shift) || '—'} ▸ {shiftCounterName(shift) || 'No shift'}
             </Text>
             <View style={[styles.onlinePill, !queueState.online && styles.offlinePill]}>
               <View style={[styles.pulsingDot, !queueState.online && styles.offlineDot]} />

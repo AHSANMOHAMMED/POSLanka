@@ -84,7 +84,7 @@ const DEFAULT_CONTACT_INFO: ContactInfo = {
   phone: '+94 11 234 5678',
   whatsapp: '+94 77 123 4567',
   address: 'Colombo, Sri Lanka',
-  companyName: process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka',
+  companyName: process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS',
   businessHours: 'Mon-Fri 9:00 AM - 6:00 PM (Asia/Colombo)',
 }
 

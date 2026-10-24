@@ -224,7 +224,7 @@ export default function ApprovalsScreen() {
         </TouchableOpacity>
         <View style={styles.headerCenter}>
           <Text style={styles.storeName} numberOfLines={1}>
-            {user?.tenantName || 'POSLanka'}
+            {user?.tenantName || 'skyERPOS'}
           </Text>
           <Text style={styles.branchSub}>Pending approvals</Text>
         </View>

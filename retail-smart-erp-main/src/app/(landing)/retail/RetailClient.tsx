@@ -471,7 +471,7 @@ export default function RetailClient() {
             badge="Multi-Business Platform"
             title="Also built for other industries"
             highlight="other industries"
-            subtitle="RetailSmart ERP adapts to your business type with specialized modules and features."
+            subtitle="skyERPOS adapts to your business type with specialized modules and features."
             gradientClass="gradient-text-retail"
           />
 

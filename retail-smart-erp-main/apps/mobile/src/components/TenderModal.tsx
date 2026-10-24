@@ -306,7 +306,7 @@ export function TenderModal({
 
     setBusy(true)
     try {
-      const businessInfo: BusinessInfo = business || { name: 'POSLanka' }
+      const businessInfo: BusinessInfo = business || { name: 'skyERPOS' }
       const splits = payload.paymentSplits as Array<{ method: string; amount: number; reference?: string }> | undefined
       const fallbackPayment = splits?.[0] || { method: String(payload.paymentMethod), amount: Number(payload.amountPaid) || netPayable }
       // local stock is in base units (a box line holds quantity × factor pieces)

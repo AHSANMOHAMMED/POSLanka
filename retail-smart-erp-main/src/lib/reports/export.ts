@@ -16,7 +16,7 @@ export async function exportToExcel(
   reportName: string
 ): Promise<void> {
   const workbook = new ExcelJS.Workbook()
-  workbook.creator = 'RetailSmart POS'
+  workbook.creator = 'skyERPOS POS'
   workbook.created = new Date()
 
   const worksheet = workbook.addWorksheet(reportName)

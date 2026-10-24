@@ -34,6 +34,7 @@ import { AdminSessionTimer, signOutAdmin } from './AdminSessionTimer'
 import { AdminHealthProvider, useAdminHealth } from './AdminHealth'
 import { StatusDot } from './kit'
 import { LogoMark } from './kit/LogoMark'
+import { BrandWordmark } from '@/components/ui/logo'
 import { AdminRoleProvider, useAdminRole } from './AdminRoleContext'
 import { adminCan, ADMIN_ROLE_LABELS, type AdminPermission, type AdminRole } from '@/lib/admin/roles'
 
@@ -151,7 +152,7 @@ function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellPr
             >
               <Menu size={20} aria-hidden />
             </button>
-            <Link href="/sys-control" className="flex shrink-0 items-center gap-2 lg:hidden" aria-label="POSLanka admin home">
+            <Link href="/sys-control" className="flex shrink-0 items-center gap-2 lg:hidden" aria-label="skyERPOS admin home">
               <LogoMark size={26} />
               <span className="hidden text-[15px] font-semibold text-adm-fg min-[420px]:inline">Admin</span>
             </Link>
@@ -205,11 +206,8 @@ function Sidebar({ pathname, open, onClose }: { pathname: string; open: boolean;
     >
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-adm-sidebar-border px-4">
         <Link href="/sys-control" className="flex items-center gap-2.5">
-          <LogoMark size={28} />
-          <span className="leading-tight">
-            <span className="block text-[15px] font-semibold text-white">POSLanka</span>
-            <span className="block text-[11.5px] text-adm-sidebar-muted">Platform admin</span>
-          </span>
+          <BrandWordmark height={30} onDark />
+          <span className="text-[11.5px] leading-tight text-adm-sidebar-muted">Platform<br />admin</span>
         </Link>
         <button
           type="button"

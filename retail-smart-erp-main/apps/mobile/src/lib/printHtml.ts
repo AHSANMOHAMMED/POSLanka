@@ -70,5 +70,5 @@ export function zReportHtml(input: ZReportInput): string {
       .join('')}
     ${input.notes ? `<p>Notes: ${escapeHtml(input.notes)}</p>` : ''}
     <p>Signature: ____________________</p>
-    <div class="c">Powered by POSLanka</div>`
+    <div class="c">Powered by skyERPOS</div>`
 }

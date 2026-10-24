@@ -83,7 +83,7 @@ export default function ContactClient() {
           </BlurFadeIn>
           <BlurFadeIn delay={0.2}>
             <p className="mt-6 text-lg sm:text-xl text-zinc-400 leading-relaxed max-w-2xl mx-auto">
-              Have questions about RetailSmart ERP? We&apos;d love to hear from you. Our team is ready to help you get started — your first company is <span className="text-emerald-400 font-semibold">free forever</span>.
+              Have questions about skyERPOS? We&apos;d love to hear from you. Our team is ready to help you get started — your first company is <span className="text-emerald-400 font-semibold">free forever</span>.
             </p>
           </BlurFadeIn>
         </div>

@@ -11,7 +11,7 @@ function esc(s: string): string {
 }
 
 function appName() {
-  return process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka'
+  return process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
 }
 
 function shell(title: string, body: string) {

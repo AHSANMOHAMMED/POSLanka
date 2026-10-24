@@ -63,7 +63,7 @@ export function labelTestTemplate(widthMm: number, heightMm: number): LabelTempl
     heightMm: h,
     elements: [
       { id: 'border', type: 'shape', shape: 'rectangle', x: 1, y: 1, width: w - 2, height: h - 2, rotation: 0, zIndex: 0, borderWidth: 2, borderColor: '#000', borderStyle: 'solid' },
-      { id: 'title', type: 'text', dataField: 'custom', customValue: 'POSLanka label test', x: 2, y: 2.5, width: w - 4, height: h * 0.2, rotation: 0, zIndex: 1, fontSize: 9, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: 'title', type: 'text', dataField: 'custom', customValue: 'skyERPOS label test', x: 2, y: 2.5, width: w - 4, height: h * 0.2, rotation: 0, zIndex: 1, fontSize: 9, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
       { id: 'size', type: 'text', dataField: 'custom', customValue: `${w} x ${h} mm`, x: 2, y: 2.5 + h * 0.2, width: w - 4, height: h * 0.15, rotation: 0, zIndex: 1, fontSize: 7, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
       { id: 'bc', type: 'barcode', format: 'code128', dataField: 'custom', customValue: 'TEST-12345', showText: true, barWidth: 2, x: 3, y: h * 0.45, width: w - 6, height: h * 0.45, rotation: 0, zIndex: 1 },
     ],

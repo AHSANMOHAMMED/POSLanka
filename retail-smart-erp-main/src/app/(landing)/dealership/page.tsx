@@ -7,14 +7,14 @@ export const metadata: Metadata = {
   description: 'Vehicle dealership management with inventory tracking, sales pipeline, trade-in management, test drive scheduling, and AI analytics. For car, motorbike, and vehicle dealerships. Unlimited users, free to start.',
   keywords: ['vehicle dealership software', 'car dealership management', 'vehicle inventory', 'dealership POS', 'vehicle sales', 'trade-in management', 'dealership CRM'],
   openGraph: {
-    title: 'Vehicle Dealership Management System | RetailSmart ERP',
+    title: 'Vehicle Dealership Management System | skyERPOS',
     description: 'Vehicle inventory, sales pipeline, trade-ins, test drives. AI-powered. Unlimited users.',
     url: 'https://www.retailsmarterp.com/dealership',
-    images: [{ url: '/og/dealership', width: 1200, height: 630, alt: 'RetailSmart ERP Vehicle Dealership Management' }],
+    images: [{ url: '/og/dealership', width: 1200, height: 630, alt: 'skyERPOS Vehicle Dealership Management' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Vehicle Dealership Management System | RetailSmart ERP',
+    title: 'Vehicle Dealership Management System | skyERPOS',
     description: 'Vehicle inventory, sales pipeline, trade-ins, test drives. AI-powered.',
     images: ['/og/dealership'],
   },
@@ -44,7 +44,7 @@ export default function DealershipPage() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            "name": "RetailSmart ERP - Vehicle Dealership Management",
+            "name": "skyERPOS - Vehicle Dealership Management",
             "applicationCategory": "BusinessApplication",
             "applicationSubCategory": "Vehicle Dealership Management",
             "operatingSystem": "Web",

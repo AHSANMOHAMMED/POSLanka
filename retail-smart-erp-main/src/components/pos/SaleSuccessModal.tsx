@@ -29,7 +29,7 @@ export function SaleSuccessModal({
   onDismiss,
   onPrintReceipt,
   printingReceipt,
-  shopName = 'POSLanka',
+  shopName = 'skyERPOS',
 }: SaleSuccessModalProps) {
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()

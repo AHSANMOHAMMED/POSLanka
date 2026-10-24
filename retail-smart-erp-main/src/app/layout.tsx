@@ -19,27 +19,27 @@ export const metadata: Metadata = {
     ? `https://${process.env.NEXT_PUBLIC_LANDING_DOMAIN.replace(/^https?:\/\//, '')}`
     : 'https://www.poslanka.lk'),
   title: {
-    default: 'POSLanka - Sri Lanka POS & Light ERP',
-    template: '%s | POSLanka',
+    default: 'skyERPOS - All-in-one POS & ERP',
+    template: '%s | skyERPOS',
   },
   description: 'Modern multi-tenant POS and light ERP for Sri Lankan retail shops, mini-supermarkets, and growing chains. LKR, Sinhala, WhatsApp, PayHere.',
-  keywords: ['POS Sri Lanka', 'point of sale', 'POSLanka', 'retail POS', 'supermarket POS', 'inventory management', 'LKR POS', 'Sinhala POS'],
-  authors: [{ name: 'POSLanka' }],
-  creator: 'POSLanka',
-  publisher: 'POSLanka',
+  keywords: ['POS Sri Lanka', 'point of sale', 'skyERPOS', 'retail POS', 'supermarket POS', 'inventory management', 'LKR POS', 'Sinhala POS'],
+  authors: [{ name: 'skyERPOS' }],
+  creator: 'skyERPOS',
+  publisher: 'skyERPOS',
   formatDetection: { email: false, address: false, telephone: false },
   openGraph: {
     type: 'website',
     locale: 'en_LK',
     url: 'https://www.poslanka.lk',
-    siteName: 'POSLanka',
-    title: 'POSLanka - Sri Lanka POS & Light ERP',
+    siteName: 'skyERPOS',
+    title: 'skyERPOS - Sri Lanka POS & Light ERP',
     description: 'POS and light ERP for Sri Lankan shops. Fast billing, inventory, WhatsApp receipts, LKR-ready.',
-    images: [{ url: '/og/home', width: 1200, height: 630, alt: 'POSLanka - Sri Lanka POS & Light ERP' }],
+    images: [{ url: '/og/home', width: 1200, height: 630, alt: 'skyERPOS - Sri Lanka POS & Light ERP' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'POSLanka - Sri Lanka POS & Light ERP',
+    title: 'skyERPOS - Sri Lanka POS & Light ERP',
     description: 'POS and light ERP for Sri Lankan shops. Fast billing, inventory, WhatsApp receipts.',
     images: ['/og/home'],
   },
@@ -49,15 +49,18 @@ export const metadata: Metadata = {
     google: '', // TODO: Add Google Search Console verification code
   },
   other: {
-    'application-name': 'POSLanka',
+    'application-name': 'skyERPOS',
     'subject': 'Business Management Software, Point of Sale, ERP',
     'classification': 'Business',
     'coverage': 'Sri Lanka',
     'distribution': 'Global',
   },
   icons: {
-    icon: '/icons/icon-192.png',
-    apple: '/icons/icon-512.png',
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icons/icon-192.png', type: 'image/png', sizes: '192x192' },
+    ],
+    apple: '/icons/apple-touch-icon.png',
   },
 }
 

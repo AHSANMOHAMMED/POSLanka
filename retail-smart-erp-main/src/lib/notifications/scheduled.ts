@@ -207,7 +207,7 @@ export async function runSubscriptionReminders(opts: TenantFilter = {}): Promise
         ? `Your free trial ends ${when}`
         : s.cancelAtPeriodEnd ? `Your subscription ends ${when}` : `Your subscription renews ${when}`
       const body = s.status === 'trial'
-        ? `${s.tenantName}: the trial ends on ${date}. Choose a plan to keep using POSLanka without interruption.`
+        ? `${s.tenantName}: the trial ends on ${date}. Choose a plan to keep using skyERPOS without interruption.`
         : s.cancelAtPeriodEnd
           ? `${s.tenantName}: the plan ends on ${date}. Renew to keep access to your data.`
           : `${s.tenantName}: the current period ends on ${date}. Make sure your payment is ready.`

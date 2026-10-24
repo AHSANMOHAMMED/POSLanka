@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   ScrollView,
   Switch,
+  Image,
 } from 'react-native'
 import { router } from 'expo-router'
 import {
@@ -201,11 +202,8 @@ export default function LoginScreen() {
       keyboardShouldPersistTaps="handled"
     >
       <View style={styles.brandBox}>
-        <View style={styles.logoBadge}>
-          <Text style={styles.logoBadgeText}>PL</Text>
-        </View>
-        <Text style={styles.title}>POSLanka</Text>
-        <Text style={styles.sub}>Cloud ERP & Mobile POS Terminal</Text>
+        <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="skyERPOS" />
+        <Text style={styles.sub}>All-in-one POS & ERP</Text>
       </View>
 
       <View style={styles.card}>
@@ -349,22 +347,7 @@ const styles = StyleSheet.create({
   linkBtn: { alignSelf: 'flex-start', marginBottom: 14 },
   linkText: { fontSize: 12, fontWeight: '700', color: THEME.colors.primary },
   brandBox: { alignItems: 'center', marginBottom: 28 },
-  logoBadge: {
-    width: 60,
-    height: 60,
-    borderRadius: 16,
-    backgroundColor: THEME.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    shadowColor: THEME.colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  logoBadgeText: { color: '#FFF', fontSize: 24, fontWeight: '900', letterSpacing: 1 },
-  title: { fontSize: 28, fontWeight: '900', color: THEME.colors.primary, letterSpacing: -0.5 },
+  logo: { width: 230, height: 105, marginBottom: 4 },
   sub: { marginTop: 4, color: THEME.colors.textMuted, fontSize: 13, fontWeight: '500' },
   card: {
     backgroundColor: '#FFFFFF',

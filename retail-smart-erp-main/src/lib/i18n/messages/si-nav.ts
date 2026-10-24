@@ -1,6 +1,6 @@
-/** Sinhala UI strings for POSLanka (UTF-8) */
+/** Sinhala UI strings for skyERPOS (UTF-8) */
 export const siMessages = {
-  appName: 'POSLanka',
+  appName: 'skyERPOS',
   nav: {
     dashboard: 'උපකරණ පුවරුව',
     pos: 'විකුණුම් තිරය',

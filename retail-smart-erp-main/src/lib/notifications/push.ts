@@ -1,5 +1,5 @@
 /**
- * Push notifications via the Expo Push API (works for Android/iOS builds of the POSLanka app).
+ * Push notifications via the Expo Push API (works for Android/iOS builds of the skyERPOS app).
  * Tokens are registered by the mobile app through POST /api/account/devices.
  * All functions are fire-and-forget safe: they never throw to the caller.
  */

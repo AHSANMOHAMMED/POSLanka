@@ -32,7 +32,7 @@ export function RecentSalesModal({
   onClose,
   onPrintReceipt,
   onReturnSale,
-  shopName = 'POSLanka',
+  shopName = 'skyERPOS',
 }: RecentSalesModalProps) {
   const { currency: currencyCode } = useCurrency()
   const [sales, setSales] = useState<PastSale[]>([])

@@ -1,6 +1,6 @@
 /**
  * Generate a simple Code128-friendly numeric barcode when item barcode is blank.
- * Uses a POSLanka prefix + timestamp + random digits (13 chars when possible).
+ * Uses a skyERPOS prefix + timestamp + random digits (13 chars when possible).
  */
 export function generateItemBarcode(prefix = '2'): string {
   const ts = Date.now().toString().slice(-10)

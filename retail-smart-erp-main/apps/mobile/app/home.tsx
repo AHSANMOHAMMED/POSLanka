@@ -80,7 +80,7 @@ export default function HomeScreen() {
     <View style={styles.safe}>
       <View style={[styles.header, headerPad]}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.company} numberOfLines={1}>{user?.tenantName || 'POSLanka'}</Text>
+          <Text style={styles.company} numberOfLines={1}>{user?.tenantName || 'skyERPOS'}</Text>
           {user?.businessId ? (
             <Text style={styles.businessId} numberOfLines={1}>Business ID {formatBusinessId(user.businessId)}</Text>
           ) : null}

@@ -130,7 +130,7 @@ export default function AlertSettingsPage() {
         </button>
         <div>
           <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">Alerts &amp; reminders</h1>
-          <p className="text-sm text-gray-500">Push notifications on the POSLanka app and the in-app alert inbox</p>
+          <p className="text-sm text-gray-500">Push notifications on the skyERPOS app and the in-app alert inbox</p>
         </div>
       </div>
 

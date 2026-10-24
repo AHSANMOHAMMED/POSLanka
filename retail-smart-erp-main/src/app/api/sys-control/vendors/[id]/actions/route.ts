@@ -354,7 +354,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             })
             await sendStaffInviteEmail({
               email: owner.email,
-              inviterName: 'POSLanka Platform Team',
+              inviterName: 'skyERPOS Platform Team',
               companyName: tenant.name,
               role: 'owner',
               inviteUrl: `${baseUrl}/invite/${token}`,

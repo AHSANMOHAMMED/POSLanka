@@ -326,7 +326,7 @@ export default function AutoServiceClient() {
             badge="Also Available"
             title="Solutions for every business type"
             highlight="every business type"
-            subtitle="RetailSmart ERP adapts to your industry. Explore other purpose-built solutions."
+            subtitle="skyERPOS adapts to your industry. Explore other purpose-built solutions."
             gradientClass="gradient-text-auto"
           />
 

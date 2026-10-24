@@ -71,7 +71,7 @@ export async function totpQrDataUrl(
   email: string,
   secret: string
 ): Promise<{ otpauthUrl: string; qrDataUrl: string }> {
-  const issuer = 'POSLanka Control'
+  const issuer = 'skyERPOS Control'
   const encodedIssuer = encodeURIComponent(issuer)
   const encodedEmail = encodeURIComponent(email)
   const otpauthUrl = `otpauth://totp/${encodedIssuer}:${encodedEmail}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`

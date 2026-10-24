@@ -39,7 +39,7 @@ function ResetPasswordForm() {
       }
       setSuccess(true)
     } catch {
-      setError('Can’t reach POSLanka. Check your connection and try again.')
+      setError('Can’t reach skyERPOS. Check your connection and try again.')
     } finally {
       setLoading(false)
     }

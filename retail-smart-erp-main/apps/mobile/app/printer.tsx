@@ -383,7 +383,7 @@ function PrinterEditor({ initial, isNew, onDone }: { initial: PrinterConfig; isN
           {!nativeAvailable && (
             <View style={styles.notice}>
               <Text style={styles.noticeText}>
-                Bluetooth, USB and network printing need the POSLanka dev-client / EAS build. In Expo Go only "System print / PDF" works.
+                Bluetooth, USB and network printing need the skyERPOS dev-client / EAS build. In Expo Go only "System print / PDF" works.
               </Text>
             </View>
           )}

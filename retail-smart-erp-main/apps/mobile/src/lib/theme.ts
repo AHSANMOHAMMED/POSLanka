@@ -1,4 +1,4 @@
-// Stitch "Operational Velocity" Design System Tokens for POSLanka Mobile
+// Stitch "Operational Velocity" Design System Tokens for skyERPOS Mobile
 
 export const THEME = {
   colors: {

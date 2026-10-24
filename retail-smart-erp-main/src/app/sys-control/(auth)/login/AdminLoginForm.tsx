@@ -73,7 +73,7 @@ export function AdminLoginForm({ sessionExpired }: { sessionExpired?: boolean })
           description={
             needsTotp
               ? 'Enter the 6-digit code from the authenticator app linked to this account.'
-              : 'For POSLanka platform administrators only.'
+              : 'For skyERPOS platform administrators only.'
           }
         />
 

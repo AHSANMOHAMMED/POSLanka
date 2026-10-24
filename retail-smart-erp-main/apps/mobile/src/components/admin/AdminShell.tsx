@@ -1,7 +1,7 @@
 // Shared chrome for the super-admin companion screens: header with the admin's
 // identity + sign-out, and a bottom tab bar (Pulse / Live / Vendors / Approvals).
 import React, { useEffect, useState } from 'react'
-import { View, Text, Pressable, StyleSheet, Alert } from 'react-native'
+import { View, Text, Pressable, StyleSheet, Alert, Image } from 'react-native'
 import { router, usePathname } from 'expo-router'
 import { THEME } from '../../lib/theme'
 import { ADMIN_ROLE_LABEL, adminLogout, getAdminUser, type AdminUser } from '../../lib/adminApi'
@@ -51,9 +51,7 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
             <Text style={styles.backBtnText}>←</Text>
           </Pressable>
         ) : (
-          <View style={styles.badge}>
-            <Text style={styles.badgeText}>SA</Text>
-          </View>
+          <Image source={require('../../../assets/icon.png')} style={styles.badge} accessibilityLabel="skyERPOS" />
         )}
         <View style={{ flex: 1 }}>
           <Text style={styles.headerTitle} numberOfLines={1}>
@@ -250,8 +248,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: THEME.colors.border,
   },
-  badge: { width: 38, height: 38, borderRadius: 10, backgroundColor: THEME.colors.textDark, alignItems: 'center', justifyContent: 'center' },
-  badgeText: { color: '#FFF', fontWeight: '900', fontSize: 13, letterSpacing: 1 },
+  badge: { width: 38, height: 38, borderRadius: 10, borderWidth: 1, borderColor: THEME.colors.border },
   backBtn: { width: 38, height: 38, borderRadius: 8, backgroundColor: THEME.colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
   backBtnText: { fontSize: 20, fontWeight: '700', color: THEME.colors.text },
   headerTitle: { fontSize: 17, fontWeight: '800', color: THEME.colors.text },

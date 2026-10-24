@@ -127,7 +127,7 @@ export default function ApiKeysPage() {
         <div>
           <h2 className="text-lg font-semibold">API Keys</h2>
           <p className="text-sm text-gray-500 mt-1 max-w-2xl">
-            Keys let other systems (web shop, accounting, BI) use the POSLanka API at <code className="font-mono">/api/v1</code>.
+            Keys let other systems (web shop, accounting, BI) use the skyERPOS API at <code className="font-mono">/api/v1</code>.
             A key acts with the permissions of the person who created it and stops working if it is revoked,
             expires, or that person is deactivated. See docs/API.md.
           </p>
@@ -251,7 +251,7 @@ export default function ApiKeysPage() {
           <div className="space-y-3">
             <p className="text-sm text-gray-700">
               This is the only time the key for <strong>{secret.name}</strong> is shown. Store it in the other
-              system&apos;s secret settings; POSLanka keeps only a hash and cannot show it again.
+              system&apos;s secret settings; skyERPOS keeps only a hash and cannot show it again.
             </p>
             <div className="flex items-center gap-2">
               <code className="flex-1 p-2 bg-gray-50 border rounded font-mono text-xs break-all">{secret.key}</code>

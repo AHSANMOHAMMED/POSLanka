@@ -3,10 +3,10 @@ import LoginClient from './LoginClient'
 
 export const metadata: Metadata = {
   title: 'Sign in',
-  description: 'Sign in to POSLanka with your Business ID, or to your owner account to manage your companies.',
+  description: 'Sign in to skyERPOS with your Business ID, or to your owner account to manage your companies.',
   openGraph: {
-    title: 'Sign in | POSLanka',
-    description: 'Sign in to your POSLanka point of sale and back office.',
+    title: 'Sign in | skyERPOS',
+    description: 'Sign in to your skyERPOS point of sale and back office.',
     images: [{ url: '/og/home', width: 1200, height: 630 }],
   },
 }

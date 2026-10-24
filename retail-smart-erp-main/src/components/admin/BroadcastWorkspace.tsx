@@ -472,7 +472,7 @@ function Composer({
                   <Checkbox label="Vendor app inbox" description="The bell in the vendor app (web and mobile)" checked={channels.includes('in_app')} onChange={() => setChannels(toggle(channels, 'in_app') as Channel[])} />
                   <Checkbox label="Account portal" description="Notifications in the owner’s account portal" checked={channels.includes('account')} onChange={() => setChannels(toggle(channels, 'account') as Channel[])} />
                   <Checkbox label="Email" description="Also email the same message" checked={channels.includes('email')} onChange={() => setChannels(toggle(channels, 'email') as Channel[])} />
-                  <Checkbox label="Push to phones" description="A push notification on phones signed in to the POSLanka app" checked={channels.includes('push')} onChange={() => setChannels(toggle(channels, 'push') as Channel[])} />
+                  <Checkbox label="Push to phones" description="A push notification on phones signed in to the skyERPOS app" checked={channels.includes('push')} onChange={() => setChannels(toggle(channels, 'push') as Channel[])} />
                 </div>
               </Field>
             )}

@@ -9,7 +9,7 @@ const defaultContact = {
   email: 'hello@poslanka.lk',
   phone: '077 840 7616',
   address: 'No 31, Akuressa Road, Nupe, Matara, Sri Lanka',
-  companyName: 'POSLanka',
+  companyName: 'skyERPOS',
 }
 
 const productLinks = [

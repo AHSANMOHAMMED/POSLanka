@@ -198,8 +198,8 @@ export default function FeaturesClient() {
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
             badge="Feature Checklist"
-            title="What you get with RetailSmart"
-            highlight="RetailSmart"
+            title="What you get with skyERPOS"
+            highlight="skyERPOS"
           />
           <FadeIn>
             <div className="overflow-x-auto rounded-2xl border border-white/10 bg-white/5 shadow-sm">
@@ -207,7 +207,7 @@ export default function FeaturesClient() {
                 <thead>
                   <tr className="border-b border-white/10 bg-white/5">
                     <th className="px-6 py-4 text-left text-sm font-semibold text-white">Feature</th>
-                    <th className="px-6 py-4 text-center text-sm font-bold text-emerald-400">RetailSmart</th>
+                    <th className="px-6 py-4 text-center text-sm font-bold text-emerald-400">skyERPOS</th>
                   </tr>
                 </thead>
                 <tbody>

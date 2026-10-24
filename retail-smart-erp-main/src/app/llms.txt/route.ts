@@ -3,11 +3,11 @@ import { NextResponse } from 'next/server'
 export const dynamic = 'force-static'
 
 export async function GET() {
-  const content = `# RetailSmart ERP
+  const content = `# skyERPOS
 
 > AI-powered cloud POS and ERP platform for retail stores, restaurants, supermarkets, auto service centers, and vehicle dealerships. All features on every plan. Unlimited users. Free to start.
 
-RetailSmart ERP is a multi-tenant SaaS business management system built for five business types. It provides point of sale, inventory management, double-entry accounting, HR and payroll, kitchen display, work order management, and AI-powered analytics in a single platform. Every plan includes every feature with no feature gating. The first company per account is free forever with no credit card required.
+skyERPOS is a multi-tenant SaaS business management system built for five business types. It provides point of sale, inventory management, double-entry accounting, HR and payroll, kitchen display, work order management, and AI-powered analytics in a single platform. Every plan includes every feature with no feature gating. The first company per account is free forever with no credit card required.
 
 ## Key Pages
 

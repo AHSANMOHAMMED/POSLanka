@@ -263,7 +263,7 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
 
         {/* Logo */}
         <Link href={`${basePath}/dashboard`} className="shrink-0">
-          <Logo variant="icon" size={28} onDark />
+          <Logo variant="full" size={22} onDark />
         </Link>
 
         {/* Company switcher (desktop only) */}

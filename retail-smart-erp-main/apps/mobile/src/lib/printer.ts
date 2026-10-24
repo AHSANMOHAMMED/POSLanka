@@ -352,7 +352,7 @@ async function ensureBluetoothPermissions(): Promise<void> {
   const perms = [PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT, PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN].filter(Boolean) as string[]
   const result = await PermissionsAndroid.requestMultiple(perms as any)
   const denied = perms.filter((p) => result[p as keyof typeof result] !== PermissionsAndroid.RESULTS.GRANTED)
-  if (denied.length) throw new PrinterError('Bluetooth permission was not granted. Allow "Nearby devices" for POSLanka in Android settings.', 'permission')
+  if (denied.length) throw new PrinterError('Bluetooth permission was not granted. Allow "Nearby devices" for skyERPOS in Android settings.', 'permission')
 }
 
 export interface BluetoothDevice {
@@ -369,7 +369,7 @@ export interface UsbDevice {
 /** Paired Bluetooth classic devices (the printer must be paired in Android settings first). */
 export async function listBluetoothDevices(): Promise<BluetoothDevice[]> {
   const lib = loadNative()
-  if (!lib) throw new PrinterError('Bluetooth printing needs the POSLanka dev-client / EAS build (not available in Expo Go).', 'unavailable')
+  if (!lib) throw new PrinterError('Bluetooth printing needs the skyERPOS dev-client / EAS build (not available in Expo Go).', 'unavailable')
   await ensureBluetoothPermissions()
   await lib.BLEPrinter.init()
   const list = await lib.BLEPrinter.getDeviceList()
@@ -378,7 +378,7 @@ export async function listBluetoothDevices(): Promise<BluetoothDevice[]> {
 
 export async function listUsbDevices(): Promise<UsbDevice[]> {
   const lib = loadNative()
-  if (!lib) throw new PrinterError('USB printing needs the POSLanka dev-client / EAS build (not available in Expo Go).', 'unavailable')
+  if (!lib) throw new PrinterError('USB printing needs the skyERPOS dev-client / EAS build (not available in Expo Go).', 'unavailable')
   await lib.USBPrinter.init()
   const list = await lib.USBPrinter.getDeviceList()
   return (list || []).map((d) => ({ name: d.device_name || 'USB printer', vendorId: String(d.vendor_id), productId: String(d.product_id) }))
@@ -501,7 +501,7 @@ export async function printBytes(bytes: Uint8Array, settingsOverride?: PrinterSe
     return
   }
   const lib = loadNative()
-  if (!lib) throw new PrinterError('Bluetooth / USB / network printing needs the POSLanka dev-client or EAS build. Use "System print" in Expo Go.', 'unavailable')
+  if (!lib) throw new PrinterError('Bluetooth / USB / network printing needs the skyERPOS dev-client or EAS build. Use "System print" in Expo Go.', 'unavailable')
 
   // Serialise jobs so two receipts never interleave on the same socket.
   const job = printChain.then(async () => {
@@ -626,7 +626,7 @@ export function receiptHtml(input: ReceiptInput): string {
     ${footerLines.map((f) => `<div class="c">${escapeHtml(f).replace(/\n/g, '<br>')}</div>`).join('')}
     ${input.returnPolicy ? `<div class="c" style="margin-top:6px;font-size:10px">${escapeHtml(input.returnPolicy)}</div>` : ''}
     ${codes}
-    <div class="c" style="margin-top:6px">Powered by POSLanka</div>`
+    <div class="c" style="margin-top:6px">Powered by skyERPOS</div>`
 }
 
 /** Real QR (SVG) for HTML / PDF receipts; falls back to the plain value when it cannot be encoded. */
@@ -665,7 +665,7 @@ export async function testPrint(settingsOverride?: PrinterSettings): Promise<voi
   const s = settingsOverride || (await getPrinterSettings())
   const b = new EscPosBuilder(s.paperWidth)
   b.init()
-  b.align('center').bold(true).size(2, 2).line('POSLanka').size(1, 1).bold(false)
+  b.align('center').bold(true).size(2, 2).line('skyERPOS').size(1, 1).bold(false)
   b.line('Printer test page').line(formatReceiptDate(new Date())).line()
   b.align('left').rule('=')
   const named = s as Partial<PrinterConfig>

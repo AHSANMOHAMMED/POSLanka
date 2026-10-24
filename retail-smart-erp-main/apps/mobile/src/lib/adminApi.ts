@@ -138,7 +138,7 @@ export async function adminApi<T = any>(path: string, init: RequestInit = {}, op
       ok: false,
       status: 0,
       data: null,
-      error: aborted ? 'The server took too long to respond.' : 'Cannot reach the POSLanka server. Check your connection and the server URL.',
+      error: aborted ? 'The server took too long to respond.' : 'Cannot reach the skyERPOS server. Check your connection and the server URL.',
     }
   }
   clearTimeout(timer)

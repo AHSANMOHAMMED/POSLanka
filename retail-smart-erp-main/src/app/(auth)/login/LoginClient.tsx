@@ -213,7 +213,7 @@ function LoginForm() {
     <AuthShell
       footer={
         <>
-          New to POSLanka?{' '}
+          New to skyERPOS?{' '}
           <Link href="/register" className="font-medium text-adm-primary hover:underline">Create an account</Link>
         </>
       }

@@ -3,7 +3,7 @@ import ResetPasswordClient from './ResetPasswordClient'
 
 export const metadata: Metadata = {
   title: 'Set a new password',
-  description: 'Set a new password for your POSLanka account.',
+  description: 'Set a new password for your skyERPOS account.',
   robots: { index: false, follow: false },
 }
 

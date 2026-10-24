@@ -87,7 +87,7 @@ export default function RegisterClient() {
         <AuthBrandPanel>
           <div className="max-w-md">
             <h2 className="text-[30px] font-semibold leading-[1.15] tracking-[-0.02em] text-white xl:text-[34px]">
-              Set up your business on POSLanka.
+              Set up your business on skyERPOS.
             </h2>
             <ul className="mt-7 space-y-3">
               {[

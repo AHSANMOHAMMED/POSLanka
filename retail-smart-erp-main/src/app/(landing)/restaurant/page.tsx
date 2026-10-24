@@ -7,14 +7,14 @@ export const metadata: Metadata = {
   description: 'Kitchen display system, table management, floor plan, reservations, recipe costing, waste tracking, and AI analytics for restaurants. Unlimited users, free to start.',
   keywords: ['restaurant POS', 'kitchen display system', 'table management', 'restaurant management', 'recipe costing', 'KDS system', 'restaurant software'],
   openGraph: {
-    title: 'Restaurant Management with Kitchen Display | RetailSmart ERP',
+    title: 'Restaurant Management with Kitchen Display | skyERPOS',
     description: 'KDS, table management, reservations, recipes. AI-powered analytics. Unlimited users.',
     url: 'https://www.retailsmarterp.com/restaurant',
-    images: [{ url: '/og/restaurant', width: 1200, height: 630, alt: 'RetailSmart ERP Restaurant Management' }],
+    images: [{ url: '/og/restaurant', width: 1200, height: 630, alt: 'skyERPOS Restaurant Management' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Restaurant Management with Kitchen Display | RetailSmart ERP',
+    title: 'Restaurant Management with Kitchen Display | skyERPOS',
     description: 'KDS, table management, reservations, recipes. AI-powered. Unlimited users.',
     images: ['/og/restaurant'],
   },
@@ -44,7 +44,7 @@ export default function RestaurantPage() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            "name": "RetailSmart ERP - Restaurant Management",
+            "name": "skyERPOS - Restaurant Management",
             "applicationCategory": "BusinessApplication",
             "applicationSubCategory": "Restaurant Management",
             "operatingSystem": "Web",

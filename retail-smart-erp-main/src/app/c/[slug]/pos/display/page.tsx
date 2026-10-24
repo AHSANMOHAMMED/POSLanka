@@ -89,7 +89,7 @@ export default function CustomerFacingDisplayPage() {
   const isStale = !state || Number.isNaN(updatedAtMs) || now - updatedAtMs > STALE_AFTER_MS
   const isIdle = !state || state.status === 'idle' || isStale
 
-  const tenantName = state?.tenantName || company?.tenantName || 'POSLanka'
+  const tenantName = state?.tenantName || company?.tenantName || 'skyERPOS'
   const cashierName = state?.cashierName || ''
   const items = state?.items ?? []
   const totalUnits = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)

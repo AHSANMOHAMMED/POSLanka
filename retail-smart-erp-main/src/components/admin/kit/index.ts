@@ -1,5 +1,5 @@
 /**
- * POSLanka console kit — shared UI for /sys-control and the sign-in pages.
+ * skyERPOS console kit — shared UI for /sys-control and the sign-in pages.
  * Colours come from --adm-* tokens (src/app/admin-kit.css) and follow light/dark.
  *
  *   import { AdminPage, AdminCard, AdminTable, Button } from '@/components/admin/kit'

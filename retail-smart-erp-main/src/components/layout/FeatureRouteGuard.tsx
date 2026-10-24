@@ -22,7 +22,7 @@ export function FeatureRouteGuard({ children }: { children: React.ReactNode }) {
       <PowerOff className="mx-auto mb-3 h-10 w-10 text-gray-400" aria-hidden />
       <h1 className="text-lg font-semibold text-gray-900 dark:text-white">{FEATURE_FLAG_LABELS[flag]} is turned off</h1>
       <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-        This feature is not enabled for your business. Contact POSLanka support to turn it on.
+        This feature is not enabled for your business. Contact skyERPOS support to turn it on.
       </p>
       <Link href={`/c/${slug}/dashboard`} className="mt-5 inline-block rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
         Back to dashboard

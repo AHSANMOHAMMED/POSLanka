@@ -114,16 +114,16 @@ export default function AboutClient() {
                 </h2>
                 <div className="space-y-4 text-zinc-400 leading-relaxed">
                   <p>
-                    RetailSmart ERP was born from a simple observation: small and medium businesses were struggling with fragmented, expensive, and overly complex software solutions. They needed a unified platform that could handle everything from point of sale to accounting, without the enterprise price tag.
+                    skyERPOS was born from a simple observation: small and medium businesses were struggling with fragmented, expensive, and overly complex software solutions. They needed a unified platform that could handle everything from point of sale to accounting, without the enterprise price tag.
                   </p>
                   <p>
-                    We set out to build a truly comprehensive business management platform that adapts to different business types. Whether you run a retail store, restaurant, supermarket, or auto service center, RetailSmart ERP provides the specific tools you need while maintaining a consistent, intuitive experience.
+                    We set out to build a truly comprehensive business management platform that adapts to different business types. Whether you run a retail store, restaurant, supermarket, or auto service center, skyERPOS provides the specific tools you need while maintaining a consistent, intuitive experience.
                   </p>
                   <p>
                     Today, our platform supports four distinct business types with specialized modules, database-level data isolation, real-time collaboration, and AI-assisted analytics that help you make smarter decisions.
                   </p>
                   <p>
-                    Making enterprise tools truly accessible means more than just building great software — it means removing financial barriers. That&apos;s why your first company on RetailSmart is <span className="text-emerald-400 font-semibold">completely free, forever</span>. No trial period, no credit card required, no feature restrictions.
+                    Making enterprise tools truly accessible means more than just building great software — it means removing financial barriers. That&apos;s why your first company on skyERPOS is <span className="text-emerald-400 font-semibold">completely free, forever</span>. No trial period, no credit card required, no feature restrictions.
                   </p>
                 </div>
               </div>
@@ -270,7 +270,7 @@ export default function AboutClient() {
       {/* ── CTA ── */}
       <CTASection
         title="Start your free account"
-        subtitle="Start building your business with RetailSmart ERP today. Free forever plan available."
+        subtitle="Start building your business with skyERPOS today. Free forever plan available."
       />
     </PageWrapper>
   )

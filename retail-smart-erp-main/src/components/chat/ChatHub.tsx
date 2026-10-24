@@ -512,7 +512,7 @@ export function ChatHub() {
             <div className="flex items-center justify-between px-4 py-3 bg-purple-600 text-white rounded-t-2xl">
               <div className="flex items-center gap-2">
                 <Bot size={18} />
-                <span className="font-medium text-sm">RetailSmart AI</span>
+                <span className="font-medium text-sm">skyERPOS AI</span>
                 <span className="text-[10px] bg-purple-500 px-1.5 py-0.5 rounded-full">Beta</span>
               </div>
               <div className="flex items-center gap-1">

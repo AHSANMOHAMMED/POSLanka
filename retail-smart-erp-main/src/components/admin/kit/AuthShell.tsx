@@ -1,18 +1,15 @@
 import type { ReactNode } from 'react'
 import Link from 'next/link'
 import { Check } from 'lucide-react'
-import { LogoMark } from './LogoMark'
+import { BrandWordmark } from '@/components/ui/logo'
 import { cn } from '@/lib/utils'
 
-/** POSLanka mark + wordmark, coloured by the surrounding kit tokens (or white on the brand panel). */
-export function BrandMark({ onBrand, subtitle, size = 32, href }: { onBrand?: boolean; subtitle?: string; size?: number; href?: string }) {
+/** skyERPOS wordmark (on a white badge over the brand panel), with an optional subtitle. */
+export function BrandMark({ onBrand, subtitle, size = 40, href }: { onBrand?: boolean; subtitle?: string; size?: number; href?: string }) {
   const inner = (
-    <span className="inline-flex items-center gap-2.5">
-      <LogoMark size={size} />
-      <span className="flex flex-col leading-tight">
-        <span className={cn('text-[16px] font-semibold tracking-[-0.01em]', onBrand ? 'text-white' : 'text-adm-fg')}>POSLanka</span>
-        {subtitle && <span className={cn('text-[12px]', onBrand ? 'text-white/70' : 'text-adm-subtle')}>{subtitle}</span>}
-      </span>
+    <span className="inline-flex flex-col items-start gap-1.5">
+      <BrandWordmark height={Math.round(size * 1.25)} onDark={onBrand} />
+      {subtitle && <span className={cn('text-[12px]', onBrand ? 'text-white/75' : 'text-adm-subtle')}>{subtitle}</span>}
     </span>
   )
   return href ? <Link href={href} className="adm-focus rounded-md">{inner}</Link> : inner
@@ -37,10 +34,10 @@ export function AuthBrandPanel({ children, footer, className }: { children?: Rea
         style={{ backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)', backgroundSize: '28px 28px' }}
       />
       <div className="relative">
-        <BrandMark onBrand subtitle="Point of sale & business management" href="/" />
+        <BrandMark onBrand size={52} subtitle="All-in-one POS & ERP" href="/" />
       </div>
       <div className="relative">{children ?? <DefaultBrandCopy />}</div>
-      <div className="relative text-[13px] text-white/65">{footer ?? <>© {new Date().getFullYear()} POSLanka · Made for Sri Lankan businesses</>}</div>
+      <div className="relative text-[13px] text-white/65">{footer ?? <>© {new Date().getFullYear()} skyERPOS · Made for Sri Lankan businesses</>}</div>
     </div>
   )
 }
@@ -55,7 +52,7 @@ function DefaultBrandCopy() {
   return (
     <div className="max-w-md">
       <h2 className="text-[30px] font-semibold leading-[1.15] tracking-[-0.02em] text-white xl:text-[34px]">
-        Run your shop, counters and back office in one place.
+        Powerful. Reliable.<br />Complete POS solution for your business.
       </h2>
       <ul className="mt-7 space-y-3">
         {points.map((p) => (
@@ -74,7 +71,7 @@ function DefaultBrandCopy() {
 export interface AuthShellProps {
   /** Left panel (desktop only). Defaults to <AuthBrandPanel />. Pass `null` for a centred single-column page. */
   aside?: ReactNode | null
-  /** Header shown above the form on phones / when there is no aside (defaults to the POSLanka mark). */
+  /** Header shown above the form on phones / when there is no aside (defaults to the skyERPOS mark). */
   mobileHeader?: ReactNode
   /** Small print under the form. */
   footer?: ReactNode

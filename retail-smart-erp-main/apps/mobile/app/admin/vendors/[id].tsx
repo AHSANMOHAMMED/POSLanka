@@ -99,7 +99,7 @@ export default function AdminVendorDetailScreen() {
     Alert.alert(
       locking ? 'Lock Vendor?' : 'Unlock Vendor?',
       locking
-        ? `${vendor.name} will be locked out of POSLanka until unlocked. Open shifts cannot continue.`
+        ? `${vendor.name} will be locked out of skyERPOS until unlocked. Open shifts cannot continue.`
         : `${vendor.name} will be set back to active and can trade again.`,
       [
         { text: 'Cancel', style: 'cancel' },

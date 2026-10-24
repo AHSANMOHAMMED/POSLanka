@@ -146,7 +146,7 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
   const disabled = await featureDisabled(request)
   if (disabled) {
     const res = NextResponse.json(
-      { error: `${FEATURE_FLAG_LABELS[disabled]} is turned off for this business. Contact POSLanka support to turn it on.`, code: 'FEATURE_DISABLED', feature: disabled },
+      { error: `${FEATURE_FLAG_LABELS[disabled]} is turned off for this business. Contact skyERPOS support to turn it on.`, code: 'FEATURE_DISABLED', feature: disabled },
       { status: 403 },
     )
     res.headers.set('x-request-id', requestId)
@@ -199,7 +199,7 @@ export async function proxy(request: NextRequest) {
     // Allow DigitalOcean App Platform domains
     if (clean.endsWith('.ondigitalocean.app')) return true
 
-    // Allow POSLanka official domains
+    // Allow skyERPOS official domains
     if (clean === 'poslanka.lk' || clean.endsWith('.poslanka.lk')) return true
 
     // Allow the configured base domain and any subdomain of it
@@ -307,6 +307,11 @@ export async function proxy(request: NextRequest) {
       return NextResponse.redirect(`${protocol}://${LANDING_DOMAIN}${pathname}`)
     }
 
+    // The site root opens the sign-in page on the app domain
+    if (pathname === '/') {
+      return NextResponse.redirect(`${protocol}://${APP_DOMAIN}/login`)
+    }
+
     // Block access to app/tenant routes
     const blockedPaths = ['/c/', '/account', '/login', '/register', '/dashboard', '/pos']
     if (blockedPaths.some(blocked => pathname.startsWith(blocked))) {
@@ -329,9 +334,9 @@ export async function proxy(request: NextRequest) {
 
   // 2. APP DOMAIN (Account Management)
   if (normalizedHostname === APP_DOMAIN.toLowerCase()) {
-    // Root path: redirect to account dashboard (account layout handles auth → /login if needed)
+    // Root path: the sign-in page (it forwards signed-in owners to /account)
     if (pathname === '/') {
-      return NextResponse.redirect(`${protocol}://${APP_DOMAIN}/account`)
+      return NextResponse.redirect(`${protocol}://${APP_DOMAIN}/login`)
     }
 
     // Allowed paths for app domain

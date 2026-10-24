@@ -56,7 +56,7 @@ export function ShareDocumentButtons({
           label,
           amount,
           document: {
-            shopName: 'POSLanka',
+            shopName: 'skyERPOS',
             lines: [{ name: label, quantity: 1, unitPrice: Number(amount || 0), total: Number(amount || 0) }],
             subtotal: Number(amount || 0),
             tax: 0,

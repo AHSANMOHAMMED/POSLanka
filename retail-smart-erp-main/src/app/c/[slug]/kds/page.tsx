@@ -331,7 +331,7 @@ export default function KitchenDisplaySystemPage() {
             <ChefHat className="w-8 h-8 text-teal-400" />
             <div>
               <h1 className="font-mono text-base font-bold tracking-tight text-white uppercase">
-                POSLanka KDS
+                skyERPOS KDS
               </h1>
               <span className="text-[11px] font-mono text-slate-400">
                 Kitchen Expedite & Line Routing

@@ -110,7 +110,7 @@ export const SETTING_DEFAULTS: Record<SettingKey, unknown> = {
     ],
   },
   contact_info: {
-    companyName: process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka',
+    companyName: process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS',
     email: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'support@poslanka.lk',
     phone: '',
     whatsapp: '',

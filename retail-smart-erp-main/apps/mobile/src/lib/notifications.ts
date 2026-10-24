@@ -51,7 +51,7 @@ async function ensureAndroidChannel() {
   if (Platform.OS !== 'android') return
   try {
     await Notifications.setNotificationChannelAsync(ANDROID_CHANNEL_ID, {
-      name: 'POSLanka alerts',
+      name: 'skyERPOS alerts',
       importance: Notifications.AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: '#0F766E',
@@ -161,7 +161,7 @@ export function installNotificationHandlers(): () => void {
     subscriptions.push(
       Notifications.addNotificationReceivedListener((notification) => {
         const content = notification.request.content
-        const title = content.title || 'POSLanka'
+        const title = content.title || 'skyERPOS'
         const body = content.body || ''
         const screen = screenFromData(content.data)
         const onPress = screen ? () => navigateTo(screen) : undefined

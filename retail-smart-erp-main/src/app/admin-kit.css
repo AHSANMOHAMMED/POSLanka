@@ -1,5 +1,5 @@
 /* ==========================================================================
-   POSLanka console kit — design tokens + a few unlayered component rules.
+   skyERPOS console kit — design tokens + a few unlayered component rules.
    Used by the super-admin console (/sys-control) and every staff/vendor
    sign-in page. Components live in src/components/admin/kit.
 
@@ -20,11 +20,12 @@
   --adm-fg: #0f172a;
   --adm-muted: #556070;
   --adm-subtle: #8a94a3;
-  --adm-primary: #0f766e;
-  --adm-primary-hover: #115e59;
+  /* skyERPOS blue (logo #0050C0) */
+  --adm-primary: #0050c0;
+  --adm-primary-hover: #00419e;
   --adm-primary-fg: #ffffff;
-  --adm-primary-soft: #e3f3f1;
-  --adm-primary-soft-fg: #0b5e57;
+  --adm-primary-soft: #e8effb;
+  --adm-primary-soft-fg: #003a8c;
   --adm-success: #15803d;
   --adm-success-soft: #e6f6ec;
   --adm-warning: #b45309;
@@ -33,17 +34,18 @@
   --adm-danger-soft: #fdecec;
   --adm-info: #2563eb;
   --adm-info-soft: #e8effd;
-  --adm-ring: rgba(15, 118, 110, 0.28);
+  --adm-ring: rgba(0, 80, 192, 0.28);
   --adm-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.04);
   --adm-shadow-lg: 0 12px 32px -12px rgba(15, 23, 42, 0.22), 0 2px 6px rgba(15, 23, 42, 0.06);
   --adm-sidebar: #0f1a2a;
   --adm-sidebar-fg: #c8d1de;
   --adm-sidebar-muted: #7d8aa0;
-  --adm-sidebar-active: rgba(45, 212, 191, 0.14);
-  --adm-sidebar-active-fg: #5eead4;
+  --adm-sidebar-active: rgba(106, 165, 255, 0.16);
+  --adm-sidebar-active-fg: #a9cbff;
   --adm-sidebar-border: #1c2a3e;
-  --adm-brand-from: #0f766e;
-  --adm-brand-to: #134e4a;
+  /* skyERPOS blue (logo #0050C0) */
+  --adm-brand-from: #0050c0;
+  --adm-brand-to: #062f73;
 }
 
 .dark {
@@ -56,11 +58,11 @@
   --adm-fg: #e7ecf3;
   --adm-muted: #a1acbd;
   --adm-subtle: #6f7c90;
-  --adm-primary: #2dd4bf;
-  --adm-primary-hover: #5eead4;
-  --adm-primary-fg: #042f2b;
-  --adm-primary-soft: rgba(45, 212, 191, 0.12);
-  --adm-primary-soft-fg: #5eead4;
+  --adm-primary: #6aa5ff;
+  --adm-primary-hover: #93c0ff;
+  --adm-primary-fg: #04122e;
+  --adm-primary-soft: rgba(106, 165, 255, 0.14);
+  --adm-primary-soft-fg: #a9cbff;
   --adm-success: #4ade80;
   --adm-success-soft: rgba(74, 222, 128, 0.12);
   --adm-warning: #fbbf24;
@@ -69,7 +71,7 @@
   --adm-danger-soft: rgba(248, 113, 113, 0.12);
   --adm-info: #60a5fa;
   --adm-info-soft: rgba(96, 165, 250, 0.12);
-  --adm-ring: rgba(45, 212, 191, 0.3);
+  --adm-ring: rgba(106, 165, 255, 0.3);
   --adm-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   --adm-shadow-lg: 0 16px 40px -16px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
   --adm-sidebar: #0a111c;

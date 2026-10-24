@@ -7,14 +7,14 @@ export const metadata: Metadata = {
   description: 'Supermarket management with high-volume checkout, department tracking, temperature zones, batch inventory, and AI-assisted analytics. Unlimited users, free to start.',
   keywords: ['supermarket POS', 'grocery POS', 'high volume checkout', 'department management', 'supermarket software', 'grocery store management'],
   openGraph: {
-    title: 'Supermarket POS & Department Management | RetailSmart ERP',
+    title: 'Supermarket POS & Department Management | skyERPOS',
     description: 'High-volume checkout, department management, batch tracking. AI-powered. Unlimited users.',
     url: 'https://www.retailsmarterp.com/supermarket',
-    images: [{ url: '/og/supermarket', width: 1200, height: 630, alt: 'RetailSmart ERP Supermarket POS' }],
+    images: [{ url: '/og/supermarket', width: 1200, height: 630, alt: 'skyERPOS Supermarket POS' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Supermarket POS & Department Management | RetailSmart ERP',
+    title: 'Supermarket POS & Department Management | skyERPOS',
     description: 'High-volume checkout, department management, batch tracking. AI-powered.',
     images: ['/og/supermarket'],
   },
@@ -44,7 +44,7 @@ export default function SupermarketPage() {
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            "name": "RetailSmart ERP - Supermarket POS",
+            "name": "skyERPOS - Supermarket POS",
             "applicationCategory": "BusinessApplication",
             "applicationSubCategory": "Supermarket Management",
             "operatingSystem": "Web",

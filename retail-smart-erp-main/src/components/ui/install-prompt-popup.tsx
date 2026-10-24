@@ -74,7 +74,7 @@ export function InstallPromptPopup() {
 
           <div className="flex-1 min-w-0">
             <h3 className="text-sm font-semibold text-white">
-              Install POSLanka
+              Install skyERPOS
             </h3>
 
             {isIOS && isSafari ? (

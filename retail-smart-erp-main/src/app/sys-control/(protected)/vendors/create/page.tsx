@@ -231,7 +231,7 @@ function CreateVendorForm() {
   if (result) {
     const bid = formatBusinessId(result.businessId)
     const instructions = [
-      `${result.vendor.name} is ready on POSLanka.`,
+      `${result.vendor.name} is ready on skyERPOS.`,
       '',
       `1. Open ${result.signInUrl}`,
       `2. Choose “Staff sign-in” and enter Business ID: ${bid}`,

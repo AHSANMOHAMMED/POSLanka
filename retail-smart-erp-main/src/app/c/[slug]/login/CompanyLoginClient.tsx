@@ -256,7 +256,7 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
       }
       footer={
         <span className="inline-flex items-center gap-1.5">
-          <ShieldCheck size={14} aria-hidden /> Secured by POSLanka
+          <ShieldCheck size={14} aria-hidden /> Secured by skyERPOS
         </span>
       }
     >

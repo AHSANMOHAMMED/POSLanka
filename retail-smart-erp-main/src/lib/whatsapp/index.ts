@@ -1,6 +1,6 @@
 import { fetchWithTimeout } from '@/lib/utils/fetch-timeout'
 /**
- * WhatsApp sharing for POSLanka documents.
+ * WhatsApp sharing for skyERPOS documents.
  * Primary path: wa.me deep links (no Cloud API required).
  * Optional: Cloud API for automated Admin alerts when env is configured.
  */
@@ -35,7 +35,7 @@ export function buildDocumentShareText(options: {
   pdfUrl?: string
   amount?: string
 }): string {
-  const shop = options.shopName || 'POSLanka'
+  const shop = options.shopName || 'skyERPOS'
   const typeLabel =
     options.documentType === 'credit_note'
       ? 'Credit Note'

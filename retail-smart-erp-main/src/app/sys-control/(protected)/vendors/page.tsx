@@ -221,7 +221,7 @@ export default function VendorsPage() {
   return (
     <AdminPage
       title="Vendors"
-      description="Every business on POSLanka. Search by name, web address, email or Business ID."
+      description="Every business on skyERPOS. Search by name, web address, email or Business ID."
       actions={
         <>
           <Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading && !!data}>Refresh</Button>

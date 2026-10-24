@@ -5,7 +5,7 @@ import { SuperAdminLayoutShell } from '@/components/admin/SuperAdminLayoutShell'
 import { AccountSetupGate } from '@/components/admin/AccountSetupGate'
 
 export const metadata: Metadata = {
-  title: { default: 'Platform admin', template: '%s · POSLanka admin' },
+  title: { default: 'Platform admin', template: '%s · skyERPOS admin' },
   robots: { index: false, follow: false },
 }
 

@@ -231,7 +231,7 @@ export async function POST(request: NextRequest) {
       const now = new Date()
 
       // Billing account for the owner (same model as self-registration): reuse an
-      // existing POSLanka account with this email, otherwise create one. Subscriptions,
+      // existing skyERPOS account with this email, otherwise create one. Subscriptions,
       // wallet, invoices and the account dashboard all hang off this account.
       let ownerAccount = await tx.query.accounts.findFirst({
         where: eq(accounts.email, ownerLoginEmail),
@@ -364,7 +364,7 @@ export async function POST(request: NextRequest) {
       try {
         await sendStaffInviteEmail({
           email: result.owner.email,
-          inviterName: 'POSLanka Platform Team',
+          inviterName: 'skyERPOS Platform Team',
           companyName: result.tenant.name,
           role: 'owner',
           inviteUrl: `${baseUrl}/invite/${result.inviteToken}`,

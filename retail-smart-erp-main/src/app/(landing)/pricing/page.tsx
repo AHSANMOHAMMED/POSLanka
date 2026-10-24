@@ -7,14 +7,14 @@ export const metadata: Metadata = {
   description: 'Simple transparent pricing. All features on every plan. Unlimited users and transactions. First company free forever — no credit card needed. Scale as you grow.',
   keywords: ['POS pricing', 'ERP pricing', 'free POS', 'business software pricing', 'unlimited users', 'no per-user fees', 'affordable ERP'],
   openGraph: {
-    title: 'Simple, Transparent Pricing | RetailSmart ERP',
+    title: 'Simple, Transparent Pricing | skyERPOS',
     description: 'All features. Unlimited users. Free forever. Only pay for storage as you grow.',
     url: 'https://www.retailsmarterp.com/pricing',
-    images: [{ url: '/og/pricing', width: 1200, height: 630, alt: 'RetailSmart ERP Pricing' }],
+    images: [{ url: '/og/pricing', width: 1200, height: 630, alt: 'skyERPOS Pricing' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Simple, Transparent Pricing | RetailSmart ERP',
+    title: 'Simple, Transparent Pricing | skyERPOS',
     description: 'All features. Unlimited users. Free forever.',
     images: ['/og/pricing'],
   },
@@ -114,11 +114,11 @@ export default function PricingPage() {
             {
               "@context": "https://schema.org",
               "@type": "Product",
-              "name": "RetailSmart ERP",
+              "name": "skyERPOS",
               "description": "All-in-one AI-powered cloud POS and ERP. All features on every plan. Unlimited users and transactions.",
               "brand": {
                 "@type": "Brand",
-                "name": "RetailSmart"
+                "name": "skyERPOS"
               },
               "offers": {
                 "@type": "Offer",

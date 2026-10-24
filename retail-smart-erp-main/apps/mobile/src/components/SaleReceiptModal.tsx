@@ -79,7 +79,7 @@ export function SaleReceiptModal({
       ? r.lines.map((l) => `${l.name} x${l.qty} = ${formatLKR(l.total)}`).join('\n')
       : ''
     const text = encodeURIComponent(
-      `${r?.business.name || 'POSLanka'} ${saleData.isReturn ? 'Credit Note' : 'Digital Receipt'}\nInvoice: ${saleData.invoiceNo}\n${lines ? `${lines}\n` : ''}${
+      `${r?.business.name || 'skyERPOS'} ${saleData.isReturn ? 'Credit Note' : 'Digital Receipt'}\nInvoice: ${saleData.invoiceNo}\n${lines ? `${lines}\n` : ''}${
         saleData.isReturn ? 'Refund' : 'Total Paid'
       }: ${formatLKR(saleData.total)}\nMethod: ${saleData.tenderMethod}\n${r?.footer || 'Thank you for shopping with us!'}`
     )

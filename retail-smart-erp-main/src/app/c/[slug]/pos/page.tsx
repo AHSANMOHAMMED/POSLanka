@@ -2743,7 +2743,7 @@ export default function POSPage() {
       {/* Stitch "Operational Velocity" Operational Context Bar */}
       <div className="w-full bg-slate-900 text-slate-300 px-4 py-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs font-mono whitespace-nowrap border-b border-slate-800 shrink-0 select-none">
         <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span className="font-extrabold text-white uppercase tracking-wider">{company.tenantName || 'POSLanka'}</span>
+          <span className="font-extrabold text-white uppercase tracking-wider">{company.tenantName || 'skyERPOS'}</span>
           <span className="text-slate-600">•</span>
           <span className="text-slate-300">{posWarehouse?.name || 'No branch'}</span>
           <span className="text-slate-600">•</span>
@@ -3018,7 +3018,7 @@ export default function POSPage() {
         onDismiss={() => { setLastSale(null); setLastSaleId(null) }}
         onPrintReceipt={printReceiptForSale}
         printingReceipt={printingReceipt}
-        shopName={company?.tenantName || 'POSLanka'}
+        shopName={company?.tenantName || 'skyERPOS'}
       />
 
       {/* Recent Sales / Bill History Modal */}
@@ -3026,7 +3026,7 @@ export default function POSPage() {
         isOpen={showRecentSalesModal}
         onClose={() => setShowRecentSalesModal(false)}
         onPrintReceipt={printReceiptForSale}
-        shopName={company?.tenantName || 'POSLanka'}
+        shopName={company?.tenantName || 'skyERPOS'}
       />
 
       <ConfirmModal

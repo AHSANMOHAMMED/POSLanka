@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
       updatedAt,
       tiers,
       platform: {
-        appName: process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka',
+        appName: process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS',
         baseUrl: process.env.NEXTAUTH_URL || request.nextUrl.origin,
         environment: process.env.NODE_ENV,
         emailConfigured: !!process.env.RESEND_API_KEY,

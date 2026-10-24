@@ -65,7 +65,7 @@ export async function sendAdminCredentialsEmail(input: {
   baseUrl: string
   requireTotp: boolean
 }): Promise<'sent' | 'logged' | 'failed'> {
-  const app = process.env.NEXT_PUBLIC_APP_NAME || 'POSLanka'
+  const app = process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
   const loginUrl = `${input.baseUrl.replace(/\/$/, '')}/sys-control/login`
   const intro = input.reason === 'created'
     ? `An administrator account for the ${app} platform console has been created for you.`
