@@ -16,11 +16,17 @@ import {
   INVOICE_CODE_TYPES,
   resolveReceiptSettings,
   type InvoiceCodeType,
+  type ReceiptAlign,
+  type ReceiptFontSize,
+  type ReceiptItemLayout,
+  type ReceiptItemSeparator,
+  type ReceiptQrContent,
   type ReceiptSettings,
 } from '@/lib/print/receipt-settings'
-import { buildReceiptModel, SAMPLE_RECEIPT_SALE } from '@/lib/print/receipt-model'
+import { buildReceiptModel, SAMPLE_RECEIPT_SALE, type ReceiptModel } from '@/lib/print/receipt-model'
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
-import { invalidateTenantInfo } from '@/lib/print/receipt-loader'
+import { invalidateTenantInfo, receiptVerifyBaseUrl } from '@/lib/print/receipt-loader'
+import { ThermalReceiptPreview } from '@/components/settings/ThermalReceiptPreview'
 import { ReturnsSettingsCard } from '@/components/settings/ReturnsSettingsCard'
 import { BusinessIdBadge } from '@/components/settings/BusinessIdBadge'
 
@@ -38,8 +44,8 @@ interface BusinessForm {
 const EMPTY_BUSINESS: BusinessForm = { name: '', legalName: '', address: '', phone: '', email: '', website: '', taxId: '', brn: '' }
 
 const INVOICE_CODE_LABELS: Record<InvoiceCodeType, string> = {
-  both: 'Barcode + QR code',
-  barcode: 'Barcode (CODE128) only',
+  both: 'Barcode (Code 128) + QR code',
+  barcode: 'Barcode (Code 128) only',
   qr: 'QR code only',
   none: 'None',
 }
@@ -56,8 +62,22 @@ const TOGGLES: Array<{ key: keyof ReceiptSettings; label: string }> = [
   { key: 'showCounter', label: 'Counter name' },
   { key: 'showCashier', label: 'Cashier name' },
   { key: 'showCustomer', label: 'Customer name & phone' },
-  { key: 'showItemSku', label: 'Item SKU under each line' },
+  { key: 'showItemSku', label: 'Item SKU / code under each line' },
+  { key: 'showItemBarcode', label: 'Item barcode under each line' },
+  { key: 'showPoweredBy', label: '"Powered by skyERPOS" (small, last line)' },
 ]
+
+/** Sample bill for the preview: a long item name shows how lines wrap on 58 mm. */
+const PREVIEW_SALE = {
+  ...SAMPLE_RECEIPT_SALE,
+  subtotal: 4100,
+  total: 4050,
+  changeAmount: 950,
+  items: [
+    ...(SAMPLE_RECEIPT_SALE.items || []).map((it, i) => ({ ...it, item: { barcode: i === 0 ? '4791234567892' : '4790011223344' } })),
+    { itemName: 'Anchor Full Cream Milk Powder 400g Pack', quantity: 1, unitPrice: 650, total: 650, sku: 'ANC-400', item: { barcode: '9300605000957' } },
+  ],
+}
 
 const linesToText = (l: string[]) => l.join('\n')
 const textToLines = (t: string) =>
@@ -75,13 +95,15 @@ export default function ReceiptSettingsPage() {
   const [saving, setSaving] = useState(false)
   const [business, setBusiness] = useState<BusinessForm>(EMPTY_BUSINESS)
   const [businessId, setBusinessId] = useState<string | null>(null)
+  const [verifyBase, setVerifyBase] = useState<string | null>(null)
   const [settings, setSettings] = useState<ReceiptSettings>(DEFAULT_RECEIPT_SETTINGS)
   const [headerText, setHeaderText] = useState('')
   const [footerText, setFooterText] = useState('')
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
   const [currency, setCurrency] = useState<string>('LKR')
-  const [previewWidth, setPreviewWidth] = useState<58 | 80>(80)
-  const [previewHtml, setPreviewHtml] = useState('')
+  const [previewWidth, setPreviewWidth] = useState<58 | 80 | 'both'>(80)
+  const [previewKind, setPreviewKind] = useState<'html' | 'thermal'>('html')
+  const [previewHtml, setPreviewHtml] = useState<Record<58 | 80, string>>({ 58: '', 80: '' })
 
   useEffect(() => {
     let cancelled = false
@@ -92,6 +114,7 @@ export default function ReceiptSettingsPage() {
         const t = await res.json()
         if (cancelled) return
         setBusinessId(t.businessId || null)
+        setVerifyBase(receiptVerifyBaseUrl())
         setBusiness({
           name: t.name || '',
           legalName: t.legalName || '',
@@ -128,23 +151,32 @@ export default function ReceiptSettingsPage() {
     [settings, headerText, footerText]
   )
 
-  // Live preview
+  // Live preview: the same model + renderers the POS uses (HTML for browser printing, ESC/POS for thermal printers)
+  const previewModel: ReceiptModel = useMemo(
+    () =>
+      buildReceiptModel({
+        sale: PREVIEW_SALE,
+        tenant: { ...business, logoUrl, currency },
+        settings: effective,
+        cashier: session?.user?.name || 'Cashier',
+        counter: 'Counter 1',
+        verifyBaseUrl: verifyBase,
+        businessId,
+      }),
+    [business, effective, logoUrl, currency, session?.user?.name, verifyBase, businessId]
+  )
   useEffect(() => {
     let cancelled = false
-    const model = buildReceiptModel({
-      sale: SAMPLE_RECEIPT_SALE,
-      tenant: { ...business, logoUrl, currency },
-      settings: effective,
-      cashier: session?.user?.name || 'Cashier',
-      counter: 'Counter 1',
-    })
-    renderReceiptHtml(model, previewWidth, { logoSrc: logoUrl }).then((html) => {
-      if (!cancelled) setPreviewHtml(html)
-    })
+    Promise.all([renderReceiptHtml(previewModel, 58, { logoSrc: logoUrl }), renderReceiptHtml(previewModel, 80, { logoSrc: logoUrl })]).then(
+      ([h58, h80]) => {
+        if (!cancelled) setPreviewHtml({ 58: h58, 80: h80 })
+      }
+    )
     return () => {
       cancelled = true
     }
-  }, [business, effective, logoUrl, currency, previewWidth, session?.user?.name])
+  }, [previewModel, logoUrl])
+  const previewWidths: (58 | 80)[] = previewWidth === 'both' ? [58, 80] : [previewWidth]
 
   const set = <K extends keyof ReceiptSettings>(key: K, value: ReceiptSettings[K]) => setSettings((s) => ({ ...s, [key]: value }))
   const setB = (key: keyof BusinessForm, value: string) => setBusiness((b) => ({ ...b, [key]: value }))
@@ -298,7 +330,7 @@ export default function ReceiptSettingsPage() {
               <FormField label={`Logo width on receipt: ${settings.logoWidthPct}%`}>
                 <input
                   type="range"
-                  min={40}
+                  min={20}
                   max={100}
                   step={5}
                   disabled={!canEdit}
@@ -307,7 +339,14 @@ export default function ReceiptSettingsPage() {
                   className="w-full"
                 />
               </FormField>
-              <p className="text-xs text-gray-500 dark:text-gray-400 self-end">
+              <FormField label="Logo position">
+                <FormSelect value={settings.logoAlign} disabled={!canEdit} onChange={(e) => set('logoAlign', e.target.value as ReceiptAlign)}>
+                  <option value="center">Centre</option>
+                  <option value="left">Left</option>
+                  <option value="right">Right</option>
+                </FormSelect>
+              </FormField>
+              <p className="text-xs text-gray-500 dark:text-gray-400 self-end sm:col-span-2">
                 Thermal printers print the logo in black &amp; white (dithered). High-contrast logos on a white or transparent
                 background work best.
               </p>
@@ -355,15 +394,40 @@ export default function ReceiptSettingsPage() {
                     ))}
                   </FormSelect>
                 </FormField>
-                <FormField label="Font size">
-                  <FormSelect value={settings.fontSize} onChange={(e) => set('fontSize', e.target.value === 'large' ? 'large' : 'normal')}>
+                <FormField label="QR code carries" hint="The barcode always carries the invoice number">
+                  <FormSelect
+                    value={settings.qrContent}
+                    disabled={settings.invoiceCode === 'barcode' || settings.invoiceCode === 'none'}
+                    onChange={(e) => set('qrContent', e.target.value as ReceiptQrContent)}
+                  >
+                    <option value="invoice_no">Invoice number (scan to start a return)</option>
+                    <option value="verify_url">Verification link (customers check the receipt online)</option>
+                  </FormSelect>
+                </FormField>
+                <FormField label="Text size">
+                  <FormSelect value={settings.fontSize} onChange={(e) => set('fontSize', e.target.value as ReceiptFontSize)}>
+                    <option value="small">Small (more per line)</option>
                     <option value="normal">Normal</option>
                     <option value="large">Large (easier to read)</option>
                   </FormSelect>
                 </FormField>
+                <FormField label="Item layout">
+                  <FormSelect value={settings.itemLayout} onChange={(e) => set('itemLayout', e.target.value as ReceiptItemLayout)}>
+                    <option value="two_line">Name, then qty x price = total</option>
+                    <option value="one_line">One line per item</option>
+                  </FormSelect>
+                </FormField>
+                <FormField label="Between items">
+                  <FormSelect value={settings.itemSeparator} onChange={(e) => set('itemSeparator', e.target.value as ReceiptItemSeparator)}>
+                    <option value="none">Nothing</option>
+                    <option value="dashed">Dashed line</option>
+                    <option value="solid">Solid line</option>
+                  </FormSelect>
+                </FormField>
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                The barcode / QR encodes the invoice number so returns can be looked up by scanning the receipt.
+                The barcode encodes the invoice number so returns can be looked up by scanning the receipt. With the
+                verification link, keep the barcode on (Barcode + QR) so returns can still be scanned.
               </p>
             </fieldset>
           </SectionCard>
@@ -373,30 +437,54 @@ export default function ReceiptSettingsPage() {
 
         {/* Live preview */}
         <div className="xl:sticky xl:top-4 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Live preview</h2>
-            <div className="inline-flex rounded border border-gray-200 dark:border-gray-700 overflow-hidden text-xs">
-              {([58, 80] as const).map((w) => (
-                <button
-                  key={w}
-                  type="button"
-                  onClick={() => setPreviewWidth(w)}
-                  className={`px-3 py-1 ${previewWidth === w ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900' : 'bg-white dark:bg-gray-800'}`}
-                >
-                  {w}mm
-                </button>
-              ))}
+            <div className="flex gap-2">
+              <div className="inline-flex rounded border border-gray-200 dark:border-gray-700 overflow-hidden text-xs" role="group" aria-label="Preview type">
+                {(['html', 'thermal'] as const).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setPreviewKind(k)}
+                    className={`px-2.5 py-1 ${previewKind === k ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900' : 'bg-white dark:bg-gray-800'}`}
+                  >
+                    {k === 'html' ? 'Browser print' : 'Thermal printer'}
+                  </button>
+                ))}
+              </div>
+              <div className="inline-flex rounded border border-gray-200 dark:border-gray-700 overflow-hidden text-xs" role="group" aria-label="Paper width">
+                {([58, 80, 'both'] as const).map((w) => (
+                  <button
+                    key={w}
+                    type="button"
+                    onClick={() => setPreviewWidth(w)}
+                    className={`px-2.5 py-1 ${previewWidth === w ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900' : 'bg-white dark:bg-gray-800'}`}
+                  >
+                    {w === 'both' ? 'Both' : `${w}mm`}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-          <div className="bg-gray-100 dark:bg-gray-900 rounded p-4 flex justify-center overflow-x-auto">
-            <div
-              className="bg-white shadow-md p-3"
-              style={{ width: previewWidth === 58 ? 220 : 302 }}
-              // Receipt HTML escapes all tenant text; SVGs are generated by bwip-js.
-              dangerouslySetInnerHTML={{ __html: previewHtml }}
-            />
+          <div className="bg-gray-100 dark:bg-gray-900 rounded p-4 flex flex-wrap gap-4 justify-center items-start overflow-x-auto">
+            {previewWidths.map((w) => (
+              <div key={w} className="space-y-1">
+                <div className="text-[11px] text-gray-500 text-center">{w} mm</div>
+                <div className="bg-white shadow-md p-3" style={{ width: w === 58 ? 220 : 302 }}>
+                  {previewKind === 'html' ? (
+                    // Receipt HTML escapes all tenant text; SVGs are generated by bwip-js.
+                    <div dangerouslySetInnerHTML={{ __html: previewHtml[w] }} />
+                  ) : (
+                    <ThermalReceiptPreview model={previewModel} paperWidth={w} widthPx={w === 58 ? 196 : 278} />
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
-          <p className="text-xs text-gray-500 dark:text-gray-400">Sample sale. Raw thermal printers print the same content in their own fonts.</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Sample sale. &quot;Thermal printer&quot; shows the exact characters per line a USB / Bluetooth receipt printer prints (32 / 48
+            columns, 42 / 64 with small text).
+          </p>
         </div>
       </div>
     </div>

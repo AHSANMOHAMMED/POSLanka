@@ -23,7 +23,9 @@ import { toast } from '@/components/ui/toast'
 import { usePrinters, buildReceiptTestBytes, type PrinterTransportKind, type PrinterProfile, type PrinterRole } from '@/hooks/usePrinter'
 import { PrintAgentTransport, supportsWebBluetooth, supportsWebUsb, type PrintAgentTarget } from '@/lib/print/escpos/transports'
 import { LABEL_LANGUAGES, LABEL_LANGUAGE_LABELS, ROLE_LABELS, type LabelLanguage } from '@/lib/print/printer-profiles'
-import { labelTestTemplate } from '@/lib/print/label'
+import { labelAlignmentTemplate, labelTestTemplate } from '@/lib/print/label'
+import { useStickerSetups } from '@/hooks/useStickerSetups'
+import { usePermission } from '@/hooks/usePermission'
 import { printLabelsRaw } from '@/lib/labels/label-print'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 
@@ -53,6 +55,8 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
   const [agentOk, setAgentOk] = useState<boolean | null>(null)
   const [agentTargets, setAgentTargets] = useState<PrintAgentTarget[]>([])
   const support = useMemo(() => ({ webusb: supportsWebUsb(), webbluetooth: supportsWebBluetooth() }), [])
+  const { setups: stickerSetups } = useStickerSetups(isOpen)
+  const isAdmin = usePermission('manageSettings')
 
   const selected: PrinterProfile | null = printers.find((p) => p.id === selectedId) || printers[0] || null
 
@@ -110,7 +114,10 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
         toast.info('Browser label printing uses the print dialog on the barcode label page.')
         return false
       }
-      const res = await printLabelsRaw(p, labelTestTemplate(p.label.widthMm, p.label.heightMm), [{ item: null, quantity: 1 }])
+      const setup = stickerSetups.find((s) => s.id === p.label.stickerSetupId) || null
+      const res = setup
+        ? await printLabelsRaw(p, labelAlignmentTemplate(setup.labelWidthMm, setup.labelHeightMm), [{ item: null, quantity: setup.columns }], { setup })
+        : await printLabelsRaw(p, labelTestTemplate(p.label.widthMm, p.label.heightMm), [{ item: null, quantity: 1 }])
       if (res.warnings.length) toast.warning(res.warnings.join('; '))
       if (!res.ok) toast.error(res.error || 'Label test failed')
       return res.ok
@@ -384,6 +391,35 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
                         </FormSelect>
                       </FormField>
                     </div>
+                    {(() => {
+                      const linked = stickerSetups.find((s) => s.id === selected.label.stickerSetupId) || null
+                      const lockedLink = !!linked?.locked && !isAdmin
+                      return (
+                        <FormField
+                          label="Label roll setup"
+                          hint={
+                            linked
+                              ? `${linked.columns} across, ${linked.labelWidthMm} x ${linked.labelHeightMm} mm: size, gaps, offsets, dpi, darkness and speed come from this setup${linked.locked ? ' (locked)' : ''}.`
+                              : 'Optional. Rolls are set up under Barcode & Labels > Settings.'
+                          }
+                        >
+                          <FormSelect
+                            value={selected.label.stickerSetupId || ''}
+                            disabled={lockedLink}
+                            onChange={(e) => updateLabel({ stickerSetupId: e.target.value || null })}
+                            selectSize="sm"
+                          >
+                            <option value="">None (use the values below)</option>
+                            {stickerSetups.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name}
+                                {s.locked ? ' [locked]' : ''}
+                              </option>
+                            ))}
+                          </FormSelect>
+                        </FormField>
+                      )
+                    })()}
                     <div>
                       <span className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1.5 block">Common Label Sizes (Zebra & Barcode Printers):</span>
                       <div className="flex flex-wrap gap-1.5">

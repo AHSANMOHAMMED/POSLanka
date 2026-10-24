@@ -7,6 +7,7 @@ import { THEME } from '../src/lib/theme'
 import { useBottomPad, useHeaderPad } from '../src/lib/safeArea'
 import { LoadingView, EmptyView } from '../src/components/StateViews'
 import { AlertsBell } from '../src/components/AlertsBell'
+import { TEXT_SCALES, useTextScale } from '../src/lib/textScale'
 
 interface Tile {
   key: string
@@ -119,6 +120,8 @@ export default function HomeScreen() {
             ) : null}
           </View>
 
+          <TextSizeRow />
+
           {tiles.length === 0 ? (
             <EmptyView icon="🔒" title="Nothing assigned yet" subtitle="Your role has no mobile features enabled. Ask the owner to grant access." />
           ) : (
@@ -138,6 +141,34 @@ export default function HomeScreen() {
           )}
         </ScrollView>
       )}
+    </View>
+  )
+}
+
+/** In-app text size (90% .. 140%); applies to every screen at once. */
+function TextSizeRow() {
+  const [scale, setScale] = useTextScale()
+  return (
+    <View style={styles.sizeCard}>
+      <Text style={styles.sizeLabel}>Text size</Text>
+      <View style={styles.sizeRow} accessibilityRole="radiogroup">
+        {TEXT_SCALES.map((s, i) => (
+          <Pressable
+            key={s}
+            onPress={() => setScale(s)}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: scale === s }}
+            accessibilityLabel={`${Math.round(s * 100)} percent`}
+            style={[styles.sizeBtn, scale === s && styles.sizeBtnActive]}
+          >
+            {/* allowFontScaling off + fixed sizes: the picker itself stays put while the app rescales */}
+            <Text allowFontScaling={false} style={[styles.sizeBtnText, { fontSize: (12 + i * 2) / scale }, scale === s && styles.sizeBtnTextActive]}>
+              A
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.sizePct}>{Math.round(scale * 100)}%</Text>
     </View>
   )
 }
@@ -181,4 +212,23 @@ const styles = StyleSheet.create({
   tileIcon: { fontSize: 26, marginBottom: 8 },
   tileTitle: { fontSize: 15, fontWeight: '800', color: THEME.colors.text },
   tileSub: { fontSize: 11, color: THEME.colors.textMuted, marginTop: 2 },
+  sizeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: THEME.colors.card,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    marginBottom: 16,
+  },
+  sizeLabel: { fontSize: 13, fontWeight: '700', color: THEME.colors.text },
+  sizeRow: { flexDirection: 'row', flex: 1, borderWidth: 1, borderColor: THEME.colors.border, borderRadius: 8, overflow: 'hidden' },
+  sizeBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 6, backgroundColor: THEME.colors.card },
+  sizeBtnActive: { backgroundColor: THEME.colors.primary },
+  sizeBtnText: { fontWeight: '700', color: THEME.colors.text },
+  sizeBtnTextActive: { color: THEME.colors.onPrimary },
+  sizePct: { fontSize: 12, color: THEME.colors.textMuted, minWidth: 36, textAlign: 'right' },
 })

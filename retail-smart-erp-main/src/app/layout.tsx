@@ -3,6 +3,7 @@ import localFont from "next/font/local"
 import { ThemeProvider } from "@/components/providers/ThemeProvider"
 import { ErrorCaptureProvider } from "@/components/providers/ErrorCaptureProvider"
 import { NavigationProgress } from "@/components/layout/NavigationProgress"
+import { TEXT_SCALE_SCRIPT } from "@/lib/ui/text-scale"
 import "./globals.css"
 
 // Inter (SIL OFL 1.1, see ./fonts/Inter-OFL-LICENSE.txt) is bundled so production builds never
@@ -97,6 +98,7 @@ export default function RootLayout({
       <head>
         <meta name="google" content="notranslate" />
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script dangerouslySetInnerHTML={{ __html: TEXT_SCALE_SCRIPT }} />
         {process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID && (
           <>
             <script async src={`https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID}`} />

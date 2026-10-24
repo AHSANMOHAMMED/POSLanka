@@ -6,6 +6,10 @@ import { startAutoSync } from '../src/lib/offlineQueue'
 import { startIntakeAutoSync } from '../src/lib/intakeStore'
 import { installNotificationHandlers } from '../src/lib/notifications'
 import { IS_ADMIN_APP } from '../src/lib/appVariant'
+import { installTextScale, TextScaleProvider } from '../src/lib/textScale'
+
+// In-app text size: wraps Text / TextInput once, before the first render
+installTextScale()
 
 export default function RootLayout() {
   useEffect(() => {
@@ -19,6 +23,7 @@ export default function RootLayout() {
   }, [])
 
   return (
+    <TextScaleProvider>
     <SafeAreaProvider>
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false }}>
@@ -38,5 +43,6 @@ export default function RootLayout() {
         <Stack.Screen name="labels" />
       </Stack>
     </SafeAreaProvider>
+    </TextScaleProvider>
   )
 }

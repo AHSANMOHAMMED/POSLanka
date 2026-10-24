@@ -10,8 +10,9 @@ const ESC = 0x1b
 const GS = 0x1d
 const LF = 0x0a
 
-/** Printable columns for Font A on the common 58mm / 80mm thermal heads. */
-export function columnsFor(paperWidth: PaperWidth): number {
+/** Printable columns for Font A on the common 58mm / 80mm thermal heads (font B: 42 / 64). */
+export function columnsFor(paperWidth: PaperWidth, small = false): number {
+  if (small) return paperWidth === 80 ? 64 : 42
   return paperWidth === 80 ? 48 : 32
 }
 
@@ -22,8 +23,23 @@ export class EscPosBuilder {
   private chunks: number[] = []
   readonly cols: number
 
-  constructor(paperWidth: PaperWidth = 58) {
-    this.cols = columnsFor(paperWidth)
+  readonly widthDots: number
+
+  /** `small`: the printer's font B (more columns); call smallFont() after init(). */
+  constructor(paperWidth: PaperWidth = 58, opts: { small?: boolean } = {}) {
+    this.cols = columnsFor(paperWidth, !!opts.small)
+    this.widthDots = paperWidth === 80 ? 576 : 384
+  }
+
+  /** ESC M n — font A (normal) or font B (small). */
+  smallFont(on: boolean): this {
+    return this.raw([ESC, 0x4d, on ? 1 : 0])
+  }
+
+  /** A solid rule two dots high across the head (GS v 0 raster). */
+  solidRule(): this {
+    const bpr = this.widthDots / 8
+    return this.rasterPacked(this.widthDots, 2, new Uint8Array(bpr * 2).fill(0xff))
   }
 
   raw(bytes: ArrayLike<number>): this {
@@ -144,7 +160,7 @@ export class EscPosBuilder {
     if (!width || !height || !data?.length) return this
     const srcBpr = Math.ceil(width / 8)
     if (data.length < srcBpr * height) return this
-    const maxBpr = this.cols >= 48 ? 72 : 48
+    const maxBpr = this.widthDots / 8
     const bpr = Math.min(srcBpr, maxBpr)
     const skip = Math.floor((srcBpr - bpr) / 2)
     this.raw([GS, 0x76, 0x30, 0x00, bpr & 0xff, (bpr >> 8) & 0xff, height & 0xff, (height >> 8) & 0xff])
@@ -160,6 +176,14 @@ export class EscPosBuilder {
   /** "label ......... value" on one line; the value is right-aligned. */
   row(left: string, right: string): this {
     return this.line(fitRow(left, right, this.cols))
+  }
+
+  /** Like row(), but a long label wraps onto extra lines (the value stays on the last one). */
+  wrapRow(left: string, right: string): this {
+    const r = sanitizeAscii(right)
+    const lines = wrapText(left, Math.max(1, this.cols - r.length - 1))
+    lines.forEach((l, i) => (i === lines.length - 1 ? this.row(l, r) : this.line(l)))
+    return this
   }
 
   /**
@@ -340,6 +364,9 @@ export interface ReceiptLogo {
 
 export interface ReceiptLine {
   name: string
+  /** Item SKU / barcode (printed when the receipt format asks for them). */
+  sku?: string | null
+  barcode?: string | null
   qty: number
   unit?: string | null
   unitPrice: number
@@ -368,6 +395,36 @@ export function vatRateText(rate: number | null | undefined): string {
   return Number.isInteger(r) ? String(r) : String(Math.round(r * 100) / 100)
 }
 
+/**
+ * Receipt look, from the tenant receipt settings (same options and defaults as
+ * the web: src/lib/print/receipt-settings.ts).
+ */
+export interface ReceiptFormat {
+  fontSize: 'small' | 'normal' | 'large'
+  itemLayout: 'two_line' | 'one_line'
+  itemSeparator: 'none' | 'dashed' | 'solid'
+  showItemSku: boolean
+  showItemBarcode: boolean
+  poweredBy: boolean
+  logoAlign: 'center' | 'left' | 'right'
+}
+
+export const DEFAULT_RECEIPT_FORMAT: ReceiptFormat = {
+  fontSize: 'normal',
+  itemLayout: 'two_line',
+  itemSeparator: 'none',
+  showItemSku: false,
+  showItemBarcode: false,
+  poweredBy: true,
+  logoAlign: 'center',
+}
+
+/** HTML receipt body font size (px), same scale as the web RECEIPT_FONT_PX. */
+export const RECEIPT_FONT_PX: Record<PaperWidth, Record<ReceiptFormat['fontSize'], number>> = {
+  58: { small: 9, normal: 10, large: 12 },
+  80: { small: 10, normal: 11, large: 13 },
+}
+
 export interface ReceiptPayment {
   method: string
   amount: number
@@ -391,8 +448,12 @@ export interface ReceiptInput {
   payments: ReceiptPayment[]
   change?: number
   isReturn?: boolean
-  /** Value encoded in the invoice barcode / QR (usually the invoice number, also OFF-... refs). */
+  /** Value encoded in the invoice QR (the invoice number / OFF-... ref, or the verification URL). */
   qrPayload?: string | null
+  /** Value of the Code 128 barcode when it differs from the QR (the invoice number). */
+  barcodePayload?: string | null
+  /** Font size, item layout, separators, codes, powered-by. Undefined = defaults. */
+  format?: ReceiptFormat | null
   /** Which invoice codes to print. Undefined = legacy (QR only when qrPayload is set). */
   invoiceCode?: InvoiceCodeType
   /** Business-settings driven header / footer lines (take precedence over header/footer). */
@@ -428,12 +489,55 @@ export function paymentLabel(method: string): string {
   return METHOD_LABELS[method] || method
 }
 
-/** Which invoice codes to print and with what value (codes only for code-like values). */
-export function invoiceCodeFor(input: Pick<ReceiptInput, 'qrPayload' | 'invoiceCode' | 'invoiceNo'>): { value: string; barcode: boolean; qr: boolean } {
-  const value = sanitizeAscii(input.qrPayload ?? (input.invoiceCode ? input.invoiceNo : '') ?? '').trim()
-  if (!value || !/^[A-Za-z0-9][A-Za-z0-9\-_/.]*$/.test(value)) return { value: '', barcode: false, qr: false }
+const CODE_LIKE = /^[A-Za-z0-9][A-Za-z0-9\-_/.]*$/
+const URL_LIKE = /^https?:\/\/[\x21-\x7e]+$/
+
+/**
+ * Which invoice codes to print and with what values: the barcode carries a
+ * code-like value (the invoice number), the QR the same or a verification URL.
+ */
+export function invoiceCodeFor(input: Pick<ReceiptInput, 'qrPayload' | 'invoiceCode' | 'invoiceNo' | 'barcodePayload'>): {
+  value: string
+  qrValue: string
+  barcode: boolean
+  qr: boolean
+} {
+  const qrRaw = sanitizeAscii(input.qrPayload ?? (input.invoiceCode ? input.invoiceNo : '') ?? '').trim()
+  const barRaw = sanitizeAscii(input.barcodePayload ?? qrRaw).trim()
+  const value = CODE_LIKE.test(barRaw) ? barRaw : ''
+  const qrValue = CODE_LIKE.test(qrRaw) || URL_LIKE.test(qrRaw) ? qrRaw : value
   const type: InvoiceCodeType = input.invoiceCode ?? 'qr'
-  return { value, barcode: type === 'barcode' || type === 'both', qr: type === 'qr' || type === 'both' }
+  return {
+    value,
+    qrValue,
+    barcode: !!value && (type === 'barcode' || type === 'both'),
+    qr: !!qrValue && (type === 'qr' || type === 'both'),
+  }
+}
+
+/** Move the ink of a centred packed logo to the left / right edge (base64 in, bytes out). */
+export function alignPackedBits(width: number, height: number, data: Uint8Array, align: 'center' | 'left' | 'right'): Uint8Array {
+  if (align === 'center') return data
+  const bpr = Math.ceil(width / 8)
+  let minX = width
+  let maxX = -1
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++)
+      if (data[y * bpr + (x >> 3)] & (0x80 >> (x & 7))) {
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+      }
+  if (maxX < 0) return data
+  const shift = align === 'left' ? -minX : width - 1 - maxX
+  if (!shift) return data
+  const out = new Uint8Array(bpr * height)
+  for (let y = 0; y < height; y++)
+    for (let x = minX; x <= maxX; x++)
+      if (data[y * bpr + (x >> 3)] & (0x80 >> (x & 7))) {
+        const nx = x + shift
+        out[y * bpr + (nx >> 3)] |= 0x80 >> (nx & 7)
+      }
+  return out
 }
 
 /**
@@ -441,13 +545,16 @@ export function invoiceCodeFor(input: Pick<ReceiptInput, 'qrPayload' | 'invoiceC
  * business block. Shared by receipts and the Z report so both carry the same
  * branding (legal name, tax numbers ...). Leaves the builder center-aligned.
  */
-function businessHeader(b: EscPosBuilder, biz: ReceiptBusiness, logo?: ReceiptLogo | null): void {
+function businessHeader(b: EscPosBuilder, biz: ReceiptBusiness, logo?: ReceiptLogo | null, logoAlign: ReceiptFormat['logoAlign'] = 'center'): void {
   const cols = b.cols
   if (logo?.data) {
-    const bits = base64ToBytes(logo.data)
+    const bits = alignPackedBits(logo.width, logo.height, base64ToBytes(logo.data), logoAlign)
     b.align('center').rasterPacked(logo.width, logo.height, bits).line()
   }
-  b.align('center').bold(true).size(2, 2).line(sanitizeAscii(biz.name).slice(0, Math.floor(cols / 2))).size(1, 1).bold(false)
+  // Shop name: double size + bold, wrapped (not cut) at half the columns
+  b.align('center').bold(true).size(2, 2)
+  for (const l of wrapText(biz.name, Math.floor(cols / 2))) b.line(l)
+  b.size(1, 1).bold(false)
   if (biz.legalName && biz.legalName.trim().toLowerCase() !== biz.name.trim().toLowerCase()) b.centeredBlock(biz.legalName)
   if (biz.address) b.centeredBlock(biz.address)
   if (biz.phone) b.centeredBlock(`Tel: ${biz.phone}`)
@@ -457,21 +564,34 @@ function businessHeader(b: EscPosBuilder, biz: ReceiptBusiness, logo?: ReceiptLo
   if (biz.brn) b.centeredBlock(`BRN: ${biz.brn}`)
 }
 
+/** Name / qty / price / total column widths for one-line items. */
+export function receiptTableWidths(cols: number): [number, number, number, number] {
+  const qtyW = cols >= 64 ? 8 : 6
+  const priceW = cols >= 64 ? 12 : 10
+  const totalW = cols >= 64 ? 13 : 11
+  return [cols - qtyW - priceW - totalW, qtyW, priceW, totalW]
+}
+
 export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Array {
-  const b = new EscPosBuilder(opts.paperWidth)
+  const f: ReceiptFormat = { ...DEFAULT_RECEIPT_FORMAT, ...(input.format || {}) }
+  const small = f.fontSize === 'small'
+  const b = new EscPosBuilder(opts.paperWidth, { small })
   const cols = b.cols
   b.init()
+  if (small) b.smallFont(true)
   if (opts.drawerKick && !input.isReturn) b.drawerKick()
   b.raw([ESC, 0x74, 0x00]) // ESC t 0: CP437 (text is ASCII-only)
 
   // Logo + business block
-  businessHeader(b, input.business, input.logo)
+  businessHeader(b, input.business, input.logo, f.logoAlign)
   const headerLines = input.headerLines?.length ? input.headerLines : input.header ? [input.header] : []
   if (headerLines.length) {
     b.line()
     for (const h of headerLines) b.centeredBlock(h)
   }
-  b.align('left').rule('=')
+  b.align('left')
+  if (f.fontSize === 'large') b.raw([GS, 0x21, 0x01]) // double-height body
+  b.rule('=')
 
   // Meta
   const ti = input.taxInvoice || null
@@ -489,27 +609,28 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
   } else if (input.customer?.name) b.row('Customer', input.customer.name)
   b.rule('-')
 
-  // Items
-  const qtyW = cols >= 48 ? 8 : 6
-  const priceW = cols >= 48 ? 12 : 9
-  const totalW = cols >= 48 ? 12 : 10
-  const nameW = cols - qtyW - priceW - totalW
-  if (cols >= 48) {
-    b.bold(true).columns(['Item', 'Qty', 'Price', 'Total'], [nameW, qtyW, priceW, totalW], undefined, false).bold(false)
-    for (const l of input.lines) {
-      b.columns([l.name, qtyText(l.qty) + (l.unit ? l.unit : ''), money(l.unitPrice), money(l.total)], [nameW, qtyW, priceW, totalW])
-      if (l.conversion) b.line(`  ${l.conversion}`)
-      if (ti && l.vatAmount) b.row(`  VAT ${vatRateText(l.vatRate)}%`, money(l.vatAmount))
-    }
-  } else {
-    // 58mm: item name on its own line, then "qty x price" and the line total.
-    for (const l of input.lines) {
-      b.paragraph(l.name)
-      b.row(`  ${qtyText(l.qty)}${l.unit ? ` ${l.unit}` : ''} x ${money(l.unitPrice)}`, money(l.total))
-      if (l.conversion) b.line(`  ${l.conversion}`)
-      if (ti && l.vatAmount) b.row(`  VAT ${vatRateText(l.vatRate)}%`, money(l.vatAmount))
-    }
+  // Items: same layouts as the web receipt (src/lib/print/escpos/receipt-from-model.ts)
+  const table = f.itemLayout === 'one_line' && cols >= 42
+  const tw = receiptTableWidths(cols)
+  if (table) b.bold(true).columns(['Item', 'Qty', 'Price', 'Total'], tw, undefined, false).bold(false)
+  else {
+    const amtW = Math.max(10, Math.min(14, Math.floor(cols / 3)))
+    b.bold(true).columns(['Item', 'Amount'], [cols - amtW, amtW], undefined, false).bold(false)
   }
+  b.rule('-')
+  input.lines.forEach((l, i) => {
+    if (i > 0 && f.itemSeparator === 'dashed') b.line('- '.repeat(Math.floor(cols / 2)).trimEnd())
+    else if (i > 0 && f.itemSeparator === 'solid') b.solidRule()
+    const qty = `${qtyText(l.qty)}${l.unit ? ` ${l.unit}` : ''}`
+    if (table) b.columns([l.name, qty, money(l.unitPrice), money(l.total)], tw)
+    else if (f.itemLayout === 'one_line') b.wrapRow(`${qty} x ${l.name}`, money(l.total))
+    else b.paragraph(l.name)
+    const codes = [f.showItemSku ? l.sku : null, f.showItemBarcode ? l.barcode : null].filter(Boolean) as string[]
+    if (codes.length) b.paragraph(`  ${codes.join(' / ')}`)
+    if (f.itemLayout !== 'one_line') b.row(`  ${qty} x ${money(l.unitPrice)}`, money(l.total))
+    if (l.conversion) b.line(`  ${l.conversion}`)
+    if (ti && l.vatAmount) b.row(`  VAT ${vatRateText(l.vatRate)}%`, money(l.vatAmount))
+  })
   b.rule('-')
 
   // Totals
@@ -519,6 +640,7 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
     if (Math.abs(t.amount) > 0.004) b.row(t.name, money(t.amount))
   }
   b.bold(true).size(1, 2).row(input.isReturn ? 'REFUND' : 'TOTAL', `LKR ${money(input.total)}`).size(1, 1).bold(false)
+  if (f.fontSize === 'large') b.raw([GS, 0x21, 0x01])
   if (ti) {
     b.rule('-')
     b.row('Total excl. VAT', money(ti.totalExclVat))
@@ -528,32 +650,35 @@ export function buildReceipt(input: ReceiptInput, opts: ReceiptOptions): Uint8Ar
   b.rule('-')
 
   for (const p of input.payments || []) {
-    b.row(paymentLabel(p.method) + (p.reference ? ` (${p.reference})` : ''), money(p.amount))
+    b.wrapRow(paymentLabel(p.method) + (p.reference ? ` (${p.reference})` : ''), money(p.amount))
   }
   if (input.change && input.change > 0.004) b.row('Change', money(input.change))
 
   // Footer
   b.line()
   const footerLines = input.footerLines?.length ? input.footerLines : [input.footer || 'Thank you for shopping with us!']
-  for (const f of footerLines) b.centeredBlock(f)
+  for (const fl of footerLines) b.centeredBlock(fl)
   if (input.returnPolicy) {
     b.line()
     b.centeredBlock(input.returnPolicy)
   }
+  if (f.fontSize === 'large') b.size(1, 1)
   const code = invoiceCodeFor(input)
   // CODE128 (set B) needs 11 modules per character + 35 for start/check/stop; at module width 2
   // a 58mm head (384 dots) fits 14 characters. Longer values (e.g. OFF-<6-char device>-<seq>)
   // print as QR instead so the receipt always carries a scannable code.
-  const barcodeFits = cols >= 48 || (code.value.length * 11 + 35) * 2 <= 384
+  const barcodeFits = b.widthDots >= 576 || (code.value.length * 11 + 35) * 2 <= 384
   if (code.barcode && barcodeFits) {
     b.line()
     b.align('center').barcodeCode128(code.value, { height: 50, width: 2 }).align('left')
   }
-  if (code.qr || (code.barcode && !barcodeFits)) {
+  const qrValue = code.qr ? code.qrValue : code.barcode && !barcodeFits ? code.value : ''
+  if (qrValue) {
     b.line()
-    b.align('center').qr(code.value, { size: cols >= 48 ? 6 : 4 }).align('left')
+    const size = b.widthDots >= 576 ? (qrValue.length > 40 ? 5 : 6) : qrValue.length > 40 ? 3 : 4
+    b.align('center').qr(qrValue, { size }).align('left')
   }
-  b.align('center').line('Powered by skyERPOS').align('left')
+  if (f.poweredBy) b.align('center').line('Powered by skyERPOS').align('left')
   b.partialCut()
   return b.bytes()
 }

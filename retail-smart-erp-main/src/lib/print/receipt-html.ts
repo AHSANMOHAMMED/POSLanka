@@ -4,7 +4,7 @@
  * settings live preview. The invoice barcode / QR are inline SVGs generated
  * with bwip-js (loaded lazily).
  */
-import { formatRate, type ReceiptModel } from './receipt-model'
+import { formatRate, RECEIPT_FONT_PX, type ReceiptModel, type ReceiptModelLine } from './receipt-model'
 import { formatMoney } from './escpos/encoder'
 
 export interface ReceiptHtmlAssets {
@@ -34,6 +34,7 @@ function safeImgSrc(src: string | null | undefined): string | null {
 /** Render the invoice barcode (CODE128) and QR as SVG strings. */
 export async function renderInvoiceCodeSvgs(model: ReceiptModel): Promise<{ barcodeSvg: string | null; qrSvg: string | null }> {
   const { type, value } = model.invoiceCode
+  const qrValue = model.invoiceCode.qrValue || value
   if (!value || type === 'none') return { barcodeSvg: null, qrSvg: null }
   try {
     const bwip = await import('bwip-js/browser')
@@ -55,7 +56,7 @@ export async function renderInvoiceCodeSvgs(model: ReceiptModel): Promise<{ barc
     }
     if (type === 'qr' || type === 'both') {
       try {
-        qrSvg = bwip.toSVG({ bcid: 'qrcode', text: value, scale: 3 })
+        qrSvg = bwip.toSVG({ bcid: 'qrcode', text: qrValue, scale: 3 })
       } catch {
         qrSvg = null
       }
@@ -67,14 +68,47 @@ export async function renderInvoiceCodeSvgs(model: ReceiptModel): Promise<{ barc
 }
 
 const row = (l: string, r: string, extra = '') =>
-  `<div style="display:flex;justify-content:space-between;gap:8px${extra}"><span>${l}</span><span style="text-align:right;white-space:nowrap">${r}</span></div>`
+  `<div style="display:flex;justify-content:space-between;gap:8px${extra}"><span style="min-width:0;overflow-wrap:anywhere">${l}</span><span style="text-align:right;white-space:nowrap">${r}</span></div>`
 const hr = '<div style="border-top:1px dashed #000;margin:6px 0"></div>'
+const sepLine = (kind: 'dashed' | 'solid') => `<div style="border-top:1px ${kind} #000;margin:3px 0"></div>`
+
+/**
+ * Type scale shared by every receipt renderer: one font family (monospace, so
+ * columns line up like on the thermal head), body = RECEIPT_FONT_PX, shop name
+ * +4 bold, document title +1 bold, TOTAL +3 bold, secondary text (codes, notes,
+ * policy) -1, "Powered by" -2.
+ */
+function itemHtml(l: ReceiptModelLine, model: ReceiptModel, paperWidth: 58 | 80, base: number, m: (n: number) => string): string {
+  const e = escapeHtml
+  const out: string[] = []
+  const codes = [model.showItemSku ? l.sku : null, model.showItemBarcode ? l.barcode : null].filter(Boolean) as string[]
+  const qty = `${e(l.qtyText)}${l.unit ? ` ${e(l.unit)}` : ''}`
+  if (model.itemLayout === 'one_line' && paperWidth === 80) {
+    out.push(
+      `<div style="display:grid;grid-template-columns:minmax(0,1fr) 4em 6em 6.5em;column-gap:4px">` +
+        `<span style="overflow-wrap:anywhere">${e(l.name)}</span>` +
+        `<span style="text-align:right;white-space:nowrap">${qty}</span>` +
+        `<span style="text-align:right;white-space:nowrap">${m(l.unitPrice)}</span>` +
+        `<span style="text-align:right;white-space:nowrap">${m(l.total)}</span></div>`
+    )
+  } else if (model.itemLayout === 'one_line') {
+    out.push(row(`${qty} x ${e(l.name)}`, m(l.total)))
+  } else {
+    out.push(`<div style="font-weight:600">${e(l.name)}</div>`)
+  }
+  if (codes.length) out.push(`<div style="font-size:${base - 1}px">&nbsp;&nbsp;${codes.map(e).join(' · ')}</div>`)
+  if (model.itemLayout !== 'one_line') out.push(row(`&nbsp;&nbsp;${qty} x ${m(l.unitPrice)}`, m(l.total)))
+  if (l.discount > 0) out.push(row('&nbsp;&nbsp;Discount', `-${m(l.discount)}`))
+  if (model.taxInvoice && l.vatAmount) out.push(row(`&nbsp;&nbsp;VAT ${formatRate(l.vatRate)}%`, m(l.vatAmount)))
+  for (const n of l.notes) out.push(`<div style="font-size:${base - 1}px">&nbsp;&nbsp;${e(n)}</div>`)
+  return out.join('')
+}
 
 /** Synchronous render when SVGs/logo are already resolved. */
 export function renderReceiptHtmlSync(model: ReceiptModel, paperWidth: 58 | 80, assets: ReceiptHtmlAssets = {}): string {
   const m = (n: number) => formatMoney(n, model.decimals)
   const e = escapeHtml
-  const base = model.fontSize === 'large' ? (paperWidth === 58 ? 12 : 13) : paperWidth === 58 ? 10 : 11
+  const base = RECEIPT_FONT_PX[paperWidth][model.fontSize] ?? RECEIPT_FONT_PX[paperWidth].normal
   const parts: string[] = []
 
   parts.push(
@@ -83,18 +117,19 @@ export function renderReceiptHtmlSync(model: ReceiptModel, paperWidth: 58 | 80, 
   parts.push('<div style="text-align:center">')
   const logo = model.logo.show ? safeImgSrc(assets.logoSrc ?? model.logo.url) : null
   if (logo) {
+    const margin = model.logo.align === 'left' ? '0 auto 4px 0' : model.logo.align === 'right' ? '0 0 4px auto' : '0 auto 4px'
     parts.push(
-      `<img src="${e(logo)}" alt="" style="display:block;margin:0 auto 4px;width:${model.logo.widthPct}%;max-width:100%;height:auto;filter:grayscale(1)" />`
+      `<img src="${e(logo)}" alt="" style="display:block;margin:${margin};width:${model.logo.widthPct}%;max-width:100%;height:auto;filter:grayscale(1)" />`
     )
   }
-  parts.push(`<div style="font-weight:bold;font-size:${base + 4}px">${e(model.business.name)}</div>`)
+  parts.push(`<div style="font-weight:bold;font-size:${base + 4}px;line-height:1.2">${e(model.business.name)}</div>`)
   for (const l of model.business.lines) parts.push(`<div>${e(l)}</div>`)
   if (model.headerLines.length) {
     parts.push('<div style="margin-top:4px">')
     for (const l of model.headerLines) parts.push(`<div>${e(l)}</div>`)
     parts.push('</div>')
   }
-  if (model.title) parts.push(`<div style="font-weight:bold;margin-top:4px">${e(model.title)}</div>`)
+  if (model.title) parts.push(`<div style="font-weight:bold;font-size:${base + 1}px;margin-top:4px">${e(model.title)}</div>`)
   if (model.copyLabel) parts.push(`<div style="margin-top:2px">*** ${e(model.copyLabel)} ***</div>`)
   parts.push('</div>')
 
@@ -102,16 +137,20 @@ export function renderReceiptHtmlSync(model: ReceiptModel, paperWidth: 58 | 80, 
   for (const r of model.meta) parts.push(row(`${e(r.label)}:`, e(r.value)))
   parts.push(hr)
 
-  for (const l of model.items) {
-    parts.push('<div style="margin-bottom:3px">')
-    parts.push(`<div style="font-weight:600">${e(l.name)}</div>`)
-    if (model.showItemSku && l.sku) parts.push(`<div style="font-size:${base - 1}px">${e(l.sku)}</div>`)
-    parts.push(row(`&nbsp;&nbsp;${e(l.qtyText)}${l.unit ? ` ${e(l.unit)}` : ''} x ${m(l.unitPrice)}`, m(l.total)))
-    if (l.discount > 0) parts.push(row('&nbsp;&nbsp;Discount', `-${m(l.discount)}`))
-    if (model.taxInvoice && l.vatAmount) parts.push(row(`&nbsp;&nbsp;VAT ${formatRate(l.vatRate)}%`, m(l.vatAmount)))
-    for (const n of l.notes) parts.push(`<div style="font-size:${base - 1}px">&nbsp;&nbsp;${e(n)}</div>`)
-    parts.push('</div>')
+  // Column header (same as the thermal print)
+  if (model.itemLayout === 'one_line' && paperWidth === 80) {
+    parts.push(
+      `<div style="display:grid;grid-template-columns:minmax(0,1fr) 4em 6em 6.5em;column-gap:4px;font-weight:bold">` +
+        '<span>Item</span><span style="text-align:right">Qty</span><span style="text-align:right">Price</span><span style="text-align:right">Total</span></div>'
+    )
+  } else {
+    parts.push(row('<b>Item</b>', '<b>Amount</b>'))
   }
+  parts.push('<div style="border-top:1px dashed #000;margin:3px 0"></div>')
+  model.items.forEach((l, i) => {
+    if (i > 0 && model.itemSeparator !== 'none') parts.push(sepLine(model.itemSeparator))
+    parts.push(`<div style="margin-bottom:${model.itemSeparator === 'none' ? 3 : 0}px">${itemHtml(l, model, paperWidth, base, m)}</div>`)
+  })
   parts.push(hr)
 
   for (const t of model.totals) parts.push(row(e(t.label), `${t.negative ? '-' : ''}${m(t.amount)}`))
@@ -149,6 +188,7 @@ export function renderReceiptHtmlSync(model: ReceiptModel, paperWidth: 58 | 80, 
   if (model.invoiceCode.type !== 'none' && !assets.barcodeSvg && !assets.qrSvg && model.invoiceCode.value) {
     parts.push(`<div style="margin-top:6px">${e(model.invoiceCode.value)}</div>`)
   }
+  if (model.poweredBy) parts.push(`<div style="margin-top:6px;font-size:${Math.max(7, base - 2)}px">${e(model.poweredBy)}</div>`)
   parts.push('</div></div>')
   return parts.join('')
 }

@@ -34,6 +34,8 @@ export interface LabelPrinterConfig {
   darkness?: number
   /** Inches per second. */
   speed?: number
+  /** Sticker stock / printer setup (GET /api/label-settings/sticker-setups) this printer uses. */
+  stickerSetupId?: string | null
 }
 
 export interface PrinterProfile {
@@ -112,6 +114,7 @@ export function sanitizeLabelConfig(raw: Partial<LabelPrinterConfig> | null | un
   }
   if (r.darkness != null && Number.isFinite(Number(r.darkness))) out.darkness = clampNum(r.darkness, 0, 30, 8)
   if (r.speed != null && Number.isFinite(Number(r.speed))) out.speed = clampNum(r.speed, 1, 14, 4)
+  if (typeof r.stickerSetupId === 'string' && r.stickerSetupId) out.stickerSetupId = r.stickerSetupId.slice(0, 64)
   return out
 }
 

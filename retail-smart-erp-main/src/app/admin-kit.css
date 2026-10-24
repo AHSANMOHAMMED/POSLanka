@@ -306,3 +306,9 @@ html body .adm-table tbody tr:hover td {
 @media (prefers-reduced-motion: reduce) {
   .adm-wave { animation: none; }
 }
+
+/* User text size for the console (src/lib/ui/text-scale.ts): the kit is px-based, so the
+   main area is zoomed instead of scaling rem. The sidebar / top bar keep their size. */
+#admin-main {
+  zoom: var(--admin-zoom, 1);
+}

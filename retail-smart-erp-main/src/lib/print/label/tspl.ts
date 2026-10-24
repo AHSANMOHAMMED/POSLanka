@@ -18,6 +18,10 @@ import {
   sortedElements,
   wrapChars,
   asciiOnly,
+  columnOrigins,
+  mediaWidthMm,
+  normalizeLayout,
+  packLabelRows,
   type EncodeLabelOptions,
   type LabelPrintItem,
   type LabelTemplateLike,
@@ -64,21 +68,27 @@ export async function encodeTspl(
 ): Promise<{ buf: CommandBuffer; warnings: string[] }> {
   const warnings: string[] = []
   const buf = new CommandBuffer('\r\n')
-  const wMm = o.widthMm ?? Number(template.widthMm)
+  // Multi-across rolls: SIZE is the whole liner width, each column is placed at its x origin.
+  const wMm = mediaWidthMm(template, o)
   const hMm = o.heightMm ?? Number(template.heightMm)
+  const layout = o.layout ? normalizeLayout(o.layout) : null
 
   buf.line(`SIZE ${fmt(wMm)} mm,${fmt(hMm)} mm`)
   buf.line(`GAP ${fmt(o.gapMm ?? 2)} mm,0 mm`)
-  buf.line('DIRECTION 1,0')
+  buf.line(`DIRECTION ${layout ? layout.direction : 1},0`)
   buf.line('REFERENCE 0,0')
   if (o.speed != null) buf.line(`SPEED ${Math.round(o.speed)}`)
   if (o.darkness != null) buf.line(`DENSITY ${Math.min(15, Math.max(0, Math.round(o.darkness)))}`)
 
   const copies = Math.max(1, Math.round(o.copies ?? 1))
-  for (const { item, quantity } of items) {
+  const { xs, y: oy } = columnOrigins(template, o)
+  for (const row of packLabelRows(items, layout?.columns ?? 1, copies)) {
     buf.line('CLS')
-    await emitElements(buf, template, item, o, warnings)
-    buf.line(`PRINT ${quantity * copies},1`)
+    for (let k = 0; k < row.cells.length; k++) {
+      const cell = row.cells[k]
+      if (cell) await emitElements(buf, template, cell.item, o, warnings, xs[k] ?? 0, oy)
+    }
+    buf.line(`PRINT ${row.count},1`)
   }
   return { buf, warnings }
 }
@@ -88,12 +98,14 @@ async function emitElements(
   template: LabelTemplateLike,
   item: LabelItemData | null,
   o: EncodeLabelOptions,
-  warnings: string[]
+  warnings: string[],
+  ox = 0,
+  oy = 0
 ) {
   const dpi = o.dpi
   for (const el of sortedElements(template)) {
-    const x = mmToDots(el.x, dpi)
-    const y = mmToDots(el.y, dpi)
+    const x = Math.max(0, ox + mmToDots(el.x, dpi))
+    const y = Math.max(0, oy + mmToDots(el.y, dpi))
     const w = Math.max(1, mmToDots(el.width, dpi))
     const h = Math.max(1, mmToDots(el.height, dpi))
     const rot = rightAngle(el.rotation)

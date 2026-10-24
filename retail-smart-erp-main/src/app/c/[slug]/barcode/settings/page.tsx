@@ -7,6 +7,7 @@ import { SectionCard } from '@/components/ui/section-card'
 import { FormInput, FormField, FormSelect, FormCheckbox } from '@/components/ui/form-elements'
 import { useDebounce } from '@/hooks/useDebounce'
 import { toast } from '@/components/ui/toast'
+import { StickerSetupsManager } from '@/components/labels/StickerSetupsManager'
 
 // ─── Weighing-scale barcode config ────────────────────────────────────────
 
@@ -194,7 +195,9 @@ export default function BarcodeLabelSettingsPage() {
       moduleHref="/barcode"
       title="Label Settings"
     >
-      <div className="max-w-2xl space-y-4">
+      <div className="max-w-3xl space-y-4">
+        <StickerSetupsManager />
+
         <SectionCard
           title="Price Code"
           icon={<Tag size={16} />}

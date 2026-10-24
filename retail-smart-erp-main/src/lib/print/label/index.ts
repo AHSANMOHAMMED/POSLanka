@@ -69,3 +69,25 @@ export function labelTestTemplate(widthMm: number, heightMm: number): LabelTempl
     ],
   }
 }
+
+
+/**
+ * Calibration / alignment pattern: a border 0.5 mm inside the label edge, a
+ * centre crosshair and the label size. Print it on the real roll and adjust
+ * the offsets / gaps until every border sits evenly inside its sticker.
+ */
+export function labelAlignmentTemplate(widthMm: number, heightMm: number): LabelTemplateLike {
+  const w = Number(widthMm)
+  const h = Number(heightMm)
+  const arm = Math.max(2, Math.min(w, h) * 0.2)
+  return {
+    widthMm: w,
+    heightMm: h,
+    elements: [
+      { id: 'border', type: 'shape', shape: 'rectangle', x: 0.5, y: 0.5, width: w - 1, height: h - 1, rotation: 0, zIndex: 0, borderWidth: 1, borderColor: '#000', borderStyle: 'solid' },
+      { id: 'cross-h', type: 'shape', shape: 'line', x: w / 2 - arm, y: h / 2 - 0.25, width: arm * 2, height: 0.5, rotation: 0, zIndex: 1, borderWidth: 1, borderColor: '#000', borderStyle: 'solid' },
+      { id: 'cross-v', type: 'shape', shape: 'line', x: w / 2 - 0.25, y: h / 2 - arm, width: 0.5, height: arm * 2, rotation: 0, zIndex: 1, borderWidth: 1, borderColor: '#000', borderStyle: 'solid' },
+      { id: 'size', type: 'text', dataField: 'custom', customValue: `${w}x${h}`, x: 1.5, y: 1.5, width: Math.max(4, w / 2 - arm - 2), height: Math.min(4, h * 0.2), rotation: 0, zIndex: 1, fontSize: 6, fontWeight: 'normal', textAlign: 'left', maxLines: 1 },
+    ],
+  }
+}

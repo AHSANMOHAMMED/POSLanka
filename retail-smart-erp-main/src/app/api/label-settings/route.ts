@@ -8,10 +8,11 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation'
 import { updateLabelSettingsSchema } from '@/lib/validation/schemas/label-templates'
+import { sanitizeStickerSetups } from '@/lib/labels/sticker-stock'
 
 const LABEL_SETTINGS_KEY = 'label_settings'
 
-const DEFAULT_LABEL_SETTINGS = { codeWord: '' }
+const DEFAULT_LABEL_SETTINGS = { codeWord: '', stickerSetups: [] as unknown[] }
 
 // GET label settings (code word for price encoding)
 export async function GET() {
@@ -32,6 +33,7 @@ export async function GET() {
           return NextResponse.json({
             ...DEFAULT_LABEL_SETTINGS,
             ...parsed,
+            stickerSetups: sanitizeStickerSetups(parsed?.stickerSetups),
           })
         } catch {
           return NextResponse.json(DEFAULT_LABEL_SETTINGS)
@@ -66,12 +68,18 @@ export async function PUT(request: NextRequest) {
     // Remove duplicate letters (keep first occurrence)
     const uniqueCodeWord = [...new Set(codeWord)].join('')
 
-    const newSettings = { codeWord: uniqueCodeWord }
-
     return await withTenant(session.user.tenantId, async (db) => {
       const existing = await db.query.settings.findFirst({
         where: eq(settings.key, LABEL_SETTINGS_KEY),
       })
+      // Keep the other label settings (sticker setups) stored in the same row
+      let prev: Record<string, unknown> = {}
+      try {
+        prev = existing?.value ? JSON.parse(existing.value) : {}
+      } catch {
+        prev = {}
+      }
+      const newSettings = { ...prev, codeWord: uniqueCodeWord }
 
       if (existing) {
         await db.update(settings)

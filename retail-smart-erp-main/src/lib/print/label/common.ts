@@ -48,6 +48,104 @@ export interface EncodeLabelOptions {
   rasterizeElement?: ElementRasterizer
   /** Required for 'escpos-raster'. */
   rasterizeLabel?: LabelRasterizer
+  /**
+   * Multi-across roll layout (sticker stock: 1/2/3/4 labels across, gaps and
+   * calibration offsets). Omitted = one label across, no offsets (legacy output).
+   */
+  layout?: LabelSheetLayout
+}
+
+/** Physical layout of a label roll / sheet (all mm). */
+export interface LabelSheetLayout {
+  /** Labels across the roll (1..4). */
+  columns: number
+  /** Horizontal gap between adjacent labels in a row. */
+  columnGapMm: number
+  /** Liner margin left of the first column (and right of the last). */
+  marginLeftMm: number
+  /** Calibration shift (positive = right / down; may be negative). */
+  offsetXMm: number
+  offsetYMm: number
+  /** TSPL DIRECTION (0 or 1, default 1). */
+  direction?: 0 | 1
+}
+
+export function normalizeLayout(l: Partial<LabelSheetLayout> | null | undefined): LabelSheetLayout {
+  const n = (v: unknown, min: number, max: number, d: number) => {
+    const x = Number(v)
+    return Number.isFinite(x) ? Math.min(max, Math.max(min, x)) : d
+  }
+  return {
+    columns: Math.round(n(l?.columns, 1, 4, 1)),
+    columnGapMm: n(l?.columnGapMm, 0, 30, 0),
+    marginLeftMm: n(l?.marginLeftMm, 0, 30, 0),
+    offsetXMm: n(l?.offsetXMm, -20, 20, 0),
+    offsetYMm: n(l?.offsetYMm, -20, 20, 0),
+    direction: l?.direction === 0 ? 0 : 1,
+  }
+}
+
+/** Media width (mm) the printer is told about: the whole liner for multi-across rolls. */
+export function mediaWidthMm(template: LabelTemplateLike, o: EncodeLabelOptions): number {
+  const w = o.widthMm ?? Number(template.widthMm)
+  if (!o.layout) return w
+  const l = normalizeLayout(o.layout)
+  return Math.round((l.marginLeftMm * 2 + l.columns * w + (l.columns - 1) * l.columnGapMm) * 100) / 100
+}
+
+/** Origin (dots) of each column's label on the media, calibration offsets applied. */
+export function columnOrigins(template: LabelTemplateLike, o: EncodeLabelOptions): { xs: number[]; y: number } {
+  const w = o.widthMm ?? Number(template.widthMm)
+  if (!o.layout) return { xs: [0], y: 0 }
+  const l = normalizeLayout(o.layout)
+  const xs = Array.from({ length: l.columns }, (_, i) => mmToDots(l.marginLeftMm + l.offsetXMm + i * (w + l.columnGapMm), o.dpi))
+  return { xs, y: mmToDots(l.offsetYMm, o.dpi) }
+}
+
+/** One printed row of a multi-across roll; `count` identical rows in a row. A null cell is left blank. */
+export interface LabelRow {
+  cells: ({ item: LabelItemData | null } | null)[]
+  count: number
+}
+
+/**
+ * Lay labels out across the roll: each item is repeated quantity x copies and
+ * the labels fill the columns left to right, row after row. Consecutive
+ * identical rows are merged (printed with one command and a count). With one
+ * column every item is one row printed quantity x copies times.
+ */
+export function packLabelRows(items: LabelPrintItem[], columns: number, copies = 1): LabelRow[] {
+  const cols = Math.max(1, Math.min(4, Math.round(columns || 1)))
+  const c = Math.max(1, Math.round(copies || 1))
+  if (cols === 1) return items.map(({ item, quantity }) => ({ cells: [{ item }], count: quantity * c }))
+  const flat: (LabelItemData | null)[] = []
+  for (const { item, quantity } of items) for (let i = 0; i < quantity * c; i++) flat.push(item)
+  const rows: LabelRow[] = []
+  for (let i = 0; i < flat.length; i += cols) {
+    const cells: LabelRow['cells'] = []
+    for (let k = 0; k < cols; k++) cells.push(i + k < flat.length ? { item: flat[i + k] } : null)
+    const prev = rows[rows.length - 1]
+    const same = prev && prev.cells.every((x, k) => (x === null ? cells[k] === null : cells[k] !== null && x.item === cells[k]!.item))
+    if (same) prev.count++
+    else rows.push({ cells, count: 1 })
+  }
+  return rows
+}
+
+/** OR a packed 1-bit bitmap into another at (x, y) dots (clipped). */
+export function blitPacked(dst: PackedRaster, src: PackedRaster, x: number, y: number): void {
+  const dBpr = Math.ceil(dst.width / 8)
+  const sBpr = Math.ceil(src.width / 8)
+  for (let sy = 0; sy < src.height; sy++) {
+    const dy = y + sy
+    if (dy < 0 || dy >= dst.height) continue
+    for (let sx = 0; sx < src.width; sx++) {
+      if (!(src.data[sy * sBpr + (sx >> 3)] & (0x80 >> (sx & 7)))) continue
+      const dx = x + sx
+      if (dx < 0 || dx >= dst.width) continue
+      dst.data[dy * dBpr + (dx >> 3)] |= 0x80 >> (dx & 7)
+    }
+  }
 }
 
 export interface EncodeLabelResult {
