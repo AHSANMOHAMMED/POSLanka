@@ -13,12 +13,12 @@ import {
   Settings,
   Moon,
   Sun,
-  Building2,
 } from 'lucide-react'
 import { broadcastAuthEvent } from '@/lib/auth/events'
 import { useTheme } from '@/components/providers/ThemeProvider'
 import { NotificationDropdown } from '@/components/account/NotificationDropdown'
 import { MessageDropdown } from '@/components/account/MessageDropdown'
+import { BrandWordmark } from '@/components/ui/logo'
 
 interface AccountHeaderProps {
   onMobileMenuToggle?: () => void
@@ -42,11 +42,8 @@ export function AccountHeader({ onMobileMenuToggle, mobileMenuOpen }: AccountHea
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
 
-          <Link href="/account" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-gray-900 rounded flex items-center justify-center">
-              <Building2 className="w-5 h-5 text-white" />
-            </div>
-            <span className="hidden sm:block font-semibold text-gray-900 dark:text-white">Smart POS</span>
+          <Link href="/account" className="flex items-center gap-2" aria-label="skyERPOS account home">
+            <BrandWordmark height={34} className="dark:rounded-md dark:bg-white dark:px-1.5 dark:py-0.5" />
           </Link>
         </div>
 

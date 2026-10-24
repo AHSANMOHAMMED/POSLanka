@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react'
-import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Alert, useWindowDimensions } from 'react-native'
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Alert, useWindowDimensions, Image } from 'react-native'
 import { router, useFocusEffect } from 'expo-router'
 import { formatBusinessId, getUser, logout, refreshPermissions, type AuthUser } from '../src/lib/api'
 import { displayRole, hasAnyPermission, hasPermission, type Permission } from '../src/lib/roles'
@@ -79,10 +79,11 @@ export default function HomeScreen() {
   return (
     <View style={styles.safe}>
       <View style={[styles.header, headerPad]}>
+        <Image source={require('../assets/icon.png')} style={styles.brandIcon} accessibilityLabel="skyERPOS" />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={styles.company} numberOfLines={1}>{user?.tenantName || 'skyERPOS'}</Text>
           {user?.businessId ? (
-            <Text style={styles.businessId} numberOfLines={1}>Business ID {formatBusinessId(user.businessId)}</Text>
+            <Text style={styles.businessId} numberOfLines={1}>Business ID {user.tenantSlug || formatBusinessId(user.businessId)}</Text>
           ) : null}
         </View>
         <AlertsBell />
@@ -142,6 +143,7 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  brandIcon: { width: 40, height: 40, borderRadius: 10, borderWidth: 1, borderColor: THEME.colors.border, marginRight: 10 },
   safe: { flex: 1, backgroundColor: THEME.colors.background },
   header: {
     flexDirection: 'row',

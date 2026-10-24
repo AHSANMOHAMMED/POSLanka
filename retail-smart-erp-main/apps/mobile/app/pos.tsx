@@ -10,6 +10,7 @@ import {
   Alert,
   ScrollView,
   RefreshControl,
+  Image,
 } from 'react-native'
 import { router, useFocusEffect } from 'expo-router'
 import * as Crypto from 'expo-crypto'
@@ -671,6 +672,7 @@ export default function PosScreen() {
             </View>
           </View>
           <View style={styles.titleRow}>
+            <Image source={require('../assets/icon.png')} style={styles.brandIcon} accessibilityLabel="skyERPOS" />
             <Text style={styles.appTitle}>Mobile POS</Text>
             {queueState.pending + queueState.rejected > 0 && (
               <Pressable style={[styles.pendingBadge, queueState.rejected > 0 && styles.pendingBadgeError]} onPress={handleSyncPress}>
@@ -1084,6 +1086,7 @@ export default function PosScreen() {
 }
 
 const styles = StyleSheet.create({
+  brandIcon: { width: 30, height: 30, borderRadius: 8, marginRight: 8, borderWidth: 1, borderColor: THEME.colors.border },
   container: { flex: 1, backgroundColor: THEME.colors.background },
   offlineModeBanner: { backgroundColor: THEME.colors.secondaryLight, paddingHorizontal: 16, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: THEME.colors.secondaryAmber },
   offlineModeText: { color: THEME.colors.onSecondaryContainer, fontSize: 12, fontWeight: '700', textAlign: 'center' },

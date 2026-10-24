@@ -15,6 +15,7 @@ import { Confetti } from './Confetti'
 import { useSetupWizard } from './hooks/useSetupWizard'
 import { useSetupSound } from './hooks/useSetupSound'
 import { Loader2, Volume2, VolumeX, Sparkles, CheckCircle, RotateCcw, ArrowLeft, ArrowRight, Save } from 'lucide-react'
+import { BrandWordmark } from '@/components/ui/logo'
 
 interface SetupWizardProps {
   companySlug: string
@@ -337,6 +338,8 @@ export function SetupWizard({ companySlug }: SetupWizardProps) {
       {/* Header */}
       <header className="h-16 flex-shrink-0 border-b border-gray-200/60 dark:border-gray-700/50 bg-white/70 dark:bg-slate-800/70 backdrop-blur-md px-4 lg:px-8 flex items-center justify-between">
         <div className="flex items-center gap-3 min-w-0">
+          <BrandWordmark height={30} className="hidden flex-shrink-0 sm:block" />
+          <span className="hidden h-7 w-px bg-gray-200 dark:bg-gray-700 sm:block" aria-hidden />
           {companyInfo?.logoUrl ? (
             /* eslint-disable-next-line @next/next/no-img-element */
             <img src={companyInfo.logoUrl} alt="" className="h-9 w-9 rounded-lg object-contain flex-shrink-0 ring-1 ring-gray-200 dark:ring-gray-700" />

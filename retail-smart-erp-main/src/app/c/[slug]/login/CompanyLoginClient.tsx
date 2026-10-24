@@ -7,6 +7,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { ArrowLeft, Building2, Lock, LogIn, Mail, ShieldCheck } from 'lucide-react'
 import { broadcastAuthEvent } from '@/lib/auth/events'
+import { landingPathForRole } from '@/lib/auth/landing'
 import { InstallPromptPopup } from '@/components/ui/install-prompt-popup'
 import {
   Alert,
@@ -94,11 +95,20 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
   const registered = searchParams.get('registered') === 'true'
   const invited = searchParams.get('invited') === 'true'
 
-  const enterCompany = () => {
+  const enterCompany = async () => {
     rememberCompany(company)
     broadcastAuthEvent('login', 'company')
+    // Each role lands on its own work screen (cashier → POS, kitchen → KDS, owner → dashboard …)
+    let landing = '/dashboard'
+    try {
+      const res = await fetch('/api/auth/session')
+      const data = res.ok ? await res.json() : null
+      landing = landingPathForRole(data?.user?.role, data?.user?.businessType ?? company.businessType)
+    } catch {
+      // keep the dashboard
+    }
     // Full page navigation so the server layout runs with the fresh session
-    window.location.href = `/c/${slug}/dashboard`
+    window.location.assign(`/c/${slug}${landing}`)
   }
 
   useEffect(() => {
@@ -130,7 +140,7 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
         const data = res.ok ? await res.json() : null
         if (cancelled) return
         if (data?.user?.tenantSlug === slug && !isExplicitLogout) {
-          router.replace(`/c/${slug}/dashboard`)
+          router.replace(`/c/${slug}${landingPathForRole(data.user.role, data.user.businessType ?? company.businessType)}`)
           return
         }
         if (isExplicitLogout) return

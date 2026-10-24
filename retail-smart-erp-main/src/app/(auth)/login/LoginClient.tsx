@@ -15,10 +15,7 @@ import {
   Field,
   Input,
   PasswordInput,
-  SegmentedControl,
 } from '@/components/admin/kit'
-
-type Mode = 'staff' | 'owner'
 
 interface RecentCompany {
   slug: string
@@ -63,27 +60,24 @@ function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const registered = searchParams.get('registered') === 'true'
-  const [mode, setMode] = useState<Mode>(registered || searchParams.get('tab') === 'account' ? 'owner' : 'staff')
   // Remembered company (per browser); null during SSR so the markup stays stable
   const recentRaw = useSyncExternalStore(noopSubscribe, readRecentRaw, () => null)
   const [recentDismissed, setRecentDismissed] = useState(false)
   const storedRecent = useMemo(() => parseRecent(recentRaw), [recentRaw])
   const recent = recentDismissed ? null : storedRecent
 
-  // Business ID step
-  const [identifier, setIdentifier] = useState(searchParams.get('company') ?? '')
-  const [lookupError, setLookupError] = useState('')
-
-  // Staff direct sign-in (Business ID + Email + Password in one step)
-  const [staffEmail, setStaffEmail] = useState('')
-  const [staffPassword, setStaffPassword] = useState('')
-  const [staffLoading, setStaffLoading] = useState(false)
-
-  // Owner account step
-  const [email, setEmail] = useState('')
+  // One form for everyone: the server works out owner vs staff and the role's landing page
+  const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
+  // null until typed: then a remembered shop pre-fills it
+  const [businessIdInput, setBusinessId] = useState<string | null>(searchParams.get('company'))
+  const [showBusinessId, setShowBusinessId] = useState(!!searchParams.get('company'))
+  const [choices, setChoices] = useState<Array<{ slug: string; name: string }> | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const businessId = businessIdInput ?? recent?.slug ?? ''
+  const isUsername = login.trim() !== '' && !login.includes('@')
+  const businessIdVisible = showBusinessId || isUsername || !!recent
 
   useEffect(() => {
     // Already signed in to the owner portal → go straight there
@@ -99,112 +93,76 @@ function LoginForm() {
     }
   }, [router])
 
-  const goToCompany = (c: RecentCompany) => {
-    try {
-      localStorage.setItem(RECENT_KEY, JSON.stringify(c))
-    } catch {
-      // storage unavailable — not important
+  async function staffSignIn(slug: string, name: string, landing: string) {
+    const csrfRes = await fetch('/api/auth/csrf')
+    const csrfData = await csrfRes.json().catch(() => ({}))
+    const authRes = await fetch('/api/auth/callback/credentials', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Auth-Return-Redirect': '1' },
+      body: new URLSearchParams({
+        email: login.trim(),
+        password,
+        tenantSlug: slug,
+        businessId: slug,
+        csrfToken: csrfData?.csrfToken || '',
+        callbackUrl: `/c/${slug}${landing}`,
+        json: 'true',
+      }),
+    })
+    const authData = await authRes.json().catch(() => ({}))
+    if (!authRes.ok || String(authData?.url || '').includes('error=')) {
+      setError(`Sign-in to ${name} failed. Please try again.`)
+      setLoading(false)
+      return
     }
-    router.push(`/c/${encodeURIComponent(c.slug)}/login`)
+    try { localStorage.setItem(RECENT_KEY, JSON.stringify({ slug, name, logoUrl: null })) } catch { /* ignore */ }
+    broadcastAuthEvent('login', 'company')
+    window.location.assign(`/c/${slug}${landing}`)
   }
 
-  async function handleStaffSignIn(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
-    const rawBizId = identifier.trim()
-    const rawEmail = staffEmail.trim()
-    if (!rawBizId) {
-      setLookupError('Enter your Business ID — your shop’s name, e.g. alisha-shop')
+  async function submit(e?: React.FormEvent<HTMLFormElement>, pickedSlug?: string) {
+    e?.preventDefault()
+    if (!login.trim() || !password) {
+      setError('Enter your username or email and your password.')
       return
     }
-    if (!rawEmail) {
-      setLookupError('Enter your staff email or username')
-      return
-    }
-    if (!staffPassword) {
-      setLookupError('Enter your password')
-      return
-    }
-
-    setLookupError('')
-    setStaffLoading(true)
-
-    try {
-      // First resolve Business ID or slug to get the canonical tenant
-      const res = await fetch('/api/lookup-tenant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: rawBizId }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok || !data.tenant) {
-        setLookupError(data?.error || 'Business ID not found. Please verify your Business ID.')
-        setStaffLoading(false)
-        return
-      }
-
-      // Save to recent
-      try {
-        localStorage.setItem(RECENT_KEY, JSON.stringify(data.tenant))
-      } catch {
-        // ignore
-      }
-
-      // 1. Get CSRF token for company auth (/api/auth)
-      const csrfRes = await fetch('/api/auth/csrf')
-      const csrfData = await csrfRes.json().catch(() => ({}))
-      const csrfToken = csrfData?.csrfToken || ''
-
-      // 2. Perform company authentication directly against /api/auth
-      const authRes = await fetch('/api/auth/callback/credentials', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'X-Auth-Return-Redirect': '1',
-        },
-        body: new URLSearchParams({
-          email: rawEmail,
-          password: staffPassword,
-          tenantSlug: data.tenant.slug,
-          businessId: rawBizId,
-          csrfToken,
-          callbackUrl: `/c/${data.tenant.slug}/pos`,
-          json: 'true',
-        }),
-      })
-
-      const authData = await authRes.json().catch(() => ({}))
-      const targetUrl = authData?.url || ''
-
-      if (targetUrl.includes('error=') || !authRes.ok) {
-        setLookupError(`Sign-in failed. Please verify your email and password for ${data.tenant.name}.`)
-        setStaffLoading(false)
-        return
-      }
-
-      broadcastAuthEvent('login', 'company')
-      window.location.href = `/c/${data.tenant.slug}/pos`
-    } catch {
-      setLookupError('Could not connect. Please check your connection and try again.')
-      setStaffLoading(false)
-    }
-  }
-
-  async function handleOwnerSignIn(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault()
     setLoading(true)
     setError('')
+    setChoices(null)
     try {
-      const result = await signIn('credentials', { email: email.trim(), password, redirect: false })
-      if (result?.error) {
-        setError('That email and password don’t match an owner account.')
+      const bid = (pickedSlug ?? (businessIdVisible ? businessId : '')).trim()
+      const res = await fetch('/api/auth/resolve-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ login: login.trim(), password, ...(bid ? { businessId: bid } : {}) }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        if (data?.field === 'businessId') setShowBusinessId(true)
+        setError(data?.error || 'Those details don’t match.')
         setLoading(false)
-      } else {
+        return
+      }
+      if (data.kind === 'owner') {
+        const result = await signIn('credentials', { email: login.trim(), password, redirect: false })
+        if (result?.error) {
+          setError('That email and password don’t match an owner account.')
+          setLoading(false)
+          return
+        }
         broadcastAuthEvent('login', 'account')
         router.push('/account')
         router.refresh()
+        return
       }
+      if (data.kind === 'choose') {
+        setChoices(data.companies)
+        setLoading(false)
+        return
+      }
+      await staffSignIn(data.slug, data.name, data.landing || '/dashboard')
     } catch {
-      setError('Something went wrong. Please try again.')
+      setError('Could not connect. Please check your connection and try again.')
       setLoading(false)
     }
   }
@@ -219,158 +177,119 @@ function LoginForm() {
       }
     >
       <AuthHeading
-        title="Sign in"
-        description={mode === 'staff' ? 'Enter your Business ID to open your company’s sign-in page.' : 'Business owners: manage your companies, billing and staff.'}
+        title="Welcome back"
+        description="Sign in once — owners go to their business account, staff go straight to their work screen."
       />
 
-      <SegmentedControl
-        ariaLabel="Sign-in type"
-        className="mb-6 flex w-full [&>button]:flex-1"
-        value={mode}
-        onChange={(m) => {
-          setMode(m)
-          setError('')
-          setLookupError('')
-        }}
-        options={[
-          { value: 'staff', label: 'Staff sign-in' },
-          { value: 'owner', label: 'Owner account' },
-        ]}
-      />
+      <div className="space-y-5">
+        {registered && <Alert tone="success" title="Account created">Sign in to add your first business.</Alert>}
+        {error && <Alert tone="danger">{error}</Alert>}
 
-      {mode === 'staff' ? (
-        <div className="space-y-5">
-          {recent && (
-            <div className="flex items-center gap-3 rounded-xl border border-adm-border bg-adm-surface p-3">
-              <CompanyAvatar name={recent.name} logoUrl={recent.logoUrl} />
-              <button type="button" onClick={() => goToCompany(recent)} className="adm-focus min-w-0 flex-1 rounded-md text-left">
-                <span className="block text-[12px] text-adm-subtle">Continue to</span>
-                <span className="block truncate text-[14px] font-medium text-adm-fg">{recent.name}</span>
-              </button>
-              <Button variant="primary" size="sm" iconRight={ArrowRight} onClick={() => goToCompany(recent)}>
-                Open
-              </Button>
-              <button
-                type="button"
-                aria-label={`Forget ${recent.name} on this device`}
-                onClick={() => {
-                  try { localStorage.removeItem(RECENT_KEY) } catch { /* ignore */ }
-                  setRecentDismissed(true)
-                }}
-                className="adm-focus flex h-7 w-7 items-center justify-center rounded-md text-adm-subtle hover:bg-adm-surface-2 hover:text-adm-fg"
-              >
-                <X size={15} aria-hidden />
-              </button>
+        {choices && (
+          <div className="rounded-xl border border-adm-border bg-adm-surface-2 p-3">
+            <p className="mb-2 text-[13px] font-medium text-adm-fg">You work at more than one shop. Choose one:</p>
+            <div className="space-y-2">
+              {choices.map((c) => (
+                <button
+                  key={c.slug}
+                  type="button"
+                  onClick={() => { setBusinessId(c.slug); setShowBusinessId(true); void submit(undefined, c.slug) }}
+                  className="adm-focus flex w-full items-center gap-3 rounded-lg border border-adm-border bg-adm-surface p-2.5 text-left hover:border-adm-primary"
+                >
+                  <CompanyAvatar name={c.name} logoUrl={null} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] font-medium text-adm-fg">{c.name}</span>
+                    <span className="block text-[12px] text-adm-subtle">Business ID {c.slug}</span>
+                  </span>
+                  <ArrowRight size={16} className="text-adm-subtle" aria-hidden />
+                </button>
+              ))}
             </div>
-          )}
+          </div>
+        )}
 
-          {lookupError && <Alert tone="danger">{lookupError}</Alert>}
-
-          <form onSubmit={handleStaffSignIn} className="space-y-4" noValidate>
-            <Field
-              label="Business ID"
-              htmlFor="business-id"
-              hint="Your shop’s name, e.g. alisha-shop (the PL-123456 number works too)."
-            >
-              <Input
-                id="business-id"
-                leftIcon={Building2}
-                size="lg"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                placeholder="e.g. alisha-shop"
-                autoComplete="organization"
-                autoCapitalize="none"
-                spellCheck={false}
-                autoFocus={!recent}
-                invalid={!!lookupError}
-                required
-              />
-            </Field>
-
-            <Field label="Username or email" htmlFor="staff-email">
-              <Input
-                id="staff-email"
-                type="text"
-                leftIcon={Mail}
-                size="lg"
-                value={staffEmail}
-                onChange={(e) => setStaffEmail(e.target.value)}
-                placeholder="e.g. cashier1"
-                autoComplete="username"
-                required
-              />
-            </Field>
-
-            <Field label="Password" htmlFor="staff-password">
-              <PasswordInput
-                id="staff-password"
-                size="lg"
-                value={staffPassword}
-                onChange={(e) => setStaffPassword(e.target.value)}
-                autoComplete="current-password"
-                required
-              />
-            </Field>
-
-            <Button
-              type="submit"
-              variant="primary"
+        <form onSubmit={(e) => submit(e)} className="space-y-4" noValidate>
+          <Field label="Username or email" htmlFor="login">
+            <Input
+              id="login"
+              type="text"
+              leftIcon={Mail}
               size="lg"
-              fullWidth
-              loading={staffLoading}
-              iconRight={staffLoading ? undefined : ArrowRight}
-            >
-              Sign In to POS
-            </Button>
-          </form>
-          <p className="text-center text-[13px] text-adm-muted">
-            Ask your store manager or owner if you don’t have your Business ID.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-5">
-          {registered && (
-            <Alert tone="success" title="Account created">Sign in to add your first business.</Alert>
-          )}
-          {error && <Alert tone="danger">{error}</Alert>}
-          <form onSubmit={handleOwnerSignIn} className="space-y-4">
-            <Field label="Email" htmlFor="owner-email">
-              <Input
-                id="owner-email"
-                type="email"
-                leftIcon={Mail}
-                size="lg"
-                autoComplete="email"
-                placeholder="you@business.lk"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoFocus
-              />
-            </Field>
+              value={login}
+              onChange={(e) => setLogin(e.target.value)}
+              placeholder="e.g. cashier1 or you@business.lk"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              autoFocus
+              required
+            />
+          </Field>
+
+          <Field
+            label="Password"
+            htmlFor="password"
+            labelAside={<Link href="/forgot-password" className="font-medium text-adm-primary hover:underline">Forgot password?</Link>}
+          >
+            <PasswordInput
+              id="password"
+              leftIcon={Lock}
+              size="lg"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              placeholder="Your password"
+              required
+            />
+          </Field>
+
+          {businessIdVisible ? (
             <Field
-              label="Password"
-              htmlFor="owner-password"
-              labelAside={<Link href="/forgot-password" className="font-medium text-adm-primary hover:underline">Forgot password?</Link>}
+              label={isUsername ? 'Business ID' : 'Business ID (optional)'}
+              htmlFor="business-id"
+              hint="Your shop’s name, e.g. alisha-shop. Owners can leave it blank."
             >
-              <PasswordInput
-                id="owner-password"
-                leftIcon={Lock}
-                size="lg"
-                autoComplete="current-password"
-                placeholder="Your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <Input
+                    id="business-id"
+                    leftIcon={Building2}
+                    size="lg"
+                    value={businessId}
+                    onChange={(e) => setBusinessId(e.target.value)}
+                    placeholder="e.g. alisha-shop"
+                    autoComplete="organization"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                  />
+                </div>
+                {recent && businessId === recent.slug && (
+                  <button
+                    type="button"
+                    aria-label={`Forget ${recent.name} on this device`}
+                    onClick={() => {
+                      try { localStorage.removeItem(RECENT_KEY) } catch { /* ignore */ }
+                      setRecentDismissed(true)
+                      setBusinessId('')
+                    }}
+                    className="adm-focus flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-adm-border text-adm-subtle hover:bg-adm-surface-2 hover:text-adm-fg"
+                  >
+                    <X size={16} aria-hidden />
+                  </button>
+                )}
+              </div>
             </Field>
-            <Button type="submit" variant="primary" size="lg" fullWidth loading={loading}>
-              {loading ? 'Signing in…' : 'Sign in'}
-            </Button>
-          </form>
-        </div>
-      )}
+          ) : (
+            <button type="button" onClick={() => setShowBusinessId(true)} className="text-[13px] font-medium text-adm-primary hover:underline">
+              Staff of a shop? Add your Business ID
+            </button>
+          )}
+
+          <Button type="submit" variant="primary" size="lg" fullWidth loading={loading} iconRight={loading ? undefined : ArrowRight}>
+            {loading ? 'Signing in…' : 'Sign in'}
+          </Button>
+        </form>
+      </div>
     </AuthShell>
   )
 }

@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { tenants, subscriptions, tenantUsage, pricingTiers, accountTenants } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import Link from 'next/link'
+import { BrandWordmark } from '@/components/ui/logo'
 
 interface LockedPageProps {
   params: Promise<{ slug: string }>
@@ -104,6 +105,7 @@ export default async function LockedPage({ params }: LockedPageProps) {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="max-w-lg w-full bg-white rounded-md shadow-lg p-8">
+        <div className="mb-6 flex justify-center"><BrandWordmark height={44} /></div>
         {/* Lock Icon */}
         <div className="flex justify-center mb-6">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
