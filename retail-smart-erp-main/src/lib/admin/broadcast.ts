@@ -35,6 +35,7 @@ import { sendSystemEmail } from '@/lib/email/system-email'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
 import { sendPushDetailed } from '@/lib/notifications/push'
 import { logError } from '@/lib/ai/error-logger'
+import { isPlaceholderLogin } from '@/lib/users/generated-login'
 
 export const BROADCAST_CHANNELS = ['in_app', 'account', 'email', 'push'] as const
 export const PUSH_SCOPES = ['owners_managers', 'all_staff'] as const
@@ -183,8 +184,8 @@ async function resolvePushTargets(vendorIds: string[], scope: typeof PUSH_SCOPES
 function emailTargets(vendors: Vendor[], recipients: Recipient[]): Array<{ vendor: Vendor | null; email: string }> {
   const byVendor = new Map<string, Set<string>>()
   for (const r of recipients) {
-    // Owners created without an email sign in with a generated owner@<slug>.poslanka.local login
-    if (!r.email || r.email.toLowerCase().endsWith('.poslanka.local')) continue
+    // People created without an email sign in with a generated …@<slug>.poslanka.local login
+    if (!r.email || isPlaceholderLogin(r.email)) continue
     const set = byVendor.get(r.tenantId) ?? new Set<string>()
     set.add(r.email.toLowerCase())
     byVendor.set(r.tenantId, set)

@@ -137,6 +137,8 @@ export default function StaffPage() {
   const canManageModules = usePermission('manageModuleAccess')
   const [createMode, setCreateMode] = useState<CreateMode>('create')
   const [confirmPassword, setConfirmPassword] = useState('')
+  // Login + generated password of a staff member just created — shown once
+  const [newLogin, setNewLogin] = useState<{ name: string; email: string; password: string | null } | null>(null)
   const [formWarehouseIds, setFormWarehouseIds] = useState<Set<string>>(new Set())
   const [formCounterIds, setFormCounterIds] = useState<Set<string>>(new Set())
   const [branchOptions, setBranchOptions] = useState<WarehouseOption[]>([])
@@ -366,7 +368,9 @@ export default function StaffPage() {
         return
       }
     } else {
-      if (!formData.email.trim()) {
+      // Invite needs an email; direct creation needs only the name and role (no email → login
+      // made from the name, no password → generated and shown once)
+      if (createMode === 'invite' && !formData.email.trim()) {
         toast.error('Email is required')
         return
       }
@@ -375,12 +379,12 @@ export default function StaffPage() {
           toast.error('Full name is required')
           return
         }
-        const problem = passwordProblem(formData.password)
+        const problem = formData.password ? passwordProblem(formData.password) : null
         if (problem) {
           toast.error(problem)
           return
         }
-        if (formData.password !== confirmPassword) {
+        if (formData.password && formData.password !== confirmPassword) {
           toast.error('Passwords do not match')
           return
         }
@@ -445,11 +449,11 @@ export default function StaffPage() {
           body: JSON.stringify(createMode === 'create'
             ? {
                 mode: 'create',
-                email: formData.email,
+                email: formData.email.trim() || undefined,
                 fullName: formData.fullName,
                 role: formData.role,
                 customRoleId: formData.customRoleId || undefined,
-                password: formData.password,
+                password: formData.password || undefined,
                 pin: formData.pin || undefined,
                 warehouseIds: Array.from(formWarehouseIds),
                 posProfileIds: Array.from(formCounterIds),
@@ -469,6 +473,9 @@ export default function StaffPage() {
           const data = await res.json()
           if (data.mode === 'created') {
             toast.success(`${data.user?.fullName || 'Staff member'} can now sign in`)
+            if (data.generatedPassword || !formData.email.trim()) {
+              setNewLogin({ name: data.user?.fullName || 'Staff member', email: data.user?.email, password: data.generatedPassword || null })
+            }
             fetchUsers()
           } else if (data.mode === 'added') {
             toast.success('Staff member added successfully')
@@ -692,6 +699,30 @@ export default function StaffPage() {
         </>
       }
     >
+      {newLogin && (
+        <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900" role="status">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold">{newLogin.name} can sign in{newLogin.password ? ' (password shown once)' : ''}</p>
+              <p className="mt-1">
+                Login <span className="font-mono">{newLogin.email}</span>
+                {newLogin.password && <> · password <span className="font-mono font-semibold">{newLogin.password}</span></>}
+              </p>
+              <p className="mt-1 text-amber-800">They sign in with the Business ID, this login and password, and can change the password afterwards.</p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                className="rounded border border-amber-400 px-2 py-1 text-xs font-medium hover:bg-amber-100"
+                onClick={() => { navigator.clipboard?.writeText(`Login: ${newLogin.email}${newLogin.password ? `\nPassword: ${newLogin.password}` : ''}`).then(() => toast.success('Copied'), () => undefined) }}
+              >
+                Copy
+              </button>
+              <button type="button" className="rounded px-2 py-1 text-xs hover:bg-amber-100" onClick={() => setNewLogin(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* How staff sign in + where roles are defined */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <BusinessIdBadge />
@@ -1048,40 +1079,40 @@ export default function StaffPage() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Email *
+                      Email {createMode === 'invite' ? '*' : '(optional)'}
                     </label>
                     <input
                       type="email"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      placeholder="colleague@example.com"
-                      required
+                      placeholder={createMode === 'create' ? 'Blank = a login is made from the name' : 'colleague@example.com'}
+                      required={createMode === 'invite'}
                     />
                   </div>
                   {createMode === 'create' ? (
                     <>
                       <div className="grid grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Password (optional)</label>
                           <input
                             type="password"
                             autoComplete="new-password"
                             value={formData.password}
                             onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                             className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            required
+                            placeholder="Blank = generated"
                           />
                         </div>
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Confirm *</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Confirm</label>
                           <input
                             type="password"
                             autoComplete="new-password"
                             value={confirmPassword}
                             onChange={(e) => setConfirmPassword(e.target.value)}
                             className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                            required
+                            required={!!formData.password}
                           />
                         </div>
                       </div>

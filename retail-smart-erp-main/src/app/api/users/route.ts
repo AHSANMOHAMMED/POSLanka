@@ -150,8 +150,9 @@ export async function GET(request: NextRequest) {
 
 // POST create new user or send invite
 // Body (see createUserBodySchema):
-//  - { mode: 'create', email, fullName, role, password, pin?, warehouseIds?, posProfileIds? }
-//    → creates the staff user directly with a password (201 { mode: 'created', user })
+//  - { mode: 'create', fullName, role, email?, password?, pin?, warehouseIds?, posProfileIds? }
+//    → creates the staff user directly (201 { mode: 'created', user, generatedPassword }); no email →
+//      login <name>@<slug>.poslanka.local, no password → generated and returned once
 //  - { mode?: 'invite', email, role, fullName?, warehouseIds?, posProfileIds? }
 //    → if the person has a global account, adds them immediately; otherwise creates a
 //      staff invite (assignments are applied when the invite is accepted) and emails it.
@@ -207,7 +208,9 @@ export async function POST(request: NextRequest) {
         })
       )
       logAndBroadcast(session.user.tenantId, 'user', 'created', created.id, { userId: session.user.id })
-      return NextResponse.json({ mode: 'created', user: created }, { status: 201 })
+      // generatedPassword: only when no password was given — shown to the creator once
+      const { generatedPassword, ...user } = created
+      return NextResponse.json({ mode: 'created', user, generatedPassword }, { status: 201 })
     }
 
     const { email, role, warehouseIds, posProfileIds } = parsed.data

@@ -33,6 +33,7 @@ import { tierNameToPlan } from '@/lib/billing/activate-company'
 import { NEVER_EXPIRES, isFreeTier, planExpiryFor } from '@/lib/billing/subscription-state'
 import { vendorFilterSchema, queryVendors } from '@/lib/admin/vendor-query'
 import { SLUG_RE, checkSlugAvailability, suggestAvailableSlug } from '@/lib/admin/vendor-slug'
+import { generateReadablePassword, placeholderLogin } from '@/lib/users/generated-login'
 
 const listSchema = vendorFilterSchema.extend({
   page: z.coerce.number().int().min(1).default(1),
@@ -117,12 +118,6 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
-/** Readable 12-character password (no 0/O/1/l/I) for owners created without one */
-function generateOwnerPassword(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
-  return Array.from(randomBytes(12), (n) => chars[n % chars.length]).join('')
-}
-
 const optText = (max: number) =>
   z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().max(max).optional())
 
@@ -198,7 +193,7 @@ export async function POST(request: NextRequest) {
 
     // Owner login: owner email, else business email, else one made from the web address
     // (the owner signs in with Business ID + this login + password and can change it later)
-    const ownerLoginEmail = (parsed.data.ownerEmail || email || `owner@${slug}.poslanka.local`).toLowerCase()
+    const ownerLoginEmail = (parsed.data.ownerEmail || email || placeholderLogin('owner', slug)).toLowerCase()
 
     // Pricing tier: explicit id, else legacy plan name, else the free tier
     const allTiers = await db.query.pricingTiers.findMany({
@@ -222,7 +217,7 @@ export async function POST(request: NextRequest) {
 
     // Password: provided; random for an invite (the owner sets their own on accept); otherwise a
     // generated one that is returned once so the admin can hand it over
-    const generatedPassword = !ownerPassword && !sendInvite ? generateOwnerPassword() : null
+    const generatedPassword = !ownerPassword && !sendInvite ? generateReadablePassword() : null
     const effectivePassword = ownerPassword || generatedPassword || randomBytes(24).toString('base64url')
     const passwordHash = await bcrypt.hash(effectivePassword, 12)
 

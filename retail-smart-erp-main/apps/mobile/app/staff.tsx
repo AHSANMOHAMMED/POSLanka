@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Share,
 } from 'react-native'
 import { router } from 'expo-router'
 import { api, apiGet, apiPost, asList, getUser, formatBusinessId, type AuthUser } from '../src/lib/api'
@@ -238,20 +239,20 @@ export default function StaffScreen() {
 
   async function submitCreate() {
     if (!form.fullName.trim()) return Alert.alert('Missing name', 'Enter the staff member’s full name.')
-    if (!form.email.trim()) return Alert.alert('Missing email', 'Enter an email address used to sign in.')
-    const pwProblem = passwordProblem(form.password)
+    // Only name and role are required: no email → login made from the name, no password → generated
+    const pwProblem = form.password ? passwordProblem(form.password) : null
     if (pwProblem) return Alert.alert('Weak password', pwProblem)
-    if (form.password !== form.confirm) return Alert.alert('Passwords differ', 'The two passwords do not match.')
+    if (form.password && form.password !== form.confirm) return Alert.alert('Passwords differ', 'The two passwords do not match.')
     if (form.pin && !/^\d{4,6}$/.test(form.pin)) return Alert.alert('Invalid PIN', 'PIN must be 4-6 digits.')
 
     setSaving(true)
-    const res = await apiPost<{ mode: string; user: StaffRow }>('/api/users', {
+    const res = await apiPost<{ mode: string; user: StaffRow; generatedPassword?: string | null }>('/api/users', {
       mode: 'create',
-      email: form.email.trim(),
+      email: form.email.trim() || undefined,
       fullName: form.fullName.trim(),
       role: form.role,
       ...(form.customRoleId ? { customRoleId: form.customRoleId } : {}),
-      password: form.password,
+      password: form.password || undefined,
       pin: form.pin || undefined,
       warehouseIds: formBranches,
       posProfileIds: formCounters,
@@ -262,8 +263,21 @@ export default function StaffScreen() {
       return
     }
     setCreateOpen(false)
-    Alert.alert('Staff created', `${res.data.user?.fullName || 'The staff member'} can now sign in with ${form.email.trim()}.`)
+    showNewLogin(res.data.user?.fullName || 'The staff member', res.data.user?.email || form.email.trim(), res.data.generatedPassword || null)
     load(true)
+  }
+
+  /** Login (and a generated password, shown once) of someone just created, with a Share button */
+  function showNewLogin(name: string, login: string, password: string | null) {
+    const text = `Login: ${login}${password ? `\nPassword: ${password}` : ''}`
+    Alert.alert(
+      password ? 'Staff created — password shown once' : 'Staff created',
+      `${name} can now sign in with the Business ID and\n\n${text}`,
+      [
+        { text: 'Share', onPress: () => { Share.share({ message: `${name}\n${text}` }).catch(() => undefined) } },
+        { text: 'Done', style: 'cancel' },
+      ],
+    )
   }
 
   async function updateUser(target: StaffRow, body: Record<string, unknown>) {
@@ -473,20 +487,20 @@ export default function StaffScreen() {
             <ScrollView contentContainerStyle={{ paddingBottom: 24 + bottomPad }} keyboardShouldPersistTaps="handled">
               <Text style={styles.label}>Full name *</Text>
               <TextInput style={styles.input} value={form.fullName} onChangeText={(v) => setForm({ ...form, fullName: v })} placeholder="e.g. Nimal Perera" />
-              <Text style={styles.label}>Email (sign-in) *</Text>
+              <Text style={styles.label}>Email (sign-in, optional)</Text>
               <TextInput
                 style={styles.input}
                 value={form.email}
                 onChangeText={(v) => setForm({ ...form, email: v })}
                 autoCapitalize="none"
                 keyboardType="email-address"
-                placeholder="cashier@shop.lk"
+                placeholder="Blank = login made from the name"
               />
               <Text style={styles.label}>Role *</Text>
               {renderRolePicker({ role: form.role, customRoleId: form.customRoleId }, (v) => setForm({ ...form, role: v.role, customRoleId: v.customRoleId }))}
-              <Text style={styles.label}>Password *</Text>
-              <TextInput style={styles.input} value={form.password} onChangeText={(v) => setForm({ ...form, password: v })} secureTextEntry autoCapitalize="none" />
-              <Text style={styles.label}>Confirm password *</Text>
+              <Text style={styles.label}>Password (optional)</Text>
+              <TextInput style={styles.input} value={form.password} onChangeText={(v) => setForm({ ...form, password: v })} secureTextEntry autoCapitalize="none" placeholder="Blank = generated and shown once" />
+              <Text style={styles.label}>Confirm password</Text>
               <TextInput style={styles.input} value={form.confirm} onChangeText={(v) => setForm({ ...form, confirm: v })} secureTextEntry autoCapitalize="none" />
               <Text style={[styles.hint, form.password && passwordProblem(form.password) ? { color: THEME.colors.secondary } : null]}>{PASSWORD_RULE}</Text>
               <Text style={styles.label}>POS PIN (optional, 4-6 digits)</Text>

@@ -29,15 +29,18 @@ export const createInviteSchema = z.object({
   posProfileIds: z.array(z.string().uuid()).optional(),
 })
 
-// POST /api/users { mode: 'create' } — create staff directly with a password
+const blankToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v)
+
+// POST /api/users { mode: 'create' } — create staff directly. Only name and role are required:
+// no email → a login is made from the name; no password → one is generated and returned once.
 export const createStaffSchema = z.object({
   mode: z.literal('create'),
-  email: emailSchema,
+  email: z.preprocess(blankToUndefined, emailSchema.optional()),
   fullName: z.string().trim().min(1, 'Full name is required').max(255),
   role: userRoleSchema,
   /** Optional custom role; its base role overrides `role` */
   customRoleId: z.string().uuid().nullable().optional(),
-  password: passwordSchema,
+  password: z.preprocess(blankToUndefined, passwordSchema.optional()),
   /** Optional 4-6 digit POS PIN; empty string = none */
   pin: z.union([z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 digits'), z.literal('')]).optional(),
   warehouseIds: z.array(z.string().uuid()).max(100).optional(),

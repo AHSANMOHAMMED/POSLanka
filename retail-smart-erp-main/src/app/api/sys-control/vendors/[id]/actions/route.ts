@@ -22,6 +22,7 @@ import { revokeAllSessions } from '@/lib/auth/session-manager'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import { createOwnerResetLink, sendOwnerResetEmail, sendOwnerWelcomeEmail, type OwnerMailTarget } from '@/lib/admin/vendor-emails'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
+import { isPlaceholderLogin } from '@/lib/users/generated-login'
 
 /**
  * POST /api/sys-control/vendors/[id]/actions — vendor lifecycle actions for the super admin.
@@ -294,6 +295,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           tenantId, tenantSlug: tenant.slug, tenantName: tenant.name, businessId: tenant.businessId,
         }
         if (input.mode === 'email') {
+          if (isPlaceholderLogin(owner.email)) throw new ActionError('The owner has no email address (they sign in with a generated login). Set a temporary password instead.')
           const link = await createOwnerResetLink(target, baseUrl)
           try {
             await sendOwnerResetEmail(target, link)
@@ -326,6 +328,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       case 'resend_welcome': {
         const owner = await findOwner(tenantId)
         if (!owner) throw new ActionError('This vendor has no active owner user.')
+        if (isPlaceholderLogin(owner.email)) throw new ActionError('The owner has no email address to send to. Set a temporary password and share it with them instead.')
         const membership = owner.accountId
           ? await db.query.accountTenants.findFirst({
               where: and(eq(accountTenants.tenantId, tenantId), eq(accountTenants.accountId, owner.accountId)),

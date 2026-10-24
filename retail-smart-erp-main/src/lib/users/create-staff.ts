@@ -1,9 +1,10 @@
 import bcrypt from 'bcryptjs'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import type { TenantDb } from '@/lib/db'
-import { accounts, customRoles, posProfiles, posProfileUsers, users, userWarehouses, warehouses } from '@/lib/db/schema'
+import { accounts, customRoles, posProfiles, posProfileUsers, tenants, users, userWarehouses, warehouses } from '@/lib/db/schema'
 import { canModifyUser } from '@/lib/auth/roles'
 import { validatePasswordStrength } from '@/lib/utils/validation'
+import { generateReadablePassword, loginLocalPart, placeholderLogin } from './generated-login'
 
 /** Error carrying an HTTP status so routes can map it directly to a response. */
 export class StaffError extends Error {
@@ -133,12 +134,14 @@ export async function replaceUserPosProfiles(
 export interface CreateStaffInput {
   tenantId: string
   actorRole: string
-  email: string
+  /** Login email; omitted → <name>@<tenant slug>.poslanka.local (made unique in the tenant) */
+  email?: string | null
   fullName: string
   role: string
   /** Custom role (validated by the caller; `role` must be its base role) */
   customRoleId?: string | null
-  password: string
+  /** Omitted → a readable password is generated and returned once as `generatedPassword` */
+  password?: string | null
   pin?: string | null
   warehouseIds?: string[] | null
   posProfileIds?: string[] | null
@@ -156,6 +159,8 @@ export interface CreatedStaffUser {
   createdAt: Date
   warehouseIds: string[]
   posProfileIds: string[]
+  /** Only when no password was given */
+  generatedPassword: string | null
 }
 
 /**
@@ -165,7 +170,6 @@ export interface CreatedStaffUser {
  */
 export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<CreatedStaffUser> {
   const { tenantId, actorRole, role } = input
-  const email = input.email.trim().toLowerCase()
   const fullName = input.fullName.trim()
 
   if (role === 'owner') {
@@ -175,9 +179,15 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
     throw new StaffError('You cannot create users with this role', 403)
   }
   if (!fullName) throw new StaffError('Full name is required', 400)
-  const pwError = validatePasswordStrength(input.password)
+  const generatedPassword = input.password ? null : generateReadablePassword()
+  const password = input.password || (generatedPassword as string)
+  const pwError = validatePasswordStrength(password)
   if (pwError) throw new StaffError(pwError, 400)
   if (input.pin && !PIN_RE.test(input.pin)) throw new StaffError('PIN must be 4-6 digits', 400)
+
+  const email = input.email?.trim()
+    ? input.email.trim().toLowerCase()
+    : await freePlaceholderLogin(tx, tenantId, fullName)
 
   const dup = await tx.select({ id: users.id, isActive: users.isActive }).from(users)
     .where(and(eq(users.tenantId, tenantId), sql`lower(${users.email}) = ${email}`))
@@ -197,7 +207,7 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
   const [account] = await tx.select({ id: accounts.id }).from(accounts)
     .where(sql`lower(${accounts.email}) = ${email}`).limit(1)
 
-  const passwordHash = await bcrypt.hash(input.password, 12)
+  const passwordHash = await bcrypt.hash(password, 12)
   const pinHash = input.pin ? await bcrypt.hash(input.pin, 12) : null
   const now = new Date()
 
@@ -241,6 +251,23 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
     hasPin: !!pinHash,
     warehouseIds: assignments.warehouseIds,
     posProfileIds: assignments.posProfileIds,
+    generatedPassword,
+  }
+}
+
+/** First unused nimal.perera@<slug>.poslanka.local, nimal.perera2@…, … in this tenant */
+async function freePlaceholderLogin(tx: Tx, tenantId: string, fullName: string): Promise<string> {
+  const [t] = await tx.select({ slug: tenants.slug }).from(tenants).where(eq(tenants.id, tenantId)).limit(1)
+  if (!t) throw new StaffError('Business not found', 404)
+  const local = loginLocalPart(fullName)
+  const taken = new Set(
+    (await tx.select({ email: users.email }).from(users)
+      .where(and(eq(users.tenantId, tenantId), sql`lower(${users.email}) LIKE ${`${local}%@%`}`)))
+      .map((r) => r.email.toLowerCase()),
+  )
+  for (let n = 1; ; n++) {
+    const candidate = placeholderLogin(n === 1 ? local : `${local}${n}`, t.slug)
+    if (!taken.has(candidate)) return candidate
   }
 }
 

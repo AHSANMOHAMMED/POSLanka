@@ -24,6 +24,7 @@ import { closeAllPools } from '@/lib/db'
 import { GET as listVendors, POST as createVendor } from '@/app/api/sys-control/vendors/route'
 import { GET as getVendor } from '@/app/api/sys-control/vendors/[id]/route'
 import { POST as vendorAction } from '@/app/api/sys-control/vendors/[id]/actions/route'
+import { POST as createVendorStaff, PATCH as updateVendorStaff } from '@/app/api/sys-control/vendors/[id]/staff/route'
 import { GET as exportVendors } from '@/app/api/sys-control/vendors/export/route'
 import { GET as slugCheck } from '@/app/api/sys-control/vendors/slug-check/route'
 import { PUT as reviewPayment } from '@/app/api/sys-control/payments/[id]/route'
@@ -327,6 +328,44 @@ async function main() {
       check('resend sign-in details → 200', welcome.status === 200 && welcome.body.kind === 'sign_in_details', welcome.body)
     })
 
+    // ============================================================ staff per vendor
+    await step('super admin adds and manages a vendor’s staff', async () => {
+      asAdmin()
+      const noRole = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${vendorId}/staff`, { fullName: 'No Role' }), ctx(vendorId!)))
+      check('staff without a role → 400', noRole.status === 400, noRole.status)
+      const ownerRole = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${vendorId}/staff`, { fullName: 'Second Owner', role: 'owner' }), ctx(vendorId!)))
+      check('second owner refused → 400', ownerRole.status === 400, ownerRole.status)
+      const chef = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${vendorId}/staff`, { fullName: 'Kitchen Chef', role: 'chef' }), ctx(vendorId!)))
+      check('role not used by this business type (chef in a supermarket) → 400', chef.status === 400, chef.body)
+
+      const c1 = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${vendorId}/staff`, { fullName: 'Kamal Silva', role: 'cashier' }), ctx(vendorId!)))
+      check('name + role only → 201', c1.status === 201, c1)
+      check('login made from the name and the web address', c1.body.user?.email === `kamal.silva@${slug}.poslanka.local`, c1.body.user?.email)
+      check('password generated and returned once', typeof c1.body.generatedPassword === 'string' && c1.body.generatedPassword.length === 12)
+      const row = (await pg.query(`SELECT role, is_active, password_hash FROM users WHERE id = $1`, [c1.body.user?.id])).rows[0]
+      check('cashier stored for this vendor and the generated password signs in',
+        row?.role === 'cashier' && row?.is_active === true && await bcrypt.compare(c1.body.generatedPassword || '', row.password_hash), row?.role)
+      const counter = (await pg.query(`SELECT 1 FROM pos_profile_users WHERE user_id = $1`, [c1.body.user?.id])).rowCount
+      check('cashier gets the vendor’s only POS counter', counter === 1, counter)
+
+      const c2 = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${vendorId}/staff`, { fullName: 'Kamal Silva', role: 'manager', email: `mgr-${tag}@example.test`, password: 'Manager@123' }), ctx(vendorId!)))
+      check('manager with own email + password → 201, nothing generated', c2.status === 201 && c2.body.user?.email === `mgr-${tag}@example.test` && c2.body.generatedPassword === null, c2.body)
+      const c3 = await json(await createVendorStaff(req('POST', `/api/sys-control/vendors/${vendorId}/staff`, { fullName: 'Kamal Silva', role: 'cashier' }), ctx(vendorId!)))
+      check('same name again → next free login', c3.body.user?.email === `kamal.silva2@${slug}.poslanka.local`, c3.body.user?.email)
+
+      const reset = await json(await updateVendorStaff(req('PATCH', `/api/sys-control/vendors/${vendorId}/staff`, { userId: c1.body.user?.id, action: 'reset_password' }), ctx(vendorId!)))
+      const after = (await pg.query(`SELECT password_hash FROM users WHERE id = $1`, [c1.body.user?.id])).rows[0]
+      check('new password for a staff member works', reset.status === 200 && await bcrypt.compare(reset.body.temporaryPassword || '', after.password_hash), reset.status)
+      const off = await json(await updateVendorStaff(req('PATCH', `/api/sys-control/vendors/${vendorId}/staff`, { userId: c1.body.user?.id, action: 'deactivate' }), ctx(vendorId!)))
+      check('deactivate staff', off.status === 200 && (await pg.query(`SELECT is_active FROM users WHERE id = $1`, [c1.body.user?.id])).rows[0]?.is_active === false)
+      const owner = (await pg.query(`SELECT id FROM users WHERE tenant_id = $1 AND role = 'owner'`, [vendorId])).rows[0]
+      const ownerOff = await json(await updateVendorStaff(req('PATCH', `/api/sys-control/vendors/${vendorId}/staff`, { userId: owner?.id, action: 'deactivate' }), ctx(vendorId!)))
+      check('owner cannot be changed here → 400', ownerOff.status === 400, ownerOff.status)
+      const other = await json(await updateVendorStaff(req('PATCH', `/api/sys-control/vendors/${vendorId}/staff`, { userId: c1.body.user?.id, action: 'activate' }), ctx(randomUUID())))
+      check('staff of another vendor id → 404', other.status === 404, other.status)
+      check('staff changes audited', (await pg.query(`SELECT 1 FROM admin_audit_logs WHERE resource = 'tenant_user' AND details->>'tenantId' = $1`, [vendorId])).rowCount! >= 3)
+    })
+
     // ============================================================ CSV export
     await step('CSV export', async () => {
       asAdmin()
@@ -410,10 +449,11 @@ async function main() {
       asAdmin()
       const wrong = await json(await vendorAction(req('POST', `/api/sys-control/vendors/${vendorId}/actions`, { action: 'archive', reason: 'I3 closing', confirm: 'nope' }), ctx(vendorId)))
       check('archive with wrong confirmation → 400', wrong.status === 400)
+      const usersBefore = (await pg.query(`SELECT count(*)::int AS n FROM users WHERE tenant_id = $1`, [vendorId])).rows[0].n
       const r = await json(await vendorAction(req('POST', `/api/sys-control/vendors/${vendorId}/actions`, { action: 'archive', reason: 'I3 closing', confirm: `${businessId.slice(0, 2)}-${businessId.slice(2)}` }), ctx(vendorId)))
       const t = (await pg.query(`SELECT status, deletion_scheduled_at FROM tenants WHERE id = $1`, [vendorId])).rows[0]
       const users = (await pg.query(`SELECT count(*)::int AS n FROM users WHERE tenant_id = $1`, [vendorId])).rows[0].n
-      check('archived: status cancelled, nothing deleted, no deletion scheduled', r.status === 200 && t.status === 'cancelled' && t.deletion_scheduled_at === null && users === 1, { r: r.body, t })
+      check('archived: status cancelled, nothing deleted, no deletion scheduled', r.status === 200 && t.status === 'cancelled' && t.deletion_scheduled_at === null && users === usersBefore, { r: r.body, t })
       const imp = await json(await vendorAction(req('POST', `/api/sys-control/vendors/${vendorId}/actions`, { action: 'extend', days: 3, reason: 'nope' }), ctx(vendorId)))
       check('archived vendor cannot be extended until reactivated', imp.status === 400)
       check('archive audited as delete', (await pg.query(`SELECT 1 FROM admin_audit_logs WHERE resource_id = $1 AND action = 'delete' AND details->>'op' = 'archive'`, [vendorId])).rowCount === 1)

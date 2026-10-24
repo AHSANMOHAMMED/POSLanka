@@ -14,6 +14,7 @@ import {
   PlayCircle,
   RefreshCw,
   Store,
+  UserPlus,
   Users,
 } from 'lucide-react'
 import {
@@ -57,6 +58,7 @@ import {
   labelFor,
 } from '@/components/admin/console-helpers'
 import { formatBusinessId } from '@/lib/tenant/business-id-format'
+import { getRolesForBusinessType } from '@/lib/auth/roles'
 
 /* ------------------------------------------------------------------ types */
 
@@ -451,7 +453,7 @@ export default function VendorDetailPage() {
         </div>
       )}
 
-      {tab === 'staff' && <StaffTab staff={data.staff} />}
+      {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={v.businessType} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
       {tab === 'billing' && <BillingTab data={data} />}
       {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} labels={data.featureFlagLabels} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
       {tab === 'activity' && <ActivityTab activity={data.activity} />}
@@ -463,8 +465,33 @@ export default function VendorDetailPage() {
 
 /* ------------------------------------------------------------------ tabs */
 
-function StaffTab({ staff }: { staff: Detail['staff'] }) {
-  const columns: AdminColumn<Detail['staff'][number]>[] = [
+type StaffRow = Detail['staff'][number]
+type StaffResult = { title: string; email: string; password: string }
+
+/** Staff of this vendor: list, add (only name + role required), reset password, deactivate / activate. */
+function StaffTab({ staff, vendorId, businessType, canManage, onChanged }: {
+  staff: Detail['staff']; vendorId: string; businessType: string; canManage: boolean; onChanged: (text: string) => void
+}) {
+  const [adding, setAdding] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<StaffResult | null>(null)
+
+  async function act(u: StaffRow, action: 'deactivate' | 'activate' | 'reset_password') {
+    setBusyId(u.id)
+    setError(null)
+    try {
+      const res = await adminFetch<{ temporaryPassword: string | null; email: string }>(`/api/sys-control/vendors/${vendorId}/staff`, { method: 'PATCH', json: { userId: u.id, action } })
+      if (res.temporaryPassword) setResult({ title: `New password for ${u.fullName}`, email: res.email, password: res.temporaryPassword })
+      onChanged(action === 'reset_password' ? `${u.fullName} has a new password.` : `${u.fullName} was ${action === 'activate' ? 'activated' : 'deactivated'}.`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'The change failed')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  const columns: AdminColumn<StaffRow>[] = [
     {
       key: 'name',
       header: 'Name',
@@ -479,11 +506,114 @@ function StaffTab({ staff }: { staff: Detail['staff'] }) {
     { key: 'role', header: 'Role', cell: (u) => <Badge tone={u.role === 'owner' ? 'primary' : 'neutral'}>{ROLE_LABEL[u.role] ?? u.role}</Badge> },
     { key: 'status', header: 'Status', cell: (u) => <Badge tone={u.isActive ? 'success' : 'neutral'} dot>{u.isActive ? 'Active' : 'Deactivated'}</Badge> },
     { key: 'login', header: 'Last sign-in', hideBelow: 'md', cell: (u) => <span className="text-adm-muted">{u.lastLoginAt ? timeAgo(u.lastLoginAt) : 'Never'}</span> },
+    ...(canManage ? [{
+      key: 'actions',
+      header: '',
+      align: 'right' as const,
+      cell: (u: StaffRow) => u.role === 'owner' ? <span className="text-[12.5px] text-adm-subtle">Use the vendor actions</span> : (
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <Button size="sm" icon={KeyRound} disabled={busyId === u.id} onClick={() => act(u, 'reset_password')}>New password</Button>
+          {u.isActive
+            ? <Button size="sm" variant="ghost" icon={PauseCircle} disabled={busyId === u.id} onClick={() => act(u, 'deactivate')}>Deactivate</Button>
+            : <Button size="sm" variant="ghost" icon={PlayCircle} disabled={busyId === u.id} onClick={() => act(u, 'activate')}>Activate</Button>}
+        </div>
+      ),
+    }] : []),
   ]
   return (
-    <AdminCard title="Staff" description="Users of this business and their roles. Staff are managed by the vendor in their own settings." flush>
-      <AdminTable columns={columns} rows={staff} rowKey={(u) => u.id} minWidth={560} empty={<EmptyState icon={Users} title="No staff" compact />} />
-    </AdminCard>
+    <>
+      {error && <Alert tone="danger">{error}</Alert>}
+      {result && (
+        <Alert tone="warning" title={`${result.title} (shown once)`}>
+          <span className="inline-flex flex-wrap items-center gap-2">
+            Login <span className="font-mono">{result.email}</span> · password <span className="font-mono font-semibold">{result.password}</span>
+            <CopyButton text={`Login: ${result.email}\nPassword: ${result.password}`} label="Copy login and password" />
+          </span>
+          <span className="mt-1 block">They sign in with the Business ID, this login and password, and can change the password afterwards.</span>
+        </Alert>
+      )}
+      <AdminCard
+        title="Staff"
+        description="Users of this business and their roles. Add managers, cashiers and other staff for the vendor here or from their own settings."
+        actions={canManage ? <Button size="sm" variant="primary" icon={UserPlus} onClick={() => setAdding(true)}>Add staff</Button> : undefined}
+        flush
+      >
+        <AdminTable columns={columns} rows={staff} rowKey={(u) => u.id} minWidth={640} empty={<EmptyState icon={Users} title="No staff" compact />} />
+      </AdminCard>
+      {adding && (
+        <AddStaffDialog
+          vendorId={vendorId}
+          businessType={businessType}
+          onClose={() => setAdding(false)}
+          onCreated={(name, email, password) => {
+            setAdding(false)
+            if (password) setResult({ title: `${name} can sign in`, email, password })
+            onChanged(`${name} was added.`)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+function AddStaffDialog({ vendorId, businessType, onClose, onCreated }: {
+  vendorId: string; businessType: string; onClose: () => void; onCreated: (name: string, email: string, password: string | null) => void
+}) {
+  const roles = getRolesForBusinessType(businessType).filter((r) => r !== 'owner')
+  const [fullName, setFullName] = useState('')
+  const [role, setRole] = useState<string>(roles.includes('cashier') ? 'cashier' : roles[0])
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [pin, setPin] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const nameOk = fullName.trim().length >= 2
+
+  async function save() {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await adminFetch<{ user: { email: string; fullName: string }; generatedPassword: string | null }>(`/api/sys-control/vendors/${vendorId}/staff`, {
+        method: 'POST',
+        json: { fullName: fullName.trim(), role, email: email.trim() || undefined, password: password || undefined, pin: pin || undefined },
+      })
+      onCreated(res.user.fullName, res.user.email, res.generatedPassword ?? null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not add the staff member')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AdminModal
+      open
+      onClose={onClose}
+      title="Add staff"
+      description="Only the name and role are needed. Leave the email blank to get a login made from the name, and the password blank to get one generated."
+      footer={<><Button onClick={onClose} disabled={busy}>Cancel</Button><Button variant="primary" icon={UserPlus} onClick={save} loading={busy} disabled={!nameOk}>Add staff</Button></>}
+    >
+      {error && <Alert tone="danger" className="mb-3">{error}</Alert>}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field label="Name" htmlFor="st-name" required>
+          <Input id="st-name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Nimal Perera" autoFocus />
+        </Field>
+        <Field label="Role" htmlFor="st-role" required hint="Manager = admin of the business; Cashier = POS only.">
+          <Select id="st-role" value={role} onChange={(e) => setRole(e.target.value)}>
+            {roles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r] ?? r}</option>)}
+          </Select>
+        </Field>
+        <Field label="Email (login)" htmlFor="st-email" hint="Optional.">
+          <Input id="st-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nimal@example.lk" />
+        </Field>
+        <Field label="Password" htmlFor="st-pass" hint="Optional. 8+ characters with upper, lower case and a number.">
+          <Input id="st-pass" type="text" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Generated if blank" />
+        </Field>
+        <Field label="POS PIN" htmlFor="st-pin" hint="Optional, 4–6 digits, for the POS lock screen.">
+          <Input id="st-pin" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))} />
+        </Field>
+      </div>
+    </AdminModal>
   )
 }
 

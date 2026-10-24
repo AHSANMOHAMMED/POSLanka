@@ -4,6 +4,7 @@ import { useLocalSearchParams } from 'expo-router'
 import { adminGet, adminPut, useAdminUser } from '../../../src/lib/adminApi'
 import { THEME, formatLKR } from '../../../src/lib/theme'
 import { ErrorView, InlineNotice, LoadingView } from '../../../src/components/StateViews'
+import { AdminVendorStaff, type AdminStaffRow } from '../../../src/components/admin/AdminVendorStaff'
 import { AdminShell, Card, Kpi, ListRow, Pill, SectionTitle, adminStyles, businessTypeLabel, compactLKR, statusTone, timeAgo } from '../../../src/components/admin/AdminShell'
 
 /** Mirrors src/lib/features/flags.ts on the server (labels only; the server normalises unknown keys away). */
@@ -59,6 +60,8 @@ interface VendorAnalytics {
 export default function AdminVendorDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const [vendor, setVendor] = useState<VendorDetail | null>(null)
+  const [staff, setStaff] = useState<AdminStaffRow[]>([])
+  const [roles, setRoles] = useState<string[]>([])
   const [analytics, setAnalytics] = useState<VendorAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -76,11 +79,14 @@ export default function AdminVendorDetailScreen() {
       setError(null)
       setNotice(null)
       const [vRes, aRes] = await Promise.all([
-        adminGet<{ vendor: VendorDetail }>(`/api/sys-control/vendors/${id}`),
+        adminGet<{ vendor: VendorDetail; staff: AdminStaffRow[]; assignableRoles?: string[] }>(`/api/sys-control/vendors/${id}`),
         adminGet<VendorAnalytics>(`/api/sys-control/analytics/vendors/${id}`),
       ])
-      if (vRes.ok) setVendor(vRes.data.vendor)
-      else setError(vRes.error)
+      if (vRes.ok) {
+        setVendor(vRes.data.vendor)
+        setStaff(vRes.data.staff || [])
+        setRoles(vRes.data.assignableRoles || [])
+      } else setError(vRes.error)
       if (aRes.ok) setAnalytics(aRes.data)
       else if (vRes.ok) setNotice(`Sales analytics: ${aRes.error}`)
       setLoading(false)
@@ -240,6 +246,9 @@ export default function AdminVendorDetailScreen() {
               ) : null}
             </>
           ) : null}
+
+          {/* Staff: add managers / cashiers / … for this vendor */}
+          <AdminVendorStaff vendorId={vendor.id} staff={staff} roles={roles} canManage={canManage} onChanged={() => load(true)} />
 
           {/* Feature flags */}
           <SectionTitle>Feature flags</SectionTitle>

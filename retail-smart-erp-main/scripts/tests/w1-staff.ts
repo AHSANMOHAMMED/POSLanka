@@ -119,6 +119,18 @@ async function main() {
   await expectStaffError('branch from another tenant rejected (400)', 400, () =>
     create(A.tenantId, 'owner', { warehouseIds: [B.warehouses[0].id] }))
 
+  console.log('\nName + role only')
+  const minimal = await create(A.tenantId, 'owner', { email: undefined, password: undefined, fullName: 'Ruwan Jayasinghe' })
+  const tSlug = (await pool.query(`SELECT slug FROM tenants WHERE id = $1`, [A.tenantId])).rows[0].slug
+  check('no email → login from the name and the web address', minimal.email === `ruwan.jayasinghe@${tSlug}.poslanka.local`, minimal.email)
+  check('no password → generated one passes the strength rules', typeof minimal.generatedPassword === 'string' && /[a-z]/.test(minimal.generatedPassword!) && /[A-Z]/.test(minimal.generatedPassword!) && /\d/.test(minimal.generatedPassword!))
+  const minRow = (await pool.query(`SELECT password_hash FROM users WHERE id = $1`, [minimal.id])).rows[0]
+  check('generated password verifies', await bcrypt.compare(minimal.generatedPassword!, minRow.password_hash))
+  const minimal2 = await create(A.tenantId, 'owner', { email: null, password: null, fullName: 'Ruwan Jayasinghe' })
+  check('same name → next free login', minimal2.email === `ruwan.jayasinghe2@${tSlug}.poslanka.local`, minimal2.email)
+  const given = await create(A.tenantId, 'owner')
+  check('password given → nothing generated', given.generatedPassword === null)
+
   console.log('\nCashier auto-assignment + credentials')
   const email = `Cashier-${tag}@Test.Local`
   const cashier = await create(A.tenantId, 'manager', { email, pin: '4321', fullName: '  Kamal Silva ' })

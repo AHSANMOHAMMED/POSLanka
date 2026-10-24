@@ -26,6 +26,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { FEATURE_FLAG_LABELS, normalizeFeatureFlags, type FeatureFlagsMap } from '@/lib/features/flags'
 import { foldTenantUsage } from '@/lib/db/storage-quota'
 import { neverExpires } from '@/lib/billing/subscription-state'
+import { getRolesForBusinessType } from '@/lib/auth/roles'
 
 export async function GET(
   _request: NextRequest,
@@ -171,6 +172,8 @@ export async function GET(
     ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
 
     return NextResponse.json({
+      /** Roles the super admin may give new staff of this vendor (by business type, owner excluded) */
+      assignableRoles: getRolesForBusinessType(vendor.businessType).filter((r) => r !== 'owner'),
       vendor: {
         ...vendor,
         vatRegistered: settings.vatRegistered === true,
