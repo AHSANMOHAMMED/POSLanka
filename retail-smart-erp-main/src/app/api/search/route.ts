@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { customers, vehicles, workOrders, insuranceEstimates, sales, items, tenants, suppliers, categories, purchaseOrders } from '@/lib/db/schema'
-import { eq, or, ilike, sql } from 'drizzle-orm'
+import { and, eq, or, ilike, sql } from 'drizzle-orm'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { formatCurrencyWithSymbol } from '@/lib/utils/currency'
 import { logError } from '@/lib/ai/error-logger'
@@ -44,10 +45,13 @@ export async function GET(request: NextRequest) {
         })
         .from(customers)
         .where(
-          or(
-            ilike(customers.name, searchPattern),
-            ilike(sql`COALESCE(${customers.phone}, '')`, searchPattern),
-            ilike(sql`COALESCE(${customers.email}, '')`, searchPattern)
+          and(
+            eq(customers.isActive, true),
+            or(
+              ilike(customers.name, searchPattern),
+              ilike(sql`COALESCE(${customers.phone}, '')`, searchPattern),
+              ilike(sql`COALESCE(${customers.email}, '')`, searchPattern)
+            )
           )
         )
         .limit(limit)
@@ -148,10 +152,13 @@ export async function GET(request: NextRequest) {
         })
         .from(items)
         .where(
-          or(
-            ilike(items.name, searchPattern),
-            ilike(sql`COALESCE(${items.sku}, '')`, searchPattern),
-            ilike(sql`COALESCE(${items.barcode}, '')`, searchPattern)
+          and(
+            notInRecycleBin('item', items.id),
+            or(
+              ilike(items.name, searchPattern),
+              ilike(sql`COALESCE(${items.sku}, '')`, searchPattern),
+              ilike(sql`COALESCE(${items.barcode}, '')`, searchPattern)
+            )
           )
         )
         .limit(limit)
@@ -165,10 +172,13 @@ export async function GET(request: NextRequest) {
         })
         .from(suppliers)
         .where(
-          or(
-            ilike(suppliers.name, searchPattern),
-            ilike(sql`COALESCE(${suppliers.phone}, '')`, searchPattern),
-            ilike(sql`COALESCE(${suppliers.email}, '')`, searchPattern)
+          and(
+            notInRecycleBin('supplier', suppliers.id),
+            or(
+              ilike(suppliers.name, searchPattern),
+              ilike(sql`COALESCE(${suppliers.phone}, '')`, searchPattern),
+              ilike(sql`COALESCE(${suppliers.email}, '')`, searchPattern)
+            )
           )
         )
         .limit(limit)
@@ -180,7 +190,7 @@ export async function GET(request: NextRequest) {
           name: categories.name,
         })
         .from(categories)
-        .where(ilike(categories.name, searchPattern))
+        .where(and(notInRecycleBin('category', categories.id), ilike(categories.name, searchPattern)))
         .limit(limit)
 
       // Search purchase orders (RLS scopes)

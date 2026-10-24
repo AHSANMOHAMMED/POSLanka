@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { canViewCostPrices, redactItemCost } from '@/lib/auth/field-access'
@@ -36,6 +37,9 @@ export async function GET(request: NextRequest) {
       // By default only return active items; items list page can pass includeInactive=true
       if (!includeInactive) {
         conditions.push(eq(items.isActive, true))
+      } else {
+        // Deactivated items show; ones moved to the recycle bin do not
+        conditions.push(notInRecycleBin('item', items.id))
       }
       if (search) {
         const escaped = escapeLikePattern(search)

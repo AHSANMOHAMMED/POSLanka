@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { categories } from '@/lib/db/schema'
 import { and, ilike, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
+import { notInRecycleBin } from '@/lib/recycle-bin'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
@@ -26,7 +27,8 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions (tenantId filter handled by RLS)
-      const conditions = []
+      // Categories moved to the recycle bin are hidden (deactivated ones still show)
+      const conditions = [notInRecycleBin('category', categories.id)]
       if (search) {
         conditions.push(ilike(categories.name, `%${escapeLikePattern(search)}%`))
       }

@@ -9,6 +9,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { moveToRecycleBin } from '@/lib/recycle-bin'
 
 // GET single held sale (for recall)
 export async function GET(
@@ -71,7 +72,17 @@ export async function DELETE(
     const { id } = paramsParsed.data
 
     // Execute with RLS tenant context
+    // ?recall=1: the ticket was resumed into the cart (nothing is lost). Otherwise it is being
+    // discarded: keep a copy in the recycle bin so a super admin can bring it back.
+    const recall = request.nextUrl.searchParams.get('recall') === '1'
+
     return await withTenant(session.user.tenantId, async (db) => {
+      if (!recall) {
+        await moveToRecycleBin(db, {
+          tenantId: session.user.tenantId, entityType: 'held_sale', entityId: id,
+          userId: session.user.id, userName: session.user.name,
+        })
+      }
       const [deleted] = await db.delete(heldSales)
         .where(eq(heldSales.id, id))
         .returning()

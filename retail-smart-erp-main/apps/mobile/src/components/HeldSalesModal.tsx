@@ -56,7 +56,7 @@ export function HeldSalesModal({ visible, onClose, onResume }: Props) {
   async function resume(held: HeldSale) {
     setBusyId(held.id)
     try {
-      const res = await apiDelete(`/api/held-sales/${held.id}`)
+      const res = await apiDelete(`/api/held-sales/${held.id}?recall=1`)
       if (!res.ok && res.status !== 404) {
         Alert.alert('Could Not Resume', res.error)
         return

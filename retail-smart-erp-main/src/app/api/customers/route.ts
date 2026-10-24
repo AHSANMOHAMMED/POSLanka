@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { customers } from '@/lib/db/schema'
-import { eq, or, ilike, sql } from 'drizzle-orm'
+import { and, eq, or, ilike, sql } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { requireAnyPermission, hasPermission } from '@/lib/auth/roles'
 import { hasAnyPermission, CUSTOMER_LOOKUP_PERMISSIONS, CUSTOMER_CREATE_PERMISSIONS } from '@/lib/auth/field-access'
@@ -32,14 +32,15 @@ export async function GET(request: NextRequest) {
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
-      let whereClause = undefined
+      // Customers moved to the recycle bin (is_active = false) never show in lists, pickers or the POS
+      let whereClause = eq(customers.isActive, true)
       if (search) {
         const escaped = escapeLikePattern(search)
-        whereClause = or(
+        whereClause = and(whereClause, or(
           ilike(customers.name, `%${escaped}%`),
           ilike(customers.phone, `%${escaped}%`),
           ilike(customers.email, `%${escaped}%`)
-        )
+        ))!
       }
 
       // Get total count for pagination
@@ -120,7 +121,11 @@ export async function POST(request: NextRequest) {
           where: eq(customers.phone, normalizedPhone),
         })
         if (existingPhone) {
-          return NextResponse.json({ error: 'A customer with this phone number already exists' }, { status: 400 })
+          return NextResponse.json({
+            error: existingPhone.isActive
+              ? 'A customer with this phone number already exists'
+              : 'A customer with this phone number is in the recycle bin. Ask the platform administrator to restore it.',
+          }, { status: 400 })
         }
       }
 

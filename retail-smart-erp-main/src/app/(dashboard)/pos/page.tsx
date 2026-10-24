@@ -469,7 +469,7 @@ export default function POSPage() {
 
     // Delete the held sale
     try {
-      await fetch(`/api/held-sales/${heldSale.id}`, { method: 'DELETE' })
+      await fetch(`/api/held-sales/${heldSale.id}?recall=1`, { method: 'DELETE' })
       fetchHeldSales()
     } catch (error) {
       console.error('Error deleting held sale:', error)
