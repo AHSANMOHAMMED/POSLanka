@@ -2,12 +2,13 @@
   "expo": {
     "name": "POSLanka",
     "slug": "poslanka",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "scheme": "poslanka",
     "userInterfaceStyle": "light",
     "android": {
       "package": "lk.poslanka.app",
+      "versionCode": 2,
       "permissions": [
         "CAMERA",
         "BLUETOOTH",
