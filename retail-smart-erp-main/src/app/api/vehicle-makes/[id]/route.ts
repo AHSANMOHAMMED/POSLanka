@@ -37,12 +37,12 @@ export async function GET(
 }
 
 export async function PUT(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   // Vehicle makes are one list shared by every business: a vendor may add new ones, but editing
   // or switching one off would change it for all vendors. Platform staff maintain the list.
-  void request; void params
+  void params
   return NextResponse.json({ error: 'Vehicle makes are shared by all businesses and can only be changed by skyERPOS support. Add a new one instead.', code: 'SHARED_CATALOG' }, { status: 403 })
 }
 
@@ -52,6 +52,6 @@ export async function DELETE(
 ) {
   // Vehicle makes are one list shared by every business: a vendor may add new ones, but editing
   // or switching one off would change it for all vendors. Platform staff maintain the list.
-  void request; void params
+  void params
   return NextResponse.json({ error: 'Vehicle makes are shared by all businesses and can only be changed by skyERPOS support. Add a new one instead.', code: 'SHARED_CATALOG' }, { status: 403 })
 }

@@ -193,6 +193,7 @@ export function getPaymentMethodLabel(method: PaymentMethod): string {
     bank_transfer: 'Bank Transfer',
     credit: 'Store Credit',
     gift_card: 'Gift Card',
+    cheque: 'Cheque',
   }
   return labels[method] || method
 }
