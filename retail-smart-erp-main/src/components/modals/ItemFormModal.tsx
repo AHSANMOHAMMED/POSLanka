@@ -7,8 +7,10 @@ import { FormInput, FormSelect, FormLabel } from '@/components/ui/form-elements'
 import { CategoryModal } from './CategoryModal'
 import { SupplierModal } from './SupplierModal'
 import { toast } from '@/components/ui/toast'
+import { useFeatureFlag } from '@/hooks/useFeatureFlag'
+import { VariantsPanel } from '@/components/items/VariantsPanel'
 import { isValidPositiveNumber } from '@/lib/utils/validation'
-import { Package, Tag, DollarSign, Boxes, Truck, Ruler, Leaf, Snowflake, Pill, Car, Plus, X, Loader2, Upload, Image as ImageIcon, History, ArrowRight, Clock } from 'lucide-react'
+import { Package, Tag, DollarSign, Boxes, Truck, Ruler, Leaf, Snowflake, Pill, Layers, Car, Plus, X, Loader2, Upload, Image as ImageIcon, History, ArrowRight, Clock } from 'lucide-react'
 import { Pagination } from '@/components/ui/pagination'
 import { useTerminology, useSmartWarnings } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
@@ -19,7 +21,7 @@ import { ItemHistoryPanel } from './ItemHistoryPanel'
 import { formatDateTime } from '@/lib/utils/date-format'
 import { ItemUnitsBarcodesEditor } from '@/components/items/ItemUnitsBarcodesEditor'
 
-type TabType = 'basic' | 'pricing' | 'inventory' | 'supplier' | 'physical' | 'dietary' | 'freshness' | 'medicine' | 'fits' | 'cost_tracking' | 'history'
+type TabType = 'basic' | 'pricing' | 'inventory' | 'supplier' | 'physical' | 'dietary' | 'freshness' | 'medicine' | 'variants' | 'fits' | 'cost_tracking' | 'history'
 
 interface VehicleMake {
   id: string
@@ -66,6 +68,7 @@ interface Item {
   categoryId: string | null
   costPrice: string
   sellingPrice: string
+  parentItemId?: string | null
   currentStock: string
   minStock: string
   unit: string
@@ -130,6 +133,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
   const isAutoService = businessType === 'auto_service' || businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
   const isPharmacy = businessType === 'pharmacy'
+  const variantsOn = useFeatureFlag('variants')
   // Freshness tab (PLU, shelf life, storage temperature, expiry): supermarket and pharmacy
   const isSupermarket = businessType === 'supermarket' || isPharmacy
   const [saving, setSaving] = useState(false)
@@ -550,12 +554,16 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     if (isSupermarket) {
       base.push({ key: 'freshness', label: isPharmacy ? 'Storage & Expiry' : 'Freshness', icon: <Snowflake size={16} /> })
     }
+    // Size / colour variants: shops, for a saved main product (not a variant itself)
+    if (editItem && !editItem.parentItemId && variantsOn && ['retail', 'supermarket', 'pharmacy'].includes(businessType || '')) {
+      base.push({ key: 'variants', label: 'Variants', icon: <Layers size={16} /> })
+    }
     if (editItem) {
       base.push({ key: 'cost_tracking', label: 'Supplier Pricing', icon: <History size={16} /> })
       base.push({ key: 'history', label: 'History', icon: <Clock size={16} /> })
     }
     return base
-  }, [isAutoService, isRestaurant, isSupermarket, isPharmacy, businessType, editItem])
+  }, [isAutoService, isRestaurant, isSupermarket, isPharmacy, businessType, editItem, variantsOn])
 
   function handleClose() {
     resetForm()
@@ -1599,6 +1607,10 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
             )}
 
             {/* Supplier Pricing / Cost History Tab */}
+            {activeTab === 'variants' && editItem && (
+              <VariantsPanel itemId={editItem.id} defaultPrice={String(editItem.sellingPrice ?? '')} />
+            )}
+
             {activeTab === 'cost_tracking' && editItem && (
               <div className="space-y-6">
                 {/* Supplier Costs Table */}

@@ -17,6 +17,8 @@ export const itemsListSchema = paginatedSearchSchema.extend({
   availableNow: z.string().optional().transform(v => v === 'true'),
   includeInactive: z.string().optional().transform(v => v === 'true'),
   inStockOnly: z.string().optional().transform(v => v === 'true'),
+  /** POS browse grid: list main products only (their size / colour variants open from the picker) */
+  hideVariants: z.string().optional().transform(v => v === 'true'),
   ids: z.string().max(5000).optional(),
 })
 

@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { withTenant } from '@/lib/db'
+import { withTenant, withTenantTransaction } from '@/lib/db'
 import { items, warehouseStock } from '@/lib/db/schema'
 import { eq, and, inArray, sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
-import { requireModule } from '@/lib/auth/roles'
+import { requireModule, requirePermission } from '@/lib/auth/roles'
+import { z } from 'zod'
+import { validateBody } from '@/lib/validation'
+import { createItem } from '@/lib/inventory/create-item'
+import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { toApiError } from '@/lib/db/errors'
 
 export async function GET(
   request: NextRequest,
@@ -138,5 +143,90 @@ export async function GET(
   } catch (error) {
     logError('api/items/[id]/variants', error)
     return NextResponse.json({ error: 'Failed to fetch variants' }, { status: 500 })
+  }
+}
+
+const generateSchema = z.object({
+  /** e.g. { Size: ['S', 'M', 'L'], Colour: ['Black', 'White'] } → 6 variants (max 3 attributes, 200 variants) */
+  attributes: z.record(z.string().trim().min(1).max(30), z.array(z.string().trim().min(1).max(40)).min(1).max(50))
+    .refine((a) => Object.keys(a).length >= 1 && Object.keys(a).length <= 3, 'Use 1 to 3 attributes (e.g. Size, Colour)'),
+  /** Optional price for every new variant (defaults to the parent's) */
+  sellingPrice: z.coerce.number().min(0).optional(),
+})
+
+/**
+ * POST /api/items/[id]/variants — create the size / colour variants of a product: one item per
+ * combination, copying the parent's category, prices, tax, unit and tracking, each with its own
+ * item code, barcode and stock. Combinations that already exist are skipped. manageItems.
+ */
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const session = await authWithCompany()
+    if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const permError = requirePermission(session, 'manageItems')
+    if (permError) return permError
+    const parsed = await validateBody(request, generateSchema)
+    if (!parsed.success) return parsed.response
+    const { id: parentId } = await params
+    const { tenantId, id: userId } = session.user
+
+    // Every combination of the attribute values
+    const keys = Object.keys(parsed.data.attributes)
+    let combos: Array<Record<string, string>> = [{}]
+    for (const k of keys) {
+      const values = Array.from(new Set(parsed.data.attributes[k]))
+      combos = combos.flatMap((c) => values.map((v) => ({ ...c, [k]: v })))
+    }
+    if (combos.length > 200) return NextResponse.json({ error: `That makes ${combos.length} variants; the limit is 200 per product.` }, { status: 400 })
+
+    const result = await withTenantTransaction(tenantId, async (tx) => {
+      const [parent] = await tx.select().from(items).where(and(eq(items.id, parentId), eq(items.tenantId, tenantId))).limit(1)
+      if (!parent) return { status: 404 as const }
+      if (parent.parentItemId) return { status: 400 as const, error: 'This item is itself a variant; add variants to its main product.' }
+
+      const existing = await tx.select({ attrs: items.variantAttributes }).from(items)
+        .where(and(eq(items.tenantId, tenantId), eq(items.parentItemId, parentId)))
+      const key = (a: Record<string, string> | null | undefined) => JSON.stringify(Object.keys(a || {}).sort().map((k) => [k.toLowerCase(), String(a![k]).toLowerCase()]))
+      const have = new Set(existing.map((e) => key(e.attrs)))
+
+      const created: Array<{ id: string; name: string; barcode: string | null; itemCode: string; variantAttributes: Record<string, string> }> = []
+      for (const attrs of combos) {
+        if (have.has(key(attrs))) continue
+        const label = keys.map((k) => attrs[k]).join(' / ')
+        const { item } = await createItem(tx, {
+          tenantId, userId, source: 'manual',
+          data: {
+            name: `${parent.name} - ${label}`.slice(0, 255),
+            sku: parent.sku ? `${parent.sku}-${keys.map((k) => attrs[k]).join('-')}`.toUpperCase().replace(/\s+/g, '').slice(0, 100) : null,
+            categoryId: parent.categoryId,
+            brand: parent.brand,
+            description: parent.description,
+            costPrice: parent.costPrice,
+            sellingPrice: parsed.data.sellingPrice !== undefined ? String(parsed.data.sellingPrice) : parent.sellingPrice,
+            unit: parent.unit,
+            trackStock: parent.trackStock,
+            trackBatches: parent.trackBatches,
+            productType: parent.productType,
+            taxTemplateId: parent.taxTemplateId,
+            supplierId: parent.supplierId,
+            imageUrl: parent.imageUrl,
+            parentItemId: parent.id,
+            variantAttributes: attrs,
+          },
+        })
+        created.push({ id: item.id, name: item.name, barcode: item.barcode, itemCode: item.itemCode, variantAttributes: attrs })
+      }
+      return { status: 200 as const, created, skipped: combos.length - created.length }
+    })
+
+    if (result.status === 404) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
+    if (result.status === 400) return NextResponse.json({ error: result.error }, { status: 400 })
+    for (const c of result.created) logAndBroadcast(tenantId, 'item', 'created', c.id, { userId, entityName: c.name })
+    return NextResponse.json({ created: result.created, skipped: result.skipped }, { status: 201 })
+  } catch (error) {
+    const apiError = toApiError(error)
+    if (apiError) return apiError
+    logError('api/items/[id]/variants POST', error)
+    return NextResponse.json({ error: 'Failed to create variants' }, { status: 500 })
   }
 }

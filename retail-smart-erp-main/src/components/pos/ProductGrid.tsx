@@ -166,6 +166,9 @@ export function ProductGrid({
         item.barcode?.toLowerCase().includes(searchLower) ||
         item.oemPartNumber?.toLowerCase().includes(searchLower) ||
         item.supplierPartNumber?.toLowerCase().includes(searchLower) ||
+        item.genericName?.toLowerCase().includes(searchLower) ||
+        item.pluCode?.toLowerCase() === searchLower ||
+        item.itemCode?.toLowerCase().includes(searchLower) ||
         item.alternatePartNumbers?.some(pn => pn.toLowerCase().includes(searchLower))
       return matchesSearch
     })
@@ -366,6 +369,14 @@ export function ProductGrid({
                   <h3 className="font-bold text-slate-900 dark:text-white text-sm leading-snug line-clamp-2 min-h-[36px] mb-1 group-hover:text-teal-700 dark:group-hover:text-teal-400 transition-colors">
                     {item.name}
                   </h3>
+                  {(item.genericName || item.drugSchedule === 'prescription' || item.drugSchedule === 'controlled') && (
+                    <p className="text-[12px] text-slate-500 mb-1 truncate">
+                      {(item.drugSchedule === 'prescription' || item.drugSchedule === 'controlled') && (
+                        <span className={`mr-1 rounded px-1 font-bold ${item.drugSchedule === 'controlled' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>Rx</span>
+                      )}
+                      {[item.genericName, item.strength].filter(Boolean).join(' ')}
+                    </p>
+                  )}
 
                   {(() => {
                     const partNum = getItemPartNumber(item, businessType)

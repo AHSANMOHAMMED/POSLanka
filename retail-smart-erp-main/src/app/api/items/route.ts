@@ -4,7 +4,7 @@ import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { canViewCostPrices, redactItemCost } from '@/lib/auth/field-access'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { items, users, workOrderParts, workOrders, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, warehouses, stockMovements } from '@/lib/db/schema'
-import { eq, and, sql, or, ilike, inArray, lte, isNotNull } from 'drizzle-orm'
+import { eq, and, sql, or, ilike, inArray, lte, isNotNull, isNull } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     const parsed = validateSearchParams(request, itemsListSchema)
     if (!parsed.success) return parsed.response
-    const { search, categoryId, warehouseId, expiringBefore, storageTemp, availableNow, includeInactive, inStockOnly, page, pageSize, all, ids } = parsed.data
+    const { search, categoryId, warehouseId, expiringBefore, storageTemp, availableNow, includeInactive, inStockOnly, hideVariants, page, pageSize, all, ids } = parsed.data
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -102,6 +102,13 @@ export async function GET(request: NextRequest) {
                 WHERE ws.item_id = ${items.id}
                   AND ws.warehouse_id = ${warehouseId}
                   AND CAST(ws.current_stock AS DECIMAL) > 0
+              )`,
+              // A main product whose stock sits on its size / colour variants
+              sql`EXISTS (
+                SELECT 1 FROM items v JOIN warehouse_stock ws ON ws.item_id = v.id
+                WHERE v.parent_item_id = ${items.id} AND v.is_active
+                  AND ws.warehouse_id = ${warehouseId}
+                  AND CAST(ws.current_stock AS DECIMAL) > 0
               )`
             )
           )
@@ -114,11 +121,17 @@ export async function GET(request: NextRequest) {
                 SELECT 1 FROM warehouse_stock ws
                 WHERE ws.item_id = ${items.id}
                   AND CAST(ws.current_stock AS DECIMAL) > 0
+              )`,
+              sql`EXISTS (
+                SELECT 1 FROM items v JOIN warehouse_stock ws ON ws.item_id = v.id
+                WHERE v.parent_item_id = ${items.id} AND v.is_active
+                  AND CAST(ws.current_stock AS DECIMAL) > 0
               )`
             )
           )
         }
       }
+      if (hideVariants) conditions.push(isNull(items.parentItemId))
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
       // Calculate pagination

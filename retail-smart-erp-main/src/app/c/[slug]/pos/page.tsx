@@ -460,6 +460,8 @@ export default function POSPage() {
       params.set('pageSize', String(POS_ITEMS_LIMIT))
       params.set('inStockOnly', 'true')
       if (searchQuery) params.set('search', searchQuery)
+      // Browsing shows main products (sizes / colours from the picker); a search or scan finds variants too
+      else params.set('hideVariants', 'true')
       if (warehouseId) params.set('warehouseId', warehouseId)
       if (categoryId) params.set('categoryId', categoryId)
 
@@ -2131,7 +2133,7 @@ export default function POSPage() {
     const exact = items.filter(i => i.barcode === trimmed || i.pluCode === trimmed || (i.sku || '').toLowerCase() === q)
     const candidates = exact.length > 0
       ? exact
-      : items.filter(i => i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q) || (i.barcode || '').includes(trimmed))
+      : items.filter(i => i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q) || (i.barcode || '').includes(trimmed) || (i.genericName || '').toLowerCase().includes(q))
     if (candidates.length === 1) {
       const match = candidates[0]
       if (scanUom || (match.isWeighable && scanQty !== 1)) {

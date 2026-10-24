@@ -19,6 +19,11 @@ export interface Item {
   isWeighable?: boolean
   unit?: string | null
   pluCode?: string | null
+  itemCode?: string | null
+  /** Pharmacy: generic name / strength / schedule (search and tile) */
+  genericName?: string | null
+  strength?: string | null
+  drugSchedule?: string | null
   coreCharge?: string | null
   taxTemplateId?: string | null
   parentItemId?: string | null

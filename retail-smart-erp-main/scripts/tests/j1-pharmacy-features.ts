@@ -20,6 +20,9 @@ import { GET as rxCheck } from '@/app/api/pharmacy/rx-check/route'
 import { GET as expiryReport } from '@/app/api/pharmacy/expiry/route'
 import { GET as register } from '@/app/api/prescriptions/route'
 import { GET as listItems } from '@/app/api/items/route'
+import { POST as makeVariants, GET as getVariants } from '@/app/api/items/[id]/variants/route'
+import { withTenantTransaction } from '@/lib/db'
+import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { featureForApiPath, featureForHref, featureAppliesTo, normalizeFeatureFlags } from '@/lib/features/flags'
 
 type J = Record<string, unknown> & { [k: string]: any } // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -180,6 +183,35 @@ async function main() {
       const offCredit = await sale(f, { customerId: f.customerId, cartItems: [{ itemId: soap, name: 'Soap', quantity: 1, unitPrice: 90 }], paymentMethod: 'credit', subtotal: 90, total: 90, amountPaid: 0, offlineRef: `OFF-J1C-${Date.now()}` })
       check('offline credit sale made before the switch still syncs', offCredit.status !== 403, short(offCredit.body))
       await setFlags({})
+    })
+
+    await step('size / colour variants (clothing, footwear)', async () => {
+      const shirt = await newItem(admin, f, 'Polo T-shirt', 1500)
+      await admin.query(`UPDATE items SET track_stock = true, sku = 'POLO' WHERE id = $1`, [shirt])
+      const ctxV = { params: Promise.resolve({ id: shirt }) }
+      const r = await json(await makeVariants(req('POST', `/api/items/${shirt}/variants`, { attributes: { Size: ['S', 'M', 'L'], Colour: ['Black', 'White'] } }), ctxV))
+      check('2 sizes × colours → 6 variants created', r.status === 201 && r.body.created.length === 6, short(r.body))
+      const v = r.body.created?.[0]
+      const row = (await admin.query(`SELECT name, parent_item_id, variant_attributes, selling_price::float p, sku, barcode, track_stock FROM items WHERE id = $1`, [v?.id])).rows[0]
+      check('variant copies the product (price, tracking) with its own name, SKU and barcode',
+        row?.parent_item_id === shirt && row?.name === 'Polo T-shirt - S / Black' && row?.p === 1500 && row?.sku === 'POLO-S-BLACK' && !!row?.barcode && row?.track_stock === true, JSON.stringify(row))
+      const again = await json(await makeVariants(req('POST', `/api/items/${shirt}/variants`, { attributes: { Size: ['S', 'M', 'L', 'XL'], Colour: ['Black', 'White'] } }), ctxV))
+      check('adding XL creates only the 2 new combinations', again.status === 201 && again.body.created.length === 2 && again.body.skipped === 6, short(again.body))
+      const nested = await json(await makeVariants(req('POST', `/api/items/${v.id}/variants`, { attributes: { Size: ['S'] } }), { params: Promise.resolve({ id: v.id }) }))
+      check('a variant cannot have variants → 400', nested.status === 400, short(nested.body))
+      const list = await json(await getVariants(req('GET', `/api/items/${shirt}/variants?warehouseId=${f.wh}`), ctxV))
+      check('variants list for the POS picker (8, Size and Colour)', list.body.variants.length === 8 && list.body.attributeKeys.includes('Size') && list.body.attributeKeys.includes('Colour'), short(list.body.attributeKeys))
+
+      await withTenantTransaction(f.tenantId, (tx) => applyStockChange(tx, { tenantId: f.tenantId, warehouseId: f.wh, itemId: v.id, mode: 'delta', qty: 5, referenceType: 'test_seed', source: 'system', userId: f.userId }))
+      const browse = await json(await listItems(req('GET', `/api/items?inStockOnly=true&hideVariants=true&warehouseId=${f.wh}&pageSize=200`)))
+      const ids = (browse.body.data as J[]).map((i) => i.id)
+      check('POS browse: the product shows (stock is on a variant), its variants do not', ids.includes(shirt) && !ids.includes(v.id), short(ids))
+      check('POS browse: the product is marked as having variants', (browse.body.data as J[]).find((i) => i.id === shirt)?.hasVariants === true)
+      const search = await json(await listItems(req('GET', `/api/items?inStockOnly=true&search=Black&warehouseId=${f.wh}`)))
+      check('POS search finds the in-stock variant itself', (search.body.data as J[]).some((i) => i.id === v.id), short(search.body.data))
+      const sold = await sale(f, { cartItems: [{ itemId: v.id, name: 'Polo S Black', quantity: 2, unitPrice: 1500 }], paymentMethod: 'cash', subtotal: 3000, total: 3000, amountPaid: 3000 })
+      const left = Number((await admin.query(`SELECT current_stock FROM warehouse_stock WHERE item_id = $1 AND warehouse_id = $2`, [v.id, f.wh])).rows[0]?.current_stock)
+      check('selling a variant takes its own stock', sold.status === 200 && left === 3, `${sold.status} ${left}`)
     })
 
     await step('switch catalogue', async () => {
