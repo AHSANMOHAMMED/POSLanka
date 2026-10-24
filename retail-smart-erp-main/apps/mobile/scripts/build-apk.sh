@@ -58,6 +58,6 @@ cd ..
 
 VERSION="$(node -p "require('./app.json').expo.version")"
 mkdir -p dist
-OUT="dist/POSLanka-${VERSION}.apk"
+OUT="dist/skyERPOS-${VERSION}.apk"
 cp android/app/build/outputs/apk/release/app-release.apk "$OUT"
 echo "✔ $OUT ($(du -h "$OUT" | cut -f1))"
