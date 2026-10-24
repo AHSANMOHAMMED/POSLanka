@@ -13,6 +13,7 @@ import {
   OUTPUT_VAT_CSV_COLUMNS,
   toCsv,
 } from '@/lib/reports/vat'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD')
 const querySchema = z.object({
@@ -29,6 +30,9 @@ export async function GET(request: NextRequest) {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const permError = requirePermission(session, 'viewReports')
     if (permError) return permError
+    // K4: a company-wide report, not split by branch: refused for branch-restricted users
+    const branchError = await requireAllBranches(session)
+    if (branchError) return branchError
 
     const parsed = validateSearchParams(request, querySchema)
     if (!parsed.success) return parsed.response

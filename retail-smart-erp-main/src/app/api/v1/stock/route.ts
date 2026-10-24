@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { items, warehouseStock, warehouses } from '@/lib/db/schema'
 import { withApiKey } from '@/lib/auth/api-keys'
 import { v1Iso, v1Page, v1PageSchema, v1Query } from '@/lib/api-v1'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 const listSchema = v1PageSchema.extend({
   warehouseId: z.string().uuid().optional(),
@@ -23,6 +24,9 @@ export async function GET(request: NextRequest) {
     return withTenant(session.user.tenantId, async (db) => {
       const conditions = [eq(items.trackStock, true)]
       if (warehouseId) conditions.push(eq(warehouseStock.warehouseId, warehouseId))
+      // K4: a key acting for a branch-restricted user sees that user's branches only
+      const branchCond = branchFilter(await getBranchScope(session, db), warehouseStock.warehouseId)
+      if (branchCond) conditions.push(branchCond)
       if (itemId) conditions.push(eq(warehouseStock.itemId, itemId))
       if (updatedSince) conditions.push(gte(warehouseStock.updatedAt, updatedSince))
       const where = and(...conditions)

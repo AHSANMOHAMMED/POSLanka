@@ -4,13 +4,14 @@ import { requirePermission } from '@/lib/auth/roles'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { withTenant } from '@/lib/db'
 import { heldSales, customers, vehicles } from '@/lib/db/schema'
-import { eq, desc, sql, gt } from 'drizzle-orm'
+import { eq, desc, sql, gt, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { heldSalesListSchema, createHeldSaleSchema } from '@/lib/validation/schemas/held-sales'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getBranchScope, branchFilter, branchDeniedResponse, canAccessBranch } from '@/lib/auth/branch-access'
 
 // Default expiration time in hours
 const DEFAULT_EXPIRATION_HOURS = 24
@@ -40,8 +41,11 @@ export async function GET(request: NextRequest) {
         ? undefined  // No filter - include all
         : gt(heldSales.expiresAt, sql`NOW()`)  // Only non-expired
 
+      // K4: branch-restricted cashiers only see bills held at their own branches
+      const branchCond = branchFilter(await getBranchScope(session, db), heldSales.warehouseId, { includeUnassigned: true })
+
       const result = await db.query.heldSales.findMany({
-        where: whereCondition,
+        where: and(whereCondition, branchCond),
         with: {
           customer: true,
           vehicle: true,
@@ -85,6 +89,11 @@ export async function POST(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a branch-restricted cashier holds bills at their own branches only
+      const scope = await getBranchScope(session, db)
+      if (warehouseId && !canAccessBranch(scope, warehouseId)) return branchDeniedResponse(scope, db)
+      const heldWarehouseId = warehouseId || scope?.[0] || null
+
       // Variables for denormalized fields
       let resolvedCustomerName = customerName
       let resolvedVehiclePlate = vehiclePlate
@@ -128,7 +137,7 @@ export async function POST(request: NextRequest) {
           holdNumber,
           customerId: customerId || null,
           vehicleId: vehicleId || null,
-          warehouseId: warehouseId || null,
+          warehouseId: heldWarehouseId,
           // Denormalized fields for display
           customerName: resolvedCustomerName || null,
           vehiclePlate: resolvedVehiclePlate || null,

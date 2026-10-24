@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // POST submit estimate to insurance
 export async function POST(
@@ -34,6 +35,10 @@ export async function POST(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, estimateId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Get estimate with items (RLS scopes to tenant)
       const estimate = await db.query.insuranceEstimates.findFirst({
         where: eq(insuranceEstimates.id, estimateId),

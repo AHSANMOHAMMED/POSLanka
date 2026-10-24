@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { warehouses } from '@/lib/db/schema'
@@ -10,6 +10,7 @@ import { tenantToday } from '@/lib/accounting/gl'
 import { tenantDayRange } from '@/lib/reports/date-range'
 import { ownerDashboard } from '@/lib/dashboard/owner'
 import { logError } from '@/lib/ai/error-logger'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter } from '@/lib/auth/branch-access'
 
 /**
  * GET /api/dashboard/owner?warehouseId=&fromDate=&toDate=&topItems=
@@ -33,10 +34,14 @@ export async function GET(request: NextRequest) {
     const range = await tenantDayRange(tenantId, fromDate, toDate)
 
     return await withTenant(tenantId, async (db) => {
+      // K4: a branch-restricted manager sees the figures of their own branches only
+      const scope = await getBranchScope(session, db)
+      if (parsed.data.warehouseId && !canAccessBranch(scope, parsed.data.warehouseId)) return branchDeniedResponse(scope, db)
       const branches = await db.select({ id: warehouses.id, name: warehouses.name })
-        .from(warehouses).where(eq(warehouses.isActive, true)).orderBy(asc(warehouses.name))
+        .from(warehouses).where(and(eq(warehouses.isActive, true), branchFilter(scope, warehouses.id))).orderBy(asc(warehouses.name))
       const figures = await ownerDashboard(db, {
-        tenantId, warehouseId: parsed.data.warehouseId || null, from: range.from, to: range.to, today, topItems: parsed.data.topItems,
+        tenantId, warehouseId: parsed.data.warehouseId || null, warehouseIds: scope,
+        from: range.from, to: range.to, today, topItems: parsed.data.topItems,
       })
       return NextResponse.json({
         period: { fromDate, toDate, timezone: range.tz },

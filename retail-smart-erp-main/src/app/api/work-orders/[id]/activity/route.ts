@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { activityLogs, users } from '@/lib/db/schema'
+import { activityLogs, users, workOrders } from '@/lib/db/schema'
 import { eq, and, desc } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET /api/work-orders/[id]/activity - Get activity log for a work order
 export async function GET(
@@ -28,6 +29,10 @@ export async function GET(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const logs = await db
         .select({
           id: activityLogs.id,

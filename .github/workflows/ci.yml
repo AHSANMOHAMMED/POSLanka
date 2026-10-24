@@ -161,6 +161,8 @@ jobs:
           for t in h1-pos-controls h2-tax h3-inventory-purchasing h5-pricing-catalog j1-pharmacy-features k1-cheques-expenses; do
             npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
           done
+      - name: Branch isolation (staff of one branch cannot see or change another)
+        run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/k4-branches.ts
       - name: Platform (offline sync, backup, API keys, dashboard, read permissions)
         run: npx tsx --tsconfig scripts/tests/h4-harness/tsconfig.json scripts/tests/h4-platform.ts
       - name: Vendor roles & module access, non-functional (timeouts, fan-out, CSRF, retention)

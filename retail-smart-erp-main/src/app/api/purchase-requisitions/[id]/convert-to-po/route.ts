@@ -9,6 +9,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { convertRequisitionToPOSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // POST - Convert approved requisition to purchase order
 export async function POST(
@@ -26,6 +27,9 @@ export async function POST(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'managePurchases')
     if (permError) return { error: permError }
+    // K4: a branch-restricted user works with their own branches only
+    const branchDenied = await assertBranchAccess(session, body.warehouseId, tx)
+    if (branchDenied) return { error: branchDenied }
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return { error: quotaError }

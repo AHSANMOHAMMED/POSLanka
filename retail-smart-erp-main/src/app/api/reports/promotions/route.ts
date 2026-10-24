@@ -5,6 +5,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { tenantDayRange } from '@/lib/reports/date-range'
 import { logError } from '@/lib/ai/error-logger'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -17,6 +18,9 @@ export async function GET(request: NextRequest) {
     if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const permError = requirePermission(session, 'viewReports')
     if (permError) return permError
+    // K4: a company-wide report, not split by branch: refused for branch-restricted users
+    const branchError = await requireAllBranches(session)
+    if (branchError) return branchError
 
     const { searchParams } = new URL(request.url)
     const fromDate = searchParams.get('fromDate') || ''

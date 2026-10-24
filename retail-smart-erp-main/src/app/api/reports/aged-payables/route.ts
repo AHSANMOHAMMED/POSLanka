@@ -3,6 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { getAgedPayables } from '@/lib/reports/inventory'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 
 export async function GET(request: NextRequest) {
   const session = await authWithCompany()
@@ -12,6 +13,9 @@ export async function GET(request: NextRequest) {
 
   const permError = requirePermission(session, 'viewReports')
   if (permError) return permError
+  // K4: a company-wide report, not split by branch: refused for branch-restricted users
+  const branchError = await requireAllBranches(session)
+  if (branchError) return branchError
 
   const { searchParams } = new URL(request.url)
   const asOfDate = searchParams.get('asOfDate') || undefined

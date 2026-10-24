@@ -9,6 +9,7 @@ import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { validateBody } from '@/lib/validation/helpers'
 import { logError } from '@/lib/ai/error-logger'
 import { z } from 'zod'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 const bulkBreakdownSchema = z.object({
   warehouseId: z.string().uuid(),
@@ -49,6 +50,9 @@ export async function POST(request: NextRequest) {
       if (!warehouse) {
         return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
       }
+      // K4: only the user's own branches
+      const branchDenied = await assertBranchAccess(session, body.warehouseId, tx)
+      if (branchDenied) return { error: branchDenied }
 
       const [sourceItem] = await tx.select().from(items).where(eq(items.id, body.sourceItemId)).limit(1)
       const [targetItem] = await tx.select().from(items).where(eq(items.id, body.targetItemId)).limit(1)

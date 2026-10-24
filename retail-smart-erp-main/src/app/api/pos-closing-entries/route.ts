@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { posClosingEntries } from '@/lib/db/schema'
-import { eq, desc, and, sql } from 'drizzle-orm'
+import { posClosingEntries, posOpeningEntries } from '@/lib/db/schema'
+import { eq, desc, and, sql, inArray } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation'
 import { posClosingListSchema } from '@/lib/validation/schemas/pos'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { getBranchScope } from '@/lib/auth/branch-access'
 
 // GET list of closing entries
 export async function GET(request: NextRequest) {
@@ -35,6 +36,13 @@ export async function GET(request: NextRequest) {
         where = where
           ? and(where, eq(posClosingEntries.userId, userId))
           : eq(posClosingEntries.userId, userId)
+      }
+      // K4: branch-restricted staff only see closings of their own branches' shifts
+      const scope = await getBranchScope(session, db)
+      if (scope) {
+        const branchCond = inArray(posClosingEntries.openingEntryId,
+          db.select({ id: posOpeningEntries.id }).from(posOpeningEntries).where(inArray(posOpeningEntries.warehouseId, scope)))
+        where = where ? and(where, branchCond) : branchCond
       }
 
       const entries = await db.query.posClosingEntries.findMany({

@@ -9,6 +9,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseOrderSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // Valid status transitions
 // Note: 'partially_received' and 'fully_received' are set by the /receive endpoint, not direct status changes
@@ -36,6 +37,9 @@ export async function GET(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, purchaseOrders, id)
+    if (branchDenied) return { error: branchDenied }
 
     // Get purchase order with joins (RLS filters by tenant)
     const [order] = await db
@@ -141,6 +145,9 @@ export async function PUT(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'managePurchases')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, tx, purchaseOrders, id)
+    if (branchDenied) return { error: branchDenied }
 
     // Lock and get current order to prevent race conditions (RLS filters by tenant)
     const [currentOrder] = await tx
@@ -208,6 +215,9 @@ export async function PUT(
     if (warehouseId !== undefined && warehouseId !== currentOrder.warehouseId) {
       const [w] = await tx.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.id, warehouseId))
       if (!w) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
+      // K4: an order can only be moved to one of the user's own branches
+      const moveDenied = await assertBranchAccess(session, warehouseId, tx)
+      if (moveDenied) return { error: moveDenied }
     }
 
     // Build update data
@@ -301,6 +311,9 @@ export async function DELETE(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'managePurchases')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, tx, purchaseOrders, id)
+    if (branchDenied) return { error: branchDenied }
 
     // Get current order (RLS filters by tenant)
     const [currentOrder] = await tx

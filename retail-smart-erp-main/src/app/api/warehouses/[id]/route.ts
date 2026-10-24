@@ -10,6 +10,7 @@ import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateWarehouseSchema } from '@/lib/validation/schemas/stock'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET single warehouse with summary
 export async function GET(
@@ -35,6 +36,10 @@ export async function GET(
       if (!warehouse) {
         return NextResponse.json({ error: 'Warehouse not found' }, { status: 404 })
       }
+
+      // K4: a branch-restricted user can only open or change their own branches
+      const branchDenied = await assertBranchAccess(session, id, db)
+      if (branchDenied) return branchDenied
 
       // Get stock count for this warehouse (RLS scopes the query)
       const [{ stockCount }] = await db
@@ -92,6 +97,10 @@ export async function PUT(
       if (!existing) {
         return NextResponse.json({ error: 'Warehouse not found' }, { status: 404 })
       }
+
+      // K4: a branch-restricted user can only open or change their own branches
+      const branchDenied = await assertBranchAccess(session, id, db)
+      if (branchDenied) return branchDenied
 
       // Check for concurrent modification
       if (expectedUpdatedAt) {
@@ -245,6 +254,10 @@ export async function DELETE(
       if (!existing) {
         return NextResponse.json({ error: 'Warehouse not found' }, { status: 404 })
       }
+
+      // K4: a branch-restricted user can only open or change their own branches
+      const branchDenied = await assertBranchAccess(session, id, db)
+      if (branchDenied) return branchDenied
 
       // Cannot delete default warehouse
       if (existing.isDefault) {

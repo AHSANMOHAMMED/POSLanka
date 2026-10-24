@@ -18,6 +18,7 @@ import { SAFE_USER } from '@/lib/db/safe-columns'
 import { restoreSaleLineBatches } from '@/lib/inventory/batches'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // Issue #24: Expanded workflow with intermediate states
 const validStatusTransitions: Record<string, string[]> = {
@@ -49,6 +50,10 @@ export async function GET(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (tenantDb) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tenantDb, workOrders, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const workOrder = await tenantDb.query.workOrders.findFirst({
         where: eq(workOrders.id, id),
         with: {
@@ -261,6 +266,13 @@ export async function PUT(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (tenantDb) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tenantDb, workOrders, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+      // K4: a job card can only be moved to one of the user's own branches
+      const moveDenied = await assertBranchAccess(session, warehouseId, tenantDb)
+      if (moveDenied) return moveDenied
+
       // Use transaction with FOR UPDATE to prevent TOCTOU race condition
       const result = await tenantDb.transaction(async (tx) => {
         // Lock and get current work order to validate status transition (RLS scopes the query)
@@ -850,6 +862,10 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (tenantDb) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tenantDb, workOrders, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Fetch inspections with their photos before deletion (for file cleanup) - RLS scopes
       const inspectionsToCleanup = await tenantDb.query.vehicleInspections.findMany({
         where: eq(vehicleInspections.workOrderId, id),

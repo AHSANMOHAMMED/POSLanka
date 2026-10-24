@@ -16,6 +16,7 @@ import { createSerialMovement } from '@/lib/inventory/serial-numbers'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSerialNumberSchema } from '@/lib/validation/schemas/items'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 type SerialNumberStatus = 'available' | 'reserved' | 'sold' | 'returned' | 'defective' | 'scrapped' | 'lost'
 
@@ -35,6 +36,10 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, itemSerialNumbers, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Get serial number with item and warehouse info
       const [serialNumber] = await db
         .select({
@@ -122,6 +127,11 @@ export async function PUT(
     const userId = session!.user.id
 
     return await withTenant(tenantId, async (db) => {
+      // K4: only serial numbers of the user's own branches, moved to their own branches
+      const branchDenied = await assertRecordBranch(session, db, itemSerialNumbers, id, { includeUnassigned: true })
+        || await assertBranchAccess(session, body.warehouseId, db)
+      if (branchDenied) return branchDenied
+
       return await db.transaction(async (tx) => {
         // Lock and get current serial number
         const [current] = await tx

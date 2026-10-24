@@ -7,6 +7,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateItemBatchSchema } from '@/lib/validation/schemas/items'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertBranchAccess, assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET - Single batch detail
 export async function GET(
@@ -43,11 +44,15 @@ export async function GET(
       .where(eq(itemBatches.id, id))
 
     if (!batch) return { notFound: true }
+    // K4: batches of another branch are not shown to branch-restricted staff
+    const branchDenied = await assertBranchAccess(session, batch.warehouseId, db)
+    if (branchDenied) return { denied: branchDenied }
     return { data: batch }
   })
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if ('notFound' in result) return NextResponse.json({ error: 'Batch not found' }, { status: 404 })
+  if ('denied' in result) return result.denied
   return NextResponse.json(result.data)
 }
 
@@ -67,6 +72,9 @@ export async function PUT(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'manageItems')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, tx, itemBatches, id, { includeUnassigned: true })
+    if (branchDenied) return { error: branchDenied }
 
     const [existing] = await tx.select()
       .from(itemBatches)

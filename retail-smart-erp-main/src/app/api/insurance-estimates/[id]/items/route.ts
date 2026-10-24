@@ -11,6 +11,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addEstimateItemSchema, updateEstimateItemSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // Quantity of an inventory item already on this estimate (optionally excluding one line).
 // getAvailableStock() excludes the whole estimate's reservation, so callers add this back.
@@ -114,6 +115,9 @@ export async function POST(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'manageInsuranceEstimates')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, estimateId, { includeUnassigned: true })
+    if (branchDenied) return { error: branchDenied }
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return { error: quotaError }
@@ -260,6 +264,9 @@ export async function PUT(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'manageInsuranceEstimates')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, estimateId, { includeUnassigned: true })
+    if (branchDenied) return { error: branchDenied }
 
     const estimate = await db.query.insuranceEstimates.findFirst({
       where: eq(insuranceEstimates.id, estimateId),
@@ -425,6 +432,9 @@ export async function DELETE(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'manageInsuranceEstimates')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, estimateId, { includeUnassigned: true })
+    if (branchDenied) return { error: branchDenied }
 
     const estimate = await db.query.insuranceEstimates.findFirst({
       where: eq(insuranceEstimates.id, estimateId),

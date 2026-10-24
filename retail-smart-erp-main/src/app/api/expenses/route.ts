@@ -18,6 +18,7 @@ import { ChequeError } from '@/lib/cheques/cheques'
 import { ExpenseError, nextExpenseNo, payExpense } from '@/lib/expenses/expenses'
 import { expenseErrorResponse, canManageExpenses } from '@/lib/expenses/route-helpers'
 import { notify } from '@/lib/notifications/notify'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchDeniedMessage } from '@/lib/auth/branch-access'
 
 const STATUSES = ['pending', 'approved', 'rejected', 'paid', 'void'] as const
 
@@ -47,6 +48,10 @@ export async function GET(request: NextRequest) {
       }
       if (q.categoryId) conds.push(eq(expenses.categoryId, q.categoryId))
       if (q.warehouseId) conds.push(eq(expenses.warehouseId, q.warehouseId))
+      // K4: branch-restricted users see their own branches' expenses (and their own claims)
+      const scope = await getBranchScope(session, db)
+      if (q.warehouseId && !canAccessBranch(scope, q.warehouseId)) return branchDeniedResponse(scope, db)
+      if (scope) conds.push(or(inArray(expenses.warehouseId, scope), eq(expenses.createdBy, me), eq(expenses.claimantId, me))!)
       if (q.paidFrom) conds.push(eq(expenses.paidFrom, q.paidFrom))
       if (q.openingEntryId) conds.push(eq(expenses.posOpeningEntryId, q.openingEntryId))
       if (q.fromDate) conds.push(sql`${expenses.expenseDate} >= ${q.fromDate}::date`)
@@ -146,6 +151,10 @@ export async function POST(request: NextRequest) {
     const today = await tenantToday(tenantId)
 
     const expense = await withTenantTransaction(tenantId, async (tx) => {
+      // K4: a branch-restricted user records expenses for their own branches (default: their first)
+      const scope = await getBranchScope(session, tx)
+      if (body.warehouseId && !canAccessBranch(scope, body.warehouseId)) throw new ExpenseError('BRANCH_ACCESS_DENIED', await branchDeniedMessage(scope, tx), 403)
+      const expenseWarehouseId = body.warehouseId || scope?.[0] || null
       if (body.categoryId) {
         const [cat] = await tx.select({ id: expenseCategories.id }).from(expenseCategories).where(eq(expenseCategories.id, body.categoryId))
         if (!cat) throw new ExpenseError('NOT_FOUND', 'Expense category not found', 404)
@@ -165,7 +174,7 @@ export async function POST(request: NextRequest) {
         description: body.description || null,
         notes: body.notes || null,
         attachmentUrl: body.attachmentUrl || null,
-        warehouseId: body.warehouseId || null,
+        warehouseId: expenseWarehouseId,
         claimantId: body.kind === 'reimbursement' ? (body.claimantId || userId) : null,
         createdBy: userId,
       }).returning()

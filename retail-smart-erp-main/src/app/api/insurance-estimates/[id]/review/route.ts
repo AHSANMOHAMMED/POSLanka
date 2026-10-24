@@ -11,6 +11,7 @@ import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { reviewEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // PUT record insurance review response
 export async function PUT(
@@ -43,6 +44,10 @@ export async function PUT(
     // Execute with RLS tenant context
     // withTenant already wraps in a transaction — no nested db.transaction() which resets SET LOCAL RLS context.
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, estimateId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Lock and get estimate with items (RLS scopes to tenant)
       const [lockedEstimate] = await db
         .select()

@@ -17,6 +17,7 @@ import { voidSaleSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { getSaleLineBatches, restoreSaleLineBatches } from '@/lib/inventory/batches'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET single sale
 export async function GET(
@@ -55,6 +56,10 @@ export async function GET(
       if (!sale) {
         return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
       }
+
+      // K4: a sale of another branch is not shown to branch-restricted staff
+      const branchDenied = await assertBranchAccess(session, sale.warehouseId, db)
+      if (branchDenied) return branchDenied
 
       // Filter payment data to only include safe fields
       const filteredPayments = (sale.payments || []).map(p => ({
@@ -117,6 +122,11 @@ export async function PUT(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: branch-restricted staff can only void sales of their own branches
+      const target = await db.query.sales.findFirst({ where: eq(sales.id, id), columns: { warehouseId: true } })
+      const branchDenied = await assertBranchAccess(session, target?.warehouseId, db)
+      if (branchDenied) return branchDenied
+
       // Use transaction for atomic operations
       const result = await db.transaction(async (tx) => {
         // Lock and get current sale (RLS scopes the query)

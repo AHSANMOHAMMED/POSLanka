@@ -16,6 +16,7 @@ import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchasesListSchema, createPurchaseSchema } from '@/lib/validation/schemas/purchases'
 import { nextDocNo } from '@/lib/documents/numbering'
 import { findDuplicateSupplierInvoice, duplicateSupplierInvoiceResponse } from '@/lib/purchasing/supplier-invoice'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET all purchases for the tenant (with pagination support)
 export async function GET(request: NextRequest) {
@@ -52,6 +53,12 @@ export async function GET(request: NextRequest) {
       if (filterWarehouseId) {
         conditions.push(eq(purchases.warehouseId, filterWarehouseId))
       }
+
+      // K4: branch-restricted users see their own branches' documents only
+      const scope = await getBranchScope(session, db)
+      if (filterWarehouseId && !canAccessBranch(scope, filterWarehouseId)) return { error: await branchDeniedResponse(scope, db) }
+      const branchCond = branchFilter(scope, purchases.warehouseId)
+      if (branchCond) conditions.push(branchCond)
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
@@ -232,6 +239,9 @@ export async function POST(request: NextRequest) {
       if (!warehouse) {
         return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
       }
+      // K4: a branch-restricted user buys into their own branches only
+      const branchDenied = await assertBranchAccess(session, warehouseId, tx)
+      if (branchDenied) return { error: branchDenied }
 
       // A linked purchase order must exist in this tenant, belong to the same supplier and be live
       if (purchaseOrderId) {

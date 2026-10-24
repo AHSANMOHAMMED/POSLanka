@@ -17,6 +17,7 @@ import { receiveIntoBatch } from '@/lib/purchasing/batch-receipt'
 import { postGoodsReceiptToGL } from '@/lib/accounting/auto-post'
 import { grnPostedValue } from '@/lib/purchasing/srbnb'
 import { tenantToday } from '@/lib/accounting/gl'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // POST receive items for a purchase order (partial receiving)
 export async function POST(
@@ -42,6 +43,9 @@ export async function POST(
     result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'managePurchases')
       if (permError) return { error: permError }
+      // K4: documents of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tx, purchaseOrders, id)
+      if (branchDenied) return { error: branchDenied }
 
       // Get purchase order with lock (RLS filters by tenant)
       const [order] = await tx

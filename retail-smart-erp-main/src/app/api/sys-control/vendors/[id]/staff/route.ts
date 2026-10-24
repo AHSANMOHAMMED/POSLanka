@@ -24,6 +24,8 @@ const createSchema = z.object({
   email: z.preprocess(blank, staffLoginSchema.optional()),
   password: z.preprocess(blank, passwordSchema.optional()),
   pin: z.preprocess(blank, z.string().regex(/^\d{4,6}$/, 'PIN must be 4-6 digits').optional()),
+  // K4: the branches this staff member works in (none = every branch, or the only one)
+  warehouseIds: z.array(z.string().uuid()).max(100).optional(),
 })
 
 const updateSchema = z.object({
@@ -78,6 +80,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         role: parsed.data.role,
         password: parsed.data.password,
         pin: parsed.data.pin,
+        warehouseIds: parsed.data.warehouseIds,
       })))
     } catch (err) {
       if (err instanceof StaffError) return NextResponse.json({ error: err.message }, { status: err.status })
@@ -87,7 +90,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { generatedPassword, ...user } = created
     await adminAudit.create(session.superAdminId, 'tenant_user', user.id, {
       op: 'create_staff', tenantId: tenant.id, tenantName: tenant.name, businessId: tenant.businessId,
-      email: user.email, fullName: user.fullName, role: user.role, passwordGenerated: !!generatedPassword,
+      email: user.email, fullName: user.fullName, role: user.role, passwordGenerated: !!generatedPassword, warehouseIds: user.warehouseIds,
     })
     return NextResponse.json({ success: true, user, generatedPassword }, { status: 201 })
   } catch (error) {

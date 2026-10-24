@@ -12,6 +12,7 @@ import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
 import { logError } from '@/lib/ai/error-logger'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // POST - Apply bulk stock adjustments (each line: set stock to newQuantity)
 // H3: all-or-nothing — one failing line (unknown item, GL posting failure, …) rolls the whole
@@ -43,6 +44,9 @@ export async function POST(request: NextRequest) {
       const [warehouse] = await tx.select({ id: warehouses.id }).from(warehouses)
         .where(eq(warehouses.id, body.warehouseId)).limit(1)
       if (!warehouse) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
+      // K4: a branch-restricted stock keeper adjusts their own branches only
+      const branchDenied = await assertBranchAccess(session, body.warehouseId, tx)
+      if (branchDenied) return { error: branchDenied }
 
       // Configuration problems fail before anything is written
       const acctError = await requireAccountingConfig(tx, tenantId, 'stock_adjustment')

@@ -22,6 +22,7 @@ import { findDuplicateSupplierInvoice, duplicateSupplierInvoiceResponse } from '
 import { unbilledGrnStock } from '@/lib/purchasing/grn-coverage'
 import { planGrnClearing } from '@/lib/purchasing/srbnb'
 import { evaluateThreeWayMatch, matchBlockedMessage } from '@/lib/purchasing/three-way-match'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // POST create invoice from purchase order
 export async function POST(
@@ -47,6 +48,9 @@ export async function POST(
     result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'managePurchases')
       if (permError) return { error: permError }
+      // K4: documents of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tx, purchaseOrders, id)
+      if (branchDenied) return { error: branchDenied }
 
       // Get purchase order with lock to prevent double invoicing (RLS filters by tenant)
       const [order] = await tx

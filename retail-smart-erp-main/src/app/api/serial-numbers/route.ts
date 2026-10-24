@@ -7,6 +7,7 @@ import { escapeLikePattern } from '@/lib/utils/sql'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation'
 import { serialNumbersListSchema } from '@/lib/validation/schemas/items'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 // GET - List serial numbers with pagination
 export async function GET(request: NextRequest) {
@@ -20,6 +21,9 @@ export async function GET(request: NextRequest) {
       if (permError) return { error: permError }
 
       const conditions = []
+      // K4: branch-restricted users see their own branches' serial numbers (and unplaced ones)
+      const branchCond = branchFilter(await getBranchScope(session, db), itemSerialNumbers.warehouseId, { includeUnassigned: true })
+      if (branchCond) conditions.push(branchCond)
 
       if (search) {
         const escaped = escapeLikePattern(search)

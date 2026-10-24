@@ -1,7 +1,7 @@
 // Sales report calculation logic
 // All reports query from sales, sale_items, payments tables
 
-import { eq, and, sql, gte, lte } from 'drizzle-orm'
+import { eq, and, sql, gte, lte, inArray } from 'drizzle-orm'
 import { sales, saleItems, payments, items, glEntries, chartOfAccounts } from '@/lib/db/schema'
 import { tenantDayRange, localTs } from './date-range'
 
@@ -15,6 +15,8 @@ export async function getSalesSummary(
     fromDate: string
     toDate: string
     groupBy?: 'day' | 'week' | 'month' | 'customer' | 'salesperson' | 'payment_method'
+    /** K4: only these branches (branch-restricted users) */
+    warehouseIds?: string[] | null
   }
 ) {
   const { fromDate, toDate, groupBy = 'day' } = filters
@@ -32,6 +34,7 @@ export async function getSalesSummary(
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
+      filters.warehouseIds ? inArray(sales.warehouseId, filters.warehouseIds) : undefined,
       gte(sales.createdAt, range.from),
       lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
@@ -84,6 +87,7 @@ export async function getSalesSummary(
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
+      filters.warehouseIds ? inArray(sales.warehouseId, filters.warehouseIds) : undefined,
       gte(sales.createdAt, range.from),
       lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
@@ -115,7 +119,7 @@ export async function getSalesSummary(
 export async function getSalesByItem(
   db: DbInstance,
   tenantId: string,
-  filters: { fromDate: string; toDate: string; categoryId?: string }
+  filters: { fromDate: string; toDate: string; categoryId?: string; warehouseIds?: string[] | null }
 ) {
   const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const conditions = [
@@ -126,6 +130,9 @@ export async function getSalesByItem(
   ]
   if (filters.categoryId) {
     conditions.push(eq(items.categoryId, filters.categoryId))
+  }
+  if (filters.warehouseIds) {
+    conditions.push(inArray(sales.warehouseId, filters.warehouseIds))
   }
 
   const data = await db.select({
@@ -159,7 +166,7 @@ export async function getSalesByItem(
 export async function getSalesByCustomer(
   db: DbInstance,
   tenantId: string,
-  filters: { fromDate: string; toDate: string }
+  filters: { fromDate: string; toDate: string; warehouseIds?: string[] | null }
 ) {
   const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const data = await db.select({
@@ -173,6 +180,7 @@ export async function getSalesByCustomer(
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
+      filters.warehouseIds ? inArray(sales.warehouseId, filters.warehouseIds) : undefined,
       gte(sales.createdAt, range.from),
       lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
@@ -194,7 +202,7 @@ export async function getSalesByCustomer(
 export async function getDailySales(
   db: DbInstance,
   tenantId: string,
-  filters: { fromDate: string; toDate: string }
+  filters: { fromDate: string; toDate: string; warehouseIds?: string[] | null }
 ) {
   const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const data = await db.select({
@@ -206,6 +214,7 @@ export async function getDailySales(
     .from(sales)
     .where(and(
       eq(sales.tenantId, tenantId),
+      filters.warehouseIds ? inArray(sales.warehouseId, filters.warehouseIds) : undefined,
       gte(sales.createdAt, range.from),
       lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,
@@ -224,6 +233,7 @@ export async function getDailySales(
     .innerJoin(sales, eq(payments.saleId, sales.id))
     .where(and(
       eq(payments.tenantId, tenantId),
+      filters.warehouseIds ? inArray(sales.warehouseId, filters.warehouseIds) : undefined,
       gte(sales.createdAt, range.from),
       lte(sales.createdAt, range.to),
       sql`${sales.status} != 'void'`,

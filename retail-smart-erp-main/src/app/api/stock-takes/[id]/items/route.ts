@@ -7,6 +7,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateStockTakeItemsSchema } from '@/lib/validation/schemas/stock'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // PUT - Bulk update counted quantities
 export async function PUT(
@@ -24,6 +25,10 @@ export async function PUT(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'manageInventory')
     if (permError) return { error: permError }
+
+    // K4: only counts of the user's own branches
+    const branchDenied = await assertRecordBranch(session, tx, stockTakes, id)
+    if (branchDenied) return { error: branchDenied }
 
     const [stockTake] = await tx.select()
       .from(stockTakes)

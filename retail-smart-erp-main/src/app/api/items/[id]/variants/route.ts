@@ -10,6 +10,7 @@ import { validateBody } from '@/lib/validation'
 import { createItem } from '@/lib/inventory/create-item'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { toApiError } from '@/lib/db/errors'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 export async function GET(
   request: NextRequest,
@@ -29,6 +30,10 @@ export async function GET(
     const warehouseId = searchParams.get('warehouseId')
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: stock of another branch is not shown to branch-restricted staff
+      const branchDenied = await assertBranchAccess(session, warehouseId, db)
+      if (branchDenied) return branchDenied
+
       // Find parent item
       const parent = await db.query.items.findFirst({
         where: and(eq(items.id, parentId), eq(items.isActive, true)),

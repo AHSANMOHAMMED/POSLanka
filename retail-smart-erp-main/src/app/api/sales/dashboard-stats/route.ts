@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { sales } from '@/lib/db/schema'
 import { sql, gte, and } from 'drizzle-orm'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 export async function GET() {
   const session = await authWithCompany()
@@ -20,6 +21,8 @@ export async function GET() {
     const weekStart = new Date(todayStart)
     weekStart.setDate(weekStart.getDate() - weekStart.getDay())
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    // K4: branch-restricted users see their own branches' figures
+    const branchCond = branchFilter(await getBranchScope(session, db), sales.warehouseId)
 
     async function periodStats(since: Date) {
       const [result] = await db.select({
@@ -28,7 +31,7 @@ export async function GET() {
         transactionCount: sql<number>`COUNT(CASE WHEN ${sales.isReturn} = false AND ${sales.status} != 'void' THEN 1 END)::int`,
         returnCount: sql<number>`COUNT(CASE WHEN ${sales.isReturn} = true AND ${sales.status} != 'void' THEN 1 END)::int`,
         pendingCount: sql<number>`COUNT(CASE WHEN ${sales.status} = 'pending' THEN 1 END)::int`,
-      }).from(sales).where(gte(sales.createdAt, since))
+      }).from(sales).where(and(gte(sales.createdAt, since), branchCond))
       return result
     }
 
@@ -40,6 +43,7 @@ export async function GET() {
     }).from(sales)
       .where(and(
         gte(sales.createdAt, todayStart),
+        branchCond,
         sql`${sales.isReturn} = false`,
         sql`${sales.status} != 'void'`,
       ))

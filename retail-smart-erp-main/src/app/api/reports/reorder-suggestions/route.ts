@@ -3,6 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { getReorderSuggestions } from '@/lib/reports/inventory'
+import { getBranchScope, canAccessBranch, branchDeniedResponse } from '@/lib/auth/branch-access'
 
 export async function GET(request: NextRequest) {
   const session = await authWithCompany()
@@ -18,8 +19,12 @@ export async function GET(request: NextRequest) {
   const supplierId = searchParams.get('supplierId') || undefined
 
   const result = await withTenant(session.user.tenantId, async (db) => {
-    return getReorderSuggestions(db, session.user.tenantId, { warehouseId, supplierId })
+    // K4: branch-restricted users get suggestions for their own branches only
+    const scope = await getBranchScope(session, db)
+    if (warehouseId && !canAccessBranch(scope, warehouseId)) return branchDeniedResponse(scope, db)
+    return getReorderSuggestions(db, session.user.tenantId, { warehouseId, supplierId, warehouseIds: scope })
   })
+  if (result instanceof Response) return result
 
   return NextResponse.json(result)
 }

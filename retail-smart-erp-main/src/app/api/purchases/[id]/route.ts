@@ -27,6 +27,7 @@ import { evaluateThreeWayMatch, matchBlockedMessage } from '@/lib/purchasing/thr
 import { activeLandedCostFor } from '@/lib/purchasing/landed-cost'
 import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET single purchase with items
 export async function GET(
@@ -40,6 +41,9 @@ export async function GET(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, purchases, id)
+    if (branchDenied) return { error: branchDenied }
 
     // Get purchase with joins (RLS filters by tenant)
     const [purchase] = await db
@@ -169,6 +173,9 @@ export async function PUT(
       result = await withAuthTenantTransaction(async (session, tx) => {
         const permError = requirePermission(session, 'managePurchases')
         if (permError) return { error: permError }
+        // K4: documents of another branch are off limits to branch-restricted staff
+        const branchDenied = await assertRecordBranch(session, tx, purchases, id)
+        if (branchDenied) return { error: branchDenied }
 
         // Get current purchase with lock to prevent concurrent cancellation (RLS filters by tenant)
         const [currentPurchase] = await tx
@@ -375,6 +382,9 @@ export async function PUT(
       result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'managePurchases')
       if (permError) return { error: permError }
+      // K4: documents of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tx, purchases, id)
+      if (branchDenied) return { error: branchDenied }
 
       // Pre-validate accounting config before GL posting
       const acctError = await requireAccountingConfig(null, session.user.tenantId, 'purchase')
@@ -725,6 +735,9 @@ export async function PUT(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'managePurchases')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, purchases, id)
+    if (branchDenied) return { error: branchDenied }
 
     const [currentPurchase] = await db
       .select()
@@ -761,6 +774,9 @@ export async function PUT(
     if (warehouseId !== undefined && warehouseId !== currentPurchase.warehouseId) {
       const [w] = await db.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.id, warehouseId))
       if (!w) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
+      // K4: a draft can only be moved to one of the user's own branches
+      const moveDenied = await assertBranchAccess(session, warehouseId, db)
+      if (moveDenied) return { error: moveDenied }
     }
     const nextSupplierId = supplierId !== undefined ? supplierId : currentPurchase.supplierId
     const nextBillNo = supplierInvoiceNo !== undefined ? supplierInvoiceNo : currentPurchase.supplierInvoiceNo
@@ -850,6 +866,9 @@ export async function DELETE(
     result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'managePurchases')
       if (permError) return { error: permError }
+      // K4: documents of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tx, purchases, id)
+      if (branchDenied) return { error: branchDenied }
 
       // Get current purchase with lock (RLS filters by tenant)
       const [currentPurchase] = await tx

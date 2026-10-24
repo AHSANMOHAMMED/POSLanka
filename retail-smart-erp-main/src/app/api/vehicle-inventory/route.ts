@@ -11,6 +11,7 @@ import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { vehicleInventoryListSchema, createVehicleInventorySchema } from '@/lib/validation/schemas/vehicles'
+import { getBranchScope, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET all vehicle inventory for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -29,6 +30,9 @@ export async function GET(request: NextRequest) {
       // Build where clause (tenantId filter handled by RLS)
       // Vehicles moved to the recycle bin are hidden
       const conditions = [notInRecycleBin('vehicle_inventory', vehicleInventory.id)]
+      // K4: branch-restricted staff see their own branches' vehicles (and ones without a branch)
+      const branchCond = branchFilter(await getBranchScope(session, db), vehicleInventory.warehouseId, { includeUnassigned: true })
+      if (branchCond) conditions.push(branchCond)
       if (search) {
         const escaped = escapeLikePattern(search)
         conditions.push(
@@ -123,6 +127,10 @@ export async function POST(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session!.user.tenantId, async (db) => {
+      // K4: a branch-restricted user stocks vehicles at their own branches only
+      const branchDenied = await assertBranchAccess(session, warehouseId, db)
+      if (branchDenied) return branchDenied
+
       // Check for duplicate stock number within tenant (RLS scopes the query)
       if (stockNo) {
         const existingStockNo = await db.query.vehicleInventory.findFirst({

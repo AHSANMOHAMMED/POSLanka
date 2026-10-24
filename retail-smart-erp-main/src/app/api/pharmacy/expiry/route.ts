@@ -5,6 +5,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { itemBatches, items, warehouses } from '@/lib/db/schema'
 import { logError } from '@/lib/ai/error-logger'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter } from '@/lib/auth/branch-access'
 
 /**
  * GET /api/pharmacy/expiry?days=90&warehouseId= — batches in stock that are expired or expire within
@@ -32,6 +33,11 @@ export async function GET(request: NextRequest) {
     if (warehouseId && /^[0-9a-f-]{36}$/i.test(warehouseId)) where.push(eq(itemBatches.warehouseId, warehouseId))
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: branch-restricted users see their own branches' batches only
+      const scope = await getBranchScope(session, db)
+      if (warehouseId && !canAccessBranch(scope, warehouseId)) return branchDeniedResponse(scope, db)
+      const branchCond = branchFilter(scope, itemBatches.warehouseId, { includeUnassigned: true })
+      if (branchCond) where.push(branchCond)
       const rows = await db.select({
         batchId: itemBatches.id, batchNumber: itemBatches.batchNumber, expiryDate: itemBatches.expiryDate,
         quantity: itemBatches.currentQuantity, status: itemBatches.status,

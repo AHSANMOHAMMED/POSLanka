@@ -30,6 +30,7 @@ import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 /** Payment methods that never sit in the cash drawer / card terminal batch */
 const NON_DRAWER_METHODS = new Set<string>(['credit', 'gift_card'])
@@ -86,6 +87,10 @@ export async function POST(
           error: 'Opening entry not found or already closed' 
         }, { status: 404 })
       }
+
+      // K4: a branch-restricted user closes shifts of their own branches only
+      const branchDenied = await assertBranchAccess(session, openingEntry.warehouseId, db)
+      if (branchDenied) return branchDenied
 
       // Only the owner of the shift or manager/owner can close
       if (openingEntry.userId !== session.user.id && !['owner', 'manager'].includes(session.user.role)) {

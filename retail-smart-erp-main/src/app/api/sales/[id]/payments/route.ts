@@ -16,6 +16,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { ChequeError, chequeAmountFor, insertCheque } from '@/lib/cheques/cheques'
 import { getTenantFeatureFlags } from '@/lib/features/check'
+import { assertBranchAccess, assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET payments for a sale
 export async function GET(
@@ -45,6 +46,10 @@ export async function GET(
       if (!sale) {
         return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
       }
+
+      // K4: payments of another branch's sale are not shown to branch-restricted staff
+      const branchDenied = await assertBranchAccess(session, sale.warehouseId, db)
+      if (branchDenied) return branchDenied
 
       // Get payments (RLS scopes to tenant)
       const salePayments = await db.query.payments.findMany({
@@ -210,6 +215,10 @@ export async function POST(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: branch-restricted staff collect payments only on their own branches' sales
+      const branchDenied = await assertRecordBranch(session, db, sales, saleId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const cashCardAmount = amount
       const creditUsed = creditAmount
       const totalPayment = cashCardAmount + creditUsed

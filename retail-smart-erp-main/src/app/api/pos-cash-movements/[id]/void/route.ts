@@ -12,6 +12,7 @@ import { broadcastChange } from '@/lib/websocket/broadcast'
 import { logActivity } from '@/lib/utils/activity-log'
 import { logError } from '@/lib/ai/error-logger'
 import { ApprovalError, consumeApprovals, coverScopes, verifyApprovalTokens } from '@/lib/auth/approval-token'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 /**
  * POST /api/pos-cash-movements/[id]/void — reverse a paid-in / paid-out while its shift is open.
@@ -51,6 +52,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (shift.userId !== userId && !isSupervisor) {
         return { error: NextResponse.json({ error: 'You can only void cash movements of your own shift', code: 'SHIFT_NOT_YOURS' }, { status: 403 }) }
       }
+      // K4: only drawers of the user's own branches
+      const branchDenied = await assertBranchAccess(session, shift.warehouseId, db)
+      if (branchDenied) return { error: branchDenied }
 
       const approvals = isSupervisor ? [] : verifyApprovalTokens(approvalToken ? [approvalToken] : [], { tenantId, requesterId: session.user.id })
       const cover = coverScopes(['cash_movement_void'], approvals)

@@ -16,6 +16,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { reverseGLEntries, tenantToday } from '@/lib/accounting/gl'
 import { activeLandedCostFor } from '@/lib/purchasing/landed-cost'
 import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET - Single purchase receipt detail
 export async function GET(
@@ -100,6 +101,9 @@ export async function DELETE(
     result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'managePurchases')
       if (permError) return { error: permError }
+      // K4: documents of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tx, purchaseReceipts, id)
+      if (branchDenied) return { error: branchDenied }
 
       // Lock the receipt
       const [receipt] = await tx

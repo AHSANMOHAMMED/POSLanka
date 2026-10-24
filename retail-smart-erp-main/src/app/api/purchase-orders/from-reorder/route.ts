@@ -8,6 +8,7 @@ import { authWithCompany } from '@/lib/auth'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { createReorderDocuments, ReorderError } from '@/lib/purchasing/reorder'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 const schema = z.object({
   mode: z.enum(['purchase_order', 'requisition']).default('purchase_order'),
@@ -36,6 +37,9 @@ export async function POST(request: NextRequest) {
     const result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, body.mode === 'requisition' ? 'createRequisitions' : 'managePurchases')
       if (permError) return { error: permError }
+      // K4: a branch-restricted user works with their own branches only
+      const branchDenied = await assertBranchAccess(session, body.lines.map((l) => l.warehouseId), tx)
+      if (branchDenied) return { error: branchDenied }
       const docs = await createReorderDocuments(tx, {
         tenantId: session.user.tenantId, userId: session.user.id, mode: body.mode, lines: body.lines, source: 'reorder',
       })

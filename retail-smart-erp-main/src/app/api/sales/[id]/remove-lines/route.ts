@@ -12,6 +12,8 @@ import { createReturnInTx } from '@/lib/sales/returns'
 import { notifyReturnAlerts } from '@/lib/notifications/sales-alerts'
 import { saleFlowErrorResponse } from '@/lib/sales/route-helpers'
 import { getTenantSalesSettings } from '@/lib/sales/return-settings'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
+import { sales } from '@/lib/db/schema'
 
 /**
  * POST /api/sales/[id]/remove-lines — "edit a completed bill / remove an item".
@@ -39,6 +41,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (acctError) return acctError
 
     return await withTenant(tenantId, async (db) => {
+      // K4: only bills of the user's own branches
+      const branchDenied = await assertRecordBranch(session, db, sales, p.data.id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const result = await db.transaction(async (tx) => createReturnInTx(tx, { tenantId, userId }, {
         // D1: tenant return settings (serial status, stock vs quarantine)
         ...(await getTenantSalesSettings(tx, tenantId)).returns,

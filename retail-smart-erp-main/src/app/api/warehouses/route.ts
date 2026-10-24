@@ -4,7 +4,8 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { warehouses, userWarehouses } from '@/lib/db/schema'
-import { eq, and, ilike, sql, or } from 'drizzle-orm'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
+import { eq, and, ilike, sql, or, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -44,10 +45,14 @@ export async function GET(request: NextRequest) {
         conditions.push(eq(warehouses.isActive, true))
       }
 
-      const whereClause = conditions.length > 0 ? and(...conditions) : undefined
+      // K4: a branch-restricted user only ever sees their own branches (every dropdown in web and
+      // the app reads this list); the owner and unassigned staff see every branch.
+      const scope = await getBranchScope(session, db)
+      const scoped = branchFilter(scope, warehouses.id)
+      if (scoped) conditions.push(scoped)
 
-      // If userOnly, get user's assigned warehouse IDs first
-      let userWarehouseIds: string[] = []
+      // userOnly: just the branches assigned to this user (none assigned = empty list; the
+      // callers fall back to the full list themselves)
       if (userOnly) {
         const assignments = await db.select({ warehouseId: userWarehouses.warehouseId })
           .from(userWarehouses)
@@ -55,27 +60,18 @@ export async function GET(request: NextRequest) {
             eq(userWarehouses.userId, session.user.id),
             eq(userWarehouses.isActive, true)
           ))
-        userWarehouseIds = assignments.map(a => a.warehouseId)
+        conditions.push(assignments.length > 0 ? inArray(warehouses.id, assignments.map(a => a.warehouseId)) : sql`false`)
       }
+
+      const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
       // Return all warehouses (for dropdowns)
       if (all) {
-        let result = await db.query.warehouses.findMany({
+        const result = await db.query.warehouses.findMany({
           where: whereClause,
           orderBy: (warehouses, { desc, asc }) => [desc(warehouses.isDefault), asc(warehouses.name)],
           limit: 1000,
         })
-
-        // Filter by user's warehouses if requested
-        if (userOnly) {
-          if (userWarehouseIds.length > 0) {
-            result = result.filter(w => userWarehouseIds.includes(w.id))
-          } else {
-            // No warehouse assignments = return empty array (not all warehouses)
-            result = []
-          }
-        }
-
         return NextResponse.json(result)
       }
 
@@ -85,27 +81,15 @@ export async function GET(request: NextRequest) {
         .from(warehouses)
         .where(whereClause)
 
-      let total = Number(count)
+      const total = Number(count)
 
       // Get paginated results
-      let result = await db.query.warehouses.findMany({
+      const result = await db.query.warehouses.findMany({
         where: whereClause,
         orderBy: (warehouses, { desc, asc }) => [desc(warehouses.isDefault), asc(warehouses.name)],
         limit: pageSize,
         offset: (page - 1) * pageSize,
       })
-
-      // Filter by user's warehouses if requested
-      if (userOnly) {
-        if (userWarehouseIds.length > 0) {
-          result = result.filter(w => userWarehouseIds.includes(w.id))
-          total = result.length
-        } else {
-          // No warehouse assignments = return empty array (not all warehouses)
-          result = []
-          total = 0
-        }
-      }
 
       const totalPages = Math.ceil(total / pageSize)
 

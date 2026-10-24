@@ -7,6 +7,7 @@ import { eq, desc } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // E24: Get all revisions with full snapshots for comparison
 export async function GET(
@@ -28,6 +29,10 @@ export async function GET(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Verify estimate exists (RLS scopes to tenant)
       const estimate = await db.query.insuranceEstimates.findFirst({
         where: eq(insuranceEstimates.id, id),

@@ -3,10 +3,11 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { warehouseStock, warehouses, items } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, and } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 // GET warehouse stock details for a specific item
 export async function GET(
@@ -38,14 +39,16 @@ export async function GET(
       }
 
       // Get all warehouses for the tenant (RLS scopes)
+      // K4: branch-restricted users only see their own branches
+      const scope = await getBranchScope(session, db)
       const allWarehouses = await db.query.warehouses.findMany({
-        where: eq(warehouses.isActive, true),
+        where: and(eq(warehouses.isActive, true), branchFilter(scope, warehouses.id)),
         orderBy: (warehouses, { asc }) => [asc(warehouses.name)],
       })
 
       // Get stock entries for this item (RLS scopes)
       const stockEntries = await db.query.warehouseStock.findMany({
-        where: eq(warehouseStock.itemId, id),
+        where: and(eq(warehouseStock.itemId, id), branchFilter(scope, warehouseStock.warehouseId)),
       })
 
       // Create a map of stock by warehouse

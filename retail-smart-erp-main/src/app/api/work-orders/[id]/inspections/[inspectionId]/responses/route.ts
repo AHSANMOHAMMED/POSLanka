@@ -10,6 +10,7 @@ import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { upsertInspectionResponseSchema } from '@/lib/validation/schemas/work-orders'
 import { z } from 'zod'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET responses for an inspection
 export async function GET(
@@ -31,6 +32,10 @@ export async function GET(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Verify work order exists (RLS scopes to tenant)
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),
@@ -95,6 +100,10 @@ export async function POST(
 
     // Execute with RLS tenant context + transaction for atomicity of bulk updates
     return await withTenantTransaction(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Verify access and that inspection is not completed (RLS scopes to tenant)
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),

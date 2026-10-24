@@ -24,6 +24,7 @@ import { billableOrderItems } from '@/lib/restaurant/order-totals'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 // Status workflow: open -> closed -> completed OR cancelled
 const validStatusTransitions: Record<string, string[]> = {
@@ -253,9 +254,11 @@ export async function PUT(
 
               // E1: the sale's warehouse (default active warehouse, never the quarantine location)
               // so stock-tracked lines leave stock and returns / voids put it (and its batches) back.
+              // K4: a branch-restricted user's sale goes to one of their own branches
               const [saleWarehouse] = await tx.select({ id: warehouses.id })
                 .from(warehouses)
-                .where(and(eq(warehouses.isActive, true), sql`upper(${warehouses.code}) <> 'QUARANTINE'`))
+                .where(and(eq(warehouses.isActive, true), sql`upper(${warehouses.code}) <> 'QUARANTINE'`,
+                  branchFilter(await getBranchScope(session, tx), warehouses.id)))
                 .orderBy(desc(warehouses.isDefault))
                 .limit(1)
               const saleWarehouseId = saleWarehouse?.id || null

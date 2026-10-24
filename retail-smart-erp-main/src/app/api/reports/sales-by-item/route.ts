@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { getSalesByItem } from '@/lib/reports/sales'
 import { logError } from '@/lib/ai/error-logger'
+import { getBranchScope } from '@/lib/auth/branch-access'
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,6 +33,8 @@ export async function GET(request: NextRequest) {
 
     return await withTenant(session.user.tenantId, async (db) => {
       const result = await getSalesByItem(db, session.user.tenantId, {
+        // K4: branch-restricted users get their own branches' figures
+        warehouseIds: await getBranchScope(session, db),
         fromDate,
         toDate,
         categoryId: categoryId || undefined,

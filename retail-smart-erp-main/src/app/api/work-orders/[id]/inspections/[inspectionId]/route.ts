@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateInspectionSchema } from '@/lib/validation/schemas/work-orders'
 import { z } from 'zod'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET single inspection
 export async function GET(
@@ -32,6 +33,10 @@ export async function GET(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Verify work order exists (RLS scopes to tenant)
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),
@@ -122,6 +127,10 @@ export async function PUT(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Verify work order exists (RLS scopes to tenant)
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),
@@ -228,6 +237,10 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Verify work order exists (RLS scopes to tenant)
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),

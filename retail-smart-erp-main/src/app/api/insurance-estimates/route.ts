@@ -14,6 +14,7 @@ import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { insuranceEstimatesListSchema, createInsuranceEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getBranchScope, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET all insurance estimates for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -34,6 +35,9 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions (tenantId filter handled by RLS)
       const conditions = []
+      // K4: branch-restricted staff see their own branches' estimates (and ones without a branch)
+      const branchCond = branchFilter(await getBranchScope(session, db), insuranceEstimates.warehouseId, { includeUnassigned: true })
+      if (branchCond) conditions.push(branchCond)
       if (customerId) {
         conditions.push(eq(insuranceEstimates.customerId, customerId))
       }
@@ -161,6 +165,10 @@ export async function POST(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a branch-restricted user estimates for their own branches only
+      const branchDenied = await assertBranchAccess(session, warehouseId, db)
+      if (branchDenied) return branchDenied
+
       // Calculate totals using tax template system
       const lineItems = buildLineItems(items)
       const taxResult = await recalculateDocumentTax(db, session.user.tenantId, lineItems, { type: 'sales' })

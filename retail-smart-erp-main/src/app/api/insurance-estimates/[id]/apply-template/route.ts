@@ -10,6 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { applyTemplateSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 interface TemplateItem {
   itemType: 'service' | 'part'
@@ -49,6 +50,10 @@ export async function POST(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, estimateId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Verify estimate exists and is in draft status (RLS scopes to tenant)
       const estimate = await db.query.insuranceEstimates.findFirst({
         where: eq(insuranceEstimates.id, estimateId),

@@ -16,6 +16,7 @@ import {
 import { validateSearchParams, validateBody, validateParams } from '@/lib/validation/helpers'
 import { itemSerialNumbersListSchema, createItemSerialNumbersSchema } from '@/lib/validation/schemas/items'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { getBranchScope, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET - List serial numbers for an item (paginated)
 export async function GET(
@@ -54,6 +55,9 @@ export async function GET(
           )
         )
       }
+      // K4: branch-restricted users see their own branches' serial numbers (and unplaced ones)
+      const branchCond = branchFilter(await getBranchScope(session, db), itemSerialNumbers.warehouseId, { includeUnassigned: true })
+      if (branchCond) conditions.push(branchCond)
       if (warehouseId) {
         conditions.push(eq(itemSerialNumbers.warehouseId, warehouseId))
       }
@@ -167,6 +171,9 @@ export async function POST(
       if (body.warehouseId) {
         const [wh] = await tx.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.id, body.warehouseId)).limit(1)
         if (!wh) return NextResponse.json({ error: 'Warehouse not found' }, { status: 404 })
+        // K4: only the user's own branches
+        const branchDenied = await assertBranchAccess(session, body.warehouseId, tx)
+        if (branchDenied) return branchDenied
       }
 
       // Serialise concurrent entry of serials for the same item (duplicate check below)

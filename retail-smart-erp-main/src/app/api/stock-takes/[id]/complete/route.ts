@@ -9,6 +9,8 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { completeStockTake, StockTakeCompletionError } from '@/lib/inventory/complete-stock-take'
 import { toApiError } from '@/lib/db/errors'
 import { logError } from '@/lib/ai/error-logger'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
+import { stockTakes } from '@/lib/db/schema'
 
 // POST - Complete stock take: apply (counted - system qty at count) per line through the stock ledger
 export async function POST(
@@ -23,6 +25,10 @@ export async function POST(
     const result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'manageInventory')
       if (permError) return { error: permError }
+
+      // K4: only counts of the user's own branches
+      const branchDenied = await assertRecordBranch(session, tx, stockTakes, id)
+      if (branchDenied) return { error: branchDenied }
 
       const quotaError = await requireQuota(session.user.tenantId, 'standard')
       if (quotaError) return { error: quotaError }

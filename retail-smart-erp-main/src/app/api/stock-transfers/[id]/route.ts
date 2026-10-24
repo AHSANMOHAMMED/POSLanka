@@ -18,6 +18,7 @@ import { updateStockTransferSchema } from '@/lib/validation/schemas/stock'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { getBranchScope, canAccessBranch, branchDeniedResponse } from '@/lib/auth/branch-access'
 
 // GET single stock transfer
 export async function GET(
@@ -58,6 +59,12 @@ export async function GET(
 
       if (!transfer) {
         return NextResponse.json({ error: 'Stock transfer not found' }, { status: 404 })
+      }
+
+      // K4: visible to the sending and the receiving branch
+      const scope = await getBranchScope(session, db)
+      if (!canAccessBranch(scope, transfer.fromWarehouseId) && !canAccessBranch(scope, transfer.toWarehouseId)) {
+        return branchDeniedResponse(scope, db)
       }
 
       return NextResponse.json(transfer)
@@ -121,6 +128,13 @@ export async function PUT(
             code: 'CONFLICT'
           }, { status: 409 })
         }
+      }
+
+      // K4: receiving needs access to the destination branch; every other step (edit, approve,
+      // ship, cancel) belongs to the sending branch
+      const scope = await getBranchScope(session, db)
+      if (!canAccessBranch(scope, action === 'receive' ? transfer.toWarehouseId : transfer.fromWarehouseId)) {
+        return branchDeniedResponse(scope, db)
       }
 
       // Handle different actions
@@ -258,6 +272,10 @@ export async function DELETE(
       if (!transfer) {
         return NextResponse.json({ error: 'Stock transfer not found' }, { status: 404 })
       }
+
+      // K4: only the sending branch deletes its draft
+      const scope = await getBranchScope(session, db)
+      if (!canAccessBranch(scope, transfer.fromWarehouseId)) return branchDeniedResponse(scope, db)
 
       if (transfer.status !== 'draft') {
         return NextResponse.json({

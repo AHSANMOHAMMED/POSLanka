@@ -11,6 +11,7 @@ import { updateUserPosProfilesSchema } from '@/lib/validation/schemas/users'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { addUserWarehouses, replaceUserPosProfiles, StaffError } from '@/lib/users/create-staff'
 import type { TenantDb } from '@/lib/db'
+import { assertStaffInScope } from '@/lib/auth/branch-access'
 
 async function listAssigned(db: TenantDb, tenantId: string, userId: string) {
   return db
@@ -93,6 +94,9 @@ export async function PUT(
       if (!user) {
         return NextResponse.json({ error: 'User not found' }, { status: 404 })
       }
+      // K4: a branch-restricted manager manages their own branches' staff only
+      const staffDenied = await assertStaffInScope(session, db, userId)
+      if (staffDenied) return staffDenied
       if (!canModifyUser(session!.user.role, user.role)) {
         return NextResponse.json({ error: 'You cannot modify this user' }, { status: 403 })
       }

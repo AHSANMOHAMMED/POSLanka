@@ -1,9 +1,10 @@
 // Inventory report calculation logic
 // Queries from items, warehouse_stock, stock_movements, purchases, sale_items tables
 
-import { eq, and, sql, gte, lte, desc, ne } from 'drizzle-orm'
+import { eq, and, sql, gte, lte, desc, ne, inArray } from 'drizzle-orm'
 import { items, warehouseStock, stockMovements, purchases, sales, saleItems, categories, suppliers, journalEntryItems, journalEntries, paymentEntryReferences } from '@/lib/db/schema'
 import { tenantDayRange, localTs } from './date-range'
+import { branchSqlFilter } from '@/lib/auth/branch-access'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DbInstance = any
@@ -11,7 +12,7 @@ type DbInstance = any
 export async function getStockBalance(
   db: DbInstance,
   tenantId: string,
-  filters: { categoryId?: string; belowReorder?: boolean }
+  filters: { categoryId?: string; belowReorder?: boolean; warehouseIds?: string[] | null }
 ) {
   const conditions = [eq(items.tenantId, tenantId), eq(items.trackStock, true)]
 
@@ -30,7 +31,8 @@ export async function getStockBalance(
     minStock: sql<string>`COALESCE(MAX(CAST(${warehouseStock.minStock} AS numeric)), 0)`,
   })
     .from(items)
-    .leftJoin(warehouseStock, and(eq(warehouseStock.itemId, items.id), eq(warehouseStock.tenantId, tenantId)))
+    .leftJoin(warehouseStock, and(eq(warehouseStock.itemId, items.id), eq(warehouseStock.tenantId, tenantId),
+      filters.warehouseIds ? inArray(warehouseStock.warehouseId, filters.warehouseIds) : undefined))
     .leftJoin(categories, eq(items.categoryId, categories.id))
     .where(and(...conditions))
     .groupBy(items.id, items.name, items.sku, categories.name, items.costPrice, items.sellingPrice)
@@ -65,7 +67,7 @@ export async function getStockBalance(
 export async function getStockMovement(
   db: DbInstance,
   tenantId: string,
-  filters: { fromDate: string; toDate: string; itemId?: string; movementType?: string }
+  filters: { fromDate: string; toDate: string; itemId?: string; movementType?: string; warehouseIds?: string[] | null }
 ) {
   const range = await tenantDayRange(tenantId, filters.fromDate, filters.toDate)
   const conditions = [
@@ -80,6 +82,9 @@ export async function getStockMovement(
   if (filters.movementType) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     conditions.push(eq(stockMovements.type, filters.movementType as any))
+  }
+  if (filters.warehouseIds) {
+    conditions.push(inArray(stockMovements.warehouseId, filters.warehouseIds))
   }
 
   const data = await db.select({
@@ -463,7 +468,7 @@ export async function getAgedPayables(
 export async function getReorderSuggestions(
   db: DbInstance,
   tenantId: string,
-  filters: { warehouseId?: string; supplierId?: string } = {}
+  filters: { warehouseId?: string; supplierId?: string; warehouseIds?: string[] | null } = {}
 ) {
   const res = await db.execute(sql`
     WITH on_order AS (
@@ -508,7 +513,7 @@ export async function getReorderSuggestions(
       AND i.is_active = true AND i.track_stock = true
       AND ws.min_stock > 0
       AND ws.current_stock - ws.reserved_stock + COALESCE(oo.q, 0) + COALESCE(orq.q, 0) <= ws.min_stock
-      ${filters.warehouseId ? sql`AND ws.warehouse_id = ${filters.warehouseId}` : sql``}
+      ${filters.warehouseId ? sql`AND ws.warehouse_id = ${filters.warehouseId}` : sql``}${branchSqlFilter(filters.warehouseIds, 'ws.warehouse_id')}
       ${filters.supplierId ? sql`AND COALESCE(i.supplier_id, last_sup.supplier_id) = ${filters.supplierId}` : sql``}
     ORDER BY (ws.current_stock - ws.min_stock), i.name
   `)
@@ -603,7 +608,7 @@ export async function getReorderSuggestions(
 export async function getAdjustmentsByReason(
   db: DbInstance,
   tenantId: string,
-  filters: { startDate?: string; endDate?: string; warehouseId?: string } = {}
+  filters: { startDate?: string; endDate?: string; warehouseId?: string; warehouseIds?: string[] | null } = {}
 ) {
   const range = filters.startDate || filters.endDate
     ? await tenantDayRange(tenantId, filters.startDate || '1970-01-01', filters.endDate || '9999-12-31')
@@ -620,7 +625,7 @@ export async function getAdjustmentsByReason(
       WHERE m.tenant_id = ${tenantId}
         AND m.reference_type IN ('manual_adjustment', 'bulk_adjustment', 'stock_take', 'waste')
         ${range ? sql`AND m.created_at >= ${range.from.toISOString()}::timestamp AND m.created_at <= ${range.to.toISOString()}::timestamp` : sql``}
-        ${filters.warehouseId ? sql`AND m.warehouse_id = ${filters.warehouseId}` : sql``}
+        ${filters.warehouseId ? sql`AND m.warehouse_id = ${filters.warehouseId}` : sql``}${branchSqlFilter(filters.warehouseIds, 'm.warehouse_id')}
     )
     SELECT adj.reason_code,
            COUNT(*)::int AS movements,

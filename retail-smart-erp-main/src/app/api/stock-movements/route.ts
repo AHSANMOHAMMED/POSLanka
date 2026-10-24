@@ -7,6 +7,7 @@ import { escapeLikePattern } from '@/lib/utils/sql'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { stockMovementsListSchema } from '@/lib/validation/schemas/stock'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter } from '@/lib/auth/branch-access'
 
 // GET stock movements for the tenant (paginated)
 export async function GET(request: NextRequest) {
@@ -21,6 +22,12 @@ export async function GET(request: NextRequest) {
 
       // Build where conditions - RLS handles tenant filtering
       const conditions: ReturnType<typeof eq>[] = []
+
+      // K4: branch-restricted users see their own branches' stock ledger only
+      const scope = await getBranchScope(session, db)
+      if (warehouseId && !canAccessBranch(scope, warehouseId)) return { error: await branchDeniedResponse(scope, db) }
+      const branchCond = branchFilter(scope, stockMovements.warehouseId)
+      if (branchCond) conditions.push(branchCond)
 
       if (search) {
         const escaped = escapeLikePattern(search)

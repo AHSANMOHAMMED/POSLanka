@@ -14,6 +14,7 @@ import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchaseOrdersListSchema, createPurchaseOrderSchema } from '@/lib/validation/schemas/purchases'
 import { requireTenantFeature } from '@/lib/features/check'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET all purchase orders for the tenant (with pagination support)
 export async function GET(request: NextRequest) {
@@ -55,6 +56,12 @@ export async function GET(request: NextRequest) {
       if (filterWarehouseId) {
         conditions.push(eq(purchaseOrders.warehouseId, filterWarehouseId))
       }
+
+      // K4: branch-restricted users see their own branches' documents only
+      const scope = await getBranchScope(session, db)
+      if (filterWarehouseId && !canAccessBranch(scope, filterWarehouseId)) return { error: await branchDeniedResponse(scope, db) }
+      const branchCond = branchFilter(scope, purchaseOrders.warehouseId)
+      if (branchCond) conditions.push(branchCond)
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
@@ -212,6 +219,9 @@ export async function POST(request: NextRequest) {
     if (!warehouse) {
       return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
     }
+    // K4: a branch-restricted user orders for their own branches only
+    const branchDenied = await assertBranchAccess(session, warehouseId, tx)
+    if (branchDenied) return { error: branchDenied }
 
     // Generate order number with lock
     const orderNo = await nextDocNo(tx, session.user.tenantId, 'purchase_order')

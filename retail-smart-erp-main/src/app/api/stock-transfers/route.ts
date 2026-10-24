@@ -12,6 +12,7 @@ import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { stockTransfersListSchema, createStockTransferSchema } from '@/lib/validation/schemas/stock'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET all stock transfers (with pagination)
 export async function GET(request: NextRequest) {
@@ -49,6 +50,13 @@ export async function GET(request: NextRequest) {
           eq(stockTransfers.fromWarehouseId, warehouseId),
           eq(stockTransfers.toWarehouseId, warehouseId)
         )!)
+      }
+
+      // K4: branch-restricted users see transfers leaving or arriving at their own branches
+      const scope = await getBranchScope(session, db)
+      if (warehouseId && !canAccessBranch(scope, warehouseId)) return branchDeniedResponse(scope, db)
+      if (scope) {
+        conditions.push(or(inArray(stockTransfers.fromWarehouseId, scope), inArray(stockTransfers.toWarehouseId, scope))!)
       }
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
@@ -139,6 +147,11 @@ export async function POST(request: NextRequest) {
       if (!toWarehouse) {
         return NextResponse.json({ error: 'Destination warehouse not found or inactive' }, { status: 404 })
       }
+
+      // K4: a branch-restricted user may send stock out of their own branches (to any branch);
+      // receiving it is up to the destination branch.
+      const branchDenied = await assertBranchAccess(session, fromWarehouseId, db)
+      if (branchDenied) return branchDenied
 
       // Validate items and stock availability (RLS scopes all queries)
       for (const item of transferItems) {
