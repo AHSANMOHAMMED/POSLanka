@@ -178,3 +178,15 @@ Verification: fresh DB 0000–0169, 45 suites pass (new i6 61/61), web + mobile 
 - **Permission cache races fixed:** a role change landing during a cache load no longer leaves stale permissions for 5 minutes, and an invalidation no longer makes a request fall back to role defaults (it marks the entry stale instead of deleting it). Module access invalidates after commit.
 
 Still open: Expo SDK upgrade (only remaining npm advisories are in Expo's build tooling), IRD RAMIS transmitter (no public API yet), hardware tests (phones, printers, scanners, scales).
+
+## Round 12 — vendor setup, staff, data console, feature switches, pharmacy, multi-department stores (2026-10-24)
+- **POS:** Bills History labels Print / WhatsApp on phones; ~10% larger POS text; shift-open errors name the counter that is in use.
+- **New vendor:** only name, phone and address required; web address, owner name, login (`owner@<slug>.poslanka.local`) and password are filled in (password shown once).
+- **Staff per vendor:** super admin adds managers / cashiers / … per vendor (web and app), gives new passwords, deactivates; staff anywhere need only name + role (login from the name, generated password).
+- **Vendor data console** (`/sys-control/vendors/[id]/data`, app: vendor → All data): every tenant table (221) with search and add / edit / delete, kept inside the vendor (RLS + tenant filter), secrets hidden, logs read-only, every change audited with before / after.
+- **Feature switches:** 27 real switches in 5 groups (was 8 that only hid links), enforced on menus, direct URLs, the API (proxy → 403 `FEATURE_DISABLED`), the POS (credit, gift cards, loyalty, coupons, WhatsApp, scales) and the app; grouped Features tab on web and app.
+- **API wiring audit** (1,682 call sites): fixed POS float / safe drop (now real cash movements), bank "Reconcile matched", GL account filter, commission matrix, recipe ingredients, salary component toggle, Plans → change plan, purchase-requisition cancel, file tags, commission cancel reasons.
+- **Pharmacy (0170):** business type, generic name / strength / dosage form / drug schedule, generic-name search (web, app, offline), prescription capture for prescription / controlled medicines (web POS before payment, app on PRESCRIPTION_REQUIRED, enforced by `POST /api/sales`), Prescription Register, Expiry Report, pharmacy categories / accounts / terminology.
+- **Multi-department stores:** supermarket starts with grocery + clothing, footwear & slippers, bags, stationery, fancy departments; retail with clothing / footwear / bags / stationery / fancy; size × colour variant generator (own code, barcode, stock), POS shows products and opens the size picker; departments, scales, category sales and item velocity for retail, supermarket and pharmacy.
+
+Verification: fresh DB 0000–0170 — j1 38/38 (new), i3 96, i5 vendor data 32, w1 45, gA 37, h1 71, h5 105, w6 51, gG 39; RLS isolation and drift checks OK; web + mobile typecheck and lint clean; browser: vendor creation, staff, data console (desktop + phone), feature switch 403, pharmacy POS → prescription → register.
