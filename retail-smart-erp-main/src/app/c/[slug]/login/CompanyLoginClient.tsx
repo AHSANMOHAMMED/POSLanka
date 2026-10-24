@@ -13,7 +13,6 @@ import {
   AuthBrandPanel,
   AuthHeading,
   AuthShell,
-  BrandMark,
   Button,
   Divider,
   Field,
@@ -241,16 +240,16 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
             <CompanyLogo company={company} size={88} onBrand />
             <h2 className="mt-6 text-[32px] font-semibold leading-tight tracking-[-0.02em] text-white">{company.name}</h2>
             <p className="mt-1.5 text-[15px] text-white/75">{businessTypeLabel(company.businessType)} · Staff portal</p>
-            <div className="mt-5"><BusinessIdChip id={company.businessId} onBrand /></div>
+            <div className="mt-5"><BusinessIdChip id={company.slug || company.businessId} onBrand /></div>
           </div>
         </AuthBrandPanel>
       }
       mobileHeader={
         <div className="flex items-center gap-3">
-          <CompanyLogo company={company} size={48} />
+          <CompanyLogo company={company} size={36} />
           <div className="min-w-0">
             <p className="truncate text-[17px] font-semibold text-adm-fg">{company.name}</p>
-            {company.businessId && <p className="adm-num text-[12.5px] text-adm-muted">Business ID {company.businessId}</p>}
+            <p className="text-[12.5px] text-adm-muted">Business ID {company.slug || company.businessId}</p>
           </div>
         </div>
       }
@@ -260,7 +259,7 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
         </span>
       }
     >
-      <AuthHeading title="Staff sign-in" description={<>Sign in to <span className="font-medium text-adm-fg">{company.name}</span> with the email your manager invited.</>} />
+      <AuthHeading title="Staff sign-in" description={<>Sign in to <span className="font-medium text-adm-fg">{company.name}</span> with your username or email.</>} />
 
       <div className="space-y-4">
         {invited && <Alert tone="success" title="Invitation accepted">You can now sign in to this company.</Alert>}
@@ -329,8 +328,8 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
 
 export function CompanyNotFound({ slug }: { slug: string }) {
   return (
-    <AuthShell aside={null} mobileHeader={<BrandMark href="/" />}>
-      <div className="rounded-2xl border border-adm-border bg-adm-surface p-6 text-center shadow-[var(--adm-shadow-lg)] sm:p-8">
+    <AuthShell aside={null}>
+      <div className="text-center">
         <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-adm-surface-2 text-adm-subtle">
           <Building2 size={22} aria-hidden />
         </span>

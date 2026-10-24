@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { KeyRound, Lock, Mail, ShieldCheck } from 'lucide-react'
-import { Alert, AuthHeading, AuthShell, BrandMark, Button, Field, Input, PasswordInput } from '@/components/admin/kit'
+import { Alert, AuthHeading, AuthShell, Button, Field, Input, PasswordInput } from '@/components/admin/kit'
 
 function minutesFrom(retryAfter: string | null): number | null {
   const s = retryAfter ? parseInt(retryAfter, 10) : NaN
@@ -66,8 +66,8 @@ export function AdminLoginForm({ sessionExpired }: { sessionExpired?: boolean })
   }
 
   return (
-    <AuthShell aside={null} mobileHeader={<BrandMark subtitle="Platform admin" />}>
-      <div className="rounded-2xl border border-adm-border bg-adm-surface p-6 shadow-[var(--adm-shadow-lg)] sm:p-8">
+    <AuthShell aside={null} mobileHeader={<span className="text-[13px] font-semibold text-[#0050C0]">Platform admin console</span>}>
+      <div>
         <AuthHeading
           title={needsTotp ? 'Two-factor verification' : 'Sign in to the admin console'}
           description={

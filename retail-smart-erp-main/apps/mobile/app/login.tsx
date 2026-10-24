@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   ScrollView,
   Image,
+  ImageBackground,
+  useWindowDimensions,
 } from 'react-native'
 import { router } from 'expo-router'
 import {
@@ -46,6 +48,7 @@ export default function LoginScreen() {
   // Older installs signed in with the company slug; keep that path available.
   const [useSlug, setUseSlug] = useState(false)
   const insets = useSafeAreaInsets()
+  const { width } = useWindowDimensions()
   const [busy, setBusy] = useState(false)
   const [settingsLoaded, setSettingsLoaded] = useState(false)
   // This build's sign-in: platform admins (skyERPOS Admin app) or shop staff (skyERPOS app)
@@ -207,16 +210,23 @@ export default function LoginScreen() {
       contentContainerStyle={{ flexGrow: 1, paddingBottom: 24 + insets.bottom }}
       keyboardShouldPersistTaps="handled"
     >
-      {/* Brand header in the logo blue */}
-      <View style={[styles.hero, { paddingTop: 36 + insets.top }]}>
+      {/* Brand header: logo-blue gradient with the skyERPOS waves and orange swoosh (assets/login-hero.png) */}
+      <ImageBackground
+        source={require('../assets/login-hero.png')}
+        resizeMode="stretch"
+        style={[styles.hero, { height: Math.round(width * 0.815) + insets.top, paddingTop: 28 + insets.top }]}
+      >
         <View style={styles.logoCard}>
           <Image source={require('../assets/logo.png')} style={styles.logo} resizeMode="contain" accessibilityLabel="skyERPOS" />
         </View>
-        <Text style={styles.heroTitle}>{IS_ADMIN_APP ? 'Admin Console' : 'Point of Sale'}</Text>
+        <View style={styles.heroPill}>
+          <View style={styles.heroDot} />
+          <Text style={styles.heroPillText}>{IS_ADMIN_APP ? 'Admin Console' : 'All-in-one POS & ERP'}</Text>
+        </View>
         <Text style={styles.heroSub}>{IS_ADMIN_APP ? 'Vendors, sales and approvals across the platform' : 'Powerful. Reliable. Complete POS solution.'}</Text>
-      </View>
+      </ImageBackground>
 
-      <View style={styles.card}>
+      <View style={[styles.card, { marginTop: -Math.round(width * 0.2) }]}>
         <Text style={styles.cardTitle}>{title}</Text>
         <Text style={styles.cardSub}>{subtitle}</Text>
 
@@ -357,24 +367,18 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: THEME.colors.background },
-  hero: {
-    backgroundColor: THEME.colors.primary,
-    alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingBottom: 64,
-    borderBottomLeftRadius: 28,
-    borderBottomRightRadius: 28,
-  },
+  hero: { width: '100%', alignItems: 'center', paddingHorizontal: 24 },
   logoCard: { backgroundColor: '#FFFFFF', borderRadius: 18, paddingHorizontal: 18, paddingVertical: 10, marginBottom: 14, elevation: 3, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
   logo: { width: 190, height: 87 },
-  heroTitle: { color: '#FFFFFF', fontSize: 20, fontWeight: '800' },
-  heroSub: { color: 'rgba(255,255,255,0.8)', fontSize: 13, marginTop: 4, textAlign: 'center' },
+  heroPill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.14)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5 },
+  heroDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: THEME.colors.secondaryAmber },
+  heroPillText: { color: '#FFFFFF', fontSize: 12.5, fontWeight: '700' },
+  heroSub: { color: 'rgba(255,255,255,0.85)', fontSize: 13, marginTop: 8, textAlign: 'center' },
   card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     padding: 22,
     marginHorizontal: 20,
-    marginTop: -40,
     width: '90%',
     maxWidth: 480,
     alignSelf: 'center',

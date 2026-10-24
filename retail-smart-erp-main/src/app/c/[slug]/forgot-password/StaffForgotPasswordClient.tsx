@@ -148,7 +148,7 @@ export function StaffForgotPasswordClient({ slug, company }: { slug: string; com
       aside={null}
       mobileHeader={
         <div className="flex items-center gap-3">
-          <CompanyLogo company={company} size={44} />
+          <CompanyLogo company={company} size={36} />
           <div className="min-w-0">
             <p className="truncate text-[16px] font-semibold text-adm-fg">{company.name}</p>
             <p className="text-[12.5px] text-adm-muted">Staff portal</p>
@@ -156,7 +156,7 @@ export function StaffForgotPasswordClient({ slug, company }: { slug: string; com
         </div>
       }
     >
-      <div className="rounded-2xl border border-adm-border bg-adm-surface p-6 shadow-[var(--adm-shadow-lg)] sm:p-8">
+      <div>
         <Suspense fallback={null}>
           <Inner slug={slug} company={company} />
         </Suspense>

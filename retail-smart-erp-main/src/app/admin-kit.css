@@ -295,3 +295,14 @@ html body .adm-table tbody tr:hover td {
     font-size: 16px;
   }
 }
+
+/* Sign-in page waves (AuthWaves): two loops drift at different speeds */
+@keyframes adm-wave-drift {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.adm-wave { animation: adm-wave-drift 18s linear infinite; }
+.adm-wave--slow { animation-duration: 30s; }
+@media (prefers-reduced-motion: reduce) {
+  .adm-wave { animation: none; }
+}
