@@ -14,6 +14,7 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { PgColumn } from 'drizzle-orm/pg-core'
 import { withTenant, type TenantDb } from '@/lib/db'
+import { deleteFromR2, keyFromUrl } from '@/lib/files'
 
 export type RecycleMode = 'archive' | 'delete'
 
@@ -365,7 +366,7 @@ export async function restoreFromRecycleBin(tenantId: string, binId: string, adm
  * mapped by the caller); delete → the row is already gone, drop the saved copy.
  */
 export async function purgeFromRecycleBin(tenantId: string, binId: string, adminId: string) {
-  return withTenant(tenantId, async (db) => {
+  const purged = await withTenant(tenantId, async (db) => {
     const { entry, def } = await lockOpenEntry(db, tenantId, binId)
     if (def.mode === 'archive') {
       await db.execute(sql`DELETE FROM ${sql.identifier(def.table)} WHERE id = ${entry.entity_id}::uuid AND tenant_id = ${tenantId}::uuid`)
@@ -384,4 +385,12 @@ export async function purgeFromRecycleBin(tenantId: string, binId: string, admin
     `)
     return entry
   })
+  // A deleted vehicle document keeps its scan in storage while it can still be restored; purging
+  // is the point of no return, so the file goes now.
+  const fileUrl = purged.entity_type === 'vehicle_document' ? (purged.snapshot as { file_url?: string | null } | null)?.file_url : null
+  if (fileUrl) {
+    const key = keyFromUrl(fileUrl)
+    if (key) await deleteFromR2(key).catch(() => undefined)
+  }
+  return purged
 }

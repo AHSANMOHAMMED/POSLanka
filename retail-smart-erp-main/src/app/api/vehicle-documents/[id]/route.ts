@@ -8,7 +8,6 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleDocumentSchema } from '@/lib/validation/schemas/vehicles'
-import { deleteFromR2, keyFromUrl } from '@/lib/files'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
@@ -161,13 +160,8 @@ export async function DELETE(
       await db.delete(vehicleDocuments)
         .where(eq(vehicleDocuments.id, id))
 
-      // Clean up file from R2
-      if (existing.fileUrl) {
-        const key = keyFromUrl(existing.fileUrl)
-        if (key) {
-          try { await deleteFromR2(key) } catch { /* ignore */ }
-        }
-      }
+      // The scanned file stays in storage while the document is in the recycle bin (a restore
+      // brings it back with its file); purging it there deletes the file.
 
       logAndBroadcast(session.user.tenantId, 'vehicle-document', 'deleted', id, {
         userId,

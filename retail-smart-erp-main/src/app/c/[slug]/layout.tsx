@@ -20,6 +20,7 @@ import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { ChatHub } from '@/components/chat/ChatHub'
 import { SubdomainUrlCleaner } from '@/components/layout/SubdomainUrlCleaner'
 import { FeatureRouteGuard } from '@/components/layout/FeatureRouteGuard'
+import { SetupPendingNotice } from './SetupPendingNotice'
 
 interface CompanyLayoutProps {
   children: React.ReactNode
@@ -180,7 +181,15 @@ export default async function CompanyLayout({
   // Check if this is the setup page
   const isSetupPage = pathname === `/c/${slug}/setup` || pathname.startsWith(`/c/${slug}/setup/`)
 
-  // Setup wizard guard: redirect to setup if not completed (unless already on setup page)
+  // Setup wizard guard: only the owner can finish the wizard, so the owner is sent there and
+  // everyone else is told to wait for the owner (instead of a wizard they cannot save)
+  if (!tenant.setupCompletedAt && userRecord.role !== 'owner') {
+    return (
+      <SessionProvider session={session} refetchInterval={840}>
+        <SetupPendingNotice slug={slug} businessName={tenant.name} />
+      </SessionProvider>
+    )
+  }
   if (!tenant.setupCompletedAt && !isSetupPage) {
     redirect(`/c/${slug}/setup`)
   }

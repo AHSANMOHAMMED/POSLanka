@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus, Receipt, Loader2, Tags } from 'lucide-react'
+import { Plus, Receipt, Loader2, Tags, Paperclip, X } from 'lucide-react'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { PermissionGuard } from '@/components/auth/PermissionGuard'
 import { Modal, ModalFooter } from '@/components/ui/modal'
@@ -24,6 +24,7 @@ interface Expense {
   paidFrom: string | null
   payee: string | null
   receiptNo: string | null
+  attachmentUrl: string | null
   description: string | null
   warehouseName: string | null
   createdByName: string | null
@@ -119,9 +120,25 @@ export default function ExpensesPage() {
   const [newCat, setNewCat] = useState({ name: '', accountId: '' })
   const blankForm = () => ({
     kind: 'expense' as Kind, expenseDate: todayStr(), categoryId: '', amount: '', payee: '', receiptNo: '', description: '',
+    attachmentUrl: '', attachmentName: '',
     warehouseId: '', paidFrom: 'cash', paymentMethod: 'cash', cheque: emptyCheque(),
   })
   const [form, setForm] = useState(blankForm)
+  const [uploading, setUploading] = useState(false)
+
+  async function uploadBill(file: File) {
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/expenses/attachment', { method: 'POST', body: fd })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { toast.error(data.error || 'Could not upload the bill'); return }
+      setForm((f) => ({ ...f, attachmentUrl: data.fileUrl, attachmentName: data.fileName || file.name }))
+    } finally {
+      setUploading(false)
+    }
+  }
   const [paying, setPaying] = useState<Expense | null>(null)
   const [payForm, setPayForm] = useState({ paidFrom: 'cash', paymentMethod: 'cash', cheque: emptyCheque() })
 
@@ -178,6 +195,7 @@ export default function ExpensesPage() {
         body: JSON.stringify({
           kind: form.kind, expenseDate: form.expenseDate, categoryId: form.categoryId || undefined, amount,
           payee: form.payee.trim() || undefined, receiptNo: form.receiptNo.trim() || undefined, description: form.description.trim() || undefined,
+          attachmentUrl: form.attachmentUrl || undefined,
           warehouseId: form.warehouseId || undefined,
           ...(form.kind === 'expense' ? { paidFrom: form.paidFrom, paymentMethod: form.paidFrom === 'cash' ? 'cash' : form.paymentMethod, cheque } : {}),
         }),
@@ -348,7 +366,8 @@ export default function ExpensesPage() {
                 </td></tr>
               ) : rows.map((e) => (
                 <tr key={e.id} className="text-sm">
-                  <td className="px-4 py-3 font-mono text-gray-900 dark:text-white">{e.expenseNo}{e.receiptNo ? <div className="text-xs text-gray-500">Rcpt {e.receiptNo}</div> : null}</td>
+                  <td className="px-4 py-3 font-mono text-gray-900 dark:text-white">{e.expenseNo}{e.receiptNo ? <div className="text-xs text-gray-500">Rcpt {e.receiptNo}</div> : null}
+                    {e.attachmentUrl ? <a href={e.attachmentUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 hover:underline"><Paperclip size={12} />Bill</a> : null}</td>
                   <td className="px-4 py-3 text-gray-600 dark:text-gray-400 whitespace-nowrap">{e.expenseDate}</td>
                   <td className="px-4 py-3 text-gray-900 dark:text-white">{e.categoryName || '—'}{e.description ? <div className="text-xs text-gray-500 truncate max-w-xs">{e.description}</div> : null}</td>
                   <td className="px-4 py-3 text-gray-700 dark:text-gray-300">{kind === 'expense' ? (e.payee || '—') : (e.claimantName || '—')}<div className="text-xs text-gray-500">by {e.createdByName || '—'}{e.warehouseName ? ` · ${e.warehouseName}` : ''}</div></td>
@@ -411,11 +430,25 @@ export default function ExpensesPage() {
               <input value={form.receiptNo} onChange={(e) => setForm({ ...form, receiptNo: e.target.value })} className={INPUT} placeholder="Receipt / bill no." maxLength={100} />
             </div>
             <input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className={INPUT} placeholder="Description" maxLength={1000} />
+            {form.attachmentUrl ? (
+              <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <Paperclip size={14} />
+                <a href={form.attachmentUrl} target="_blank" rel="noopener noreferrer" className="underline truncate">{form.attachmentName || 'Bill'}</a>
+                <button type="button" onClick={() => setForm({ ...form, attachmentUrl: '', attachmentName: '' })} className="text-gray-400 hover:text-red-600" aria-label="Remove bill"><X size={14} /></button>
+              </div>
+            ) : (
+              <label className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400 cursor-pointer w-fit">
+                {uploading ? <Loader2 size={14} className="animate-spin" /> : <Paperclip size={14} />}
+                {uploading ? 'Uploading…' : 'Attach bill (photo or PDF, up to 5 MB)'}
+                <input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" capture="environment" className="hidden" disabled={uploading}
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void uploadBill(f) }} />
+              </label>
+            )}
             {form.kind === 'expense' && <PaymentFields form={form} setForm={(f) => setForm({ ...form, ...f })} />}
           </div>
           <ModalFooter>
             <button onClick={() => setShowNew(false)} className="px-4 py-2 text-sm border rounded hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200">Cancel</button>
-            <button onClick={saveNew} disabled={saving} className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
+            <button onClick={saveNew} disabled={saving || uploading} className="px-4 py-2 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2">
               {saving && <Loader2 className="w-4 h-4 animate-spin" />} Save
             </button>
           </ModalFooter>
