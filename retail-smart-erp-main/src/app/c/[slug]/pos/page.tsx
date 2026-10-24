@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter, useParams } from 'next/navigation'
-import { Clock, Loader2, Tag, Wallet } from 'lucide-react'
+import { Clock, Loader2, Tag, Wallet, Keyboard, MonitorUp } from 'lucide-react'
 import { CustomerFormModal, VehicleModal } from '@/components/modals'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import {
@@ -25,7 +25,13 @@ import {
   CashMovementModal,
 } from '@/components/pos'
 import { POS_SEARCH_INPUT_ID } from '@/components/pos/ProductGrid'
-import { publishPosDisplay, createIdlePosDisplayState } from '@/lib/pos/display-channel'
+import { publishPosDisplay, createIdlePosDisplayState, POS_DISPLAY_HEARTBEAT_MS, type PosDisplayState } from '@/lib/pos/display-channel'
+import { POS_CART_LIST_ID, POS_CUSTOMER_PICKER_ID } from '@/components/pos/CartPanel'
+import { ShortcutsHelpModal } from '@/components/pos/ShortcutsHelpModal'
+import { Kbd } from '@/components/pos/Kbd'
+import { matchPosShortcut, isFunctionKey, type PosShortcutAction } from '@/lib/pos/shortcuts'
+import { applyQtyKey, parseQtyBuffer, moveSelection } from '@/lib/pos/qty-buffer'
+import { openCustomerDisplayWindow } from '@/lib/pos/customer-display-window'
 import { WeightInputModal } from '@/components/pos/WeightInputModal'
 import { VariantPickerModal } from '@/components/pos/VariantPickerModal'
 import { QuickItemAddModal } from '@/components/pos/QuickItemAddModal'
@@ -376,6 +382,15 @@ export default function POSPage() {
   } | null>(null)
   const [lastSaleId, setLastSaleId] = useState<string | null>(null)
   const [showRecentSalesModal, setShowRecentSalesModal] = useState(false)
+  /** Last completed sale of this session (Alt+R reprint), kept after the success window closes */
+  const lastCompletedSaleIdRef = useRef<string | null>(null)
+  useEffect(() => { if (lastSaleId) lastCompletedSaleIdRef.current = lastSaleId }, [lastSaleId])
+
+  // Keyboard-first cart: selected line, quantity being typed, whether the cart list has focus
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(null)
+  const [qtyBuffer, setQtyBuffer] = useState('')
+  const [cartFocused, setCartFocused] = useState(false)
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
 
   // Tax template state
   const [taxTemplatesMap, setTaxTemplatesMap] = useState<Map<string, ResolvedTaxTemplate>>(new Map())
@@ -2151,116 +2166,370 @@ export default function POSPage() {
     return false
   }
 
-  // ─── Keyboard shortcuts & Barcode Wedge Scanner ──────────────
+  // ─── Keyboard cart: keep one line selected (the last added / grown one) ──
+  const prevCartQtyRef = useRef<Map<string, number>>(new Map())
+  const selectedIndexRef = useRef(-1)
   useEffect(() => {
-    const isTyping = (el: Element | null) =>
-      !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
-    const modalOpen = !!rxPrompt || showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
+    const prev = prevCartQtyRef.current
+    const next = new Map(cart.map(c => [c.cartLineId, Math.abs(c.isWeighable ? (c.weight || 1) : c.quantity)] as const))
+    prevCartQtyRef.current = next
+    let sel = selectedLineId
+    if (cart.length === 0) sel = null
+    else {
+      const added = cart.filter(c => !prev.has(c.cartLineId))
+      const grown = cart.filter(c => prev.has(c.cartLineId) && (next.get(c.cartLineId) || 0) > (prev.get(c.cartLineId) || 0))
+      if (added.length > 0) sel = added[added.length - 1].cartLineId
+      else if (grown.length === 1 && !cartFocused) sel = grown[0].cartLineId
+      else if (!sel || !next.has(sel)) sel = cart[Math.min(Math.max(selectedIndexRef.current, 0), cart.length - 1)].cartLineId
+    }
+    selectedIndexRef.current = sel ? cart.findIndex(c => c.cartLineId === sel) : -1
+    if (sel !== selectedLineId) {
+      setSelectedLineId(sel)
+      setQtyBuffer('')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, selectedLineId])
+
+  function focusCart() {
+    if (cart.length === 0) { focusSearch(); return }
+    if (!selectedLineId || !cart.some(c => c.cartLineId === selectedLineId)) setSelectedLineId(cart[cart.length - 1].cartLineId)
+    const el = document.getElementById(POS_CART_LIST_ID)
+    if (el && document.activeElement !== el) { setQtyBuffer(''); el.focus() }
+  }
+
+  /** Weighed / measured lines take decimals (1.25 kg); pieces take whole numbers */
+  function lineAllowsDecimal(line: CartItem): boolean {
+    const unit = (line.unit || '').toLowerCase()
+    return !!line.isWeighable || ['kg', 'g', 'l', 'ml', 'm'].includes(unit)
+  }
+
+  /** Set a line to an absolute (positive) quantity, honouring serials, stock and return limits */
+  function setLineQuantity(line: CartItem, qty: number) {
+    if (line.serialNumberIds?.length) { toast.warning('Remove and re-add to change serial number selection'); return }
+    if (!(qty > 0)) { removeFromCart(line.cartLineId); return }
+    if (isReturnMode) {
+      if (line.maxReturnQuantity !== undefined && qty > line.maxReturnQuantity) {
+        toast.warning(`Only ${line.maxReturnQuantity} returnable on this invoice line`)
+        return
+      }
+      setCart(prev => prev.map(c => c.cartLineId === line.cartLineId
+        ? { ...c, quantity: -qty, total: roundCurrency(-qty * c.unitPrice) }
+        : c))
+      return
+    }
+    const item = items.find(i => i.id === line.itemId)
+    if (item?.trackStock) {
+      const others = cart
+        .filter(c => c.itemId === line.itemId && c.cartLineId !== line.cartLineId)
+        .reduce((sum, c) => sum + (c.isWeighable ? (c.weight || 1) : c.quantity), 0)
+      if (others + qty > parseFloat(item.availableStock)) { toast.warning('Not enough stock available'); return }
+    }
+    setQuantityDirectly(line.cartLineId, qty)
+  }
+
+  function stepLine(line: CartItem, delta: number) {
+    const current = Math.abs(line.isWeighable ? (line.weight || 1) : line.quantity)
+    setLineQuantity(line, roundCurrency(current + delta))
+  }
+
+  function commitQtyBuffer(): boolean {
+    const line = cart.find(c => c.cartLineId === selectedLineId)
+    if (!line || !qtyBuffer) return false
+    const qty = parseQtyBuffer(qtyBuffer, lineAllowsDecimal(line))
+    setQtyBuffer('')
+    if (qty !== null) setLineQuantity(line, qty)
+    return true
+  }
+
+  /** Keys while the cart list has focus. Returns true when handled. */
+  function handleCartKey(e: KeyboardEvent, timeDiff: number): boolean {
+    if (e.ctrlKey || e.altKey || e.metaKey) return false
+    const idx = cart.findIndex(c => c.cartLineId === selectedLineId)
+    const line = idx >= 0 ? cart[idx] : null
+    const k = e.key
+    if (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End' || k === 'PageDown' || k === 'PageUp') {
+      e.preventDefault()
+      if (qtyBuffer) commitQtyBuffer()
+      const ni = k === 'Home' ? 0 : k === 'End' ? cart.length - 1
+        : moveSelection(idx, k === 'ArrowDown' ? 1 : k === 'ArrowUp' ? -1 : k === 'PageDown' ? 5 : -5, cart.length)
+      if (ni >= 0) setSelectedLineId(cart[ni].cartLineId)
+      return true
+    }
+    if (k === 'Escape') { e.preventDefault(); if (qtyBuffer) setQtyBuffer(''); else focusSearch(); return true }
+    if (k === 'Enter') { e.preventDefault(); if (!commitQtyBuffer()) focusSearch(); return true }
+    if (!line) return false
+    if (k === '+' || k === '-') { e.preventDefault(); setQtyBuffer(''); stepLine(line, k === '+' ? 1 : -1); return true }
+    if (k === 'Delete') { e.preventDefault(); setQtyBuffer(''); removeFromCart(line.cartLineId); return true }
+    if (/^[0-9]$/.test(k) && timeDiff < 30 && qtyBuffer.length > 0) {
+      // Keys this fast are a barcode scanner, not the cashier: hand them to the search box
+      e.preventDefault()
+      setSearch(qtyBuffer + k)
+      setQtyBuffer('')
+      document.getElementById(POS_SEARCH_INPUT_ID)?.focus()
+      return true
+    }
+    const nb = applyQtyKey(qtyBuffer, k, lineAllowsDecimal(line))
+    if (nb !== null) { e.preventDefault(); setQtyBuffer(nb); return true }
+    return false
+  }
+
+  /** Arrow keys between product tiles (Enter / Space on a tile adds it) */
+  function moveTileFocus(from: HTMLElement, key: string) {
+    const tiles = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-pos-tile]')).filter(t => !t.disabled)
+    const i = tiles.indexOf(from as HTMLButtonElement)
+    if (i < 0) return
+    if (key === 'ArrowRight') { tiles[i + 1]?.focus(); return }
+    if (key === 'ArrowLeft') { tiles[i - 1]?.focus(); return }
+    const r = from.getBoundingClientRect()
+    const centre = (t: HTMLElement) => { const b = t.getBoundingClientRect(); return b.left + b.width / 2 }
+    const cx = r.left + r.width / 2
+    const candidates = tiles.filter(t => {
+      const top = t.getBoundingClientRect().top
+      return key === 'ArrowDown' ? top > r.top + 4 : top < r.top - 4
+    })
+    if (candidates.length === 0) { if (key === 'ArrowUp') focusSearch(); return }
+    const tops = candidates.map(t => t.getBoundingClientRect().top)
+    const rowTop = key === 'ArrowDown' ? Math.min(...tops) : Math.max(...tops)
+    const row = candidates.filter(t => Math.abs(t.getBoundingClientRect().top - rowTop) < 4)
+    row.sort((a, b) => Math.abs(centre(a) - cx) - Math.abs(centre(b) - cx))
+    row[0]?.focus()
+    row[0]?.scrollIntoView({ block: 'nearest' })
+  }
+
+  function openCustomerPicker() {
+    // CreatableSelect: wrapper > container > clickable box (opens and focuses its search input)
+    const box = document.querySelector<HTMLElement>(`#${POS_CUSTOMER_PICKER_ID} > div > div`)
+    if (box) box.click()
+    else toast.info('Customer selection is not available here')
+  }
+
+  function reprintLastBill() {
+    const id = lastSaleId || lastCompletedSaleIdRef.current
+    if (!id) {
+      toast.info('No bill on this counter yet — opening bills history')
+      setShowRecentSalesModal(true)
+      return
+    }
+    toast.info('Reprinting the last bill…')
+    void printReceiptForSale(id)
+  }
+
+  const customerDisplayEnabled = featureFlags.customer_display !== false
+    && ((posProfile?.receiptSettings as { cashierPermissions?: { customerDisplay?: boolean } } | undefined)?.cashierPermissions?.customerDisplay !== false)
+
+  function openCustomerDisplay() {
+    if (!customerDisplayEnabled) {
+      toast.info('The customer display is turned off for this shop or counter')
+      return
+    }
+    const ok = openCustomerDisplayWindow(`/c/${params.slug}/pos/display`)
+    if (!ok) toast.error('The browser blocked the pop-up. Allow pop-ups for this site, then press Alt+D again.')
+    else toast.info('Customer display opened — drag it to the customer screen and press F11 there for full screen')
+  }
+
+  function runPosAction(action: PosShortcutAction) {
+    switch (action) {
+      case 'focusSearch': focusSearch(); break
+      case 'focusCart': focusCart(); break
+      case 'holdSale': if (cart.length > 0 && !holdingInProgress) holdSale(); break
+      case 'recallHeld': setShowHeldSalesModal(true); break
+      case 'quickAdd': handleOpenQuickAdd(); break
+      case 'discount': if (allowDiscount && cart.length > 0) setShowDiscountModal(true); break
+      case 'returnSale': if (cart.length > 0) setReturnModeConfirm(true); else setShowReturnLookupModal(true); break
+      case 'priceCheck': setShowPriceCheckModal(true); break
+      case 'lock': if (activeShift) setTerminalLocked(true); break
+      case 'payment':
+        if (cart.length > 0 && activeShift) {
+          // A typed quantity still pending is applied first, then payment opens on the updated cart
+          if (qtyBuffer && commitQtyBuffer()) window.setTimeout(() => openPaymentRef.current(), 0)
+          else openPaymentModal()
+        }
+        break
+      case 'floatDrop': if (activeShift) setShowFloatModal(true); break
+      case 'newSale': handleClearCartRequest(); break
+      case 'customer': openCustomerPicker(); break
+      case 'reprintLast': reprintLastBill(); break
+      case 'billsHistory': setShowRecentSalesModal(true); break
+      case 'openShift': if (activeShift) toast.info(`Shift ${activeShift.entryNumber} is already open`); else setShowShiftOpenModal(true); break
+      case 'closeShift': if (activeShift) setShowShiftCloseModal(true); break
+      case 'cashMovement': if (activeShift) setShowCashMovementModal(true); break
+      case 'customerDisplay': openCustomerDisplay(); break
+      case 'help': setShowShortcutsHelp(true); break
+    }
+  }
+
+  /** Any modal / dialog / full-screen overlay on top of the POS: page shortcuts pause while one is open */
+  function overlayOpen(): boolean {
+    if (rxPrompt || showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
       || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || showFloatModal || showPriceCheckModal
       || showQuickAddModal || !!variantPickerParentItem || !!supervisorRequest || clearCartConfirm || showCashMovementModal
+      || showRecentSalesModal || showPrinterSettings || showCameraScan || showShortcutsHelp || !!lastSale
+      || !!weightInputItem || !!serialPickerItem || showModifierPicker || returnModeConfirm
+      || recallConfirm.open || deleteHeldConfirm.open) return true
+    return !!document.querySelector('[role="dialog"], [aria-modal="true"], .fixed.inset-0')
+  }
 
-    let barcodeBuffer = ''
-    let lastKeyTime = 0
+  // ─── Keyboard shortcuts, keyboard cart & barcode wedge scanner ──────────
+  // Focus model: the search box owns typing (Enter = scan / add). `*`, or ↓ / ↑ from an EMPTY search box,
+  // or clicking a cart line moves focus to the cart list: ↑ ↓ select a line, digits type its quantity,
+  // Enter confirms, + / − change it, Del removes it, Esc goes back to search. ↓ from a search WITH text
+  // moves into the product results (arrows move, Enter adds). Shortcuts (src/lib/pos/shortcuts.ts) pause
+  // while any modal / overlay is open and come back when it closes.
+  const keyStateRef = useRef({ barcodeBuffer: '', lastKeyTime: 0 })
+  const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {})
+  const openPaymentRef = useRef<() => void>(() => {})
 
-    function onKey(e: KeyboardEvent) {
-      if (terminalLocked) return
+  function handlePosKey(e: KeyboardEvent) {
+    if (terminalLocked) return
+    // Already handled by the focused control (e.g. Enter in the search box submits the scan itself)
+    if (e.defaultPrevented) return
+    const ks = keyStateRef.current
+    const now = Date.now()
+    const timeDiff = now - ks.lastKeyTime
+    ks.lastKeyTime = now
 
-      const now = Date.now()
-      const timeDiff = now - lastKeyTime
-      lastKeyTime = now
+    const target = e.target as HTMLElement | null
+    const isTyping = (el: Element | null) =>
+      !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
+    const isSearchInput = target?.id === POS_SEARCH_INPUT_ID
+    const inCart = target?.id === POS_CART_LIST_ID
+    const inTextInput = isTyping(target)
+    const isOtherInput = inTextInput && !isSearchInput
 
-      const target = e.target as HTMLElement | null
-      const isSearchInput = target?.id === POS_SEARCH_INPUT_ID
-      const isOtherInput = isTyping(target) && !isSearchInput
+    // The browser's own F1–F10 actions (help, reload, caret browsing, menu bar) never fire on the POS
+    if (isFunctionKey(e.key) && e.key !== 'F11' && e.key !== 'F12') e.preventDefault()
 
-      // Barcode Wedge Scanner: when Enter is pressed anywhere on page outside modals/inputs
-      if (e.key === 'Enter' && !modalOpen && !isOtherInput) {
-        const codeToScan = barcodeBuffer.trim() || (isSearchInput ? search.trim() : '')
-        if (codeToScan.length >= 3) {
-          e.preventDefault()
-          barcodeBuffer = ''
-          handleScanSubmit(codeToScan)
-          return
-        }
-        barcodeBuffer = ''
-      }
+    const plain = !e.ctrlKey && !e.altKey && !e.metaKey
+    // "Sale completed" window: the next scan / typed key closes it and starts the next sale
+    if (lastSale && e.key.length === 1 && plain && !isOtherInput) {
+      setLastSale(null)
+      setLastSaleId(null)
+      ks.barcodeBuffer = timeDiff > 100 ? e.key : ks.barcodeBuffer + e.key
+      focusSearch()
+      return
+    }
 
-      // If user/scanner enters printable characters outside input elements, redirect to search buffer & focus search
-      if (!modalOpen && !isTyping(target) && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-        if (timeDiff > 100) {
-          barcodeBuffer = e.key
-        } else {
-          barcodeBuffer += e.key
-        }
-        focusSearch()
-      }
+    if (overlayOpen()) { ks.barcodeBuffer = ''; return }
 
-      switch (e.key) {
-        case 'F1':
-          e.preventDefault(); focusSearch(); break
-        case 'F2':
-          e.preventDefault(); if (!modalOpen && cart.length > 0 && !holdingInProgress) holdSale(); break
-        case 'F3':
-          e.preventDefault(); if (!modalOpen) setShowHeldSalesModal(true); break
-        case 'F4':
-          e.preventDefault(); if (!modalOpen) handleOpenQuickAdd(); break
-        case 'F5':
-          e.preventDefault(); if (!modalOpen && allowDiscount && cart.length > 0) setShowDiscountModal(true); break
-        case 'F6':
-          e.preventDefault(); if (!modalOpen) { if (cart.length > 0) setReturnModeConfirm(true); else setShowReturnLookupModal(true) } break
-        case 'F7':
-          e.preventDefault(); if (!modalOpen) setShowPriceCheckModal(true); break
-        case 'F8':
-          e.preventDefault(); if (activeShift) setTerminalLocked(true); break
-        case 'F9':
-          e.preventDefault(); if (!modalOpen && cart.length > 0 && activeShift) openPaymentModal(); break
-        case 'F10':
-          e.preventDefault(); if (!modalOpen && activeShift) setShowFloatModal(true); break
-        case 'Escape':
-          if (!modalOpen && search) { setSearch(''); focusSearch() } break
-        case 'Delete':
-          if (e.ctrlKey && !modalOpen && cart.length > 0) { e.preventDefault(); handleClearCartRequest(); } break
-        case '/':
-          if (!isTyping(document.activeElement)) { e.preventDefault(); focusSearch() } break
-        default:
-          break
+    if (inCart && handleCartKey(e, timeDiff)) return
+
+    if (isSearchInput && plain) {
+      if (!search) {
+        if ((e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === '*') && cart.length > 0) { e.preventDefault(); focusCart(); return }
+        const line = cart.find(c => c.cartLineId === selectedLineId)
+        if ((e.key === '+' || e.key === '-') && line) { e.preventDefault(); stepLine(line, e.key === '+' ? 1 : -1); return }
+      } else if (e.key === 'ArrowDown') {
+        const first = document.querySelector<HTMLButtonElement>('[data-pos-tile]:not(:disabled)')
+        if (first) { e.preventDefault(); first.focus(); return }
       }
     }
+    if (target?.dataset?.posTile && plain && ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) {
+      e.preventDefault()
+      moveTileFocus(target, e.key)
+      return
+    }
+
+    // Barcode wedge scanner: Enter outside other inputs submits what was typed / scanned
+    if (e.key === 'Enter' && !isOtherInput) {
+      const codeToScan = ks.barcodeBuffer.trim() || (isSearchInput ? search.trim() : '')
+      if (codeToScan.length >= 3) {
+        e.preventDefault()
+        ks.barcodeBuffer = ''
+        handleScanSubmit(codeToScan)
+        return
+      }
+      ks.barcodeBuffer = ''
+    }
+
+    const action = matchPosShortcut(e, { inTextInput })
+    if (action) {
+      e.preventDefault()
+      runPosAction(action)
+      return
+    }
+
+    if (e.key === 'Escape') {
+      if (search) setSearch('')
+      focusSearch()
+      return
+    }
+
+    // Printable characters outside inputs (scanner or cashier) go to the search box
+    if (!inTextInput && e.key.length === 1 && plain) {
+      ks.barcodeBuffer = timeDiff > 100 ? e.key : ks.barcodeBuffer + e.key
+      focusSearch()
+    }
+  }
+
+  // Layout effect: the handler sees the latest state even for very fast (scanner) key bursts
+  useLayoutEffect(() => {
+    keyHandlerRef.current = handlePosKey
+    openPaymentRef.current = () => { void openPaymentModal() }
+  })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => keyHandlerRef.current(e)
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showPayment, showDiscountModal, showHeldSalesModal, showCustomerModal, showVehicleModal, showShiftOpenModal, showShiftCloseModal,
-      showReturnLookupModal, showFloatModal, showPriceCheckModal, showQuickAddModal, variantPickerParentItem, supervisorRequest, clearCartConfirm, showCashMovementModal, rxPrompt, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
+  }, [])
 
   // ─── Customer-facing display mirror (/pos/display) ─────────────
+  // Cash handed over is reset when the sale completes: remember it while the payment window is open
+  const paidSnapshotRef = useRef<{ amount: number; method: string }>({ amount: 0, method: 'cash' })
   useEffect(() => {
+    if (showPayment) paidSnapshotRef.current = { amount: parseFloat(amountPaid) || 0, method: paymentMethod }
+  }, [showPayment, amountPaid, paymentMethod])
+
+  const lastDisplayStateRef = useRef<PosDisplayState | null>(null)
+  useEffect(() => {
+    if (!customerDisplayEnabled) return
+    const base = { ...createIdlePosDisplayState(company.tenantName, cashierName), tenantSlug: String(params.slug || '') }
+    let state: PosDisplayState
     if (lastSale) {
-      publishPosDisplay({
-        ...createIdlePosDisplayState(company.tenantName, cashierName),
+      const paid = paidSnapshotRef.current
+      const cashPaid = paid.method === 'cash' && !lastSale.isReturn ? paid.amount : 0
+      state = {
+        ...base,
         status: 'paid',
         total: lastSale.total,
         invoiceNo: lastSale.invoiceNo,
-        changeDue: paymentMethod === 'cash' ? Math.max(0, (parseFloat(amountPaid) || 0) - lastSale.total) : undefined,
-      })
-      return
+        amountPaid: cashPaid > 0 ? cashPaid : undefined,
+        changeDue: cashPaid > 0 ? Math.max(0, roundCurrency(cashPaid - lastSale.total)) : undefined,
+      }
+    } else if (cart.length === 0) {
+      state = base
+    } else {
+      state = {
+        ...base,
+        items: cart.map(c => ({
+          id: c.cartLineId,
+          name: c.name,
+          quantity: c.isWeighable && c.weight ? c.weight : c.quantity,
+          unit: c.isWeighable ? (c.unit || 'kg') : (c.uom || undefined),
+          unitPrice: c.isWeighable && c.weight ? (c.baseUnitPrice ?? roundCurrency(c.total / c.weight)) : c.unitPrice,
+          total: c.total,
+        })),
+        subtotal,
+        discount: discountAmount,
+        tax,
+        total,
+        status: showPayment ? 'paying' : 'cart',
+        amountPaid: showPayment && paymentMethod === 'cash' ? (parseFloat(amountPaid) || undefined) : undefined,
+      }
     }
-    if (cart.length === 0) {
-      publishPosDisplay(createIdlePosDisplayState(company.tenantName, cashierName))
-      return
-    }
-    publishPosDisplay({
-      tenantName: company.tenantName,
-      cashierName,
-      items: cart.map(c => ({ id: c.cartLineId, name: c.name, quantity: c.quantity, unitPrice: c.unitPrice, total: c.total })),
-      subtotal,
-      discount: discountAmount,
-      tax,
-      total,
-      status: showPayment ? 'paying' : 'cart',
-      updatedAt: new Date().toISOString(),
-    })
+    lastDisplayStateRef.current = state
+    publishPosDisplay({ ...state, sentAt: state.updatedAt })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart, subtotal, discountAmount, tax, total, showPayment, lastSale, company.tenantName, cashierName])
+  }, [cart, subtotal, discountAmount, tax, total, showPayment, amountPaid, paymentMethod, lastSale, company.tenantName, cashierName, customerDisplayEnabled])
+
+  // Heartbeat: a display opened later (or reloaded) catches up, and it can tell when the POS is gone
+  useEffect(() => {
+    if (!customerDisplayEnabled) return
+    const timer = window.setInterval(() => {
+      const s = lastDisplayStateRef.current
+      if (s) publishPosDisplay({ ...s, sentAt: new Date().toISOString() })
+    }, POS_DISPLAY_HEARTBEAT_MS)
+    return () => window.clearInterval(timer)
+  }, [customerDisplayEnabled])
 
   async function openPaymentModal(rxOverride?: PrescriptionForm) {
     // Pharmacy: prescription / controlled medicines need the prescription before payment
@@ -2719,7 +2988,7 @@ export default function POSPage() {
   // ─── Main Render ──────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-[calc(100vh-48px)] bg-gray-100 -m-5 overflow-hidden font-sans">
+    <div className="flex flex-col h-[calc(100dvh-48px)] bg-gray-100 dark:bg-gray-950 -m-5 overflow-hidden font-sans">
       <OfflineStatusBanner />
       {exchangeFrom && (
         <div className="w-full bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between text-sm shrink-0">
@@ -2767,10 +3036,20 @@ export default function POSPage() {
             type="button"
             onClick={() => setShowRecentSalesModal(true)}
             className="px-2 py-0.5 rounded bg-blue-900/80 hover:bg-blue-800 text-blue-200 font-bold border border-blue-700/80 flex items-center gap-1"
-            title="Recent Sales & Bills — reprint or share via WhatsApp"
+            title="Recent Sales & Bills — reprint or share via WhatsApp (Alt+B)"
           >
             <Clock className="w-3 h-3" />
             Bills History
+            <Kbd tone="dark">Alt+B</Kbd>
+          </button>
+          <button
+            type="button"
+            onClick={reprintLastBill}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700 flex items-center gap-1"
+            title="Reprint the last bill (Alt+R)"
+          >
+            Reprint
+            <Kbd tone="dark">Alt+R</Kbd>
           </button>
           <button
             type="button"
@@ -2780,6 +3059,7 @@ export default function POSPage() {
           >
             <Tag className="w-3 h-3" />
             Price Check
+            <Kbd tone="dark">F7</Kbd>
           </button>
           {activeShift && (
             <button
@@ -2790,6 +3070,7 @@ export default function POSPage() {
             >
               <Wallet className="w-3 h-3" />
               Float / Drop
+              <Kbd tone="dark">F10</Kbd>
             </button>
           )}
           <button
@@ -2816,14 +3097,38 @@ export default function POSPage() {
               title="Lock terminal (F8)"
             >
               Lock
+              <Kbd tone="dark" className="ml-1">F8</Kbd>
             </button>
           )}
+          {customerDisplayEnabled && (
+            <button
+              type="button"
+              onClick={openCustomerDisplay}
+              className="px-2 py-0.5 rounded bg-teal-900/80 hover:bg-teal-800 text-teal-100 font-bold border border-teal-700/80 flex items-center gap-1"
+              title="Open the customer display on the second screen (Alt+D)"
+            >
+              <MonitorUp className="w-3 h-3" />
+              <span className="hidden xl:inline">Customer Display</span>
+              <span className="xl:hidden">Display</span>
+              <Kbd tone="dark">Alt+D</Kbd>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowShortcutsHelp(true)}
+            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700 flex items-center gap-1"
+            title="Keyboard shortcuts (? or Ctrl+/)"
+            aria-label="Keyboard shortcuts"
+          >
+            <Keyboard className="w-3 h-3" />
+            <Kbd tone="dark">?</Kbd>
+          </button>
           <div className="flex items-center text-slate-300">
             <ThemeToggle />
           </div>
         </div>
       </div>
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
       <ProductGrid
         items={items}
         categories={categories}
@@ -2899,6 +3204,11 @@ export default function POSPage() {
         cartPromotions={pricingEnabled ? cartPromotions : []}
         couponCode={couponCode}
         onCouponChange={isReturnMode || !featureFlags.promotions ? undefined : setCouponCode}
+        selectedLineId={selectedLineId}
+        qtyBuffer={qtyBuffer}
+        cartFocused={cartFocused}
+        onSelectLine={(id) => { setSelectedLineId(id); setQtyBuffer('') }}
+        onCartFocusChange={(f) => { setCartFocused(f); if (!f) setQtyBuffer('') }}
       />
 
       <POSPaymentModal
@@ -3212,6 +3522,9 @@ export default function POSPage() {
 
       {/* Receipt printer settings (per terminal) */}
       <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} />
+
+      {/* Keyboard shortcuts overlay (? / Ctrl+/) */}
+      <ShortcutsHelpModal isOpen={showShortcutsHelp} onClose={() => setShowShortcutsHelp(false)} />
 
       {/* Camera barcode scanner (tablets / laptops without a hardware scanner) */}
       <CameraScanModal

@@ -6,6 +6,7 @@ import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
 import { getCurrencyNotes } from '@/lib/utils/countries'
 import type { Customer, PaymentMethodConfig, LoyaltyProgram, GiftCardInfo } from './types'
+import { paymentMethodIndexForKey } from '@/lib/pos/shortcuts'
 
 const PAYMENT_METHOD_META: Record<string, { icon: typeof Banknote; label: string }> = {
   cash: { icon: Banknote, label: 'Cash' },
@@ -189,6 +190,29 @@ export function POSPaymentModal({
     return amounts.slice(0, 5)
   }, [payableTotal, remainingAfterCredit, paymentMethod, currency])
 
+  // Keyboard: F1, F2 … pick the payment / refund method by position (the digit too when not typing in a field)
+  useEffect(() => {
+    if (!isOpen || processing) return
+    function onMethodKey(e: KeyboardEvent) {
+      const el = e.target as HTMLElement | null
+      const inTextInput = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
+      const ids = isReturnMode ? enabledRefundMethods : enabledPaymentMethods.map((m) => m.paymentMethod)
+      const idx = paymentMethodIndexForKey(e, { inTextInput, count: ids.length })
+      if (idx === null) return
+      e.preventDefault()
+      const id = ids[idx]
+      if (isReturnMode) {
+        if (id === 'credit' && !selectedCustomer) return
+        setRefundMethod(id)
+        return
+      }
+      setPaymentMethod(id)
+      if (id !== 'cash' && cashCardPaid > remainingAfterCredit) setAmountPaid(remainingAfterCredit.toFixed(2))
+    }
+    window.addEventListener('keydown', onMethodKey)
+    return () => window.removeEventListener('keydown', onMethodKey)
+  }, [isOpen, processing, isReturnMode, enabledRefundMethods, enabledPaymentMethods, selectedCustomer, setRefundMethod, setPaymentMethod, setAmountPaid, cashCardPaid, remainingAfterCredit])
+
   if (!isOpen) return null
 
   return (
@@ -232,7 +256,7 @@ export function POSPaymentModal({
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-3">Refund Method</label>
               <div className={`grid gap-3 ${enabledRefundMethods.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
-                {enabledRefundMethods.map(methodId => {
+                {enabledRefundMethods.map((methodId, methodIdx) => {
                   const meta = PAYMENT_METHOD_META[methodId] || { icon: Banknote, label: methodId }
                   const Icon = meta.icon
                   const isCredit = methodId === 'credit'
@@ -252,6 +276,7 @@ export function POSPaymentModal({
                       <span className={`text-sm font-medium ${refundMethod === methodId ? 'text-blue-700' : 'text-gray-600'}`}>
                         {meta.label}
                       </span>
+                      {methodIdx < 9 && <kbd className="hidden sm:inline text-[10px] font-mono font-bold px-1 rounded border border-gray-300 bg-gray-100 text-gray-600">F{methodIdx + 1}</kbd>}
                     </button>
                   )
                 })}
@@ -407,7 +432,7 @@ export function POSPaymentModal({
                 )}
               </div>
               <div className={`grid gap-3 ${enabledPaymentMethods.length <= 3 ? 'grid-cols-3' : enabledPaymentMethods.length <= 4 ? 'grid-cols-4' : 'grid-cols-3'}`}>
-                {enabledPaymentMethods.map(pm => {
+                {enabledPaymentMethods.map((pm, methodIdx) => {
                   const meta = PAYMENT_METHOD_META[pm.paymentMethod] || { icon: Banknote, label: pm.paymentMethod }
                   const Icon = meta.icon
                   return (
@@ -429,6 +454,7 @@ export function POSPaymentModal({
                       <span className={`text-sm font-medium ${paymentMethod === pm.paymentMethod ? 'text-blue-700' : 'text-gray-600'}`}>
                         {meta.label}
                       </span>
+                      {methodIdx < 9 && <kbd className="hidden sm:inline text-[10px] font-mono font-bold px-1 rounded border border-gray-300 bg-gray-100 text-gray-600">F{methodIdx + 1}</kbd>}
                     </button>
                   )
                 })}

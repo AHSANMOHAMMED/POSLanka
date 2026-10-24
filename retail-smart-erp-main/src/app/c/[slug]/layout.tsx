@@ -216,8 +216,11 @@ export default async function CompanyLayout({
     timeFormat: tenant.timeFormat || '12h',
   }
 
-  // Setup page: render minimal layout (no sidebar, navbar, etc.)
-  if (isSetupPage) {
+  // Customer-facing second screen (/pos/display): full screen, no navbar / sidebar / chat
+  const isCustomerDisplay = pathname === `/c/${slug}/pos/display`
+
+  // Setup page / customer display: render minimal layout (no sidebar, navbar, etc.)
+  if (isSetupPage || isCustomerDisplay) {
     return (
       <SessionProvider session={session} refetchInterval={840}>
         <CompanyContextProvider value={companyContext}>
