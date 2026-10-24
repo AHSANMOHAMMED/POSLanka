@@ -173,6 +173,8 @@ export function ChatHub() {
   const slugPrefix = tenantSlug ? `/c/${tenantSlug}` : ''
   const totalUnreadCount = chatStore.totalUnreadCount
   const isChatPage = pathname?.includes('/chat')
+  // The POS keeps its pay / hold keys bottom-right, so the bubble moves to the bottom-left there
+  const isPosPage = /\/pos(\/|$)/.test(pathname || '')
 
   const suggestedQuestions = useMemo(() => {
     return AI_SUGGESTED_QUESTIONS[businessType] || AI_SUGGESTED_QUESTIONS.retail
@@ -345,11 +347,11 @@ export function ChatHub() {
 
   return (
     <>
-      <div ref={hubRef} className="fixed bottom-5 right-5 z-40">
+      <div ref={hubRef} className={`fixed bottom-5 z-40 ${isPosPage ? 'left-5' : 'right-5'}`}>
 
         {/* ── Speed Dial Menu ────────────────────────────────── */}
         {view === 'menu' && (
-          <div className="absolute bottom-14 right-0 flex flex-col gap-2 w-56">
+          <div className={`absolute bottom-14 ${isPosPage ? 'left-0' : 'right-0'} flex flex-col gap-2 w-56`}>
             {/* AI Assistant (top, farther from FAB) */}
             <button
               type="button"
@@ -395,7 +397,7 @@ export function ChatHub() {
 
         {/* ── Staff Chat Panel ───────────────────────────────── */}
         {view === 'staff' && (
-          <div className="absolute bottom-14 right-0 w-[380px] h-[550px] bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden animate-chat-panel">
+          <div className={`absolute bottom-14 ${isPosPage ? 'left-0' : 'right-0'} w-[380px] h-[550px] bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden animate-chat-panel`}>
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
               {staffView === 'chat' && activeConversation ? (
@@ -507,7 +509,7 @@ export function ChatHub() {
 
         {/* ── AI Chat Panel ──────────────────────────────────── */}
         {view === 'ai' && (
-          <div className="absolute bottom-14 right-0 w-[380px] h-[550px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-chat-panel">
+          <div className={`absolute bottom-14 ${isPosPage ? 'left-0' : 'right-0'} w-[380px] h-[550px] bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-chat-panel`}>
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 bg-purple-600 text-white rounded-t-2xl">
               <div className="flex items-center gap-2">
