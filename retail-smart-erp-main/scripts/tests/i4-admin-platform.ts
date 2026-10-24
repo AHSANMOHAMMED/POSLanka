@@ -118,7 +118,7 @@ async function main() {
         const ownerEmail = `i4-owner${i}-${tag}@example.test`
         const res = await json(await createVendor(req('POST', '/api/sys-control/vendors', {
           name: `I4 Shop ${i} ${tag}`, slug: `i4-shop${i}-${tag}`, email: `i4-shop${i}-${tag}@example.test`,
-          phone: `+9477${String(Date.now() + i).slice(-7)}`, businessType: type, tierId: starter.id, billingCycle: 'monthly',
+          phone: `+9477${String(Date.now() + i).slice(-7)}`, address: 'Colombo', businessType: type, tierId: starter.id, billingCycle: 'monthly',
           ownerName: `I4 Owner ${i}`, ownerEmail, ownerPassword: 'Owner@12345',
         })))
         if (res.body.vendor?.id) tenantIds.push(res.body.vendor.id)

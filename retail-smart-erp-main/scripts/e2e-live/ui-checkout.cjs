@@ -21,7 +21,7 @@ function gtinCd(d) { let s = 0; [...d].reverse().forEach((c, i) => { s += +c * (
   // ---------- data setup via API
   const adm = await api('POST', '/api/sys-control/auth/login', { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD })
   const adminCookie = (adm.setCookie || '').split(';')[0]
-  const v = await api('POST', '/api/sys-control/vendors', { name: 'UI Mart ' + uid, slug, email: `o${uid}@ex.com`, businessType: 'supermarket', plan: 'trial', country: 'LK', currency: 'LKR', ownerName: 'UI Owner', ownerPassword: 'Owner@12345' }, null, adminCookie)
+  const v = await api('POST', '/api/sys-control/vendors', { name: 'UI Mart ' + uid, slug, email: `o${uid}@ex.com`, phone: '+94771234567', address: 'Colombo', businessType: 'supermarket', plan: 'trial', country: 'LK', currency: 'LKR', ownerName: 'UI Owner', ownerPassword: 'Owner@12345' }, null, adminCookie)
   if (v.status !== 200) { console.log('vendor create failed', v.status, v.data); process.exit(1) }
   const vendorId = v.data.vendor.id, email = v.data.owner.email
   const ml = await api('POST', '/api/auth/mobile-login', { email, password: 'Owner@12345', tenantSlug: slug })

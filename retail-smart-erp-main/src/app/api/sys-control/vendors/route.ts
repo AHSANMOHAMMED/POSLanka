@@ -32,7 +32,7 @@ import { getNextPeriodDates } from '@/lib/billing/proration'
 import { tierNameToPlan } from '@/lib/billing/activate-company'
 import { NEVER_EXPIRES, isFreeTier, planExpiryFor } from '@/lib/billing/subscription-state'
 import { vendorFilterSchema, queryVendors } from '@/lib/admin/vendor-query'
-import { SLUG_RE, checkSlugAvailability } from '@/lib/admin/vendor-slug'
+import { SLUG_RE, checkSlugAvailability, suggestAvailableSlug } from '@/lib/admin/vendor-slug'
 
 const listSchema = vendorFilterSchema.extend({
   page: z.coerce.number().int().min(1).default(1),
@@ -117,17 +117,29 @@ export async function PATCH(request: NextRequest) {
   }
 }
 
+/** Readable 12-character password (no 0/O/1/l/I) for owners created without one */
+function generateOwnerPassword(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789'
+  return Array.from(randomBytes(12), (n) => chars[n % chars.length]).join('')
+}
+
 const optText = (max: number) =>
   z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().max(max).optional())
 
 const createVendorSchema = z
   .object({
-    name: z.string().trim().min(2).max(255),
+    // Required: name, phone, address. Everything else is optional — the web address comes from
+    // the name, the owner name from the business name, the owner login from the email(s) or the
+    // web address, and the owner password is generated (returned once) when none is given.
+    name: z.string().trim().min(2, 'Enter the business name').max(255),
+    phone: z.string().trim().regex(/^\+?[0-9][0-9 ()-]{6,24}$/, 'Enter a valid phone number'),
+    address: z.string().trim().min(3, 'Enter the business address').max(1000),
     legalName: optText(255),
-    slug: z.string().trim().toLowerCase().regex(SLUG_RE, 'Use 3–50 characters: lowercase letters, numbers and single hyphens'),
-    email: z.string().trim().email().max(255),
-    phone: optText(50),
-    address: optText(1000),
+    slug: z.preprocess(
+      (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+      z.string().trim().toLowerCase().regex(SLUG_RE, 'Use 3–50 characters: lowercase letters, numbers and single hyphens').optional(),
+    ),
+    email: z.preprocess((v) => (v === '' ? undefined : v), z.string().trim().email().max(255).optional()),
     businessType: z.enum(businessTypeEnum.enumValues).default('retail'),
     /** Pricing tier to start on (pricing_tiers.id). Falls back to `plan` (legacy) or the free tier. */
     tierId: z.string().uuid().optional(),
@@ -142,14 +154,14 @@ const createVendorSchema = z
     brn: optText(50),
     vatRegistered: z.boolean().default(false),
     featureFlags: z.record(z.string(), z.boolean()).optional(),
-    ownerName: z.string().trim().min(2).max(255),
+    ownerName: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(2).max(255).optional()),
     ownerEmail: z.preprocess((v) => (v === '' ? undefined : v), z.string().trim().email().max(255).optional()),
     ownerPassword: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(8).max(128).optional()),
     sendInvite: z.boolean().optional(),
   })
-  .refine((d) => !!d.ownerPassword || d.sendInvite === true, {
-    message: 'Set an owner password (at least 8 characters) or choose to email an invitation',
-    path: ['ownerPassword'],
+  .refine((d) => d.sendInvite !== true || !!(d.ownerEmail || d.email), {
+    message: 'An email invitation needs the owner or business email',
+    path: ['ownerEmail'],
   })
   .refine((d) => !d.vatRegistered || !!(d.taxId || d.tin), {
     message: 'A VAT-registered business needs its TIN / VAT number',
@@ -166,19 +178,27 @@ export async function POST(request: NextRequest) {
     const parsed = await validateBody(request, createVendorSchema)
     if (!parsed.success) return parsed.response
     const {
-      name, legalName, slug, email, phone, address, businessType, tierId, billingCycle, plan, country, currency,
-      brn, vatRegistered, featureFlags, ownerName, ownerEmail, ownerPassword, sendInvite,
+      name, legalName, phone, address, businessType, tierId, billingCycle, plan, country, currency,
+      brn, vatRegistered, featureFlags, ownerPassword, sendInvite,
     } = parsed.data
     const taxId = parsed.data.taxId || parsed.data.tin || null
-
-    const ownerLoginEmail = (ownerEmail || email).toLowerCase()
+    // tenants.email is NOT NULL: the business email, else the owner's, else empty
+    const email = parsed.data.email || parsed.data.ownerEmail || ''
+    const ownerName = parsed.data.ownerName || name
 
     // Same checks as self-registration (reserved words, taken, held by a pending sign-up);
-    // the transaction re-checks the tenants table to avoid races.
-    const slugCheck = await checkSlugAvailability(slug)
-    if (!slugCheck.available) {
-      return NextResponse.json({ error: slugCheck.reason, field: 'slug' }, { status: 409 })
+    // the transaction re-checks the tenants table to avoid races. No address given → one from the name.
+    if (parsed.data.slug) {
+      const slugCheck = await checkSlugAvailability(parsed.data.slug)
+      if (!slugCheck.available) {
+        return NextResponse.json({ error: slugCheck.reason, field: 'slug' }, { status: 409 })
+      }
     }
+    const slug = parsed.data.slug || (await suggestAvailableSlug(name))
+
+    // Owner login: owner email, else business email, else one made from the web address
+    // (the owner signs in with Business ID + this login + password and can change it later)
+    const ownerLoginEmail = (parsed.data.ownerEmail || email || `owner@${slug}.poslanka.local`).toLowerCase()
 
     // Pricing tier: explicit id, else legacy plan name, else the free tier
     const allTiers = await db.query.pricingTiers.findMany({
@@ -200,8 +220,10 @@ export async function POST(request: NextRequest) {
       ? normalizeFeatureFlags(featureFlags as Partial<FeatureFlagsMap>)
       : DEFAULT_VENDOR_FEATURE_FLAGS
 
-    // Password: provided, or random (invite flow — owner sets their own on accept)
-    const effectivePassword = ownerPassword || randomBytes(24).toString('base64url')
+    // Password: provided; random for an invite (the owner sets their own on accept); otherwise a
+    // generated one that is returned once so the admin can hand it over
+    const generatedPassword = !ownerPassword && !sendInvite ? generateOwnerPassword() : null
+    const effectivePassword = ownerPassword || generatedPassword || randomBytes(24).toString('base64url')
     const passwordHash = await bcrypt.hash(effectivePassword, 12)
 
     const result = await db.transaction(async (tx) => {
@@ -379,6 +401,8 @@ export async function POST(request: NextRequest) {
       vendor: result.tenant,
       businessId: result.tenant.businessId,
       owner: { id: result.owner.id, email: result.owner.email },
+      /** Only when the admin gave no password and sent no invite — shown once */
+      generatedPassword,
       plan: { id: tier.id, name: tier.displayName },
       loginUrl: companyLoginUrl,
       signInUrl: loginUrl,

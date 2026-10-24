@@ -45,7 +45,7 @@ async function mobileLogin(email, password, businessId) {
 
   // ---- fresh vendor
   const created = await api('POST', '/api/sys-control/vendors', {
-    name: `E2E Vendor ${uid}`, slug: `e2e${uid}`, email: `owner-${uid}@example.test`, businessType: 'retail',
+    name: `E2E Vendor ${uid}`, slug: `e2e${uid}`, email: `owner-${uid}@example.test`, phone: '+94771234567', address: 'Colombo', businessType: 'retail',
     country: 'LK', currency: 'LKR', ownerName: 'E2E Owner', ownerPassword: 'Owner@12345',
   })
   ok('create test vendor via API', created.status === 200 || created.status === 201, JSON.stringify(created.body))

@@ -17,6 +17,7 @@
  */
 import { Client } from 'pg'
 import { randomBytes, randomUUID } from 'crypto'
+import bcrypt from 'bcryptjs'
 import { NextRequest } from 'next/server'
 import { setTestCookie, setTestHeader } from './i3-harness/next-headers-mock'
 import { closeAllPools } from '@/lib/db'
@@ -132,7 +133,7 @@ async function main() {
       check('slug check: reserved word refused', reserved.body.available === false, reserved.body)
 
       const bad = await json(await createVendor(req('POST', '/api/sys-control/vendors', {
-        name: 'I3 Bad', slug: `i3-bad-${tag}`, email: `bad-${tag}@example.test`, ownerName: 'Bad Owner', ownerPassword: 'Owner@12345', vatRegistered: true,
+        name: 'I3 Bad', slug: `i3-bad-${tag}`, email: `bad-${tag}@example.test`, phone: '+94771234567', address: 'Colombo', ownerName: 'Bad Owner', ownerPassword: 'Owner@12345', vatRegistered: true,
       })))
       check('VAT-registered without TIN → 400', bad.status === 400, bad)
 
@@ -176,12 +177,12 @@ async function main() {
       check('VAT-registered → default sales tax template is VAT 18%', tax.some((r) => /vat/i.test(r.name) && Number(r.rate) === 18), tax)
 
       const dup = await json(await createVendor(req('POST', '/api/sys-control/vendors', {
-        name: 'Dup', slug, email: `dup-${tag}@example.test`, ownerName: 'Dup Owner', ownerPassword: 'Owner@12345',
+        name: 'Dup', slug, email: `dup-${tag}@example.test`, phone: '+94771234567', address: 'Colombo', ownerName: 'Dup Owner', ownerPassword: 'Owner@12345',
       })))
       check('duplicate slug → 409', dup.status === 409, dup.status)
 
       const nv = await json(await createVendor(req('POST', '/api/sys-control/vendors', {
-        name: `I3 Cafe ${tag}`, slug: `i3-cafe-${tag}`, email: `cafe-${tag}@example.test`, businessType: 'restaurant',
+        name: `I3 Cafe ${tag}`, slug: `i3-cafe-${tag}`, email: `cafe-${tag}@example.test`, phone: '+94771234568', address: 'Kandy', businessType: 'restaurant',
         ownerName: 'Cafe Owner', ownerPassword: 'Owner@12345', vatRegistered: false,
       })))
       if (nv.body.vendor?.id) tenantIds.push(nv.body.vendor.id)
@@ -189,6 +190,26 @@ async function main() {
       const nvSub = (await pg.query(`SELECT s.status, s.current_period_end, t.plan_expires_at, s.tier_id FROM subscriptions s JOIN tenants t ON t.id = s.tenant_id WHERE s.tenant_id = $1`, [nv.body.vendor?.id])).rows[0]
       check('not VAT-registered → no default sales tax', nv.status === 200 && nvSet && nvSet.default_tax_template_id === null, nvSet)
       check('no tier given → free plan that never expires', nvSub?.tier_id === freeTier.id && nvSub?.status === 'trial' && nvSub?.plan_expires_at === null, nvSub)
+      // Only name, phone and address: web address, owner name, login and password are filled in
+      const noPhone = await json(await createVendor(req('POST', '/api/sys-control/vendors', { name: `I3 Min ${tag}`, address: 'Galle' })))
+      check('missing phone → 400', noPhone.status === 400, noPhone.status)
+      const noAddr = await json(await createVendor(req('POST', '/api/sys-control/vendors', { name: `I3 Min ${tag}`, phone: '+94771234569' })))
+      check('missing address → 400', noAddr.status === 400, noAddr.status)
+      const min = await json(await createVendor(req('POST', '/api/sys-control/vendors', { name: `I3 Min ${tag}`, phone: '+94771234569', address: 'Galle' })))
+      if (min.body.vendor?.id) tenantIds.push(min.body.vendor.id)
+      check('name + phone + address only → 200', min.status === 200, min)
+      check('web address generated from the name', min.body.vendor?.slug === `i3-min-${tag}`, min.body.vendor?.slug)
+      check('owner login generated from the web address', min.body.owner?.email === `owner@i3-min-${tag}.poslanka.local`, min.body.owner?.email)
+      check('owner password generated and returned once', typeof min.body.generatedPassword === 'string' && min.body.generatedPassword.length === 12)
+      const minOwner = (await pg.query(`SELECT full_name, password_hash FROM users WHERE tenant_id = $1 AND role = 'owner'`, [min.body.vendor?.id])).rows[0]
+      check('owner name defaults to the business name', minOwner?.full_name === `I3 Min ${tag}`, minOwner?.full_name)
+      check('generated password signs in', !!minOwner && await bcrypt.compare(min.body.generatedPassword || '', minOwner.password_hash))
+      const min2 = await json(await createVendor(req('POST', '/api/sys-control/vendors', { name: `I3 Min ${tag}`, phone: '+94771234570', address: 'Galle' })))
+      if (min2.body.vendor?.id) tenantIds.push(min2.body.vendor.id)
+      check('same name again → next free web address', min2.status === 200 && min2.body.vendor?.slug === `i3-min-${tag}-2`, min2.body.vendor?.slug)
+      const inv = await json(await createVendor(req('POST', '/api/sys-control/vendors', { name: `I3 Inv ${tag}`, phone: '+94771234571', address: 'Galle', sendInvite: true })))
+      check('invitation without any email → 400', inv.status === 400, inv.status)
+
       check('create audited with Business ID', (await pg.query(`SELECT 1 FROM admin_audit_logs WHERE resource_id = $1 AND action = 'create' AND details->>'businessId' = $2`, [vendorId, businessId])).rowCount === 1)
     })
 
@@ -312,7 +333,7 @@ async function main() {
       const res = await exportVendors(req('GET', `/api/sys-control/vendors/export?q=${tag}`))
       const text = await res.text()
       check('export → text/csv with the vendor and its Business ID', res.status === 200 && (res.headers.get('content-type') || '').includes('text/csv') &&
-        text.includes(`${businessId.slice(0, 2)}-${businessId.slice(2)}`) && text.split('\r\n').filter(Boolean).length === 3, text.slice(0, 300))
+        text.includes(`${businessId.slice(0, 2)}-${businessId.slice(2)}`) && text.split('\r\n').filter(Boolean).length === tenantIds.length + 1, text.slice(0, 300))
       const a = await pg.query(`SELECT 1 FROM admin_audit_logs WHERE super_admin_id = $1 AND resource = 'vendor_export'`, [adminId])
       check('export audited', a.rowCount === 1)
     })

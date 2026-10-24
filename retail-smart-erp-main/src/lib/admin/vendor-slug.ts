@@ -32,3 +32,25 @@ export async function checkSlugAvailability(slug: string): Promise<SlugCheck> {
   if (pending) return { available: false, reason: 'A sign-up awaiting payment has reserved this address.' }
   return { available: true }
 }
+
+/** Lowercase, hyphenated web address from a business name (may be shorter than 3 chars or empty). */
+export function slugifyName(name: string): string {
+  return name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 44).replace(/-+$/g, '')
+}
+
+/**
+ * A free web address for a business name: the name itself, then name-2 … name-9, then a random
+ * suffix. Names without Latin letters/digits (e.g. Sinhala / Tamil) start from "shop".
+ */
+export async function suggestAvailableSlug(name: string): Promise<string> {
+  let base = slugifyName(name)
+  if (base.length < 3) base = base ? `${base}-shop` : 'shop'
+  const candidates = [base, ...Array.from({ length: 8 }, (_, i) => `${base}-${i + 2}`)]
+  for (const c of candidates) {
+    if ((await checkSlugAvailability(c)).available) return c
+  }
+  for (;;) {
+    const c = `${base}-${Math.random().toString(36).slice(2, 6)}`
+    if ((await checkSlugAvailability(c)).available) return c
+  }
+}

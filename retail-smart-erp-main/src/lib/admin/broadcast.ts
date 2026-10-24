@@ -183,7 +183,8 @@ async function resolvePushTargets(vendorIds: string[], scope: typeof PUSH_SCOPES
 function emailTargets(vendors: Vendor[], recipients: Recipient[]): Array<{ vendor: Vendor | null; email: string }> {
   const byVendor = new Map<string, Set<string>>()
   for (const r of recipients) {
-    if (!r.email) continue
+    // Owners created without an email sign in with a generated owner@<slug>.poslanka.local login
+    if (!r.email || r.email.toLowerCase().endsWith('.poslanka.local')) continue
     const set = byVendor.get(r.tenantId) ?? new Set<string>()
     set.add(r.email.toLowerCase())
     byVendor.set(r.tenantId, set)

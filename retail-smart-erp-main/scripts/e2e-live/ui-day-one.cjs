@@ -18,7 +18,7 @@ function gtinCd(d) { let s = 0; [...d].reverse().forEach((c, i) => { s += +c * (
   const uid = crypto.randomBytes(4).toString('hex'); const slug = 'uit' + uid
   const adm = await api('POST', '/api/sys-control/auth/login', { email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD })
   const cookie = (adm.setCookie || '').split(';')[0]
-  const v = await api('POST', '/api/sys-control/vendors', { name: 'UI2 Mart ' + uid, slug, email: `u${uid}@ex.com`, businessType: 'supermarket', plan: 'trial', country: 'LK', currency: 'LKR', ownerName: 'UI2 Owner', ownerPassword: 'Owner@12345' }, null, cookie)
+  const v = await api('POST', '/api/sys-control/vendors', { name: 'UI2 Mart ' + uid, slug, email: `u${uid}@ex.com`, phone: '+94771234567', address: 'Colombo', businessType: 'supermarket', plan: 'trial', country: 'LK', currency: 'LKR', ownerName: 'UI2 Owner', ownerPassword: 'Owner@12345' }, null, cookie)
   const email = v.data.owner.email
   const tok = (await api('POST', '/api/auth/mobile-login', { email, password: 'Owner@12345', tenantSlug: slug })).data.token
   const ean = '890' + String(parseInt(uid, 16) % 1e9).padStart(9, '0'); const bc = ean + gtinCd(ean)
