@@ -77,6 +77,15 @@ const TENDER_LABELS: Record<TenderOption, string> = {
   card: 'CARD',
   lankaqr: 'LANKAQR',
   credit: 'CREDIT',
+  cheque: 'CHEQUE',
+}
+
+/** Sri Lankan banks offered as quick picks for a cheque (any name can be typed). */
+const CHEQUE_BANKS = ['Bank of Ceylon', "People's Bank", 'Commercial Bank', 'Hatton National Bank', 'Sampath Bank', 'Seylan Bank', 'NDB Bank', 'DFCC Bank', 'Nations Trust Bank', 'Pan Asia Bank', 'Union Bank', 'National Savings Bank', 'Cargills Bank', 'Amana Bank']
+
+function localToday(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 interface SaleResponse {
@@ -143,6 +152,8 @@ export function TenderModal({
   const [tender, setTender] = useState<TenderOption>('cash')
   const [cashTendered, setCashTendered] = useState<string>('')
   const [reference, setReference] = useState('')
+  // K1: the cheque taken (number, bank, branch, date; post-dated allowed)
+  const [cheque, setCheque] = useState({ chequeNo: '', bankName: '', branchName: '', chequeDate: localToday() })
   const [autoPrint, setAutoPrint] = useState(false)
   const [printer, setPrinter] = useState<PrinterSettings | null>(null)
   const [busy, setBusy] = useState(false)
@@ -165,6 +176,7 @@ export function TenderModal({
       setTender('cash')
       setCashTendered(netPayable.toFixed(2))
       setReference('')
+      setCheque({ chequeNo: '', bankName: '', branchName: '', chequeDate: localToday() })
       setLoyaltyPoints('')
       setBusy(false)
       getPrinterSettings().then((s) => {
@@ -206,7 +218,12 @@ export function TenderModal({
 
   const numericTendered = parseFloat(cashTendered) || 0
   const changeDue = roundCurrency(numericTendered - netPayable)
-  const isTenderSufficient = tender !== 'cash' || changeDue >= -0.009
+  const chequeDateValid = /^\d{4}-\d{2}-\d{2}$/.test(cheque.chequeDate) && !Number.isNaN(Date.parse(`${cheque.chequeDate}T00:00:00Z`))
+  const chequeComplete = !!cheque.chequeNo.trim() && !!cheque.bankName.trim() && chequeDateValid
+  const chequeDays = chequeDateValid
+    ? Math.round((Date.parse(`${cheque.chequeDate}T00:00:00Z`) - Date.parse(`${localToday()}T00:00:00Z`)) / 86400000)
+    : 0
+  const isTenderSufficient = tender === 'cheque' ? chequeComplete : tender !== 'cash' || changeDue >= -0.009
   const tenders = allowedTenders(shift.posProfile)
   const creditAllowed = !!customer && shift.posProfile?.allowCreditSale !== false && features.has('credit_customer')
   if (!visible) return null
@@ -229,7 +246,7 @@ export function TenderModal({
       taxTemplateId: c.taxTemplateId || undefined,
     }))
 
-    let paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'credit'
+    let paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'credit' | 'cheque'
     let amountPaid: number
     let creditAmount = 0
     let paymentSplits: Array<{ method: string; amount: number; reference?: string }> | undefined
@@ -248,6 +265,11 @@ export function TenderModal({
         paymentMethod = 'bank_transfer'
         amountPaid = netPayable
         paymentSplits = [{ method: 'bank_transfer', amount: netPayable, reference: reference.trim() || undefined }]
+        break
+      case 'cheque':
+        // The cheque covers the bill (no change on a cheque); the server registers it in Cheques
+        paymentMethod = 'cheque'
+        amountPaid = netPayable
         break
       case 'credit':
         // Sell on customer credit: nothing received now.
@@ -282,13 +304,24 @@ export function TenderModal({
       promotionDiscount: cartPromotionDiscount > 0 ? cartPromotionDiscount : undefined,
       couponCodes: couponCodes && couponCodes.length ? couponCodes : undefined,
       prescription: prescriptionRef.current || undefined,
+      cheque: tender === 'cheque'
+        ? {
+            chequeNo: cheque.chequeNo.trim(),
+            bankName: cheque.bankName.trim(),
+            branchName: cheque.branchName.trim() || undefined,
+            chequeDate: cheque.chequeDate,
+            amount: netPayable,
+            partyName: customer?.name || undefined,
+          }
+        : undefined,
       soldAt: new Date().toISOString(),
     }
   }
 
   async function handleCompleteSale() {
     if (!isTenderSufficient) {
-      Alert.alert('Insufficient Tender', 'Tendered cash is less than the net amount payable.')
+      if (tender === 'cheque') Alert.alert('Cheque Details', 'Enter the cheque number, bank and date (YYYY-MM-DD).')
+      else Alert.alert('Insufficient Tender', 'Tendered cash is less than the net amount payable.')
       return
     }
     if (tender === 'credit' && !customer) {
@@ -431,6 +464,8 @@ export function TenderModal({
     { id: 'cash', emoji: '💵', title: 'Cash', sub: 'Physical tender' },
     { id: 'card', emoji: '💳', title: 'Card POS', sub: tenders.has('card') ? 'Visa / Master / LankaPay' : 'Not enabled on this counter', disabled: !tenders.has('card') },
     { id: 'lankaqr', emoji: '📱', title: 'LankaQR', sub: tenders.has('lankaqr') ? 'Bank transfer with reference' : 'Not enabled on this counter', disabled: !tenders.has('lankaqr') },
+    // Cheques switched off by the platform: no cheque card at all
+    ...(features.has('cheques') ? [{ id: 'cheque' as TenderOption, emoji: '🏦', title: 'Cheque', sub: tenders.has('cheque') ? 'Number, bank and date' : 'Not enabled on this counter', disabled: !tenders.has('cheque') }] : []),
     // Credit sales switched off by the platform: no credit card at all
     ...(features.has('credit_customer') ? [{ id: 'credit' as TenderOption, emoji: '🧾', title: 'Customer Credit', sub: customer ? `Bill to ${customer.name}` : 'Link a customer first', disabled: !creditAllowed }] : []),
   ]
@@ -568,6 +603,53 @@ export function TenderModal({
                 onChangeText={setReference}
                 autoCapitalize="characters"
               />
+            </View>
+          )}
+
+          {tender === 'cheque' && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>Cheque Details</Text>
+                {chequeDays > 0 ? <Text style={styles.sectionHint}>Post-dated · {chequeDays} day{chequeDays === 1 ? '' : 's'}</Text> : null}
+              </View>
+              <TextInput
+                style={styles.phoneInput}
+                placeholder="Cheque number"
+                placeholderTextColor={THEME.colors.textSubtle}
+                value={cheque.chequeNo}
+                onChangeText={(v) => setCheque((c) => ({ ...c, chequeNo: v.replace(/[^0-9A-Za-z-]/g, '').slice(0, 50) }))}
+                autoCapitalize="characters"
+              />
+              <TextInput
+                style={styles.phoneInput}
+                placeholder="Bank"
+                placeholderTextColor={THEME.colors.textSubtle}
+                value={cheque.bankName}
+                onChangeText={(v) => setCheque((c) => ({ ...c, bankName: v.slice(0, 100) }))}
+              />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }} keyboardShouldPersistTaps="handled">
+                {CHEQUE_BANKS.filter((b) => !cheque.bankName.trim() || b.toLowerCase().includes(cheque.bankName.trim().toLowerCase())).map((b) => (
+                  <Pressable key={b} style={[styles.bankChip, cheque.bankName === b && styles.bankChipActive]} onPress={() => setCheque((c) => ({ ...c, bankName: b }))}>
+                    <Text style={[styles.bankChipText, cheque.bankName === b && styles.bankChipTextActive]}>{b}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+              <TextInput
+                style={styles.phoneInput}
+                placeholder="Branch (optional)"
+                placeholderTextColor={THEME.colors.textSubtle}
+                value={cheque.branchName}
+                onChangeText={(v) => setCheque((c) => ({ ...c, branchName: v.slice(0, 100) }))}
+              />
+              <TextInput
+                style={[styles.phoneInput, !chequeDateValid && { borderColor: THEME.colors.error }]}
+                placeholder="Cheque date (YYYY-MM-DD)"
+                placeholderTextColor={THEME.colors.textSubtle}
+                value={cheque.chequeDate}
+                onChangeText={(v) => setCheque((c) => ({ ...c, chequeDate: v.replace(/[^0-9-]/g, '').slice(0, 10) }))}
+                keyboardType="numbers-and-punctuation"
+              />
+              <Text style={styles.toggleSub}>The cheque is for the full amount; no change is given. It appears under Money out & cheques until it is deposited and cleared.</Text>
             </View>
           )}
 
@@ -736,6 +818,10 @@ const styles = StyleSheet.create({
   changeAmount: { fontSize: 20, fontWeight: '900' },
   changeAmountSuccess: { color: THEME.colors.tertiary },
   changeAmountError: { color: THEME.colors.error },
+  bankChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, borderWidth: 1, borderColor: THEME.colors.border, backgroundColor: THEME.colors.surfaceContainerLow, marginRight: 6 },
+  bankChipActive: { backgroundColor: THEME.colors.primary, borderColor: THEME.colors.primary },
+  bankChipText: { fontSize: 12, fontWeight: '600', color: THEME.colors.text },
+  bankChipTextActive: { color: '#FFF' },
   creditText: { fontSize: 12, color: THEME.colors.onSecondaryContainer, marginTop: 6 },
   toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   toggleInfo: { flex: 1, marginRight: 12 },

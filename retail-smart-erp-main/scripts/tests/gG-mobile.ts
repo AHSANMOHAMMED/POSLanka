@@ -111,7 +111,8 @@ const cashCard = allowedTenders({ paymentMethods: [{ paymentMethod: 'cash' }, { 
 check('profile cash+card: LankaQR disabled', !cashCard.has('lankaqr') && cashCard.has('card') && cashCard.has('cash'))
 const qrOnly = allowedTenders({ paymentMethods: ['bank_transfer'] })
 check('profile bank_transfer: LankaQR on, card off, cash always on', qrOnly.has('lankaqr') && !qrOnly.has('card') && qrOnly.has('cash'))
-check('profile without a list: all tenders (older profiles)', allowedTenders({ paymentMethods: [] }).size === 4 && allowedTenders(null).size === 4)
+check('profile without a list: all tenders except cheque (older profiles)', allowedTenders({ paymentMethods: [] }).size === 4 && allowedTenders(null).size === 4 && !allowedTenders(null).has('cheque'))
+check('cheque only when the profile lists it', !cashCard.has('cheque') && allowedTenders({ paymentMethods: ['cash', 'cheque'] }).has('cheque'))
 check('credit stays governed by allowCreditSale', cashCard.has('credit'))
 
 // ---------------------------------------------------------------- 6. return idempotency

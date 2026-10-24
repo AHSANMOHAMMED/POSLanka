@@ -483,6 +483,7 @@ const METHOD_LABELS: Record<string, string> = {
   bank_transfer: 'Bank / LankaQR',
   credit: 'Credit',
   gift_card: 'Gift card',
+  cheque: 'Cheque',
 }
 
 export function paymentLabel(method: string): string {
