@@ -28,6 +28,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   EmptyState,
   Field,
   Input,
@@ -462,7 +463,7 @@ export default function VendorDetailPage() {
         </div>
       )}
 
-      {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={v.businessType} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
+      {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={v.businessType} branches={v.branches.filter((b) => b.isActive)} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
       {tab === 'billing' && <BillingTab data={data} />}
       {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} businessType={v.businessType} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
       {tab === 'activity' && <ActivityTab activity={data.activity} />}
@@ -478,8 +479,10 @@ type StaffRow = Detail['staff'][number]
 type StaffResult = { title: string; email: string; password: string }
 
 /** Staff of this vendor: list, add (only name + role required), reset password, deactivate / activate. */
-function StaffTab({ staff, vendorId, businessType, canManage, onChanged }: {
-  staff: Detail['staff']; vendorId: string; businessType: string; canManage: boolean; onChanged: (text: string) => void
+type BranchRow = Detail['vendor']['branches'][number]
+
+function StaffTab({ staff, vendorId, businessType, branches, canManage, onChanged }: {
+  staff: Detail['staff']; vendorId: string; businessType: string; branches: BranchRow[]; canManage: boolean; onChanged: (text: string) => void
 }) {
   const [adding, setAdding] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -553,6 +556,7 @@ function StaffTab({ staff, vendorId, businessType, canManage, onChanged }: {
         <AddStaffDialog
           vendorId={vendorId}
           businessType={businessType}
+          branches={branches}
           onClose={() => setAdding(false)}
           onCreated={(name, email, password) => {
             setAdding(false)
@@ -565,8 +569,8 @@ function StaffTab({ staff, vendorId, businessType, canManage, onChanged }: {
   )
 }
 
-function AddStaffDialog({ vendorId, businessType, onClose, onCreated }: {
-  vendorId: string; businessType: string; onClose: () => void; onCreated: (name: string, email: string, password: string | null) => void
+function AddStaffDialog({ vendorId, businessType, branches, onClose, onCreated }: {
+  vendorId: string; businessType: string; branches: BranchRow[]; onClose: () => void; onCreated: (name: string, email: string, password: string | null) => void
 }) {
   const roles = getRolesForBusinessType(businessType).filter((r) => r !== 'owner')
   const [fullName, setFullName] = useState('')
@@ -574,6 +578,8 @@ function AddStaffDialog({ vendorId, businessType, onClose, onCreated }: {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [pin, setPin] = useState('')
+  // K4: branches this staff member works in (none = every branch; one branch is auto-assigned)
+  const [branchIds, setBranchIds] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nameOk = fullName.trim().length >= 2
@@ -584,7 +590,7 @@ function AddStaffDialog({ vendorId, businessType, onClose, onCreated }: {
     try {
       const res = await adminFetch<{ user: { email: string; fullName: string }; generatedPassword: string | null }>(`/api/sys-control/vendors/${vendorId}/staff`, {
         method: 'POST',
-        json: { fullName: fullName.trim(), role, email: email.trim() || undefined, password: password || undefined, pin: pin || undefined },
+        json: { fullName: fullName.trim(), role, email: email.trim() || undefined, password: password || undefined, pin: pin || undefined, warehouseIds: branchIds.length ? branchIds : undefined },
       })
       onCreated(res.user.fullName, res.user.email, res.generatedPassword ?? null)
     } catch (e) {
@@ -621,6 +627,23 @@ function AddStaffDialog({ vendorId, businessType, onClose, onCreated }: {
         <Field label="POS PIN" htmlFor="st-pin" hint="Optional, 4–6 digits, for the POS lock screen.">
           <Input id="st-pin" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))} />
         </Field>
+        {branches.length > 1 && (
+          <fieldset className="sm:col-span-2">
+            <legend className="mb-1.5 text-[13px] font-medium text-adm-fg">Branches</legend>
+            <p className="mb-2 text-[12.5px] text-adm-subtle">Staff given branches only see and work with those branches. Leave all unticked to let them work with every branch.</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {branches.map((b) => (
+                <Checkbox
+                  key={b.id}
+                  label={b.name}
+                  description={b.code || undefined}
+                  checked={branchIds.includes(b.id)}
+                  onChange={(e) => setBranchIds((ids) => e.target.checked ? [...ids, b.id] : ids.filter((x) => x !== b.id))}
+                />
+              ))}
+            </div>
+          </fieldset>
+        )}
       </div>
     </AdminModal>
   )
