@@ -7,7 +7,7 @@ name: Scheduled jobs
 
 on:
   schedule:
-    - cron: '7 * * * *'      # hourly: stock-alerts
+    - cron: '7 * * * *'      # hourly: stock-alerts, cheque-reminders
     - cron: '*/15 * * * *'   # every 15 min: import-maintenance
     - cron: '*/10 * * * *'   # every 10 min: einvoice-sync
     - cron: '17 */6 * * *'   # every 6 h: enforce-subscriptions
@@ -23,6 +23,7 @@ on:
         type: choice
         options:
           - stock-alerts
+          - cheque-reminders
           - import-maintenance
           - enforce-subscriptions
           - subscription-reminders
@@ -59,7 +60,7 @@ jobs:
             exit 0
           fi
           case "$SCHEDULE" in
-            '7 * * * *')    JOBS="stock-alerts" ;;
+            '7 * * * *')    JOBS="stock-alerts cheque-reminders" ;;
             '*/15 * * * *') JOBS="import-maintenance" ;;
             '*/10 * * * *') JOBS="einvoice-sync" ;;
             '0 21 * * *')   JOBS="auto-reorder" ;;
@@ -68,7 +69,7 @@ jobs:
             '45 20 * * *')  JOBS="retention" ;;
             *)
               if [ "$INPUT_JOB" = "all" ]; then
-                JOBS="stock-alerts import-maintenance enforce-subscriptions subscription-reminders calculate-storage cleanup-held-sales refresh-exchange-rates einvoice-sync auto-reorder retention"
+                JOBS="stock-alerts cheque-reminders import-maintenance enforce-subscriptions subscription-reminders calculate-storage cleanup-held-sales refresh-exchange-rates einvoice-sync auto-reorder retention"
               else
                 JOBS="$INPUT_JOB"
               fi

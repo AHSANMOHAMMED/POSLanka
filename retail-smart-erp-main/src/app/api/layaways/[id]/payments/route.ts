@@ -136,7 +136,7 @@ export async function POST(
 
     // Clamp to remaining if very close (due to floating point)
     const effectiveAmount = Math.min(paymentAmount, currentBalanceDue)
-    const effectiveMethod = (paymentMethod || 'cash') as 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card'
+    const effectiveMethod = (paymentMethod || 'cash') as 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | 'cheque'
 
     // Create payment record
     const [payment] = await tx.insert(layawayPayments).values({

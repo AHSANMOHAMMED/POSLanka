@@ -25,6 +25,7 @@ export const FEATURE_FLAGS = [
   'layaways',
   'commissions',
   'customer_display',
+  'cheques',
   // Stock
   'multi_warehouse',
   'stock_takes',
@@ -100,6 +101,9 @@ export const FEATURE_DEFS: FeatureDef[] = [
   { key: 'customer_display', group: 'Sales & POS', default: true, label: 'Customer display (second screen)',
     description: 'A customer-facing screen opened from the POS (Alt+D): live cart, totals, change due and a thank-you screen. Can also be turned off per counter (POS profile).',
     businessTypes: ['retail', 'supermarket', 'pharmacy', 'restaurant'], hrefs: ['/pos/display'] },
+  { key: 'cheques', group: 'Sales & POS', default: true, label: 'Cheques',
+    description: 'Take and issue cheques (post-dated too): cheque payments at the POS, against credit and to suppliers; cheques register with deposit / clear / bounce and due reminders.',
+    hrefs: ['/accounting/cheques'], api: ['/api/cheques'] },
 
   // ------------------------------------------------------------------ Stock
   { key: 'multi_warehouse', group: 'Stock', default: false, label: 'Multiple branches / warehouses',

@@ -5,7 +5,7 @@
 //   there is no EAS projectId (Expo Go / local builds) or permission is denied.
 // - unregisterPushToken(): DELETE /api/account/devices on logout.
 // - installNotificationHandlers(): foreground toast/alert + deep-link by
-//   `data.screen` ('approvals' | 'pos' | 'shifts' | 'inventory' | 'intake' | 'alerts').
+//   `data.screen` ('approvals' | 'pos' | 'shifts' | 'inventory' | 'intake' | 'alerts' | 'cheques' | 'expenses').
 import { Platform, Alert } from 'react-native'
 import Constants from 'expo-constants'
 import * as Device from 'expo-device'
@@ -17,7 +17,7 @@ import { api, getToken, onBeforeLogout } from './api'
 const PUSH_TOKEN_KEY = 'poslanka_push_token'
 const ANDROID_CHANNEL_ID = 'poslanka-default'
 
-export type NotificationScreen = 'approvals' | 'pos' | 'shifts' | 'inventory' | 'intake' | 'alerts'
+export type NotificationScreen = 'approvals' | 'pos' | 'shifts' | 'inventory' | 'intake' | 'alerts' | 'cheques' | 'expenses'
 
 const SCREEN_ROUTES: Record<NotificationScreen, string> = {
   approvals: '/approvals',
@@ -26,6 +26,9 @@ const SCREEN_ROUTES: Record<NotificationScreen, string> = {
   inventory: '/inventory',
   intake: '/intake',
   alerts: '/alerts',
+  // K1: cheque reminders / expense claims open the money screen
+  cheques: '/money',
+  expenses: '/money',
 }
 
 type ToastFn = (title: string, body: string, onPress?: () => void) => void

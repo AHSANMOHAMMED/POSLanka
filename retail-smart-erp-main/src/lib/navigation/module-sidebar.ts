@@ -178,6 +178,7 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/my/salary-slips', 'my'],
   ['/my/commissions', 'my'],
   ['/my/advances', 'my'],
+  ['/my/expense-claims', 'my'],
   ['/my', 'my'],
 
   // Accounting
@@ -199,6 +200,8 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/accounting/journal-entries', 'accounting'],
   ['/accounting/recurring-entries', 'accounting'],
   ['/accounting/payment-entries', 'accounting'],
+  ['/accounting/cheques', 'accounting'],
+  ['/accounting/expenses', 'accounting'],
   ['/accounting/payment-reconciliation', 'accounting'],
   ['/accounting/payment-terms', 'accounting'],
   ['/accounting/modes-of-payment', 'accounting'],
@@ -584,6 +587,13 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
       title: 'Banking',
       items: [
         { href: '/accounting/bank-accounts', label: 'Bank Accounts', icon: 'Landmark', permission: 'manageAccounting' },
+        { href: '/accounting/cheques', label: 'Cheques', icon: 'FileText', permission: 'viewAccounting' },
+      ],
+    },
+    {
+      title: 'Money Out',
+      items: [
+        { href: '/accounting/expenses', label: 'Expenses & Claims', icon: 'Receipt', permission: 'manageAccounting' },
       ],
     },
     {
@@ -706,6 +716,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/my/salary-slips', label: 'My Salary Slips', icon: 'FileText', permission: 'viewOwnPaySlips' },
         { href: '/my/commissions', label: 'My Commissions', icon: 'DollarSign', permission: 'viewOwnCommissions' },
         { href: '/my/advances', label: 'My Advances', icon: 'Banknote', permission: 'requestAdvance' },
+        { href: '/my/expense-claims', label: 'My Expense Claims', icon: 'Receipt', permission: 'requestAdvance' },
       ],
     },
   ],

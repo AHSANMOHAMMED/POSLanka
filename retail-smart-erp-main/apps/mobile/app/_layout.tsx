@@ -41,6 +41,7 @@ export default function RootLayout() {
         <Stack.Screen name="intake" />
         <Stack.Screen name="alerts" />
         <Stack.Screen name="labels" />
+        <Stack.Screen name="money" />
       </Stack>
     </SafeAreaProvider>
     </TextScaleProvider>

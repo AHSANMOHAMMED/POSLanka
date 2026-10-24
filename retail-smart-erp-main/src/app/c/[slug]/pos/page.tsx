@@ -58,6 +58,7 @@ import type {
   SelectedModifier,
   GiftCardInfo,
   CartBatchOption,
+  ChequeFormValue,
 } from '@/components/pos/types'
 import { toast } from '@/components/ui/toast'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
@@ -196,6 +197,9 @@ export default function POSPage() {
   const [splitEnabled, setSplitEnabled] = useState(false)
   const [splitSecondMethod, setSplitSecondMethod] = useState('card')
   const [splitSecondAmount, setSplitSecondAmount] = useState('')
+  // K1: cheque taken at the till (tender or second split)
+  const emptyCheque = (): ChequeFormValue => ({ chequeNo: '', bankName: '', branchName: '', chequeDate: new Date().toLocaleDateString('en-CA') })
+  const [chequeDetails, setChequeDetails] = useState<ChequeFormValue>(emptyCheque)
   const { online, queueSale, cacheCatalog, loadCachedCatalog, newClientSaleId: generateClientSaleId } = useOfflinePos()
   // Gift card state
   const [giftCardNumber, setGiftCardNumber] = useState('')
@@ -416,6 +420,7 @@ export default function POSPage() {
     const methods = posProfile?.paymentMethods
     // Credit sales and gift cards follow the business's feature switches
     const allowed = (m: string) => (m !== 'credit' || featureFlags.credit_customer) && (m !== 'gift_card' || featureFlags.gift_cards)
+      && (m !== 'cheque' || featureFlags.cheques)
     if (methods && methods.length > 0) {
       return [...methods].filter((m) => allowed(m.paymentMethod)).sort((a, b) => a.sortOrder - b.sortOrder)
     }
@@ -424,7 +429,7 @@ export default function POSPage() {
       { paymentMethod: 'card', isDefault: false, allowInReturns: true, sortOrder: 1 },
       { paymentMethod: 'bank_transfer', isDefault: false, allowInReturns: true, sortOrder: 2 },
     ]
-  }, [posProfile?.paymentMethods, featureFlags.credit_customer, featureFlags.gift_cards])
+  }, [posProfile?.paymentMethods, featureFlags.credit_customer, featureFlags.gift_cards, featureFlags.cheques])
 
   /** Real payment methods used on the receipt being returned (store credit / gift cards excluded) */
   const returnPaidMethods = useMemo(() => Object.entries(returnAgainstSale?.paidByMethod || {})
@@ -2730,6 +2735,13 @@ export default function POSPage() {
           ].filter((s) => s.amount > 0)
         : undefined
 
+    // K1: a cheque tender carries its details
+    const chequeTender = paymentSplits ? paymentSplits.some((p) => p.method === 'cheque') : paymentMethod === 'cheque'
+    if (chequeTender && (!chequeDetails.chequeNo.trim() || !chequeDetails.bankName.trim() || !chequeDetails.chequeDate)) {
+      toast.error('Enter the cheque number, bank and date')
+      return
+    }
+
     const salePayload = {
       clientSaleId: ensureClientSaleId(),
       customerId: selectedCustomer?.id,
@@ -2765,6 +2777,9 @@ export default function POSPage() {
       promotionDiscount: cartPromotionDiscount > 0 ? cartPromotionDiscount : undefined,
       couponCodes: couponCode ? [couponCode] : undefined,
       prescription: prescription || undefined,
+      cheque: chequeTender
+        ? { chequeNo: chequeDetails.chequeNo.trim(), bankName: chequeDetails.bankName.trim(), branchName: chequeDetails.branchName.trim() || undefined, chequeDate: chequeDetails.chequeDate }
+        : undefined,
       soldAt: online ? undefined : new Date().toISOString(),
     }
 
@@ -2778,6 +2793,7 @@ export default function POSPage() {
         setCreditAmount('')
         setSplitEnabled(false)
         setSplitSecondAmount('')
+        setChequeDetails(emptyCheque())
         // H4: the offline receipt number (OFF-…) identifies the sale until it syncs
         setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
         rememberOfflineReceipt(queued.offlineRef, salePayload as Record<string, unknown>)
@@ -2822,6 +2838,7 @@ export default function POSPage() {
         setCreditAmount('')
         setSplitEnabled(false)
         setSplitSecondAmount('')
+        setChequeDetails(emptyCheque())
         fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
         setLastSale({
           invoiceNo: sale.invoiceNo,
@@ -2866,6 +2883,7 @@ export default function POSPage() {
         setCreditAmount('')
         setSplitEnabled(false)
         setSplitSecondAmount('')
+        setChequeDetails(emptyCheque())
         setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
         rememberOfflineReceipt(queued.offlineRef, salePayload as Record<string, unknown>)
         toast.success(`Network error — sale queued offline (receipt ${queued.offlineRef})`)
@@ -3253,6 +3271,8 @@ export default function POSPage() {
         giftCardInfo={giftCardInfo}
         giftCardLookupLoading={giftCardLookupLoading}
         onLookupGiftCard={lookupGiftCard}
+        chequeDetails={chequeDetails}
+        setChequeDetails={setChequeDetails}
       />
 
       <HeldSalesModal

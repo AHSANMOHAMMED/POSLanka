@@ -20,6 +20,8 @@ export const ALERT_TYPES = [
   'advance_requested',
   'subscription_expiring',
   'import_finished',
+  'cheque_due',
+  'expense_claim',
 ] as const
 
 export type AlertType = typeof ALERT_TYPES[number]
@@ -47,6 +49,8 @@ export const ALERT_TYPE_INFO: Record<AlertType, { label: string; description: st
   advance_requested: { label: 'Salary advance request', description: 'An employee advance awaits approval', group: 'Approvals' },
   subscription_expiring: { label: 'Subscription reminder', description: 'Your plan or trial ends soon', group: 'System' },
   import_finished: { label: 'Import finished', description: 'A bulk import you started has finished', group: 'System' },
+  cheque_due: { label: 'Cheques due', description: 'Cheques to bank or that will be presented today / tomorrow, and overdue ones (daily)', group: 'Sales' },
+  expense_claim: { label: 'Expense claim', description: 'A staff reimbursement claim awaits approval', group: 'Approvals' },
 }
 
 /**
@@ -70,6 +74,8 @@ export const DEDUPE_WINDOW_SECONDS: Record<AlertType, number> = {
   advance_requested: 0,
   subscription_expiring: 3 * 24 * 3600,
   import_finished: 0,
+  cheque_due: 20 * 3600,
+  expense_claim: 0,
 }
 
 /** Types that ignore quiet hours for push (kept empty on purpose: everything respects quiet hours). */

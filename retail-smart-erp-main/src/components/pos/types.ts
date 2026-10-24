@@ -176,6 +176,14 @@ export interface SaleForReturn {
   refundableTotal?: number
 }
 
+/** K1: cheque taken at the POS (sent as `cheque` with the sale) */
+export interface ChequeFormValue {
+  chequeNo: string
+  bankName: string
+  branchName: string
+  chequeDate: string
+}
+
 export interface PaymentMethodConfig {
   id?: string
   paymentMethod: string

@@ -11,8 +11,8 @@ export const userRoleEnum = pgEnum('user_role', [
   'system_manager', 'accounts_manager', 'sales_manager', 'purchase_manager',
   'hr_manager', 'stock_manager', 'pos_user', 'report_user', 'dealer_sales'
 ])
-export const paymentMethodEnum = pgEnum('payment_method', ['cash', 'card', 'bank_transfer', 'credit', 'gift_card'])
-export type PaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card'
+export const paymentMethodEnum = pgEnum('payment_method', ['cash', 'card', 'bank_transfer', 'credit', 'gift_card', 'cheque'])
+export type PaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | 'cheque'
 export const saleStatusEnum = pgEnum('sale_status', ['pending', 'partial', 'completed', 'void'])
 export const workOrderStatusEnum = pgEnum('work_order_status', ['draft', 'confirmed', 'in_progress', 'completed', 'invoiced', 'cancelled'])
 export const appointmentStatusEnum = pgEnum('appointment_status', ['scheduled', 'confirmed', 'arrived', 'completed', 'cancelled', 'no_show'])
@@ -1016,6 +1016,8 @@ export const posProfiles = pgTable('pos_profiles', {
   defaultPaymentMethod: varchar('default_payment_method', { length: 30 }).notNull().default('cash'),
   allowCreditSale: boolean('allow_credit_sale').notNull().default(true),
   costCenterId: uuid('cost_center_id').references(() => costCenters.id),
+  // K1 (0171): drawer expenses a cashier may record without a supervisor (null = always approve)
+  expenseLimit: decimal('expense_limit', { precision: 15, scale: 2 }),
 
   status: varchar('status', { length: 20 }).notNull().default('active'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -2408,6 +2410,9 @@ export const saleItems = pgTable('sale_items', {
   promotions: jsonb('promotions').$type<Array<{ promotionId: string; label: string; amount: number; cart?: boolean }>>(), // cart: share of a cart promotion
   uom: varchar('uom', { length: 20 }),
   uomFactor: decimal('uom_factor', { precision: 14, scale: 6 }).notNull().default('1'),
+  // K1 (0171): cost of one unit sold (items.cost_price x uom_factor at sale time; trigger
+  // trg_sale_items_unit_cost fills it for every writer, returns copy the original line)
+  unitCost: decimal('unit_cost', { precision: 15, scale: 4 }),
 })
 
 export const payments = pgTable('payments', {
@@ -3306,6 +3311,93 @@ export const purchasePayments = pgTable('purchase_payments', {
   paidAt: timestamp('paid_at').defaultNow().notNull(),
   createdBy: uuid('created_by').references(() => users.id),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// K1 (0171): expense categories (GL account per category; defaults seeded on first use)
+export const expenseCategories = pgTable('expense_categories', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 100 }).notNull(),
+  accountId: uuid('account_id').references(() => chartOfAccounts.id, { onDelete: 'set null' }),
+  isActive: boolean('is_active').notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// K1 (0171): money out — expenses (drawer / office cash / bank / cheque) and staff
+// reimbursement claims (pending -> approved -> paid | rejected). See src/lib/expenses.
+export const expenses = pgTable('expenses', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  expenseNo: varchar('expense_no', { length: 30 }).notNull(),
+  kind: varchar('kind', { length: 20 }).notNull().default('expense').$type<'expense' | 'reimbursement'>(),
+  status: varchar('status', { length: 20 }).notNull().default('paid').$type<'pending' | 'approved' | 'rejected' | 'paid' | 'void'>(),
+  expenseDate: date('expense_date').notNull(),
+  categoryId: uuid('category_id').references(() => expenseCategories.id, { onDelete: 'set null' }),
+  accountId: uuid('account_id').references(() => chartOfAccounts.id, { onDelete: 'set null' }),
+  amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+  paymentMethod: varchar('payment_method', { length: 20 }), // cash | card | bank_transfer | cheque
+  paidFrom: varchar('paid_from', { length: 20 }), // drawer | cash | bank
+  payee: varchar('payee', { length: 255 }),
+  receiptNo: varchar('receipt_no', { length: 100 }),
+  description: text('description'),
+  notes: text('notes'),
+  attachmentUrl: text('attachment_url'),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id, { onDelete: 'set null' }),
+  posOpeningEntryId: uuid('pos_opening_entry_id').references(() => posOpeningEntries.id, { onDelete: 'set null' }),
+  cashMovementId: uuid('cash_movement_id').references(() => posCashMovements.id, { onDelete: 'set null' }),
+  claimantId: uuid('claimant_id').references(() => users.id, { onDelete: 'set null' }),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  approvedBy: uuid('approved_by').references(() => users.id, { onDelete: 'set null' }),
+  approvedAt: timestamp('approved_at'),
+  rejectedReason: text('rejected_reason'),
+  paidBy: uuid('paid_by').references(() => users.id, { onDelete: 'set null' }),
+  paidAt: timestamp('paid_at'),
+  voidedBy: uuid('voided_by').references(() => users.id, { onDelete: 'set null' }),
+  voidedAt: timestamp('voided_at'),
+  voidReason: text('void_reason'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export type ChequeStatus = 'pending' | 'deposited' | 'cleared' | 'bounced' | 'cancelled' | 'returned'
+export interface ChequeStatusEvent { status: ChequeStatus; at: string; by: string | null; note?: string | null }
+
+// K1 (0171): cheques received from customers / issued to suppliers and payees (see src/lib/cheques)
+export const cheques = pgTable('cheques', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  direction: varchar('direction', { length: 10 }).notNull().$type<'received' | 'issued'>(),
+  chequeNo: varchar('cheque_no', { length: 50 }).notNull(),
+  bankName: varchar('bank_name', { length: 100 }).notNull(),
+  branchName: varchar('branch_name', { length: 100 }),
+  chequeDate: date('cheque_date').notNull(),
+  amount: decimal('amount', { precision: 15, scale: 2 }).notNull(),
+  partyName: varchar('party_name', { length: 255 }),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+  supplierId: uuid('supplier_id').references(() => suppliers.id, { onDelete: 'set null' }),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  paymentId: uuid('payment_id').references(() => payments.id, { onDelete: 'set null' }),
+  purchaseId: uuid('purchase_id').references(() => purchases.id, { onDelete: 'set null' }),
+  purchasePaymentId: uuid('purchase_payment_id').references(() => purchasePayments.id, { onDelete: 'set null' }),
+  expenseId: uuid('expense_id').references(() => expenses.id, { onDelete: 'set null' }),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 20 }).notNull().default('pending').$type<ChequeStatus>(),
+  depositAccountId: uuid('deposit_account_id').references(() => chartOfAccounts.id, { onDelete: 'set null' }),
+  depositedAt: timestamp('deposited_at'),
+  clearedAt: timestamp('cleared_at'),
+  bouncedAt: timestamp('bounced_at'),
+  cancelledAt: timestamp('cancelled_at'),
+  returnedAt: timestamp('returned_at'),
+  bounceReason: text('bounce_reason'),
+  /** the payment this cheque settled has been reversed (bounce / cancel) */
+  settlementReversed: boolean('settlement_reversed').notNull().default(false),
+  statusHistory: jsonb('status_history').notNull().default([]).$type<ChequeStatusEvent[]>(),
+  notes: text('notes'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
 
 // Supplier balance audit trail - tracks all changes to supplier balances

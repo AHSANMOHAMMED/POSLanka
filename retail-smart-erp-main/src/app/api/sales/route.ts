@@ -42,6 +42,7 @@ import { ApprovalError, consumeApprovals, coverScopes, verifyApprovalTokens, typ
 import { assignedPosProfiles, checkSaleShift, customerOutstanding, evaluateSaleControls, SHIFT_ISSUE_MESSAGES } from '@/lib/pos/sale-controls'
 import { priceSaleCart, recordPromotionRedemptions, PromotionExhaustedError, type SalePricing } from '@/lib/pricing/sale-pricing'
 import { PricingLineError } from '@/lib/pricing/load-context'
+import { ChequeError, chequeAmountFor, insertCheque } from '@/lib/cheques/cheques'
 
 const LIST_ITEM_EXCLUDED_COLUMNS = { description: false, allergens: false, alternatePartNumbers: false } as const
 
@@ -299,6 +300,20 @@ export async function POST(request: NextRequest) {
       if (!flags.gift_cards && (methods.has('gift_card') || giftCardId)) return off('gift_cards')
       if (!flags.loyalty && (loyaltyPointsRedeemed ?? 0) > 0) return off('loyalty')
       if (!flags.promotions && (couponCodes?.length ?? 0) > 0) return off('promotions')
+      if (!flags.cheques && methods.has('cheque')) return off('cheques')
+    }
+
+    // K1: a cheque tender carries the cheque's details (one cheque per sale). An offline sale
+    // queued by an older client may lack them: it is recorded without a register entry.
+    if (!isReturn) {
+      const chequeSplits = (paymentSplits ?? []).filter((p) => p.method === 'cheque').length
+      const paysByCheque = paymentSplits?.length ? chequeSplits > 0 : paymentMethod === 'cheque'
+      if (chequeSplits > 1) {
+        return NextResponse.json({ error: 'Only one cheque can be taken per sale', code: 'ONE_CHEQUE_PER_SALE' }, { status: 400 })
+      }
+      if (paysByCheque && !parsed.data.cheque && !offlineRef) {
+        return NextResponse.json({ error: 'Enter the cheque number, bank and date', code: 'CHEQUE_DETAILS_REQUIRED' }, { status: 400 })
+      }
     }
 
     // Early client-side discount sanity check (skip for returns)
@@ -1194,6 +1209,30 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // K1: register the cheque taken for this sale (bounce / cancel later re-opens the sale)
+      const chequeTender = roundCurrency(recordedPayments.filter((p) => p.method === 'cheque').reduce((sum, p) => sum + p.amount, 0))
+      if (chequeTender > 0 && parsed.data.cheque) {
+        const chequeDetails = parsed.data.cheque
+        const [chequePayment] = await tx.select({ id: payments.id }).from(payments)
+          .where(and(eq(payments.saleId, newSale.id), eq(payments.method, 'cheque'))).limit(1)
+        if (chequePayment) {
+          await tx.update(payments).set({ reference: sql`COALESCE(${payments.reference}, ${chequeDetails.chequeNo})` })
+            .where(eq(payments.id, chequePayment.id))
+        }
+        await insertCheque(tx, {
+          tenantId: session.user.tenantId,
+          direction: 'received',
+          details: chequeDetails,
+          amount: chequeAmountFor(chequeDetails, chequeTender),
+          userId,
+          customerId: customerId || null,
+          saleId: newSale.id,
+          paymentId: chequePayment?.id || null,
+          warehouseId,
+          partyName: resolvedCustomerName || null,
+        })
+      }
+
       // Gift card redemption: atomically deduct from card within same transaction.
       // Split tender: only the gift-card split is drawn from the card; single tender: only what
       // the sale keeps (never the tendered amount beyond the total).
@@ -1864,6 +1903,9 @@ export async function POST(request: NextRequest) {
 
     if (error instanceof ApprovalError) {
       return NextResponse.json({ error: error.message, code: error.code }, { status: 403 })
+    }
+    if (error instanceof ChequeError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
     }
     if (error instanceof PromotionExhaustedError) {
       return NextResponse.json({

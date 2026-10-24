@@ -86,6 +86,8 @@ export const DOCUMENT_SERIES = {
   commission_payout: simple('commission_payout', 'commission_payouts', 'payout_no', 'PAY-', 6),
   employee_advance: simple('employee_advance', 'employee_advances', 'advance_no', 'ADV-', 5),
   restaurant_order: simple('restaurant_order', 'restaurant_orders', 'order_no', 'RO-', 6),
+  expense: simple('expense', 'expenses', 'expense_no', 'EXP-', 5), // K1
+  expense_claim: simple('expense_claim', 'expenses', 'expense_no', 'CLM-', 5), // K1 reimbursement claims
 } satisfies Record<string, SeriesDef>
 
 export type DocumentSeries = keyof typeof DOCUMENT_SERIES

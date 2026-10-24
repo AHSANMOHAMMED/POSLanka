@@ -49,8 +49,8 @@ export interface ExchangeInput {
   originalSaleId: string
   returnLines: Array<{ originalSaleItemId: string; quantity: number; serialNumberIds?: string[] | null }>
   newCartItems: ExchangeCartItem[]
-  paymentMethod?: 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | null
-  paymentSplits?: Array<{ method: 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card'; amount: number; reference?: string | null }> | null
+  paymentMethod?: 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | 'cheque' | null
+  paymentSplits?: Array<{ method: 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | 'cheque'; amount: number; reference?: string | null }> | null
   amountPaid?: number | null
   refundMethod?: 'cash' | 'card' | 'credit' | null
   warehouseId?: string | null
