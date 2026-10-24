@@ -2,10 +2,14 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3 } from 'lucide-react'
+import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3, Lock, Ruler } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
 import { LabelPreview } from '@/components/labels/LabelPreview'
-import { printLabels, printLabelsRaw, isRawLabelPrinter } from '@/lib/labels/label-print'
+import { printLabels, printLabelsOnRoll, printLabelsRaw, isRawLabelPrinter } from '@/lib/labels/label-print'
+import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
+import { useStickerSetups } from '@/hooks/useStickerSetups'
+import { usePermission } from '@/hooks/usePermission'
+import { defaultStickerSetup, setupsForBranch } from '@/lib/labels/sticker-stock'
 import { usePrinters } from '@/hooks/usePrinter'
 import { LABEL_LANGUAGE_LABELS } from '@/lib/print/printer-profiles'
 import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
@@ -69,6 +73,28 @@ export default function BarcodePrintPage() {
   const defaultPrinterId = labelPrinters.find((p) => isRawLabelPrinter(p))?.id || ''
   const chosenPrinterId = printerChoice ?? defaultPrinterId
   const chosenPrinter = labelPrinters.find((p) => p.id === chosenPrinterId) || null
+
+  // Sticker stock / roll setup (columns, gaps, calibration). '' = template size, one across.
+  const isAdmin = usePermission('manageSettings')
+  const { setups: allSetups } = useStickerSetups()
+  const [branchIds, setBranchIds] = useState<string[] | null>(null)
+  useEffect(() => {
+    fetch('/api/warehouses?all=true&userOnly=true')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        const list = Array.isArray(d) ? d : d?.data
+        if (Array.isArray(list)) setBranchIds(list.map((w: { id: string }) => w.id))
+      })
+      .catch(() => {})
+  }, [])
+  const setups = useMemo(() => setupsForBranch(allSetups, branchIds), [allSetups, branchIds])
+  const linkedSetup = setups.find((s) => s.id === chosenPrinter?.label.stickerSetupId) || null
+  const fallbackSetup = defaultStickerSetup(setups)
+  // A locked setup linked to the printer (or a locked default) cannot be switched by cashiers
+  const forcedSetup = !isAdmin ? (linkedSetup?.locked ? linkedSetup : !linkedSetup && fallbackSetup?.locked ? fallbackSetup : null) : null
+  const [setupChoice, setSetupChoice] = useState<string | null>(null)
+  const activeSetup = forcedSetup
+    ?? (setupChoice !== null ? setups.find((s) => s.id === setupChoice) || null : linkedSetup || fallbackSetup)
 
   // Fetch templates and label settings on mount
   useEffect(() => {
@@ -301,6 +327,7 @@ export default function BarcodePrintPage() {
           currencySymbol,
           tenantName: company?.tenantName,
           codeWord,
+          setup: activeSetup,
         })
         if (res.warnings.length) toast.warning(res.warnings.slice(0, 3).join('; '))
         if (res.ok) toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${chosenPrinter.name}`)
@@ -313,14 +340,16 @@ export default function BarcodePrintPage() {
       return
     }
     try {
-      const success = await printLabels(
-        templateToPrint,
-        items,
-        config,
-        currencySymbol,
-        company?.tenantName,
-        codeWord
-      )
+      const success = activeSetup && config.pageSize === 'Label'
+        ? await printLabelsOnRoll(templateToPrint, items, activeSetup, currencySymbol, company?.tenantName, codeWord)
+        : await printLabels(
+          templateToPrint,
+          items,
+          config,
+          currencySymbol,
+          company?.tenantName,
+          codeWord
+        )
       if (!success) {
         toast.error('Failed to open print dialog')
       }
@@ -478,6 +507,44 @@ export default function BarcodePrintPage() {
               )}
             </div>
             <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                  <Ruler size={13} /> Label roll
+                </label>
+                {isAdmin && (
+                  <Link href={`/c/${company?.tenantSlug || ''}/barcode/settings`} className="text-xs text-blue-600 hover:underline">
+                    Set up rolls
+                  </Link>
+                )}
+              </div>
+              <select
+                value={activeSetup?.id || ''}
+                onChange={(e) => setSetupChoice(e.target.value)}
+                disabled={!!forcedSetup}
+                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm disabled:bg-gray-50"
+              >
+                <option value="">Template size, 1 across</option>
+                {setups.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x {s.columns}){s.locked ? ' [locked]' : ''}
+                  </option>
+                ))}
+              </select>
+              {activeSetup?.locked && (
+                <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
+                  <Lock size={11} /> Calibrated and locked by an admin{forcedSetup ? '' : ' (you can still pick another roll)'}
+                </p>
+              )}
+              {activeSetup && selectedTemplate &&
+                (Math.abs(Number(selectedTemplate.widthMm) - activeSetup.labelWidthMm) > 0.5 ||
+                  Math.abs(Number(selectedTemplate.heightMm) - activeSetup.labelHeightMm) > 0.5) && (
+                  <p className="text-xs text-red-600 mt-1">
+                    Template is {parseFloat(String(selectedTemplate.widthMm))} x {parseFloat(String(selectedTemplate.heightMm))} mm but the roll labels are{' '}
+                    {activeSetup.labelWidthMm} x {activeSetup.labelHeightMm} mm. Pick a matching template.
+                  </p>
+                )}
+            </div>
+            <div>
               <label className="text-sm font-medium text-gray-700 mb-1 block">Template</label>
               <select
                 value={selectedTemplateId}
@@ -501,7 +568,9 @@ export default function BarcodePrintPage() {
                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
               >
                 <option value="Label">
-                  Label{selectedTemplate ? ` (${parseFloat(String(selectedTemplate.widthMm))} x ${parseFloat(String(selectedTemplate.heightMm))} mm)` : ''}
+                  {activeSetup
+                    ? `Label roll (${activeSetup.columns} across)`
+                    : `Label${selectedTemplate ? ` (${parseFloat(String(selectedTemplate.widthMm))} x ${parseFloat(String(selectedTemplate.heightMm))} mm)` : ''}`}
                 </option>
                 <option value="A4">A4 (Sheet)</option>
                 <option value="Letter">Letter (Sheet)</option>
@@ -751,6 +820,21 @@ export default function BarcodePrintPage() {
                   )}
                 </div>
 
+                {activeSetup && (
+                  <div className="space-y-1">
+                    <div className="text-xs font-medium text-gray-600">On the roll</div>
+                    <StickerRollPreview
+                      setup={activeSetup}
+                      template={activeTemplate || selectedTemplate}
+                      items={items}
+                      currencySymbol={currencySymbol}
+                      tenantName={company?.tenantName}
+                      codeWord={codeWord}
+                      maxRows={3}
+                    />
+                  </div>
+                )}
+
                 <div className="flex items-center justify-between text-xs text-gray-500 pt-1">
                   <span>Target: <strong className="text-gray-700">{chosenPrinter ? chosenPrinter.name : 'Browser print'}</strong></span>
                   <button
@@ -775,7 +859,7 @@ export default function BarcodePrintPage() {
       {/* Full Preview Modal */}
       {showFullPreview && selectedTemplate && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+          <div className={`bg-white dark:bg-gray-900 rounded-xl ${activeSetup ? 'max-w-3xl' : 'max-w-lg'} w-full p-6 shadow-2xl space-y-4`}>
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h3 className="font-semibold text-gray-900 dark:text-white">Label Preview (100% scale)</h3>
@@ -792,6 +876,18 @@ export default function BarcodePrintPage() {
             </div>
 
             <div className="p-6 bg-slate-100 dark:bg-slate-800 rounded-lg flex items-center justify-center overflow-auto max-h-[60vh]">
+              {activeSetup ? (
+                <StickerRollPreview
+                  setup={activeSetup}
+                  template={activeTemplate || selectedTemplate}
+                  items={items}
+                  currencySymbol={currencySymbol}
+                  tenantName={company?.tenantName}
+                  codeWord={codeWord}
+                  zoom="true"
+                  maxRows={6}
+                />
+              ) : (
               <div className="shadow-md bg-white p-2 rounded">
                 <LabelPreview
                   template={activeTemplate || selectedTemplate}
@@ -802,6 +898,7 @@ export default function BarcodePrintPage() {
                   maxWidth={450}
                 />
               </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between pt-2">

@@ -7,7 +7,8 @@ import { BarcodeScannerModal } from '../src/components/BarcodeScannerModal'
 import { InlineNotice, EmptyView, LoadingView } from '../src/components/StateViews'
 import { hasAnyPermission, displayRole } from '../src/lib/roles'
 import type { AuthUser } from '../src/lib/api'
-import { getPrinterForRole, printerErrorMessage, printLabels, type PrinterConfig } from '../src/lib/printer'
+import { getPrinterForRole, printerErrorMessage, printLabels, stickerSetupForPrinter, type PrinterConfig } from '../src/lib/printer'
+import type { StickerSetup } from '../src/lib/label/stickerStock'
 import { labelCurrencySymbol, type LabelItemData, type LabelTemplate } from '../src/lib/label'
 import { loadBusinessInfo } from '../src/lib/receipt'
 import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
@@ -91,6 +92,12 @@ export default function LabelsScreen() {
   const [searching, setSearching] = useState(false)
   const [scanner, setScanner] = useState(false)
   const [printing, setPrinting] = useState(false)
+  // Label roll setup from the server (columns across, gaps, calibration) for this printer
+  const [setup, setSetup] = useState<StickerSetup | null>(null)
+  useEffect(() => {
+    if (!printer) return
+    stickerSetupForPrinter(printer).then(setSetup).catch(() => setSetup(null))
+  }, [printer])
   const searchSeq = useRef(0)
   // undefined = loading; label printing needs an item-handling or selling permission
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
@@ -230,7 +237,7 @@ export default function LabelsScreen() {
       const res = await printLabels(
         template,
         rows.filter((r) => r.quantity > 0).map((r) => ({ item: r.item, quantity: r.quantity })),
-        { currencySymbol, tenantName, codeWord: codeWord || undefined },
+        { currencySymbol, tenantName, codeWord: codeWord || undefined, setup },
         printer
       )
       Alert.alert('Labels sent', `${res.labels} label${res.labels === 1 ? '' : 's'} sent to ${res.printer.name}.${res.warnings.length ? `\n\n${res.warnings.slice(0, 5).join('\n')}` : ''}`)
@@ -241,8 +248,10 @@ export default function LabelsScreen() {
     }
   }
 
+  const mediaW = setup ? setup.labelWidthMm : printer?.label?.widthMm
+  const mediaH = setup ? setup.labelHeightMm : printer?.label?.heightMm
   const sizeMismatch =
-    template && printer?.label && (Math.abs(Number(template.widthMm) - printer.label.widthMm) > 0.5 || Math.abs(Number(template.heightMm) - printer.label.heightMm) > 0.5)
+    template && mediaW != null && mediaH != null && (Math.abs(Number(template.widthMm) - mediaW) > 0.5 || Math.abs(Number(template.heightMm) - mediaH) > 0.5)
 
   if (user === undefined || !canUseLabels) {
     return (
@@ -284,7 +293,8 @@ export default function LabelsScreen() {
       {printer === null && <InlineNotice text="No label printer yet. Tap ⚙️ to add one (role: Label printer)." />}
       {printer?.label?.language === 'escpos-raster' && <InlineNotice tone="error" text="ESC/POS raster labels are not supported on mobile. Switch the printer language to TSPL, ZPL or EPL." />}
       {templatesError ? <InlineNotice tone="error" text={`Templates: ${templatesError}`} /> : null}
-      {sizeMismatch ? <InlineNotice text={`Template is ${Number(template!.widthMm)} x ${Number(template!.heightMm)} mm but the printer is set to ${printer!.label!.widthMm} x ${printer!.label!.heightMm} mm.`} /> : null}
+      {setup ? <InlineNotice text={`Roll: ${setup.name} (${setup.columns} across, ${setup.labelWidthMm} x ${setup.labelHeightMm} mm)${setup.locked ? ' · locked' : ''}`} /> : null}
+      {sizeMismatch ? <InlineNotice text={`Template is ${Number(template!.widthMm)} x ${Number(template!.heightMm)} mm but the ${setup ? 'roll labels are' : 'printer is set to'} ${mediaW} x ${mediaH} mm.`} /> : null}
 
       <View style={styles.panel}>
         <Text style={styles.sectionTitle}>Template</Text>

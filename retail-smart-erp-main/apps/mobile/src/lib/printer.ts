@@ -30,9 +30,12 @@ import {
 import { code128Svg } from './code128'
 import { businessHeaderHtml, escapeHtml, zReportHtml } from './printHtml'
 import { qrSvg } from './qr'
+import { apiGet } from './api'
+import { pickStickerSetup, sanitizeStickerSetups, stickerLayout, type StickerSetup } from './label/stickerStock'
 import {
   encodeLabels,
   labelTestTemplate,
+  labelAlignmentTemplate,
   ESCPOS_RASTER_UNSUPPORTED,
   type LabelItemData,
   type LabelPrintItem,
@@ -108,6 +111,8 @@ export interface LabelMediaSettings {
   darkness?: number
   /** Optional print speed. */
   speed?: number
+  /** Linked label roll setup (web Barcode & Labels > Settings). Unset = the tenant default setup. */
+  stickerSetupId?: string | null
 }
 
 export const DEFAULT_LABEL_MEDIA: LabelMediaSettings = { widthMm: 50, heightMm: 30, gapMm: 2, dpi: 203, language: 'tspl' }
@@ -148,6 +153,7 @@ function normalizeLabelMedia(raw: any): LabelMediaSettings {
   }
   if (raw?.darkness !== undefined && raw?.darkness !== null && raw?.darkness !== '') out.darkness = num(raw.darkness, 8, 0, 30)
   if (raw?.speed !== undefined && raw?.speed !== null && raw?.speed !== '') out.speed = num(raw.speed, 4, 1, 14)
+  if (typeof raw?.stickerSetupId === 'string' && raw.stickerSetupId) out.stickerSetupId = raw.stickerSetupId
   return out
 }
 
@@ -724,6 +730,44 @@ export interface LabelPrintOptions {
   codeWord?: string
   /** Multiplies every item's quantity. */
   copies?: number
+  /** Roll setup to use; undefined = resolve from the server (linked / default), null = none. */
+  setup?: StickerSetup | null
+}
+
+// ---------------------------------------------------------------------------
+// Label roll setups (server, cached in memory + a JSON file for offline use)
+// ---------------------------------------------------------------------------
+let cachedSetups: StickerSetup[] | null = null
+const SETUPS_FILE = 'poslanka_sticker_setups.json'
+
+/** GET /api/label-settings sticker setups (falls back to the last cached copy offline). */
+export async function loadStickerSetups(force = false): Promise<StickerSetup[]> {
+  if (cachedSetups && !force) return cachedSetups
+  const path = FileSystem.documentDirectory ? FileSystem.documentDirectory + SETUPS_FILE : null
+  const res = await apiGet<{ stickerSetups?: unknown }>('/api/label-settings')
+  if (res.ok && res.data) {
+    cachedSetups = sanitizeStickerSetups(res.data.stickerSetups)
+    if (path) FileSystem.writeAsStringAsync(path, JSON.stringify(cachedSetups)).catch(() => undefined)
+    return cachedSetups
+  }
+  if (path) {
+    try {
+      const info = await FileSystem.getInfoAsync(path)
+      if (info.exists) cachedSetups = sanitizeStickerSetups(JSON.parse(await FileSystem.readAsStringAsync(path)))
+    } catch {
+      // cache is best effort
+    }
+  }
+  return cachedSetups || []
+}
+
+/** The roll setup a label printer uses (linked one, else the tenant default). */
+export async function stickerSetupForPrinter(printer: PrinterConfig): Promise<StickerSetup | null> {
+  try {
+    return pickStickerSetup(await loadStickerSetups(), printer.label?.stickerSetupId)
+  } catch {
+    return null
+  }
 }
 
 export interface LabelPrintResult {
@@ -742,12 +786,14 @@ export async function encodeLabelsForPrinter(
 ): Promise<{ bytes: Uint8Array; warnings: string[] }> {
   const media = printer.label || DEFAULT_LABEL_MEDIA
   if (media.language === 'escpos-raster') throw new PrinterError(ESCPOS_RASTER_UNSUPPORTED, 'not_configured')
+  const setup = opts.setup === undefined ? await stickerSetupForPrinter(printer) : opts.setup
   const res = await encodeLabels(template, items, {
     language: media.language,
-    dpi: media.dpi,
-    gapMm: media.gapMm,
-    darkness: media.darkness,
-    speed: media.speed,
+    dpi: setup?.dpi ?? media.dpi,
+    gapMm: setup?.rowGapMm ?? media.gapMm,
+    darkness: setup?.darkness ?? media.darkness,
+    speed: setup?.speed ?? media.speed,
+    ...(setup ? { widthMm: setup.labelWidthMm, heightMm: setup.labelHeightMm, layout: stickerLayout(setup) } : {}),
     copies: opts.copies,
     currencySymbol: opts.currencySymbol,
     tenantName: opts.tenantName,
@@ -787,7 +833,11 @@ export async function testPrintPrinter(printer: PrinterConfig): Promise<string[]
     throw new PrinterError('Label printers need a Bluetooth, USB or network connection (system print cannot send TSPL / ZPL / EPL).', 'not_configured')
   }
   const media = printer.label || DEFAULT_LABEL_MEDIA
-  const { bytes, warnings } = await encodeLabelsForPrinter(printer, labelTestTemplate(media.widthMm, media.heightMm), [{ item: null, quantity: 1 }])
+  const setup = await stickerSetupForPrinter(printer)
+  // With a roll setup: the alignment pattern (border + crosshair) on every column of one row
+  const { bytes, warnings } = setup
+    ? await encodeLabelsForPrinter(printer, labelAlignmentTemplate(setup.labelWidthMm, setup.labelHeightMm), [{ item: null, quantity: setup.columns }], { setup })
+    : await encodeLabelsForPrinter(printer, labelTestTemplate(media.widthMm, media.heightMm), [{ item: null, quantity: 1 }], { setup: null })
   await printBytes(bytes, printer)
   return warnings
 }

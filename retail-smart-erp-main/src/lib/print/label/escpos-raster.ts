@@ -5,7 +5,20 @@
  * receipt printer print labels on die-cut or continuous media.
  */
 import { EscPosBuilder } from '@/lib/print/escpos/encoder'
-import { CommandBuffer, mmToDots, type EncodeLabelOptions, type LabelPrintItem, type LabelTemplateLike } from './common'
+import {
+  CommandBuffer,
+  blitPacked,
+  columnOrigins,
+  mediaWidthMm,
+  mmToDots,
+  normalizeLayout,
+  packLabelRows,
+  type EncodeLabelOptions,
+  type LabelPrintItem,
+  type LabelTemplateLike,
+} from './common'
+import type { PackedRaster } from '@/lib/print/escpos/encoder'
+import type { LabelItemData } from '@/lib/labels/types'
 
 export async function encodeEscPosRaster(
   template: LabelTemplateLike,
@@ -26,8 +39,11 @@ export async function encodeEscPosRaster(
 
   const init = new EscPosBuilder({ widthDots }).init().align('center')
   buf.binary(init.build(), '<ESC @><ESC a 1>\n')
-  for (const { item, quantity } of items) {
-    const bmp = await o.rasterizeLabel(template, item, {
+
+  const cache = new Map<LabelItemData | null, PackedRaster | null>()
+  const render = async (item: LabelItemData | null) => {
+    if (cache.has(item)) return cache.get(item) ?? null
+    const bmp = await o.rasterizeLabel!(template, item, {
       dpi,
       widthDots,
       heightDots,
@@ -35,21 +51,50 @@ export async function encodeEscPosRaster(
       tenantName: o.tenantName,
       codeWord: o.codeWord,
     })
-    if (!bmp) {
-      warnings.push(`Label for ${item?.name ?? 'item'} could not be rendered`)
-      continue
-    }
-    const one = new EscPosBuilder({ widthDots: Math.max(widthDots, bmp.width) }).packedRaster(bmp)
+    if (!bmp) warnings.push(`Label for ${item?.name ?? 'item'} could not be rendered`)
+    cache.set(item, bmp)
+    return bmp
+  }
+  const feedGap = (b: EscPosBuilder) => {
     // ESC J n: feed n dots (max 255 per command)
     let g = gapDots
     while (g > 0) {
       const n = Math.min(255, g)
-      one.raw([0x1b, 0x4a, n])
+      b.raw([0x1b, 0x4a, n])
       g -= n
     }
+  }
+
+  if (!o.layout) {
+    // One label across: each label bitmap as is (legacy output).
+    for (const { item, quantity } of items) {
+      const bmp = await render(item)
+      if (!bmp) continue
+      const one = new EscPosBuilder({ widthDots: Math.max(widthDots, bmp.width) }).packedRaster(bmp)
+      feedGap(one)
+      const bytes = one.build()
+      const n = quantity * copies
+      for (let i = 0; i < n; i++) buf.binary(bytes, `<GS v 0 ${bmp.width}x${bmp.height}><ESC J ${gapDots}>\n`)
+    }
+    return { buf, warnings }
+  }
+
+  // Multi-across: compose each row (all columns, gaps and offsets) into one bitmap.
+  const layout = normalizeLayout(o.layout)
+  const rowW = mmToDots(mediaWidthMm(template, o), dpi)
+  const { xs, y: oy } = columnOrigins(template, o)
+  for (const row of packLabelRows(items, layout.columns, copies)) {
+    const dst: PackedRaster = { width: rowW, height: heightDots, data: new Uint8Array(Math.ceil(rowW / 8) * heightDots) }
+    for (let k = 0; k < row.cells.length; k++) {
+      const cell = row.cells[k]
+      if (!cell) continue
+      const bmp = await render(cell.item)
+      if (bmp) blitPacked(dst, bmp, xs[k] ?? 0, oy)
+    }
+    const one = new EscPosBuilder({ widthDots: rowW }).packedRaster(dst)
+    feedGap(one)
     const bytes = one.build()
-    const n = quantity * copies
-    for (let i = 0; i < n; i++) buf.binary(bytes, `<GS v 0 ${bmp.width}x${bmp.height}><ESC J ${gapDots}>\n`)
+    for (let i = 0; i < row.count; i++) buf.binary(bytes, `<GS v 0 ${rowW}x${heightDots}><ESC J ${gapDots}>\n`)
   }
   return { buf, warnings }
 }

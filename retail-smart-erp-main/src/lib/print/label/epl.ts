@@ -19,6 +19,10 @@ import {
   rightAngle,
   sortedElements,
   wrapChars,
+  columnOrigins,
+  mediaWidthMm,
+  normalizeLayout,
+  packLabelRows,
   type EncodeLabelOptions,
   type LabelPrintItem,
   type LabelTemplateLike,
@@ -64,7 +68,7 @@ export async function encodeEpl(
   const dpi = o.dpi
   const warnings: string[] = []
   const buf = new CommandBuffer('\r\n')
-  const wDots = mmToDots(o.widthMm ?? Number(template.widthMm), dpi)
+  const wDots = mmToDots(mediaWidthMm(template, o), dpi)
   const hDots = mmToDots(o.heightMm ?? Number(template.heightMm), dpi)
   const gap = mmToDots(o.gapMm ?? 2, dpi)
   const copies = Math.max(1, Math.round(o.copies ?? 1))
@@ -75,10 +79,15 @@ export async function encodeEpl(
   if (o.speed != null) buf.line(`S${Math.min(6, Math.max(1, Math.round(o.speed)))}`)
   if (o.darkness != null) buf.line(`D${Math.min(15, Math.max(0, Math.round(o.darkness)))}`)
   buf.line('ZT')
-  for (const { item, quantity } of items) {
+  const { xs, y: oy } = columnOrigins(template, o)
+  const columns = o.layout ? normalizeLayout(o.layout).columns : 1
+  for (const row of packLabelRows(items, columns, copies)) {
     buf.line('N')
-    await emitElements(buf, template, item, o, warnings)
-    buf.line(`P${quantity * copies},1`)
+    for (let k = 0; k < row.cells.length; k++) {
+      const cell = row.cells[k]
+      if (cell) await emitElements(buf, template, cell.item, o, warnings, xs[k] ?? 0, oy)
+    }
+    buf.line(`P${row.count},1`)
   }
   return { buf, warnings }
 }
@@ -88,13 +97,15 @@ async function emitElements(
   template: LabelTemplateLike,
   item: LabelItemData | null,
   o: EncodeLabelOptions,
-  warnings: string[]
+  warnings: string[],
+  ox = 0,
+  oy = 0
 ) {
   const dpi = o.dpi
   const fonts = EPL_FONTS[dpi === 300 ? 300 : 203]
   for (const el of sortedElements(template)) {
-    const x = mmToDots(el.x, dpi)
-    const y = mmToDots(el.y, dpi)
+    const x = Math.max(0, ox + mmToDots(el.x, dpi))
+    const y = Math.max(0, oy + mmToDots(el.y, dpi))
     const w = Math.max(1, mmToDots(el.width, dpi))
     const h = Math.max(1, mmToDots(el.height, dpi))
     const rot = rightAngle(el.rotation)

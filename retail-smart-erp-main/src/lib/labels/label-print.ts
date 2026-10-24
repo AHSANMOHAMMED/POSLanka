@@ -4,7 +4,8 @@ import type { LabelTemplate, LabelItemData, PrintLabelConfig } from './types'
 import { renderLabelHtml, getShapeBorderRadius } from './label-renderer'
 import { executePrint } from '@/lib/print/print-executor'
 import type { PrinterProfile } from '@/lib/print/printer-profiles'
-import type { LabelPrintItem, LabelTemplateLike } from '@/lib/print/label/common'
+import { packLabelRows, type LabelPrintItem, type LabelTemplateLike } from '@/lib/print/label/common'
+import { stickerLayout, stickerRollWidthMm, type StickerSetup } from './sticker-stock'
 
 const PAGE_SIZES: Record<string, { width: number; height: number }> = {
   A4: { width: 210, height: 297 },
@@ -103,6 +104,49 @@ export async function printLabels(
   return executePrint('Barcode Labels', styles, content)
 }
 
+/**
+ * Browser print on a multi-across roll: one page per physical row (page size =
+ * liner width x label height), every label absolutely placed at its column
+ * with the setup's margins, gaps and calibration offsets.
+ */
+export async function printLabelsOnRoll(
+  template: LabelTemplate,
+  items: { item: LabelItemData; quantity: number }[],
+  setup: StickerSetup,
+  currencySymbol?: string,
+  tenantName?: string,
+  codeWord?: string,
+  copies = 1
+): Promise<boolean> {
+  const rollW = stickerRollWidthMm(setup)
+  const h = setup.labelHeightMm
+  const cache = new Map<string, string>()
+  const pages: string[] = []
+  for (const row of packLabelRows(items, setup.columns, copies)) {
+    const cells: string[] = []
+    for (let k = 0; k < row.cells.length; k++) {
+      const cell = row.cells[k]
+      if (!cell) continue
+      const key = cell.item?.id ?? '__'
+      if (!cache.has(key)) cache.set(key, await renderLabelHtml(template, cell.item, currencySymbol, tenantName, codeWord))
+      const left = setup.marginLeftMm + setup.offsetXMm + k * (setup.labelWidthMm + setup.columnGapMm)
+      cells.push(`<div class="cell" style="left:${left}mm;top:${setup.offsetYMm}mm">${cache.get(key)}</div>`)
+    }
+    const page = `<div class="row">${cells.join('')}</div>`
+    for (let i = 0; i < row.count; i++) pages.push(page)
+  }
+  const styles = `
+    @page { size: ${rollW}mm ${h}mm; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    .row { position: relative; width: ${rollW}mm; height: ${h}mm; overflow: hidden; page-break-after: always; break-after: page; }
+    .row:last-child { page-break-after: auto; break-after: auto; }
+    .cell { position: absolute; width: ${Number(template.widthMm)}mm; height: ${Number(template.heightMm)}mm; overflow: hidden; }
+    @media print { * { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  `
+  return executePrint('Barcode Labels', styles, pages.join(''))
+}
+
 // ─── Raw label printers (W9: TSPL / ZPL / EPL / ESC/POS raster) ──────────
 
 export interface RawLabelPrintResult {
@@ -124,23 +168,33 @@ export async function printLabelsRaw(
   profile: PrinterProfile,
   template: LabelTemplateLike,
   items: (LabelPrintItem | LabelItemData)[],
-  opts: { currencySymbol?: string; tenantName?: string; codeWord?: string; logoUrl?: string | null; copies?: number } = {}
+  opts: {
+    currencySymbol?: string
+    tenantName?: string
+    codeWord?: string
+    logoUrl?: string | null
+    copies?: number
+    /** Sticker stock setup: columns, gaps, offsets, dpi, darkness, speed (overrides the profile's media). */
+    setup?: StickerSetup | null
+  } = {}
 ): Promise<RawLabelPrintResult> {
   const language = profile.label.language
+  const setup = opts.setup || null
   if (language === 'browser') return { ok: false, warnings: [], error: 'Printer is set to browser printing' }
   const { encodeLabels } = await import('@/lib/print/label')
   const { createCanvasLabelRasterizer, createImageElementRasterizer } = await import('@/lib/print/label/canvas-raster')
   const { sendToPrinter } = await import('@/lib/print/printer-profiles')
   const res = await encodeLabels(template, items, {
     language,
-    dpi: profile.label.dpi,
+    dpi: setup?.dpi ?? profile.label.dpi,
     copies: opts.copies ?? 1,
     codeWord: opts.codeWord,
     currencySymbol: opts.currencySymbol,
     tenantName: opts.tenantName,
-    gapMm: profile.label.gapMm,
-    darkness: profile.label.darkness,
-    speed: profile.label.speed,
+    gapMm: setup?.rowGapMm ?? profile.label.gapMm,
+    darkness: setup?.darkness ?? profile.label.darkness,
+    speed: setup?.speed ?? profile.label.speed,
+    ...(setup ? { widthMm: setup.labelWidthMm, heightMm: setup.labelHeightMm, layout: stickerLayout(setup) } : {}),
     rasterizeElement: createImageElementRasterizer(opts.logoUrl),
     rasterizeLabel: createCanvasLabelRasterizer(opts.logoUrl),
   })
