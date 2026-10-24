@@ -9,6 +9,8 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateUserWarehousesSchema } from '@/lib/validation/schemas/users'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { getBranchScope, assertStaffInScope, staffDeniedResponse } from '@/lib/auth/branch-access'
+import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 
 // GET user's warehouse assignments
 export async function GET(
@@ -100,6 +102,17 @@ export async function PUT(
         return NextResponse.json({ error: 'You cannot modify this user' }, { status: 403 })
       }
 
+      // K4: a branch-restricted manager moves only their own staff, between their own branches,
+      // and cannot clear the list (no branch = every branch)
+      const actorScope = await getBranchScope(session, db)
+      if (actorScope) {
+        const staffDenied = await assertStaffInScope(session, db, userId)
+        if (staffDenied) return staffDenied
+        if (warehouseIds.length === 0 || warehouseIds.some((w: string) => !actorScope.includes(w))) {
+          return staffDeniedResponse(actorScope, db)
+        }
+      }
+
       // Verify all warehouses exist (RLS scopes to tenant)
       if (warehouseIds.length > 0) {
         const validWarehouses = await db.query.warehouses.findMany({
@@ -150,6 +163,8 @@ export async function PUT(
       })
 
       logAndBroadcast(session!.user.tenantId, 'user', 'updated', userId)
+      // K4: branch scopes are cached per user; drop them here and in the other app processes
+      invalidatePermissionCache(session!.user.tenantId)
 
       return NextResponse.json({
         assignments: updatedAssignments,

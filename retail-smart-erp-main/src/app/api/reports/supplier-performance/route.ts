@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { suppliers } from '@/lib/db/schema'
 import { sql, and, eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 
 // GET - Summary supplier performance for all suppliers
 export async function GET(request: NextRequest) {
@@ -16,6 +17,9 @@ export async function GET(request: NextRequest) {
 
     const permError = requirePermission(session, 'viewReports')
     if (permError) return permError
+    // K4: a company-wide report, not split by branch: refused for branch-restricted users
+    const branchError = await requireAllBranches(session)
+    if (branchError) return branchError
 
     const { searchParams } = new URL(request.url)
     const fromDate = searchParams.get('from')

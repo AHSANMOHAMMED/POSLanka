@@ -10,6 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addWorkOrderPartSchema, updateWorkOrderPartSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // POST add part to work order
 export async function POST(
@@ -29,6 +30,9 @@ export async function POST(
     // W8: Check permission
     const permError = requirePermission(session, 'manageWorkOrders')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+    if (branchDenied) return { error: branchDenied }
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return { error: quotaError }
@@ -163,6 +167,9 @@ export async function PUT(
     // W8: Check permission
     const permError = requirePermission(session, 'manageWorkOrders')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+    if (branchDenied) return { error: branchDenied }
 
     // Lock work order with FOR UPDATE to prevent concurrent modifications from producing incorrect totals
     const [workOrder] = await db
@@ -284,6 +291,9 @@ export async function DELETE(
     // W8: Check permission
     const permError = requirePermission(session, 'manageWorkOrders')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+    if (branchDenied) return { error: branchDenied }
 
     // Lock work order with FOR UPDATE to prevent concurrent modifications from producing incorrect totals
     const [workOrder] = await db

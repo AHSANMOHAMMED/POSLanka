@@ -18,6 +18,7 @@ import { requireUserSeat } from '@/lib/billing/user-limit'
 import { loadAssignableCustomRole, StaffError } from '@/lib/users/create-staff'
 import { getCustomRoleName } from '@/lib/auth/permission-cache'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
+import { assertStaffInScope } from '@/lib/auth/branch-access'
 
 // GET single user by ID
 export async function GET(
@@ -90,6 +91,10 @@ export async function PUT(
 
     // Execute with RLS tenant context
     const response = await withTenant(session.user.tenantId, async (db) => {
+      // K4: a branch-restricted manager changes their own branches' staff only
+      const staffDenied = await assertStaffInScope(session, db, id)
+      if (staffDenied) return staffDenied
+
       // Use transaction with FOR UPDATE lock for optimistic locking
       const result = await db.transaction(async (tx) => {
         // Get current user with lock (RLS scopes the query)
@@ -339,6 +344,10 @@ export async function DELETE(
       if (user.role === 'owner') {
         return NextResponse.json({ error: 'The business owner cannot be deactivated here.' }, { status: 400 })
       }
+
+      // K4: a branch-restricted manager deactivates their own branches' staff only
+      const staffDenied = await assertStaffInScope(session, db, id)
+      if (staffDenied) return staffDenied
 
       // Role hierarchy: cannot deactivate users at or above your rank, nor users holding
       // permissions you lack (e.g. a manager switching off the system manager)

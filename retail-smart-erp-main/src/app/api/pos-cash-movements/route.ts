@@ -16,6 +16,7 @@ import {
   CASH_MOVEMENT_CATEGORY_LABELS, DEFAULT_PAID_IN_APPROVAL_THRESHOLD, listShiftCashMovements, shiftCashMovementTotals,
 } from '@/lib/pos/shift-report'
 import { recordCashMovement } from '@/lib/pos/cash-movement'
+import { assertBranchAccess, assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET /api/pos-cash-movements?openingEntryId=… — paid-ins / paid-outs of a shift
 export async function GET(request: NextRequest) {
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
       if (shift.userId !== session.user.id && !hasPermission(session.user.role, 'manageSales', session.user.tenantId, session.user.customRoleId)) {
         return NextResponse.json({ error: 'You can only view the cash movements of your own shift' }, { status: 403 })
       }
+      // K4: a supervisor restricted to branches sees only their branches' drawers
+      const branchDenied = await assertBranchAccess(session, shift.warehouseId, db)
+      if (branchDenied) return branchDenied
       const [movements, totals] = await Promise.all([
         listShiftCashMovements(db, openingEntryId),
         shiftCashMovementTotals(db, openingEntryId),
@@ -79,6 +83,9 @@ export async function POST(request: NextRequest) {
     if (body.type === 'paid_out') needed.push('cash_paid_out')
     if (body.type === 'paid_in' && amount >= paidInThreshold) needed.push('cash_paid_in')
     const result = await withTenantTransaction(tenantId, async (db) => {
+      // K4: only drawers of the user's own branches
+      const branchDenied = await assertRecordBranch(session, db, posOpeningEntries, body.openingEntryId, { includeUnassigned: true })
+      if (branchDenied) return { error: branchDenied }
       const r = await recordCashMovement(db, {
         tenantId,
         userId,

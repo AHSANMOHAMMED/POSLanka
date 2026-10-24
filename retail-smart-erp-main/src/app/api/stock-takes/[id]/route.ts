@@ -12,6 +12,7 @@ import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import { toApiError } from '@/lib/db/errors'
 import { logError } from '@/lib/ai/error-logger'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertBranchAccess, assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET - Single stock take with all items
 export async function GET(
@@ -58,6 +59,9 @@ export async function GET(
       .where(eq(stockTakes.id, id))
 
     if (!stockTake) return { notFound: true }
+    // K4: counts of another branch are not shown to branch-restricted staff
+    const denied = await assertBranchAccess(session, stockTake.warehouseId, db)
+    if (denied) return { denied }
 
     const items = await db.select()
       .from(stockTakeItems)
@@ -69,6 +73,7 @@ export async function GET(
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if ('moduleError' in result) return result.moduleError
   if ('notFound' in result) return NextResponse.json({ error: 'Stock take not found' }, { status: 404 })
+  if ('denied' in result) return result.denied
   return NextResponse.json(result.data)
 }
 
@@ -89,6 +94,10 @@ export async function PUT(
     const result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'manageInventory')
       if (permError) return { error: permError }
+
+      // K4: only counts of the user's own branches
+      const branchDenied = await assertRecordBranch(session, tx, stockTakes, id)
+      if (branchDenied) return { error: branchDenied }
 
       // Completing never just flips the status: it applies the counts through the
       // stock ledger (all-or-nothing; throws → rollback).
@@ -185,6 +194,10 @@ export async function DELETE(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'manageInventory')
     if (permError) return { error: permError }
+
+    // K4: only counts of the user's own branches
+    const branchDenied = await assertRecordBranch(session, tx, stockTakes, id)
+    if (branchDenied) return { error: branchDenied }
 
     const [stockTake] = await tx.select()
       .from(stockTakes)

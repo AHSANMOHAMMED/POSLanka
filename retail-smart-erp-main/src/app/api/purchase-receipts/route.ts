@@ -7,6 +7,7 @@ import { escapeLikePattern } from '@/lib/utils/sql'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { purchaseReceiptsListSchema } from '@/lib/validation/schemas/purchases'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter } from '@/lib/auth/branch-access'
 
 // GET - List purchase receipts with pagination
 export async function GET(request: NextRequest) {
@@ -32,6 +33,12 @@ export async function GET(request: NextRequest) {
       if (status) conditions.push(eq(purchaseReceipts.status, status))
       if (purchaseOrderId) conditions.push(eq(purchaseReceipts.purchaseOrderId, purchaseOrderId))
       if (warehouseId) conditions.push(eq(purchaseReceipts.warehouseId, warehouseId))
+
+      // K4: branch-restricted users see their own branches' documents only
+      const scope = await getBranchScope(session, db)
+      if (warehouseId && !canAccessBranch(scope, warehouseId)) return { error: await branchDeniedResponse(scope, db) }
+      const branchCond = branchFilter(scope, purchaseReceipts.warehouseId)
+      if (branchCond) conditions.push(branchCond)
       if (supplierId) conditions.push(eq(purchaseReceipts.supplierId, supplierId))
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined

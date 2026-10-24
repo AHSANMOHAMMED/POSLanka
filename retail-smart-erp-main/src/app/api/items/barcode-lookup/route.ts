@@ -9,6 +9,7 @@ import { barcodeLookupSchema } from '@/lib/validation/schemas/items'
 import { analyseScan, normalizeScaleConfig, type ScaleBarcodeConfig } from '@/lib/inventory/barcode-parse'
 import { logError } from '@/lib/ai/error-logger'
 import { requireModule } from '@/lib/auth/roles'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET /api/items/barcode-lookup?barcode=xxx&warehouseId=yyy
 // Fast exact-match lookup for POS scanning. Understands EAN-13/8, UPC-A/E, ITF-14,
@@ -29,6 +30,10 @@ export async function GET(request: NextRequest) {
     const { barcode, warehouseId } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: stock of another branch is not shown to branch-restricted staff
+      const branchDenied = await assertBranchAccess(session, warehouseId, db)
+      if (branchDenied) return branchDenied
+
       const tenant = await db.query.tenants.findFirst({
         where: eq(tenants.id, session.user.tenantId),
         columns: { settings: true },

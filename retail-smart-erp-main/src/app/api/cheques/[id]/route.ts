@@ -11,6 +11,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { allowedChequeActions, ChequeError, transitionCheque, CHEQUE_STATUS_LABELS, type ChequeDirection } from '@/lib/cheques/cheques'
 import type { ChequeStatus } from '@/lib/db/schema'
 import { canViewAllCheques } from '@/lib/cheques/access'
+import { getBranchScope, canAccessBranch, branchDeniedMessage } from '@/lib/auth/branch-access'
 
 // GET /api/cheques/[id]
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -37,6 +38,10 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         .leftJoin(warehouses, eq(warehouses.id, cheques.warehouseId))
         .where(eq(cheques.id, p.data.id))
       if (!r || (!viewAll && r.cheque.createdBy !== session.user.id)) {
+        return NextResponse.json({ error: 'Cheque not found' }, { status: 404 })
+      }
+      // K4: another branch's cheque is not shown to branch-restricted staff
+      if (r.cheque.createdBy !== session.user.id && !canAccessBranch(await getBranchScope(session, db), r.cheque.warehouseId)) {
         return NextResponse.json({ error: 'Cheque not found' }, { status: 404 })
       }
       return NextResponse.json({
@@ -70,8 +75,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const accounts = hasPermission(role, 'manageAccounting', tenantId, customRoleId)
 
     const result = await withTenantTransaction(tenantId, async (tx) => {
-      const [c] = await tx.select({ direction: cheques.direction }).from(cheques).where(eq(cheques.id, p.data.id))
+      const [c] = await tx.select({ direction: cheques.direction, warehouseId: cheques.warehouseId, createdBy: cheques.createdBy }).from(cheques).where(eq(cheques.id, p.data.id))
       if (!c) throw new ChequeError('NOT_FOUND', 'Cheque not found', 404)
+      // K4: only cheques of the user's own branches (or ones they recorded)
+      if (c.createdBy !== session.user.id) {
+        const scope = await getBranchScope(session, tx)
+        if (!canAccessBranch(scope, c.warehouseId)) throw new ChequeError('BRANCH_ACCESS_DENIED', await branchDeniedMessage(scope, tx), 403)
+      }
       const allowed = accounts
         || (c.direction === 'received' && hasPermission(role, 'manageSales', tenantId, customRoleId))
         || (c.direction === 'issued' && hasPermission(role, 'managePurchases', tenantId, customRoleId))

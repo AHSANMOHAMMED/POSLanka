@@ -8,6 +8,7 @@ import { escapeLikePattern } from '@/lib/utils/sql'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { serialNumberSearchSchema } from '@/lib/validation/schemas/items'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 // GET - Cross-item search by serial number
 export async function GET(request: NextRequest) {
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
           eq(itemSerialNumbers.status, status)
         )
       }
+      // K4: branch-restricted users find their own branches' serial numbers (and unplaced ones)
+      const branchCond = branchFilter(await getBranchScope(session, db), itemSerialNumbers.warehouseId, { includeUnassigned: true })
+      if (branchCond) conditions.push(branchCond)
 
       const whereClause = and(...conditions)
 

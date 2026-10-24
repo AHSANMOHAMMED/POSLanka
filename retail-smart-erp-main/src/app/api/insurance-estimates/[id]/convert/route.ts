@@ -14,6 +14,7 @@ import { convertEstimateSchema } from '@/lib/validation/schemas/insurance'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocNo } from '@/lib/documents/numbering'
 import { getAvailableStock } from '@/lib/dealership/work-orders'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // POST convert approved estimate to work order (supports partial conversion)
 export async function POST(
@@ -54,6 +55,10 @@ export async function POST(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, estimateId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Get estimate with items (RLS scopes to tenant)
       const estimate = await db.query.insuranceEstimates.findFirst({
         where: eq(insuranceEstimates.id, estimateId),

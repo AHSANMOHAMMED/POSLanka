@@ -9,6 +9,7 @@ import { validateSearchParams, validateBody } from '@/lib/validation'
 import { itemBatchesForItemListSchema, createItemBatchForItemSchema } from '@/lib/validation/schemas/items'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET - List batches for an item
 export async function GET(
@@ -30,6 +31,11 @@ export async function GET(
 
     if (status) conditions.push(eq(itemBatches.status, status))
     if (warehouseId) conditions.push(eq(itemBatches.warehouseId, warehouseId))
+    // K4: branch-restricted users see their own branches' batches only
+    const scope = await getBranchScope(session, db)
+    if (warehouseId && !canAccessBranch(scope, warehouseId)) return { moduleError: await branchDeniedResponse(scope, db) }
+    const branchCond = branchFilter(scope, itemBatches.warehouseId, { includeUnassigned: true })
+    if (branchCond) conditions.push(branchCond)
 
     const data = await db.select({
       id: itemBatches.id,
@@ -87,6 +93,9 @@ export async function POST(
     if (body.warehouseId) {
       const [wh] = await tx.select({ id: warehouses.id }).from(warehouses).where(eq(warehouses.id, body.warehouseId)).limit(1)
       if (!wh) return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
+      // K4: only the user's own branches
+      const branchDenied = await assertBranchAccess(session, body.warehouseId, tx)
+      if (branchDenied) return { error: branchDenied }
     }
     if (body.manufacturingDate && body.expiryDate && body.expiryDate < body.manufacturingDate) {
       return { error: NextResponse.json({ error: 'Expiry date cannot be before the manufacturing date' }, { status: 400 }) }

@@ -11,6 +11,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePosProfileSchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET a single POS profile
 export async function GET(
@@ -54,6 +55,10 @@ export async function GET(
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
 
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       return NextResponse.json(profile)
     })
   } catch (error) {
@@ -91,6 +96,10 @@ export async function PUT(
       if (!existing) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       const {
         name,
@@ -138,7 +147,12 @@ export async function PUT(
       const updateData: any = { updatedAt: new Date() }
       if (name !== undefined) updateData.name = name.trim()
       if (code !== undefined) updateData.code = code?.trim() || null
-      if (warehouseId !== undefined) updateData.warehouseId = warehouseId || null
+      if (warehouseId !== undefined) {
+        // K4: a counter can only be moved to one of the user's own branches
+        const moveDenied = await assertBranchAccess(session, warehouseId, db)
+        if (moveDenied) return moveDenied
+        updateData.warehouseId = warehouseId || null
+      }
       if (defaultCustomerId !== undefined) updateData.defaultCustomerId = defaultCustomerId || null
       if (costCenterId !== undefined) updateData.costCenterId = costCenterId || null
       if (isDefault !== undefined) updateData.isDefault = isDefault
@@ -295,6 +309,10 @@ export async function DELETE(
       if (!existing) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       // Check if this is the only profile
       const profileCount = await db.query.posProfiles.findMany({

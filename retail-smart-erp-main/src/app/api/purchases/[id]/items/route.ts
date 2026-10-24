@@ -10,6 +10,7 @@ import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addPurchaseItemSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // Recalculate and update purchase totals (dual mode: template or manual flat tax)
 async function recalculateTotals(db: TenantDb, tenantId: string, purchaseId: string) {
@@ -76,6 +77,9 @@ export async function GET(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, purchases, id)
+    if (branchDenied) return { error: branchDenied }
 
     // Verify purchase exists (RLS filters by tenant)
     const [purchase] = await db
@@ -134,6 +138,9 @@ export async function POST(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'managePurchases')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, purchases, id)
+    if (branchDenied) return { error: branchDenied }
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return { error: quotaError }

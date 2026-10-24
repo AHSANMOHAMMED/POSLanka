@@ -11,6 +11,7 @@ import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { salesOrdersListSchema, createSalesOrderSchema } from '@/lib/validation/schemas/sales'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET all sales orders for the tenant (with pagination support)
 export async function GET(request: NextRequest) {
@@ -50,6 +51,11 @@ export async function GET(request: NextRequest) {
       if (filterWarehouseId) {
         conditions.push(eq(salesOrders.warehouseId, filterWarehouseId))
       }
+      // K4: branch-restricted users see their own branches' orders only
+      const scope = await getBranchScope(session, db)
+      if (filterWarehouseId && !canAccessBranch(scope, filterWarehouseId)) return { moduleError: await branchDeniedResponse(scope, db) }
+      const branchCond = branchFilter(scope, salesOrders.warehouseId)
+      if (branchCond) conditions.push(branchCond)
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
@@ -195,6 +201,9 @@ export async function POST(request: NextRequest) {
     if (!warehouse) {
       return { error: NextResponse.json({ error: 'Warehouse not found' }, { status: 404 }) }
     }
+    // K4: a branch-restricted user takes orders for their own branches only
+    const branchDenied = await assertBranchAccess(session, warehouseId, tx)
+    if (branchDenied) return { error: branchDenied }
 
     // Validate customer if provided
     if (customerId) {

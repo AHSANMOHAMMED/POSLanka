@@ -14,6 +14,7 @@ import { updateInsuranceEstimateSchema } from '@/lib/validation/schemas/insuranc
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // E12: Valid status transitions for estimates
 // Issue 10: Allow cancellation from more statuses
@@ -50,6 +51,10 @@ export async function GET(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const estimate = await db.query.insuranceEstimates.findFirst({
         where: eq(insuranceEstimates.id, id),
         with: {
@@ -271,6 +276,10 @@ export async function PUT(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Validate foreign keys belong to tenant (prevent cross-tenant reference)
       if (customerId) {
         const customer = await db.query.customers.findFirst({
@@ -558,6 +567,10 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Fetch attachments before deletion (for file cleanup)
       const attachmentsToDelete = await db.query.insuranceEstimateAttachments.findMany({
         where: eq(insuranceEstimateAttachments.estimateId, id),

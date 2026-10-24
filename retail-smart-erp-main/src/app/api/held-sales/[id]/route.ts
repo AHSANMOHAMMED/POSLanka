@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET single held sale (for recall)
 export async function GET(
@@ -44,6 +45,10 @@ export async function GET(
       if (!heldSale) {
         return NextResponse.json({ error: 'Held sale not found' }, { status: 404 })
       }
+
+      // K4: bills held at another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, heldSales, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       return NextResponse.json(heldSale)
     })
@@ -90,6 +95,10 @@ export async function DELETE(
       if (!deleted) {
         return NextResponse.json({ error: 'Held sale not found' }, { status: 404 })
       }
+
+      // K4: bills held at another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, heldSales, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       // Broadcast the change
       logAndBroadcast(session.user.tenantId, 'held-sale', 'deleted', id)

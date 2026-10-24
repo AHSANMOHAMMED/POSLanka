@@ -21,6 +21,7 @@ import { applyStockChange, notifyStockDecreased, type StockChangeInput, type Sto
 import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
 import { allocateSaleLineBatches } from '@/lib/inventory/batches'
 import { getTenantSalesSettings } from '@/lib/sales/return-settings'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // POST convert work order to invoice
 export async function POST(
@@ -56,6 +57,10 @@ export async function POST(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Get work order with services and parts (RLS scopes to tenant)
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),

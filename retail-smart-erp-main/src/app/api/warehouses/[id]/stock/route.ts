@@ -17,6 +17,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import type { DbTx } from '@/lib/inventory/db-types'
 import { toApiError } from '@/lib/db/errors'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 async function currentStockOf(tx: DbTx, warehouseId: string, itemId: string): Promise<number> {
   const [row] = await tx.select({ currentStock: warehouseStock.currentStock }).from(warehouseStock)
@@ -49,6 +50,10 @@ export async function GET(
       if (!warehouse) {
         return NextResponse.json({ error: 'Warehouse not found' }, { status: 404 })
       }
+
+      // K4: only the user's own branches
+      const branchDenied = await assertBranchAccess(session, warehouseId, db)
+      if (branchDenied) return branchDenied
 
       const qsParsed = validateSearchParams(request, warehouseStockListSchema)
       if (!qsParsed.success) return qsParsed.response
@@ -159,6 +164,10 @@ export async function POST(
       if (!warehouse) {
         return NextResponse.json({ error: 'Warehouse not found' }, { status: 404 })
       }
+
+      // K4: only the user's own branches
+      const branchDenied = await assertBranchAccess(session, warehouseId, tx)
+      if (branchDenied) return branchDenied
 
       // Verify item exists (RLS scopes to tenant)
       const item = await tx.query.items.findFirst({

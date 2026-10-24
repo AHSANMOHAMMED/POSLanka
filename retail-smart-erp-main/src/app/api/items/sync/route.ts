@@ -6,6 +6,7 @@ import { validateSearchParams } from '@/lib/validation'
 import { logError } from '@/lib/ai/error-logger'
 import { canSyncCatalog, fetchItemSyncPage, InvalidCursorError, ITEM_SYNC_DEFAULT_LIMIT, ITEM_SYNC_MAX_LIMIT } from '@/lib/inventory/item-sync'
 import { requireModule } from '@/lib/auth/roles'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 const itemSyncSchema = z.object({
   warehouseId: z.string().uuid().optional(),
@@ -29,12 +30,18 @@ export async function GET(request: NextRequest) {
     const parsed = validateSearchParams(request, itemSyncSchema)
     if (!parsed.success) return parsed.response
 
-    const page = await withTenant(session.user.tenantId, (db) => fetchItemSyncPage(db, {
-      tenantId: session.user.tenantId,
-      warehouseId: parsed.data.warehouseId,
-      cursor: parsed.data.cursor,
-      limit: parsed.data.limit,
-    }))
+    const page = await withTenant(session.user.tenantId, async (db) => {
+      // K4: offline stock of another branch is not given to branch-restricted staff
+      const branchDenied = await assertBranchAccess(session, parsed.data.warehouseId, db)
+      if (branchDenied) return branchDenied
+      return fetchItemSyncPage(db, {
+        tenantId: session.user.tenantId,
+        warehouseId: parsed.data.warehouseId,
+        cursor: parsed.data.cursor,
+        limit: parsed.data.limit,
+      })
+    })
+    if (page instanceof Response) return page
     return NextResponse.json(page)
   } catch (error) {
     if (error instanceof InvalidCursorError) {

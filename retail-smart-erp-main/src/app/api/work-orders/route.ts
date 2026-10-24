@@ -15,6 +15,7 @@ import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { workOrdersListSchema, createWorkOrderSchema } from '@/lib/validation/schemas/work-orders'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getBranchScope, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET all work orders for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -36,6 +37,9 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
       const conditions = []
+      // K4: branch-restricted staff see their own branches' job cards (and ones without a branch)
+      const branchCond = branchFilter(await getBranchScope(session, db), workOrders.warehouseId, { includeUnassigned: true })
+      if (branchCond) conditions.push(branchCond)
       if (customerId) {
         conditions.push(eq(workOrders.customerId, customerId))
       }
@@ -197,6 +201,10 @@ export async function POST(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a branch-restricted user opens job cards for their own branches only
+      const branchDenied = await assertBranchAccess(session, warehouseId, db)
+      if (branchDenied) return branchDenied
+
       // Validate customerId belongs to tenant (RLS scopes the query)
       let customerSnapshot: string | null = null
       if (customerId) {

@@ -10,6 +10,7 @@ import { authWithCompany } from '@/lib/auth'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { stockTakesListSchema, createStockTakeSchema } from '@/lib/validation/schemas/stock'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET - List stock takes with pagination and filters
 export async function GET(request: NextRequest) {
@@ -25,6 +26,11 @@ export async function GET(request: NextRequest) {
 
     if (status) conditions.push(eq(stockTakes.status, status))
     if (warehouseId) conditions.push(eq(stockTakes.warehouseId, warehouseId))
+    // K4: branch-restricted users see their own branches' counts only
+    const scope = await getBranchScope(session, db)
+    if (warehouseId && !canAccessBranch(scope, warehouseId)) return { moduleError: await branchDeniedResponse(scope, db) }
+    const branchCond = branchFilter(scope, stockTakes.warehouseId)
+    if (branchCond) conditions.push(branchCond)
     if (search) conditions.push(ilike(stockTakes.countNo, `%${escapeLikePattern(search)}%`))
 
     const [countResult] = await db.select({ count: sql<number>`count(*)` })
@@ -84,6 +90,9 @@ export async function POST(request: NextRequest) {
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'manageInventory')
     if (permError) return { error: permError }
+    // K4: a branch-restricted stock keeper counts their own branches only
+    const branchDenied = await assertBranchAccess(session, body.warehouseId, tx)
+    if (branchDenied) return { error: branchDenied }
 
     // Count number SC-YYYYMMDD-### from the per-tenant daily sequence
     const countNo = await nextDocNo(tx, session.user.tenantId, 'stock_take')

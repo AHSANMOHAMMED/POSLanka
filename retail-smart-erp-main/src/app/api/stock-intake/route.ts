@@ -6,6 +6,7 @@ import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { createStockIntakeSchema, stockIntakeListSchema } from '@/lib/validation/schemas/stock-intake'
 import { createIntakeBatch, listIntakeBatches } from '@/lib/inventory/stock-intake'
 import { intakeErrorResponse, isMobileRequest } from '@/lib/inventory/stock-intake-http'
+import { getBranchScope } from '@/lib/auth/branch-access'
 
 // GET /api/stock-intake?status&warehouseId&mine&page&pageSize — list intake batches
 export async function GET(request: NextRequest) {
@@ -21,6 +22,8 @@ export async function GET(request: NextRequest) {
           tenantId: session.user.tenantId,
           status: q.status,
           warehouseId: q.warehouseId,
+          // K4: branch-restricted users see their own branches' batches only
+          warehouseIds: await getBranchScope(session, db),
           createdBy: q.mine ? session.user.id : undefined,
           page: q.page,
           pageSize: q.pageSize,

@@ -43,6 +43,7 @@ import { assignedPosProfiles, checkSaleShift, customerOutstanding, evaluateSaleC
 import { priceSaleCart, recordPromotionRedemptions, PromotionExhaustedError, type SalePricing } from '@/lib/pricing/sale-pricing'
 import { PricingLineError } from '@/lib/pricing/load-context'
 import { ChequeError, chequeAmountFor, insertCheque } from '@/lib/cheques/cheques'
+import { getBranchScope, branchFilter, canAccessBranch, branchDeniedMessage } from '@/lib/auth/branch-access'
 
 const LIST_ITEM_EXCLUDED_COLUMNS = { description: false, allergens: false, alternatePartNumbers: false } as const
 
@@ -66,6 +67,10 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions (tenantId filter handled by RLS)
       const conditions = []
+
+      // K4: branch-restricted staff only see their own branches' sales
+      const branchCond = branchFilter(await getBranchScope(session, db), sales.warehouseId)
+      if (branchCond) conditions.push(branchCond)
 
       // Filter by customer
       if (customerId) {
@@ -434,6 +439,22 @@ export async function POST(request: NextRequest) {
 
       // Get warehouse ID - use provided or default warehouse (RLS scopes the query)
       let warehouseId = providedWarehouseId
+
+      // K4: a branch-restricted cashier sells only from their own branches (and on their counters).
+      // Without a warehouse in the request they sell from the shift's branch or their first branch.
+      // An offline sale already happened: it is accepted and flagged for review instead.
+      const branchScope = await getBranchScope(session, db)
+      if (branchScope) {
+        const shiftBranch = shiftCheck.profile?.warehouseId || null
+        if (!warehouseId) warehouseId = shiftBranch && branchScope.includes(shiftBranch) ? shiftBranch : branchScope[0]
+        const foreign = [warehouseId, shiftBranch].filter((w): w is string => !!w && !canAccessBranch(branchScope, w))
+        if (foreign.length > 0) {
+          if (!isOfflineSale) {
+            return NextResponse.json({ error: await branchDeniedMessage(branchScope, db), code: 'BRANCH_ACCESS_DENIED' }, { status: 403 })
+          }
+          saleFlags.branchIssue = { code: 'BRANCH_ACCESS_DENIED', warehouseIds: foreign }
+        }
+      }
 
       // Validate provided warehouse exists and is active
       if (warehouseId) {
@@ -1829,7 +1850,7 @@ export async function POST(request: NextRequest) {
         })
       }
 
-      if (isOfflineSale && (saleFlags.priceDifferences?.length || saleFlags.taxDifference || saleFlags.stockShortfall?.length || saleFlags.batchShortfall?.length || saleFlags.approvalMissing || saleFlags.shiftIssue)) {
+      if (isOfflineSale && (saleFlags.priceDifferences?.length || saleFlags.taxDifference || saleFlags.stockShortfall?.length || saleFlags.batchShortfall?.length || saleFlags.approvalMissing || saleFlags.shiftIssue || saleFlags.branchIssue)) {
         offlineNotice = { saleId: result.id, invoiceNo: result.invoiceNo }
       }
 
@@ -1851,6 +1872,7 @@ export async function POST(request: NextRequest) {
       if (missing?.scopes?.length) parts.push(`no supervisor approval for ${missing.scopes.join(', ')}`)
       const shiftIssue = saleFlags.shiftIssue as { code?: string } | undefined
       if (shiftIssue?.code) parts.push(`shift problem: ${shiftIssue.code}`)
+      if (saleFlags.branchIssue) parts.push('sold from a branch the cashier is not assigned to')
       void notify(session.user.tenantId, 'offline_price_difference', {
         title: `Offline sale ${offlineRef} (${notice.invoiceNo}) needs review`,
         body: parts.join(' · ') || 'Offline sale differs from the current catalog',
@@ -1998,6 +2020,20 @@ async function handleReturnPost(session: CompanySession, userId: string, body: C
         }
       }
       let warehouseId = body.warehouseId || null
+
+      // K4: a branch-restricted user returns only into their own branches, and only sales of them
+      const branchScope = await getBranchScope(session, db)
+      if (branchScope) {
+        let originalBranch: string | null = null
+        if (body.returnAgainst) {
+          const original = await db.query.sales.findFirst({ where: eq(sales.id, body.returnAgainst), columns: { warehouseId: true } })
+          originalBranch = original?.warehouseId || null
+        }
+        if (!warehouseId && !body.returnAgainst) warehouseId = branchScope[0]
+        if ((warehouseId && !canAccessBranch(branchScope, warehouseId)) || (originalBranch && !canAccessBranch(branchScope, originalBranch))) {
+          return NextResponse.json({ error: await branchDeniedMessage(branchScope, db), code: 'BRANCH_ACCESS_DENIED' }, { status: 403 })
+        }
+      }
       if (!warehouseId && !body.returnAgainst) {
         const fallback = await db.query.warehouses.findFirst({
           where: and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),

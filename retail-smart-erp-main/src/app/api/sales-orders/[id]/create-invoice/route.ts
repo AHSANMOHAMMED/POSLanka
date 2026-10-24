@@ -20,6 +20,7 @@ import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // POST create sales invoice from sales order
 export async function POST(
@@ -53,6 +54,9 @@ export async function POST(
     // Permission check
     const permError = requirePermission(session, 'createSales')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, tx, salesOrders, id)
+    if (branchDenied) return { error: branchDenied }
     // Get sales order with lock to prevent double invoicing (RLS filters by tenant)
     const [order] = await tx
       .select()

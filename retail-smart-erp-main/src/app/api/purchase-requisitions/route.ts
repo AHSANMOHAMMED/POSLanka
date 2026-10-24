@@ -10,6 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchaseRequisitionsListSchema, createPurchaseRequisitionSchema } from '@/lib/validation/schemas/purchases'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 export async function GET(request: NextRequest) {
   try {
@@ -123,6 +124,9 @@ export async function POST(request: NextRequest) {
     const result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'createRequisitions')
       if (permError) return { error: permError }
+      // K4: a branch-restricted user works with their own branches only
+      const branchDenied = await assertBranchAccess(session, (body.items || []).map((i) => i.warehouseId), tx)
+      if (branchDenied) return { error: branchDenied }
 
       const quotaError = await requireQuota(session.user.tenantId, 'standard')
       if (quotaError) return { error: quotaError }

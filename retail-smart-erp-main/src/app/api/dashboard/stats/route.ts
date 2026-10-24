@@ -5,6 +5,7 @@ import { appointments, workOrders, insuranceEstimates, warehouseStock, items } f
 import { eq, and, or, sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { tenantToday } from '@/lib/accounting/gl'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 // H4 (RBAC review): intentionally available to every signed-in role — it returns operational
 // counts only (appointments, work orders, estimates, low-stock items), no amounts. Money on the
@@ -22,6 +23,11 @@ export async function GET() {
 
     // Execute with RLS tenant context - run all 5 count queries in parallel
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: branch-restricted users count their own branches only (job cards / estimates without
+      // a branch still count)
+      const scope = await getBranchScope(session, db)
+      const woBranch = branchFilter(scope, workOrders.warehouseId, { includeUnassigned: true })
+      const estBranch = branchFilter(scope, insuranceEstimates.warehouseId, { includeUnassigned: true })
       const [
         todayAppointmentsResult,
         draftWorkOrdersResult,
@@ -45,25 +51,25 @@ export async function GET() {
         db
           .select({ count: sql<number>`COUNT(*)` })
           .from(workOrders)
-          .where(eq(workOrders.status, 'draft'))
+          .where(and(eq(workOrders.status, 'draft'), woBranch))
           .then(([r]) => r),
 
         db
           .select({ count: sql<number>`COUNT(*)` })
           .from(workOrders)
-          .where(or(
+          .where(and(or(
             eq(workOrders.status, 'in_progress'),
             eq(workOrders.status, 'confirmed')
-          ))
+          ), woBranch))
           .then(([r]) => r),
 
         db
           .select({ count: sql<number>`COUNT(*)` })
           .from(insuranceEstimates)
-          .where(or(
+          .where(and(or(
             eq(insuranceEstimates.status, 'submitted'),
             eq(insuranceEstimates.status, 'under_review')
-          ))
+          ), estBranch))
           .then(([r]) => r),
 
         db
@@ -73,6 +79,7 @@ export async function GET() {
           .where(and(
             eq(items.isActive, true),
             eq(items.trackStock, true),
+            branchFilter(scope, warehouseStock.warehouseId),
             // only items with a reorder level (0 means none set), same rule as the owner dashboard
             sql`CAST(${warehouseStock.minStock} AS DECIMAL) > 0`,
             sql`CAST(${warehouseStock.currentStock} AS DECIMAL) <= CAST(${warehouseStock.minStock} AS DECIMAL)`

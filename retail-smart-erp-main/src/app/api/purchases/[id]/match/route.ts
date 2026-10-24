@@ -6,6 +6,7 @@ import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { evaluateThreeWayMatch } from '@/lib/purchasing/three-way-match'
 import { requireAnyPermission, PURCHASING_VIEW_PERMISSIONS } from '@/lib/purchasing/permissions'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET /api/purchases/[id]/match — 3-way match (invoice vs PO vs GRN). Submitted invoices return
 // the result stored at submit; drafts are evaluated live (preview before submitting).
@@ -15,6 +16,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const result = await withAuthTenant(async (session, db) => {
     const permError = requireAnyPermission(session, PURCHASING_VIEW_PERMISSIONS)
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, purchases, p.data.id)
+    if (branchDenied) return { error: branchDenied }
     const [purchase] = await db.select().from(purchases).where(eq(purchases.id, p.data.id))
     if (!purchase) return { error: NextResponse.json({ error: 'Purchase not found' }, { status: 404 }) }
     if (purchase.status !== 'draft' && purchase.matchDetails) {

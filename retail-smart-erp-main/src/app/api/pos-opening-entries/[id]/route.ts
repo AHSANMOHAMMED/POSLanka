@@ -12,6 +12,7 @@ import { updatePosOpeningEntrySchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { listShiftCashMovements, shiftCashMovementTotals } from '@/lib/pos/shift-report'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET a single opening entry
 export async function GET(
@@ -52,6 +53,10 @@ export async function GET(
       if (!entry) {
         return NextResponse.json({ error: 'Opening entry not found' }, { status: 404 })
       }
+
+      // K4: shifts of another branch are not shown to branch-restricted staff
+      const branchDenied = await assertBranchAccess(session, entry.warehouseId, db)
+      if (branchDenied) return branchDenied
 
       // Calculate totals from sales
       const salesTotal = entry.sales.reduce((sum, sale) => {
@@ -210,6 +215,10 @@ export async function PUT(
       if (!existing) {
         return NextResponse.json({ error: 'Opening entry not found' }, { status: 404 })
       }
+
+      // K4: only shifts of the user's own branches
+      const branchDenied = await assertBranchAccess(session, existing.warehouseId, db)
+      if (branchDenied) return branchDenied
 
       // Only the owner of the shift or manager/owner can modify
       if (existing.userId !== session.user.id && !['owner', 'manager'].includes(session.user.role)) {

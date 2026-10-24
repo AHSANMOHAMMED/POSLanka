@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota, invalidateStorageCache } from '@/lib/db/storage-quota'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // E23: Photo attachments API for estimates (backed by unified files table)
 
@@ -32,6 +33,10 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const estimate = await db.query.insuranceEstimates.findFirst({
         where: eq(insuranceEstimates.id, id),
       })
@@ -98,6 +103,10 @@ export async function POST(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const estimate = await db.query.insuranceEstimates.findFirst({
         where: eq(insuranceEstimates.id, id),
       })
@@ -246,6 +255,10 @@ export async function DELETE(
     }
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, insuranceEstimates, estimateId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const estimate = await db.query.insuranceEstimates.findFirst({
         where: eq(insuranceEstimates.id, estimateId),
       })

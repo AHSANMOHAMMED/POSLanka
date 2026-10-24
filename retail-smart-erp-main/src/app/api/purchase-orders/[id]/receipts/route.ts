@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { purchaseReceipts, purchaseReceiptItems, users, items as itemsTable } from '@/lib/db/schema'
+import { purchaseReceipts, purchaseReceiptItems, users, items as itemsTable, purchaseOrders } from '@/lib/db/schema'
 import { eq, desc } from 'drizzle-orm'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET - List all purchase receipts (GRN) for a purchase order
 export async function GET(
@@ -18,6 +19,9 @@ export async function GET(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'managePurchases')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, db, purchaseOrders, id)
+    if (branchDenied) return { error: branchDenied }
 
     const receipts = await db
       .select({

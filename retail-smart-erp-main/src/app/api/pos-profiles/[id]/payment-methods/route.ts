@@ -11,6 +11,7 @@ import { validateBody } from '@/lib/validation'
 import { posProfilePaymentMethodsSchema } from '@/lib/validation/schemas/pos'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET payment methods for a POS profile
 export async function GET(
@@ -36,6 +37,10 @@ export async function GET(
       if (!profile) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       const paymentMethods = await db.query.posProfilePaymentMethods.findMany({
         where: eq(posProfilePaymentMethods.posProfileId, id),
@@ -83,6 +88,10 @@ export async function POST(
       if (!profile) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       // withTenant already wraps in a transaction — no nested db.transaction() which resets SET LOCAL RLS context.
       await db.delete(posProfilePaymentMethods)

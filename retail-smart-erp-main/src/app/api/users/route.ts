@@ -4,7 +4,7 @@ import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { db } from '@/lib/db'
 import { users, userWarehouses, warehouses, accounts, staffInvites, tenants, posProfiles, posProfileUsers } from '@/lib/db/schema'
-import { eq, and, inArray, isNull, gt } from 'drizzle-orm'
+import { eq, and, inArray, isNull, gt, or } from 'drizzle-orm'
 import { requirePermission, canModifyUser, rolePermissionsNotHeld } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
@@ -16,6 +16,7 @@ import { validateBody } from '@/lib/validation'
 import { createUserBodySchema } from '@/lib/validation/schemas/users'
 import { createStaffUser, resolveStaffAssignments, addUserWarehouses, replaceUserPosProfiles, loadAssignableCustomRole, StaffError } from '@/lib/users/create-staff'
 import { getCustomRoleName } from '@/lib/auth/permission-cache'
+import { getBranchScope, staffDeniedResponse } from '@/lib/auth/branch-access'
 
 // GET all users for the tenant with optional role filter
 // Query params:
@@ -44,6 +45,15 @@ export async function GET(request: NextRequest) {
       }
       if (activeOnly) {
         conditions.push(eq(users.isActive, true))
+      }
+      // K4: a branch-restricted user sees the staff of their own branches (and themselves)
+      const scope = await getBranchScope(session, db)
+      if (scope) {
+        conditions.push(or(
+          eq(users.id, session.user.id),
+          inArray(users.id, db.select({ id: userWarehouses.userId }).from(userWarehouses)
+            .where(and(eq(userWarehouses.isActive, true), inArray(userWarehouses.warehouseId, scope)))),
+        )!)
       }
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
@@ -192,6 +202,24 @@ export async function POST(request: NextRequest) {
     if (notHeld.length > 0) {
       return NextResponse.json({ error: 'You cannot create users with this role', missingPermissions: notHeld }, { status: 403 })
     }
+
+    // K4: a branch-restricted manager adds staff to their own branches only (none chosen = their
+    // branches), so nobody they create can see more than they do
+    const branchError = await withTenant(session.user.tenantId, async (tenantDb) => {
+      const scope = await getBranchScope(session, tenantDb)
+      if (!scope) return null
+      const asked = parsed.data.warehouseIds || []
+      let counterBranches: Array<string | null> = []
+      if (parsed.data.posProfileIds?.length) {
+        const rows = await tenantDb.select({ warehouseId: posProfiles.warehouseId }).from(posProfiles)
+          .where(inArray(posProfiles.id, parsed.data.posProfileIds))
+        counterBranches = rows.map(r => r.warehouseId)
+      }
+      if ([...asked, ...counterBranches].some(w => !w || !scope.includes(w))) return staffDeniedResponse(scope, tenantDb)
+      if (asked.length === 0) parsed.data.warehouseIds = [...scope]
+      return null
+    })
+    if (branchError) return branchError
 
     if (parsed.data.mode === 'create') {
       const body = parsed.data

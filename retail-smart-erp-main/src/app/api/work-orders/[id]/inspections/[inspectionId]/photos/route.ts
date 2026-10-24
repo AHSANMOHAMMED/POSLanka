@@ -10,6 +10,7 @@ import { requireQuota, invalidateStorageCache } from '@/lib/db/storage-quota'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { validateParams } from '@/lib/validation/helpers'
 import { z } from 'zod'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 const MAX_PHOTOS_PER_INSPECTION = 20
 const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
@@ -33,6 +34,10 @@ export async function GET(
     const { id: workOrderId, inspectionId } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),
       })
@@ -91,6 +96,10 @@ export async function POST(
     const { id: workOrderId, inspectionId } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),
       })
@@ -226,6 +235,10 @@ export async function DELETE(
     }
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, workOrders, workOrderId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const workOrder = await db.query.workOrders.findFirst({
         where: eq(workOrders.id, workOrderId),
       })

@@ -18,6 +18,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { wasteReasonCode } from '@/lib/inventory/adjustment-reasons'
 import { wasteLogListSchema, createWasteLogSchema } from '@/lib/validation/schemas/waste-log'
+import { getBranchScope, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET waste log entries for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions (tenantId filter handled by RLS)
       const conditions: ReturnType<typeof eq>[] = []
+      // K4: branch-restricted users see their own branches' waste only
+      const branchCond = branchFilter(await getBranchScope(session, db), wasteLog.warehouseId, { includeUnassigned: true })
+      if (branchCond) conditions.push(branchCond)
 
       if (search) {
         const escaped = escapeLikePattern(search)
@@ -128,13 +132,18 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Item not found' }, { status: 404 })
       }
 
-      // Warehouse the waste came out of: the given one, else the tenant's default
+      // Warehouse the waste came out of: the given one, else the tenant's default (K4: for a
+      // branch-restricted user, their first branch)
+      const scope = await getBranchScope(session, tx)
+      const wasteWarehouseId = bodyWarehouseId || scope?.[0]
       const warehouse = await tx.query.warehouses.findFirst({
-        where: bodyWarehouseId
-          ? and(eq(warehouses.id, bodyWarehouseId), eq(warehouses.isActive, true))
+        where: wasteWarehouseId
+          ? and(eq(warehouses.id, wasteWarehouseId), eq(warehouses.isActive, true))
           : and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),
         columns: { id: true },
       })
+      const branchDenied = await assertBranchAccess(session, warehouse?.id, tx, { scope })
+      if (branchDenied) return branchDenied
       if (item.trackStock && !warehouse) {
         return NextResponse.json({
           error: bodyWarehouseId ? 'Warehouse not found or inactive' : 'No active default warehouse; choose the warehouse the waste came from',

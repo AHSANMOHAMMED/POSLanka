@@ -11,6 +11,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePosClosingEntrySchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET a single closing entry
 export async function GET(
@@ -58,6 +59,10 @@ export async function GET(
       if (!entry) {
         return NextResponse.json({ error: 'Closing entry not found' }, { status: 404 })
       }
+
+      // K4: closings of another branch are not shown to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posOpeningEntries, entry.openingEntryId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       // Add variance calculations
       const reconciliationWithVariance = entry.reconciliation.map(rec => ({
@@ -109,6 +114,10 @@ export async function PUT(
       if (!existing) {
         return { error: NextResponse.json({ error: 'Closing entry not found' }, { status: 404 }) }
       }
+
+      // K4: only closings of the user's own branches
+      const branchDenied = await assertRecordBranch(session, db, posOpeningEntries, existing.openingEntryId, { includeUnassigned: true })
+      if (branchDenied) return { error: branchDenied }
 
       if (existing.status === 'cancelled') {
         return { error: NextResponse.json({ error: 'Closing entry is already cancelled' }, { status: 400 }) }

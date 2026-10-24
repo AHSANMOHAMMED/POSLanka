@@ -14,6 +14,7 @@ import { validateSearchParams, validateBody } from '@/lib/validation'
 import { itemsListSchema, createItemSchema } from '@/lib/validation/schemas/items'
 import { createItem } from '@/lib/inventory/create-item'
 import { toApiError } from '@/lib/db/errors'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchFilter } from '@/lib/auth/branch-access'
 
 // GET all items for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -32,6 +33,14 @@ export async function GET(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: the catalog is shared, stock is per branch. A branch-restricted user may only ask for
+      // their own branches' stock, and "all branches" means all of THEIR branches.
+      const scope = await getBranchScope(session, db)
+      if (warehouseId && !canAccessBranch(scope, warehouseId)) return branchDeniedResponse(scope, db)
+      const wsScope = !warehouseId && scope
+        ? sql` AND ws.warehouse_id IN (${sql.join(scope.map(id => sql`${id}::uuid`), sql`, `)})`
+        : sql``
+
       // Build where clause (tenantId filter handled by RLS)
       const conditions = []
       // By default only return active items; items list page can pass includeInactive=true
@@ -124,12 +133,12 @@ export async function GET(request: NextRequest) {
               sql`EXISTS (
                 SELECT 1 FROM warehouse_stock ws
                 WHERE ws.item_id = ${items.id}
-                  AND CAST(ws.current_stock AS DECIMAL) > 0
+                  AND CAST(ws.current_stock AS DECIMAL) > 0${wsScope}
               )`,
               sql`EXISTS (
                 SELECT 1 FROM items v JOIN warehouse_stock ws ON ws.item_id = v.id
                 WHERE v.parent_item_id = ${items.id} AND v.is_active
-                  AND CAST(ws.current_stock AS DECIMAL) > 0
+                  AND CAST(ws.current_stock AS DECIMAL) > 0${wsScope}
               )`
             )
           )
@@ -167,7 +176,7 @@ export async function GET(request: NextRequest) {
       const workOrderReservedWhere = and(
         inArray(workOrderParts.itemId, itemIds.length > 0 ? itemIds : ['00000000-0000-0000-0000-000000000000']),
         eq(workOrders.status, 'draft'),
-        warehouseId ? eq(workOrders.warehouseId, warehouseId) : undefined
+        warehouseId ? eq(workOrders.warehouseId, warehouseId) : branchFilter(scope, workOrders.warehouseId)
       )
 
       const heldSalesWhere = warehouseId
@@ -175,12 +184,12 @@ export async function GET(request: NextRequest) {
             eq(heldSales.warehouseId, warehouseId),
             sql`${heldSales.expiresAt} > NOW()`
           )
-        : sql`${heldSales.expiresAt} > NOW()`
+        : and(sql`${heldSales.expiresAt} > NOW()`, branchFilter(scope, heldSales.warehouseId))
 
       const estimatesReservedWhere = and(
         inArray(insuranceEstimateItems.itemId, itemIds.length > 0 ? itemIds : ['00000000-0000-0000-0000-000000000000']),
         eq(insuranceEstimates.holdStock, true),
-        warehouseId ? eq(insuranceEstimates.warehouseId, warehouseId) : undefined,
+        warehouseId ? eq(insuranceEstimates.warehouseId, warehouseId) : branchFilter(scope, insuranceEstimates.warehouseId),
         sql`${insuranceEstimates.status} NOT IN ('cancelled', 'work_order_created')`,
         sql`${insuranceEstimateItems.itemId} IS NOT NULL`
       )
@@ -246,7 +255,7 @@ export async function GET(request: NextRequest) {
                     maxMinStock: sql<string>`COALESCE(MAX(CAST(${warehouseStock.minStock} AS DECIMAL)), 0)`,
                   })
                   .from(warehouseStock)
-                  .where(inArray(warehouseStock.itemId, itemIds))
+                  .where(and(inArray(warehouseStock.itemId, itemIds), branchFilter(scope, warehouseStock.warehouseId)))
                   .groupBy(warehouseStock.itemId),
 
             db
@@ -261,7 +270,7 @@ export async function GET(request: NextRequest) {
                 parentItemId: items.parentItemId,
                 variantStock: sql<string>`COALESCE(SUM((
                   SELECT COALESCE(SUM(CAST(ws.current_stock AS DECIMAL)), 0) FROM warehouse_stock ws
-                  WHERE ws.item_id = "items"."id" ${warehouseId ? sql`AND ws.warehouse_id = ${warehouseId}` : sql``}
+                  WHERE ws.item_id = "items"."id" ${warehouseId ? sql`AND ws.warehouse_id = ${warehouseId}` : wsScope}
                 )), 0)`,
               })
               .from(items)
@@ -432,8 +441,13 @@ export async function POST(request: NextRequest) {
       const wantsStockRow = initialStock > 0 || (minStock || 0) > 0 || !!reorderQty || !!binLocation
       let defaultWarehouseId: string | null = null
       if (wantsStockRow) {
+        // K4: a branch-restricted user's opening stock goes to their own (first) branch
+        const scope = await getBranchScope(session, tx)
         const defaultWarehouse = await tx.query.warehouses.findFirst({
-          where: and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),
+          where: scope
+            ? and(inArray(warehouses.id, scope), eq(warehouses.isActive, true))
+            : and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),
+          orderBy: (w, { desc }) => [desc(w.isDefault)],
         })
         defaultWarehouseId = defaultWarehouse?.id ?? null
         // Opening stock must land somewhere: never accept a quantity and silently drop it

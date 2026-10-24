@@ -17,6 +17,7 @@ import { posOpeningListSchema, createPosOpeningSchema } from '@/lib/validation/s
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
 import { isQuarantineCode } from '@/lib/inventory/quarantine'
+import { getBranchScope, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET list of opening entries (shifts)
 export async function GET(request: NextRequest) {
@@ -67,6 +68,9 @@ export async function GET(request: NextRequest) {
           ? and(where, eq(posOpeningEntries.userId, userId))
           : eq(posOpeningEntries.userId, userId)
       }
+      // K4: branch-restricted staff only see shifts of their own branches
+      const branchCond = branchFilter(await getBranchScope(session, db), posOpeningEntries.warehouseId)
+      if (branchCond) where = where ? and(where, branchCond) : branchCond
 
       const entries = await db.query.posOpeningEntries.findMany({
         where,
@@ -127,6 +131,10 @@ export async function POST(request: NextRequest) {
       if (isQuarantineCode(profileWarehouse?.code)) {
         return NextResponse.json({ error: 'The quarantine warehouse cannot be used for POS. Assign a selling warehouse to this POS profile.', code: 'QUARANTINE_WAREHOUSE' }, { status: 400 })
       }
+
+      // K4: a branch-restricted user opens counters of their own branches only
+      const branchDenied = await assertBranchAccess(session, profile.warehouseId, db)
+      if (branchDenied) return branchDenied
 
       // Check user has access to this profile
       const userAccess = await db.query.posProfileUsers.findFirst({

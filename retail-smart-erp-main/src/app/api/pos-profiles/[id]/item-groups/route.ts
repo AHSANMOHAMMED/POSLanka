@@ -11,6 +11,7 @@ import { validateBody } from '@/lib/validation'
 import { posProfileItemGroupsSchema, posProfileAddCategorySchema } from '@/lib/validation/schemas/pos'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET item groups (categories) for a POS profile
 export async function GET(
@@ -36,6 +37,10 @@ export async function GET(
       if (!profile) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       const itemGroups = await db.query.posProfileItemGroups.findMany({
         where: eq(posProfileItemGroups.posProfileId, id),
@@ -85,6 +90,10 @@ export async function POST(
       if (!profile) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       // Verify categories exist
       if (categoryIds.length > 0) {
@@ -157,6 +166,10 @@ export async function PUT(
       if (!profile) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       // Check if category already assigned
       const existing = await db.query.posProfileItemGroups.findFirst({

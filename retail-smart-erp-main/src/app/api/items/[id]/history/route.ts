@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateParams, validateSearchParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { getItemHistory } from '@/lib/inventory/item-history'
+import { getBranchScope, canAccessBranch, branchDeniedResponse } from '@/lib/auth/branch-access'
 
 const historyQuerySchema = z.object({
   kind: z.enum(['all', 'stock', 'fields', 'price']).default('all'),
@@ -44,7 +45,11 @@ export async function GET(
       const [item] = await db.select({ id: items.id }).from(items).where(eq(items.id, id)).limit(1)
       if (!item) return NextResponse.json({ error: 'Item not found' }, { status: 404 })
 
-      const page = await getItemHistory(db, { itemId: id, ...qs.data })
+      // K4: branch-restricted users see the stock ledger of their own branches only
+      const scope = await getBranchScope(session, db)
+      if (qs.data.warehouseId && !canAccessBranch(scope, qs.data.warehouseId)) return branchDeniedResponse(scope, db)
+
+      const page = await getItemHistory(db, { itemId: id, ...qs.data, warehouseIds: scope })
       return NextResponse.json(page)
     })
   } catch (error) {

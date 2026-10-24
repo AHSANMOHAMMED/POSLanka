@@ -8,6 +8,8 @@ import { updateStockIntakeSchema } from '@/lib/validation/schemas/stock-intake'
 import { getIntakeBatchDetail, updateIntakeBatch } from '@/lib/inventory/stock-intake'
 import { intakeErrorResponse } from '@/lib/inventory/stock-intake-http'
 import { notify } from '@/lib/notifications/notify'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
+import { stockIntakeBatches } from '@/lib/db/schema'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -19,6 +21,9 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
     const result = await withAuthTenant(async (session, db) => {
       const permError = requirePermission(session, 'submitStockIntake')
       if (permError) return { error: permError }
+      // K4: batches of another branch are not shown to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, stockIntakeBatches, p.data.id)
+      if (branchDenied) return { error: branchDenied }
       return { data: await getIntakeBatchDetail(db, session.user.tenantId, p.data.id) }
     })
     if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

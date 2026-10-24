@@ -257,9 +257,6 @@ export async function buildLinePreviews(db: DbTx, tenantId: string, warehouseId:
 
 // ==================== Branch access ====================
 
-/** Roles that may work on any branch regardless of user_warehouses assignments. */
-const BRANCH_BYPASS_ROLES = new Set(['owner', 'manager'])
-
 /** Who is acting, for branch-access checks. Omit (internal callers) to skip the check. */
 export interface IntakeActor {
   userId: string
@@ -267,22 +264,24 @@ export interface IntakeActor {
 }
 
 /**
- * Enforce the user's branch (warehouse) access: owners/managers bypass; anyone
- * else needs an active user_warehouses assignment for the warehouse. A user with
- * no assignments at all is denied, matching /api/warehouses?userOnly=true.
+ * Enforce the user's branch (warehouse) access. Stock intake is stricter than the general K4
+ * rule (src/lib/auth/branch-access.ts): the owner works with any branch, and so does a manager
+ * with no branch assigned; a manager WITH assigned branches only on those (K4); anyone else
+ * needs an active user_warehouses assignment for the warehouse. A non-manager with no
+ * assignments at all is denied, matching /api/warehouses?userOnly=true.
  */
 export async function assertBranchAccess(db: DbTx, tenantId: string, actor: IntakeActor | undefined, warehouseId: string): Promise<void> {
-  if (!actor || BRANCH_BYPASS_ROLES.has(actor.role)) return
-  const [row] = await db.select({ id: userWarehouses.id })
+  if (!actor || actor.role === 'owner') return
+  const assigned = await db.select({ warehouseId: userWarehouses.warehouseId })
     .from(userWarehouses)
     .where(and(
       eq(userWarehouses.tenantId, tenantId),
       eq(userWarehouses.userId, actor.userId),
-      eq(userWarehouses.warehouseId, warehouseId),
       eq(userWarehouses.isActive, true),
     ))
-    .limit(1)
-  if (!row) throw new IntakeError('You do not have access to this branch', 403, 'BRANCH_FORBIDDEN')
+  if (assigned.some((a) => a.warehouseId === warehouseId)) return
+  if (actor.role === 'manager' && assigned.length === 0) return
+  throw new IntakeError('You do not have access to this branch', 403, 'BRANCH_FORBIDDEN')
 }
 
 // ==================== Batches ====================
@@ -358,6 +357,8 @@ export interface ListBatchesInput {
   tenantId: string
   status?: string
   warehouseId?: string
+  /** K4: only these branches (branch-restricted users); null/undefined = all */
+  warehouseIds?: string[] | null
   createdBy?: string
   page?: number
   pageSize?: number
@@ -369,6 +370,7 @@ export async function listIntakeBatches(db: DbTx, input: ListBatchesInput) {
   const conds: SQL[] = [eq(stockIntakeBatches.tenantId, input.tenantId)]
   if (input.status) conds.push(sql`${stockIntakeBatches.status}::text = ${input.status}`)
   if (input.warehouseId) conds.push(eq(stockIntakeBatches.warehouseId, input.warehouseId))
+  if (input.warehouseIds) conds.push(inArray(stockIntakeBatches.warehouseId, input.warehouseIds))
   if (input.createdBy) conds.push(eq(stockIntakeBatches.createdBy, input.createdBy))
   const where = and(...conds)
 

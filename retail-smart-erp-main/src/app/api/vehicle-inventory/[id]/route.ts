@@ -10,6 +10,7 @@ import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleInventorySchema } from '@/lib/validation/schemas/vehicles'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET single vehicle inventory record
 export async function GET(
@@ -33,6 +34,10 @@ export async function GET(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, vehicleInventory, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       const result = await db
         .select({
           vehicle: vehicleInventory,
@@ -91,6 +96,13 @@ export async function PUT(
 
     // Execute with RLS tenant context
     return await withTenant(session!.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, vehicleInventory, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+      // K4: a vehicle can only be moved to one of the user's own branches
+      const moveDenied = await assertBranchAccess(session, warehouseId, db)
+      if (moveDenied) return moveDenied
+
       // Use transaction with FOR UPDATE to prevent race conditions
       const result = await db.transaction(async (tx) => {
         // Lock and get current vehicle (RLS scopes the query)
@@ -244,6 +256,10 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session!.user.tenantId, async (db) => {
+      // K4: records of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, vehicleInventory, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
+
       // Archive (is_active = false) + recycle bin; only a super admin restores or purges
       const binned = await moveToRecycleBin(db, {
         tenantId: session!.user.tenantId, entityType: 'vehicle_inventory', entityId: id,

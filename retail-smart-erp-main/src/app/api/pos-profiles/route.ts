@@ -11,6 +11,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { createPosProfileSchema } from '@/lib/validation/schemas/pos'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { getBranchScope, canAccessBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET current user's POS profiles (profiles they have access to)
 export async function GET(request: NextRequest) {
@@ -25,6 +26,10 @@ export async function GET(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: branch-restricted users only ever see counters of their own branches
+      const scope = await getBranchScope(session, db)
+      const inBranch = (p: { warehouseId: string | null }) => !p.warehouseId || canAccessBranch(scope, p.warehouseId)
+
       // For settings page (all=true), managers/owners see ALL tenant profiles
       if (all) {
         const canManage = ['owner', 'manager', 'system_manager'].includes(session.user.role)
@@ -42,13 +47,13 @@ export async function GET(request: NextRequest) {
             },
             orderBy: (p, { desc }) => [desc(p.isDefault), desc(p.createdAt)],
           })
-          return NextResponse.json(allProfiles)
+          return NextResponse.json(allProfiles.filter(inBranch))
         }
       }
 
       // Get all profiles the user has access to
       // (profiles moved to the recycle bin are never offered to the POS)
-      const userProfiles = await db.query.posProfileUsers.findMany({
+      const userProfiles = (await db.query.posProfileUsers.findMany({
         where: and(eq(posProfileUsers.userId, session.user.id), notInRecycleBin('pos_profile', posProfileUsers.posProfileId)),
         with: {
           posProfile: {
@@ -60,7 +65,7 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-      })
+      })).filter(pu => pu.posProfile && inBranch(pu.posProfile))
 
       // Get the user's default profile
       const defaultProfileUser = userProfiles.find(pu => pu.isDefault)
@@ -160,6 +165,9 @@ export async function POST(request: NextRequest) {
       if (!warehouse) {
         return NextResponse.json({ error: 'Warehouse not found or inactive' }, { status: 404 })
       }
+      // K4: a branch-restricted manager creates counters for their own branches only
+      const branchDenied = await assertBranchAccess(session, warehouseId, db)
+      if (branchDenied) return branchDenied
 
       // If setting as default, unset other defaults
       if (isDefault) {

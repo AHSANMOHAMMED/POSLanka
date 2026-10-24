@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { getServiceRevenue } from '@/lib/reports/business-specific'
 import { logError } from '@/lib/ai/error-logger'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,6 +15,9 @@ export async function GET(request: NextRequest) {
 
     const permError = requirePermission(session, 'viewReports')
     if (permError) return permError
+    // K4: a company-wide report, not split by branch: refused for branch-restricted users
+    const branchError = await requireAllBranches(session)
+    if (branchError) return branchError
 
     if (session.user.businessType !== 'auto_service' && session.user.businessType !== 'dealership') {
       return NextResponse.json({ error: 'This report is only available for service-capable businesses' }, { status: 403 })

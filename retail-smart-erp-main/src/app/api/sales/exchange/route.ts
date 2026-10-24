@@ -19,6 +19,7 @@ import { ApprovalError, consumeApprovals, coverScopes, verifyApprovalTokens, typ
 import { roundCurrency } from '@/lib/utils/currency'
 import { priceSaleCart } from '@/lib/pricing/sale-pricing'
 import { PricingLineError } from '@/lib/pricing/load-context'
+import { assertBranchAccess, assertRecordBranch } from '@/lib/auth/branch-access'
 
 /**
  * POST /api/sales/exchange
@@ -65,6 +66,10 @@ export async function POST(request: NextRequest) {
         const wh = await db.query.warehouses.findFirst({ where: and(eq(warehouses.id, body.warehouseId), eq(warehouses.isActive, true)) })
         if (!wh) return NextResponse.json({ error: 'Selected warehouse not found or inactive' }, { status: 400 })
       }
+      // K4: a branch-restricted cashier exchanges only sales of their own branches, into them
+      const branchDenied = await assertBranchAccess(session, body.warehouseId, db)
+        || await assertRecordBranch(session, db, sales, body.originalSaleId, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
       // H1: the exchange is rung up on an open shift of the cashier (or any shift for manageSales)
       const shiftCheck = await checkSaleShift(db, {
         posOpeningEntryId: body.posOpeningEntryId,

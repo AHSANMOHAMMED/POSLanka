@@ -5,6 +5,7 @@ import { items, warehouseStock } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { validateBody } from '@/lib/validation/helpers'
 import { bulkStockAdjustmentPreviewSchema } from '@/lib/validation/schemas/stock'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // POST - Preview bulk stock adjustments
 export async function POST(request: NextRequest) {
@@ -15,6 +16,9 @@ export async function POST(request: NextRequest) {
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'manageInventory')
     if (permError) return { error: permError }
+    // K4: only the user's own branches
+    const branchDenied = await assertBranchAccess(session, body.warehouseId, db)
+    if (branchDenied) return { error: branchDenied }
 
     const preview = []
     for (const adj of body.adjustments) {

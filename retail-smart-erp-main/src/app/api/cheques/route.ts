@@ -15,6 +15,7 @@ import { parseCurrency, roundCurrency } from '@/lib/utils/currency'
 import { allowedChequeActions, ChequeError, insertCheque, type ChequeDirection } from '@/lib/cheques/cheques'
 import type { ChequeStatus } from '@/lib/db/schema'
 import { canViewAllCheques } from '@/lib/cheques/access'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, branchDeniedMessage } from '@/lib/auth/branch-access'
 
 // GET /api/cheques — register with filters (status, direction, due within N days, branch)
 export async function GET(request: NextRequest) {
@@ -46,6 +47,10 @@ export async function GET(request: NextRequest) {
         conds.push(sql`${cheques.chequeDate} <= ${today}::date + ${q.dueWithinDays}::int`)
       }
       if (q.warehouseId) conds.push(eq(cheques.warehouseId, q.warehouseId))
+      // K4: branch-restricted users see their own branches' cheques (and the ones they recorded)
+      const scope = await getBranchScope(session, db)
+      if (q.warehouseId && !canAccessBranch(scope, q.warehouseId)) return branchDeniedResponse(scope, db)
+      if (scope) conds.push(or(inArray(cheques.warehouseId, scope), eq(cheques.createdBy, session.user.id))!)
       if (q.customerId) conds.push(eq(cheques.customerId, q.customerId))
       if (q.supplierId) conds.push(eq(cheques.supplierId, q.supplierId))
       if (q.fromDate) conds.push(sql`${cheques.chequeDate} >= ${q.fromDate}::date`)
@@ -160,6 +165,9 @@ export async function POST(request: NextRequest) {
     if (quotaError) return quotaError
 
     const cheque = await withTenantTransaction(tenantId, async (tx) => {
+      // K4: a branch-restricted user records cheques for their own branches (default: their first)
+      const scope = await getBranchScope(session, tx)
+      if (body.warehouseId && !canAccessBranch(scope, body.warehouseId)) throw new ChequeError('BRANCH_ACCESS_DENIED', await branchDeniedMessage(scope, tx), 403)
       if (body.customerId) {
         const [c] = await tx.select({ id: customers.id }).from(customers).where(eq(customers.id, body.customerId))
         if (!c) throw new ChequeError('NOT_FOUND', 'Customer not found', 404)
@@ -170,7 +178,7 @@ export async function POST(request: NextRequest) {
       }
       return insertCheque(tx, {
         tenantId, direction: body.direction, details: body, amount: body.amount, userId: session.user.id,
-        customerId: body.customerId || null, supplierId: body.supplierId || null, warehouseId: body.warehouseId || null,
+        customerId: body.customerId || null, supplierId: body.supplierId || null, warehouseId: body.warehouseId || scope?.[0] || null,
       })
     })
     logAndBroadcast(tenantId, 'cheque', 'created', cheque.id, { userId: session.user.id, entityName: cheque.chequeNo })

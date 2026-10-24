@@ -6,6 +6,7 @@ import { countExport, createExportStream, isExportSupported, type ExportFilters 
 import { logError } from '@/lib/ai/error-logger'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import type { EntityType } from '@/lib/websocket/events'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 
 const ENTITY_TYPE_MAP: Record<string, EntityType> = {
   items: 'item', customers: 'customer', suppliers: 'supplier', categories: 'category',
@@ -16,6 +17,9 @@ const ENTITY_TYPE_MAP: Record<string, EntityType> = {
 }
 
 // GET - stream an export (CSV or XLSX). No row cap: rows are read in chunks of 1000.
+/** K4: exports without branch data, open to branch-restricted users */
+const MASTER_DATA_EXPORTS = new Set(['items', 'customers', 'suppliers', 'categories', 'vehicles', 'service-types', 'appointments'])
+
 export async function GET(request: NextRequest) {
   try {
     const session = await authWithCompany()
@@ -52,6 +56,13 @@ export async function GET(request: NextRequest) {
     }
     const permError = requirePermission(session, entityConfig.permission as Parameters<typeof requirePermission>[1])
     if (permError) return permError
+    // K4: documents and stock per branch are not exported for branch-restricted users (the
+    // export is company-wide); master data (items without stock, customers, ...) is
+    const branchWide = !MASTER_DATA_EXPORTS.has(entityName) || (entityName === 'items' && (!fieldsParam || fieldsParam.split(',').includes('warehouseStock')))
+    if (branchWide) {
+      const branchError = await requireAllBranches(session)
+      if (branchError) return branchError
+    }
     if (!isExportSupported(entityName)) {
       return NextResponse.json({ error: `Export not supported for: ${entityName}` }, { status: 400 })
     }

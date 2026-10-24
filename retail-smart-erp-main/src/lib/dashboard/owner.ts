@@ -31,6 +31,8 @@ const qty = (v: unknown) => Math.round((Number(v) || 0) * 1000) / 1000
 export interface OwnerDashboardInput {
   tenantId: string
   warehouseId?: string | null
+  /** K4: a branch-restricted user's branches (null = every branch) */
+  warehouseIds?: string[] | null
   /** UTC instants bounding the period (tenantDayRange) */
   from: Date
   to: Date
@@ -46,6 +48,11 @@ export async function ownerDashboard(tx: Tx, input: OwnerDashboardInput) {
   const to = input.to.toISOString()
   const today = input.today
   const top = input.topItems ?? 10
+  // K4: limit every figure to the user's branches (column given as trusted SQL text)
+  const ids = input.warehouseIds
+  const inScope = (col: string) => ids
+    ? sql` AND ${sql.raw(col)} IN (${sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)})`
+    : sql``
 
   // ---------------------------------------------------------------- stock value
   const stockRows = rows<{ warehouse_id: string; name: string; at_cost: string; at_price: string; units: string; lines: number }>(await tx.execute(sql`
@@ -61,7 +68,7 @@ export async function ownerDashboard(tx: Tx, input: OwnerDashboardInput) {
       WHERE ws.tenant_id = ${tenantId}
     ) x ON x.warehouse_id = w.id
     WHERE w.tenant_id = ${tenantId} AND w.is_active
-      AND (${wh}::uuid IS NULL OR w.id = ${wh}::uuid)
+      AND (${wh}::uuid IS NULL OR w.id = ${wh}::uuid)${inScope('w.id')}
     GROUP BY w.id, w.name
     ORDER BY w.name
   `))
@@ -83,7 +90,7 @@ export async function ownerDashboard(tx: Tx, input: OwnerDashboardInput) {
       SELECT id, (total - tax_amount) AS net FROM sales
       WHERE tenant_id = ${tenantId} AND status <> 'void'
         AND created_at >= ${from}::timestamp AND created_at <= ${to}::timestamp
-        AND (${wh}::uuid IS NULL OR warehouse_id = ${wh}::uuid)
+        AND (${wh}::uuid IS NULL OR warehouse_id = ${wh}::uuid)${inScope('warehouse_id')}
     ), li AS (
       SELECT si.sale_id, si.item_id, si.item_name, si.quantity, si.total AS line_total,
              COALESCE(si.unit_cost, 0) AS unit_cost, COALESCE(i.is_gift_card, false) AS gift_card,
@@ -131,7 +138,7 @@ export async function ownerDashboard(tx: Tx, input: OwnerDashboardInput) {
     LEFT JOIN customers cu ON cu.id = c.customer_id
     LEFT JOIN suppliers su ON su.id = c.supplier_id
     WHERE c.tenant_id = ${tenantId}
-      AND (${wh}::uuid IS NULL OR c.warehouse_id = ${wh}::uuid)
+      AND (${wh}::uuid IS NULL OR c.warehouse_id = ${wh}::uuid)${inScope('c.warehouse_id')}
       AND (c.status = 'bounced' OR (c.status IN ('pending', 'deposited') AND c.cheque_date <= ${today}::date + 7))
     ORDER BY c.cheque_date, c.cheque_no
   `))
@@ -162,7 +169,7 @@ export async function ownerDashboard(tx: Tx, input: OwnerDashboardInput) {
     LEFT JOIN warehouses w ON w.id = b.warehouse_id
     WHERE b.tenant_id = ${tenantId} AND b.status = 'active' AND b.current_quantity > 0
       AND b.expiry_date IS NOT NULL AND b.expiry_date <= ${today}::date + 30
-      AND (${wh}::uuid IS NULL OR b.warehouse_id = ${wh}::uuid)
+      AND (${wh}::uuid IS NULL OR b.warehouse_id = ${wh}::uuid)${inScope('b.warehouse_id')}
     ORDER BY b.expiry_date, i.name
     LIMIT 500
   `))
@@ -185,7 +192,7 @@ export async function ownerDashboard(tx: Tx, input: OwnerDashboardInput) {
     JOIN warehouses w ON w.id = ws.warehouse_id
     WHERE ws.tenant_id = ${tenantId} AND i.is_active AND i.track_stock AND w.is_active
       AND ws.min_stock > 0 AND ws.current_stock <= ws.min_stock
-      AND (${wh}::uuid IS NULL OR ws.warehouse_id = ${wh}::uuid)
+      AND (${wh}::uuid IS NULL OR ws.warehouse_id = ${wh}::uuid)${inScope('ws.warehouse_id')}
     ORDER BY ws.current_stock / NULLIF(ws.min_stock, 0), i.name
     LIMIT 500
   `))

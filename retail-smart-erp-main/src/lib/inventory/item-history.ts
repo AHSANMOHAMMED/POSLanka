@@ -7,6 +7,8 @@ export interface ItemHistoryQuery {
   itemId: string
   kind: ItemHistoryKind
   warehouseId?: string
+  /** K4: limit the stock ledger to these branches (branch-restricted users) */
+  warehouseIds?: string[] | null
   cursor?: string
   limit: number
 }
@@ -76,6 +78,7 @@ export async function getItemHistory(db: DbTx, q: ItemHistoryQuery): Promise<Ite
       WHERE sm.item_id = ${q.itemId}
         AND COALESCE(sm.reference_type, '') <> 'ledger_baseline'
         ${q.warehouseId ? sql`AND sm.warehouse_id = ${q.warehouseId}` : sql``}
+        ${q.warehouseIds ? sql`AND sm.warehouse_id IN (${sql.join(q.warehouseIds.map(w => sql`${w}::uuid`), sql`, `)})` : sql``}
     `)
   }
   if (wantLog) {

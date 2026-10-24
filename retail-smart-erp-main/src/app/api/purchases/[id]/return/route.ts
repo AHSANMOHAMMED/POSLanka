@@ -25,6 +25,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocNo } from '@/lib/documents/numbering'
 import { adjustSupplierBalance } from '@/lib/purchasing/supplier-balance'
 import { takeOutOfBatches } from '@/lib/purchasing/batch-receipt'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 export async function POST(
   request: NextRequest,
@@ -53,6 +54,9 @@ export async function POST(
     const result = await withAuthTenantTransaction(async (session, tx) => {
       const permError = requirePermission(session, 'managePurchases')
       if (permError) return { error: permError }
+      // K4: documents of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, tx, purchases, id)
+      if (branchDenied) return { error: branchDenied }
 
       // Get original purchase with lock
       const [originalPurchase] = await tx

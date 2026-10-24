@@ -12,6 +12,7 @@ import { posProfileUsersSchema, posProfileAddUserSchema } from '@/lib/validation
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET users assigned to a POS profile
 export async function GET(
@@ -37,6 +38,10 @@ export async function GET(
       if (!profile) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       const users = await db.query.posProfileUsers.findMany({
         where: eq(posProfileUsers.posProfileId, id),
@@ -86,6 +91,10 @@ export async function POST(
       if (!profile) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       // withTenant already wraps in a transaction — no nested db.transaction() which resets SET LOCAL RLS context.
       await db.delete(posProfileUsers)
@@ -149,6 +158,10 @@ export async function PUT(
       if (!profile) {
         return NextResponse.json({ error: 'POS profile not found' }, { status: 404 })
       }
+
+      // K4: counters of another branch are off limits to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, posProfiles, id, { includeUnassigned: true })
+      if (branchDenied) return branchDenied
 
       // Check if user already assigned
       const existing = await db.query.posProfileUsers.findFirst({

@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { posClosingEntries } from '@/lib/db/schema'
-import { and, gte, lte, ne } from 'drizzle-orm'
+import { posClosingEntries, posOpeningEntries } from '@/lib/db/schema'
+import { and, gte, lte, ne, inArray } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { posDailySummarySchema } from '@/lib/validation/schemas/pos'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import type { ShiftReportData } from '@/lib/pos/shift-report'
+import { getBranchScope } from '@/lib/auth/branch-access'
 
 // GET daily summary - aggregate all shifts for a given date
 export async function GET(request: NextRequest) {
@@ -30,9 +31,16 @@ export async function GET(request: NextRequest) {
     const dayEnd = new Date(dateStr + 'T23:59:59.999')
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: branch-restricted users get the summary of their own branches' shifts
+      const scope = await getBranchScope(session, db)
+      const branchCond = scope
+        ? inArray(posClosingEntries.openingEntryId, db.select({ id: posOpeningEntries.id }).from(posOpeningEntries).where(inArray(posOpeningEntries.warehouseId, scope)))
+        : undefined
+
       // Get all closing entries for the date
       const closingEntries = await db.query.posClosingEntries.findMany({
         where: and(
+          branchCond,
           gte(posClosingEntries.closingTime, dayStart),
           lte(posClosingEntries.closingTime, dayEnd),
           // a cancelled closing was re-done (the shift reopened and closed again): count it once

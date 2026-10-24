@@ -15,6 +15,7 @@ import { ExpenseError, payExpense, reverseExpensePayment } from '@/lib/expenses/
 import { canManageExpenses, expenseErrorResponse } from '@/lib/expenses/route-helpers'
 import { notify } from '@/lib/notifications/notify'
 import { parseCurrency, roundCurrency } from '@/lib/utils/currency'
+import { getBranchScope, canAccessBranch, branchDeniedMessage } from '@/lib/auth/branch-access'
 
 // GET /api/expenses/[id]
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -29,6 +30,11 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
         .from(expenses).leftJoin(expenseCategories, eq(expenseCategories.id, expenses.categoryId))
         .where(eq(expenses.id, p.data.id))
       if (!r || (!viewAll && r.expense.createdBy !== session.user.id && r.expense.claimantId !== session.user.id)) {
+        return NextResponse.json({ error: 'Expense not found' }, { status: 404 })
+      }
+      // K4: another branch's expense is not shown to branch-restricted staff (their own claims are)
+      if (r.expense.createdBy !== session.user.id && r.expense.claimantId !== session.user.id
+        && !canAccessBranch(await getBranchScope(session, db), r.expense.warehouseId)) {
         return NextResponse.json({ error: 'Expense not found' }, { status: 404 })
       }
       const [cheque] = await db.select().from(cheques).where(eq(cheques.expenseId, r.expense.id))
@@ -64,6 +70,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const result = await withTenantTransaction(tenantId, async (tx) => {
       const [e] = await tx.select().from(expenses).where(eq(expenses.id, p.data.id)).for('update')
       if (!e) throw new ExpenseError('NOT_FOUND', 'Expense not found', 404)
+      // K4: only expenses of the user's own branches (or their own claims)
+      if (e.createdBy !== userId && e.claimantId !== userId) {
+        const scope = await getBranchScope(session, tx)
+        if (!canAccessBranch(scope, e.warehouseId)) throw new ExpenseError('BRANCH_ACCESS_DENIED', await branchDeniedMessage(scope, tx), 403)
+      }
       const now = new Date()
 
       if (body.action === 'approve' || body.action === 'reject') {

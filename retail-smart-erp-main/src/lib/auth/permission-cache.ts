@@ -5,6 +5,7 @@ import { pgConnectionConfig } from '@/lib/db/pg-connection'
 import { eq, sql } from 'drizzle-orm'
 import { registerModuleAccessLookup } from './roles'
 import { clearSessionValidation } from './session-validation-cache'
+import { clearBranchScopeCache } from './branch-access'
 
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
@@ -38,10 +39,12 @@ function dropTenant(tenantId: string): void {
   const entry = cache.get(tenantId)
   if (entry) entry.loadedAt = 0
   generations.set(tenantId, (generations.get(tenantId) ?? 0) + 1)
+  clearBranchScopeCache(tenantId)
 }
 function dropAll(): void {
   for (const entry of cache.values()) entry.loadedAt = 0
   epoch++
+  clearBranchScopeCache('*')
 }
 
 /**

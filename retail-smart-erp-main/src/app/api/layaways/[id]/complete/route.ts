@@ -20,6 +20,7 @@ import { applyStockChange, notifyStockDecreased, type StockChangeInput, type Sto
 import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
 import { allocateSaleLineBatches } from '@/lib/inventory/batches'
 import { getTenantSalesSettings } from '@/lib/sales/return-settings'
+import { getBranchScope, canAccessBranch, branchDeniedResponse } from '@/lib/auth/branch-access'
 
 // POST complete a layaway (convert to sale)
 export async function POST(
@@ -101,8 +102,12 @@ export async function POST(
       .from(layawayItems)
       .where(eq(layawayItems.layawayId, id))
 
-    // Get warehouse - use provided or default
+    // Get warehouse - use provided or default (K4: a branch-restricted user sells from their own
+    // branches; without one in the request, from their first branch)
     let warehouseId = body.warehouseId
+    const branchScope = await getBranchScope(session, tx)
+    if (warehouseId && !canAccessBranch(branchScope, warehouseId)) return { error: await branchDeniedResponse(branchScope, tx) }
+    if (!warehouseId && branchScope) warehouseId = branchScope[0]
     if (!warehouseId) {
       const defaultWarehouse = await tx.query.warehouses.findFirst({
         where: and(

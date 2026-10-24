@@ -3,6 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { getStockMovement } from '@/lib/reports/inventory'
+import { getBranchScope } from '@/lib/auth/branch-access'
 
 export async function GET(request: NextRequest) {
   const session = await authWithCompany()
@@ -36,7 +37,8 @@ export async function GET(request: NextRequest) {
   }
 
   const result = await withTenant(tenantId, async (db) => {
-    return getStockMovement(db, tenantId, { fromDate, toDate, itemId, movementType })
+    // K4: branch-restricted users get their own branches' movements
+    return getStockMovement(db, tenantId, { fromDate, toDate, itemId, movementType, warehouseIds: await getBranchScope(session, db) })
   })
 
   return NextResponse.json(result)

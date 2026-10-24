@@ -9,6 +9,7 @@ import { updateSalesOrderSchema } from '@/lib/validation/schemas/sales'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 /** Stock problem while confirming: thrown so the whole transaction (earlier reservations) rolls back. */
 class SalesOrderStockError extends Error {}
@@ -73,6 +74,9 @@ export async function GET(
     if (!order) {
       return { error: NextResponse.json({ error: 'Sales order not found' }, { status: 404 }) }
     }
+    // K4: orders of another branch are not shown to branch-restricted staff
+    const branchDenied = await assertBranchAccess(session, order.warehouseId, db)
+    if (branchDenied) return { error: branchDenied }
 
     // Get items
     const items = await db
@@ -163,6 +167,9 @@ export async function PUT(
   result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'manageSales')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, tx, salesOrders, id)
+    if (branchDenied) return { error: branchDenied }
 
     // Get current order with lock (RLS filters by tenant)
     const [currentOrder] = await tx
@@ -237,7 +244,12 @@ export async function PUT(
       if (vehicleId !== undefined) updateData.vehicleId = vehicleId || null
       if (vehiclePlate !== undefined) updateData.vehiclePlate = vehiclePlate || null
       if (vehicleDescription !== undefined) updateData.vehicleDescription = vehicleDescription || null
-      if (warehouseId !== undefined) updateData.warehouseId = warehouseId
+      if (warehouseId !== undefined) {
+        // K4: an order can only be moved to one of the user's own branches
+        const moveDenied = await assertBranchAccess(session, warehouseId, tx)
+        if (moveDenied) return { error: moveDenied }
+        updateData.warehouseId = warehouseId
+      }
       if (expectedDeliveryDate !== undefined) updateData.expectedDeliveryDate = expectedDeliveryDate || null
       if (deliveryAddress !== undefined) updateData.deliveryAddress = deliveryAddress || null
     }
@@ -487,6 +499,9 @@ export async function DELETE(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'manageSales')
     if (permError) return { error: permError }
+    // K4: documents of another branch are off limits to branch-restricted staff
+    const branchDenied = await assertRecordBranch(session, tx, salesOrders, id)
+    if (branchDenied) return { error: branchDenied }
 
     // Get current order (RLS filters by tenant)
     const [currentOrder] = await tx
