@@ -78,7 +78,7 @@ export function StepBusinessConfig({
           onDismiss={dismiss}
         />
       )}
-      {businessType === 'supermarket' && (
+      {(businessType === 'supermarket' || businessType === 'pharmacy') && (
         <SupermarketConfig
           data={data}
           onChange={onChange}

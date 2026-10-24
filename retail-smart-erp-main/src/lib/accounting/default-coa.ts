@@ -175,6 +175,21 @@ export function getChartOfAccountsForBusinessType(businessType: string): Account
       )
       break
 
+    case 'pharmacy':
+      addToGroup('2100',
+        leaf('2130', 'Gift Card Liability', 'liability', 'current_liability'),
+      )
+      addToGroup('4000',
+        leaf('4200', 'Prescription Sales', 'income', 'income_account'),
+        leaf('4210', 'Medical Device Sales', 'income', 'income_account'),
+      )
+      addToGroup('5200',
+        leaf('5240', 'Expired Stock Write-off', 'expense', 'expense_account'),
+        leaf('5250', 'Cold Chain', 'expense', 'expense_account'),
+        leaf('5260', 'Licence & Regulatory Fees', 'expense', 'expense_account'),
+      )
+      break
+
     case 'auto_service':
       // Income
       addToGroup('4000',

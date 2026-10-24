@@ -166,7 +166,7 @@ export default function DashboardPage() {
         <WorkspaceRenderer workspaceKey="dashboard" />
       </ErrorBoundary>
       <AIInsightsWidget />
-      {businessType === 'supermarket' && <ExpiringItemsWidget />}
+      {(businessType === 'supermarket' || businessType === 'pharmacy') && <ExpiringItemsWidget />}
     </div>
   )
 }

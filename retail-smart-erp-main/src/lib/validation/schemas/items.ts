@@ -82,6 +82,12 @@ export const createItemSchema = z.object({
   storageTemp: z.string().max(20).optional(),
   expiryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 
+  // Pharmacy fields ('' clears)
+  genericName: z.string().trim().max(255).optional(),
+  strength: z.string().trim().max(50).optional(),
+  dosageForm: z.string().trim().max(50).optional(),
+  drugSchedule: z.union([z.enum(['otc', 'pharmacy_only', 'prescription', 'controlled']), z.literal('')]).nullish(),
+
   // Gift card flag
   isGiftCard: z.boolean().optional(),
 

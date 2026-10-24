@@ -8,7 +8,7 @@ import { CategoryModal } from './CategoryModal'
 import { SupplierModal } from './SupplierModal'
 import { toast } from '@/components/ui/toast'
 import { isValidPositiveNumber } from '@/lib/utils/validation'
-import { Package, Tag, DollarSign, Boxes, Truck, Ruler, Leaf, Snowflake, Car, Plus, X, Loader2, Upload, Image as ImageIcon, History, ArrowRight, Clock } from 'lucide-react'
+import { Package, Tag, DollarSign, Boxes, Truck, Ruler, Leaf, Snowflake, Pill, Car, Plus, X, Loader2, Upload, Image as ImageIcon, History, ArrowRight, Clock } from 'lucide-react'
 import { Pagination } from '@/components/ui/pagination'
 import { useTerminology, useSmartWarnings } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
@@ -19,7 +19,7 @@ import { ItemHistoryPanel } from './ItemHistoryPanel'
 import { formatDateTime } from '@/lib/utils/date-format'
 import { ItemUnitsBarcodesEditor } from '@/components/items/ItemUnitsBarcodesEditor'
 
-type TabType = 'basic' | 'pricing' | 'inventory' | 'supplier' | 'physical' | 'dietary' | 'freshness' | 'fits' | 'cost_tracking' | 'history'
+type TabType = 'basic' | 'pricing' | 'inventory' | 'supplier' | 'physical' | 'dietary' | 'freshness' | 'medicine' | 'fits' | 'cost_tracking' | 'history'
 
 interface VehicleMake {
   id: string
@@ -101,6 +101,11 @@ interface Item {
   shelfLifeDays: number | null
   storageTemp: string | null
   expiryDate: string | null
+  // Pharmacy fields
+  genericName?: string | null
+  strength?: string | null
+  dosageForm?: string | null
+  drugSchedule?: string | null
   // Gift card
   isGiftCard: boolean
   // Tax template
@@ -124,7 +129,9 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
   const businessType = company?.businessType
   const isAutoService = businessType === 'auto_service' || businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
-  const isSupermarket = businessType === 'supermarket'
+  const isPharmacy = businessType === 'pharmacy'
+  // Freshness tab (PLU, shelf life, storage temperature, expiry): supermarket and pharmacy
+  const isSupermarket = businessType === 'supermarket' || isPharmacy
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const priceWarnings = useSmartWarnings('price_change')
@@ -177,7 +184,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     unit: 'pcs',
     trackStock: true,
     productType: 'stockable' as ProductType,
-    trackBatches: false,
+    trackBatches: isPharmacy, // pharmacy stock is batch & expiry tracked
     trackSerialNumbers: false,
     // Auto parts fields
     oemPartNumber: '',
@@ -208,6 +215,11 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     storageTemp: '',
     expiryDate: '',
     binLocation: '',
+    // Pharmacy fields
+    genericName: '',
+    strength: '',
+    dosageForm: '',
+    drugSchedule: '',
     // Gift card
     isGiftCard: false,
     // Tax template
@@ -360,6 +372,10 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           storageTemp: editItem.storageTemp || '',
           expiryDate: editItem.expiryDate || '',
           binLocation: (editItem as { binLocation?: string | null }).binLocation || '',
+          genericName: editItem.genericName || '',
+          strength: editItem.strength || '',
+          dosageForm: editItem.dosageForm || '',
+          drugSchedule: editItem.drugSchedule || '',
           // Gift card
           isGiftCard: editItem.isGiftCard || false,
           // Tax template
@@ -404,7 +420,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       unit: 'pcs',
       trackStock: true,
       productType: 'stockable' as ProductType,
-      trackBatches: false,
+      trackBatches: isPharmacy,
       trackSerialNumbers: false,
       oemPartNumber: '',
       alternatePartNumbers: '',
@@ -432,6 +448,10 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       storageTemp: '',
       expiryDate: '',
       binLocation: '',
+      genericName: '',
+      strength: '',
+      dosageForm: '',
+      drugSchedule: '',
       isGiftCard: false,
       taxTemplateId: '',
     })
@@ -524,15 +544,18 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     if (isRestaurant) {
       base.push({ key: 'dietary', label: 'Dietary', icon: <Leaf size={16} /> })
     }
+    if (isPharmacy) {
+      base.push({ key: 'medicine', label: 'Medicine', icon: <Pill size={16} /> })
+    }
     if (isSupermarket) {
-      base.push({ key: 'freshness', label: 'Freshness', icon: <Snowflake size={16} /> })
+      base.push({ key: 'freshness', label: isPharmacy ? 'Storage & Expiry' : 'Freshness', icon: <Snowflake size={16} /> })
     }
     if (editItem) {
       base.push({ key: 'cost_tracking', label: 'Supplier Pricing', icon: <History size={16} /> })
       base.push({ key: 'history', label: 'History', icon: <Clock size={16} /> })
     }
     return base
-  }, [isAutoService, isRestaurant, isSupermarket, businessType, editItem])
+  }, [isAutoService, isRestaurant, isSupermarket, isPharmacy, businessType, editItem])
 
   function handleClose() {
     resetForm()
@@ -622,6 +645,13 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           storageTemp: formData.storageTemp || null,
           expiryDate: formData.expiryDate || null,
           binLocation: formData.binLocation || null,
+          // Pharmacy fields (sent for pharmacies only, so other shops never clear them)
+          ...(isPharmacy ? {
+            genericName: formData.genericName,
+            strength: formData.strength,
+            dosageForm: formData.dosageForm,
+            drugSchedule: formData.drugSchedule,
+          } : {}),
           // Gift card
           isGiftCard: formData.isGiftCard,
           // Tax template
@@ -1277,6 +1307,49 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                     />
                     <span className="text-sm font-medium dark:text-gray-300">Gluten Free</span>
                   </label>
+                </div>
+              </div>
+            )}
+
+            {/* Medicine Tab (Pharmacy) */}
+            {activeTab === 'medicine' && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <FormLabel>Generic Name</FormLabel>
+                  <FormInput
+                    type="text"
+                    value={formData.genericName}
+                    onChange={(e) => setFormData({ ...formData, genericName: e.target.value })}
+                    placeholder="e.g. Paracetamol"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">The POS finds medicines by brand or generic name, so substitutes are easy to offer.</p>
+                </div>
+                <div>
+                  <FormLabel>Strength</FormLabel>
+                  <FormInput
+                    type="text"
+                    value={formData.strength}
+                    onChange={(e) => setFormData({ ...formData, strength: e.target.value })}
+                    placeholder="e.g. 500 mg, 5 mg/5 ml"
+                  />
+                </div>
+                <div>
+                  <FormLabel>Dosage Form</FormLabel>
+                  <FormSelect value={formData.dosageForm} onChange={(e) => setFormData({ ...formData, dosageForm: e.target.value })}>
+                    <option value="">Select...</option>
+                    {['Tablet', 'Capsule', 'Syrup', 'Suspension', 'Injection', 'Cream / Ointment', 'Drops', 'Inhaler', 'Powder', 'Device', 'Other'].map((f) => <option key={f} value={f}>{f}</option>)}
+                  </FormSelect>
+                </div>
+                <div>
+                  <FormLabel>Drug Schedule</FormLabel>
+                  <FormSelect value={formData.drugSchedule} onChange={(e) => setFormData({ ...formData, drugSchedule: e.target.value })}>
+                    <option value="">Not a medicine</option>
+                    <option value="otc">OTC (over the counter)</option>
+                    <option value="pharmacy_only">Pharmacy only (pharmacist sale)</option>
+                    <option value="prescription">Prescription only</option>
+                    <option value="controlled">Controlled drug (narcotic / psychotropic)</option>
+                  </FormSelect>
+                  <p className="mt-1 text-xs text-gray-500">Prescription and controlled medicines ask for the prescription at the POS and go to the prescription register.</p>
                 </div>
               </div>
             )}

@@ -1,7 +1,7 @@
 // Central registry defining how each entity exports/imports
 // Adapted from ERPNext's Data Import/Export pattern
 
-export type BusinessType = 'retail' | 'restaurant' | 'supermarket' | 'auto_service'
+export type BusinessType = 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'pharmacy'
 
 export interface EntityFieldConfig {
   key: string              // DB column name (camelCase)
@@ -110,8 +110,13 @@ const itemFields: EntityFieldConfig[] = [
   // Supermarket fields
   { key: 'pluCode', label: 'PLU Code', type: 'string', businessTypes: ['supermarket'] },
   { key: 'shelfLifeDays', label: 'Shelf Life (days)', type: 'number', businessTypes: ['supermarket'] },
-  { key: 'storageTemp', label: 'Storage Temp', type: 'string', businessTypes: ['supermarket'] },
-  { key: 'expiryDate', label: 'Expiry Date', type: 'date', businessTypes: ['supermarket'] },
+  { key: 'storageTemp', label: 'Storage Temp', type: 'string', businessTypes: ['supermarket', 'pharmacy'] },
+  { key: 'expiryDate', label: 'Expiry Date', type: 'date', businessTypes: ['supermarket', 'pharmacy'] },
+  // Pharmacy fields
+  { key: 'genericName', label: 'Generic Name', type: 'string', businessTypes: ['pharmacy'] },
+  { key: 'strength', label: 'Strength', type: 'string', businessTypes: ['pharmacy'] },
+  { key: 'dosageForm', label: 'Dosage Form', type: 'string', businessTypes: ['pharmacy'] },
+  { key: 'drugSchedule', label: 'Drug Schedule (otc / pharmacy_only / prescription / controlled)', type: 'string', businessTypes: ['pharmacy'] },
   // Stock (import): opening / target stock in one warehouse, plus thresholds.
   // Additional per-warehouse columns `stock:<WAREHOUSE_CODE>` are accepted dynamically.
   { key: 'warehouse', label: 'Warehouse', type: 'string', importOnly: true },

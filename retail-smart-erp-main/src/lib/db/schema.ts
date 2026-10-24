@@ -5,7 +5,7 @@ import { relations, sql } from 'drizzle-orm'
 
 export const planEnum = pgEnum('plan', ['trial', 'basic', 'standard', 'premium'])
 export const tenantStatusEnum = pgEnum('tenant_status', ['active', 'suspended', 'cancelled', 'locked'])
-export const businessTypeEnum = pgEnum('business_type', ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership'])
+export const businessTypeEnum = pgEnum('business_type', ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy'])
 export const userRoleEnum = pgEnum('user_role', [
   'owner', 'manager', 'cashier', 'technician', 'chef', 'waiter',
   'system_manager', 'accounts_manager', 'sales_manager', 'purchase_manager',
@@ -1796,6 +1796,13 @@ export const items = pgTable('items', {
   storageTemp: varchar('storage_temp', { length: 20 }), // ambient, chilled, frozen
   expiryDate: date('expiry_date'),
 
+  // Pharmacy fields (drizzle/0170): generic name for substitutes; drug schedule decides whether
+  // the POS needs a prescription (prescription, controlled) — NULL = not a medicine
+  genericName: varchar('generic_name', { length: 255 }),
+  strength: varchar('strength', { length: 50 }), // 500 mg, 5 mg/5 ml
+  dosageForm: varchar('dosage_form', { length: 50 }), // tablet, capsule, syrup …
+  drugSchedule: varchar('drug_schedule', { length: 20 }).$type<'otc' | 'pharmacy_only' | 'prescription' | 'controlled'>(),
+
   // Tax
   taxInclusive: boolean('tax_inclusive').notNull().default(false), // DEPRECATED: use taxTemplateId instead
   taxTemplateId: uuid('tax_template_id').references(() => taxTemplates.id, { onDelete: 'set null' }),
@@ -1818,6 +1825,27 @@ export const items = pgTable('items', {
   // Timestamps
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+// Pharmacy prescription register (drizzle/0170): one row per sale that sold prescription /
+// controlled medicines
+export const prescriptions = pgTable('prescriptions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+  prescriptionNo: varchar('prescription_no', { length: 100 }),
+  prescriptionDate: date('prescription_date'),
+  patientName: varchar('patient_name', { length: 255 }),
+  patientAge: varchar('patient_age', { length: 20 }),
+  patientPhone: varchar('patient_phone', { length: 50 }),
+  doctorName: varchar('doctor_name', { length: 255 }).notNull(),
+  doctorRegNo: varchar('doctor_reg_no', { length: 100 }),
+  hospital: varchar('hospital', { length: 255 }),
+  hasControlled: boolean('has_controlled').notNull().default(false),
+  notes: text('notes'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
 export const stockMovements = pgTable('stock_movements', {

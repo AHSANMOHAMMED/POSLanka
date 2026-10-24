@@ -29,6 +29,7 @@ import { createReturnInTx, returnStatusOf } from '@/lib/sales/returns'
 import { saleFlowErrorResponse } from '@/lib/sales/route-helpers'
 import { notify } from '@/lib/notifications/notify'
 import { getTenantFeatureFlags } from '@/lib/features/check'
+import { prescriptionProblem, prescriptionRequirement, recordPrescription } from '@/lib/pharmacy/prescriptions'
 import { FEATURE_FLAG_LABELS, type FeatureFlag } from '@/lib/features/flags'
 import type { SaleFlags } from '@/lib/db/schema'
 import type { CompanySession } from '@/lib/auth'
@@ -318,6 +319,17 @@ export async function POST(request: NextRequest) {
     // reverses tax, bounds the refund, restores stock/serials through the ledger).
     if (isReturn) {
       return await handleReturnPost(session, userId, parsed.data)
+    }
+
+    // Pharmacy: prescription / controlled medicines need a prescription. Checked before the
+    // transaction; an offline sale already happened, so it is recorded with whatever it carried.
+    const rx = await withTenant(session.user.tenantId, (tdb) =>
+      prescriptionRequirement(tdb, session.user.tenantId, cartItems.map((c) => c.itemId).filter((x): x is string => !!x)))
+    if (!offlineRef) {
+      const rxProblem = prescriptionProblem(rx.level, parsed.data.prescription)
+      if (rxProblem) {
+        return NextResponse.json({ error: rxProblem, code: 'PRESCRIPTION_REQUIRED', level: rx.level, items: rx.items.map((i) => ({ id: i.id, name: i.name, drugSchedule: i.drugSchedule })) }, { status: 400 })
+      }
     }
 
     // W6: a sale made offline (offlineRef) is a done deal — the customer paid and left. Catalog
@@ -1105,6 +1117,11 @@ export async function POST(request: NextRequest) {
         couponCode: usedCoupon && appliedPromotions.length > 0 ? usedCoupon : null,
       }).returning()
       const newSale = (saleResult as typeof sales.$inferSelect[])[0]
+
+      // Pharmacy prescription register
+      if (parsed.data.prescription && rx.level !== 'none') {
+        await recordPrescription(tx, { tenantId: session.user.tenantId, saleId: newSale.id, customerId: customerId || null, userId, level: rx.level, input: parsed.data.prescription })
+      }
 
       // H5: promotion usage (limits are re-checked under lock; offline sales always count)
       if (appliedPromotions.length > 0) {

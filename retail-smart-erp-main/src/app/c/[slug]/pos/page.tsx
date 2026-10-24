@@ -82,6 +82,7 @@ import { calculateItemTax, aggregateTaxBreakdown, type ResolvedTaxTemplate, type
 import { POS_ITEMS_LIMIT } from '@/components/pos/types'
 import { usePOSBusinessConfig } from '@/hooks/usePOSBusinessConfig'
 import { useFeatureFlags } from '@/hooks/useFeatureFlag'
+import { PrescriptionModal, prescriptionMissing, type PrescriptionForm, type RxLevel } from '@/components/pos/PrescriptionModal'
 import { useOfflinePos } from '@/hooks/useOfflinePos'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel } from '@/lib/utils/item-display'
@@ -343,6 +344,9 @@ export default function POSPage() {
   const [restaurantOrderId, setRestaurantOrderId] = useState<string | null>(null)
   // H5: coupon entered at the till (price lists / promotions come from /api/price-quote)
   const [couponCode, setCouponCode] = useState('')
+  // Pharmacy: prescription captured for this sale, and the prompt asking for one
+  const [prescription, setPrescription] = useState<PrescriptionForm | null>(null)
+  const [rxPrompt, setRxPrompt] = useState<{ level: Exclude<RxLevel, 'none'>; items: Array<{ id: string; name: string; drugSchedule: string }> } | null>(null)
   /** Quantities already on a kitchen ticket, per cart line, for the current restaurant order. */
   const kitchenSentRef = useRef<{ orderId: string | null; sent: KitchenSentMap }>({ orderId: null, sent: {} })
   const [tipAmount, setTipAmount] = useState(0)
@@ -1196,6 +1200,7 @@ export default function POSPage() {
     setExchangeFrom(null)
     setSaleDiscount({ type: 'percentage', value: 0, reason: '' })
     setCouponCode('')
+    setPrescription(null)
     setLoyaltyPointsToRedeem('')
     setShowLoyaltyRedeem(false)
     setRestaurantOrderId(null)
@@ -2148,7 +2153,7 @@ export default function POSPage() {
   useEffect(() => {
     const isTyping = (el: Element | null) =>
       !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el as HTMLElement).isContentEditable)
-    const modalOpen = showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
+    const modalOpen = !!rxPrompt || showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
       || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || showFloatModal || showPriceCheckModal
       || showQuickAddModal || !!variantPickerParentItem || !!supervisorRequest || clearCartConfirm || showCashMovementModal
 
@@ -2223,7 +2228,7 @@ export default function POSPage() {
     return () => window.removeEventListener('keydown', onKey)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showPayment, showDiscountModal, showHeldSalesModal, showCustomerModal, showVehicleModal, showShiftOpenModal, showShiftCloseModal,
-      showReturnLookupModal, showFloatModal, showPriceCheckModal, showQuickAddModal, variantPickerParentItem, supervisorRequest, clearCartConfirm, showCashMovementModal, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
+      showReturnLookupModal, showFloatModal, showPriceCheckModal, showQuickAddModal, variantPickerParentItem, supervisorRequest, clearCartConfirm, showCashMovementModal, rxPrompt, terminalLocked, cart.length, holdingInProgress, allowDiscount, activeShift, search])
 
   // ─── Customer-facing display mirror (/pos/display) ─────────────
   useEffect(() => {
@@ -2255,7 +2260,26 @@ export default function POSPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cart, subtotal, discountAmount, tax, total, showPayment, lastSale, company.tenantName, cashierName])
 
-  async function openPaymentModal() {
+  async function openPaymentModal(rxOverride?: PrescriptionForm) {
+    // Pharmacy: prescription / controlled medicines need the prescription before payment
+    if (company.businessType === 'pharmacy' && !isReturnMode && online && cart.length > 0) {
+      const rxNow = rxOverride ?? prescription
+      try {
+        const ids = Array.from(new Set(cart.map((c) => c.itemId))).join(',')
+        const res = await fetch(`/api/pharmacy/rx-check?ids=${ids}`)
+        if (res.ok) {
+          const rx = await res.json() as { level: RxLevel; items: Array<{ id: string; name: string; drugSchedule: string }> }
+          if (rx.level === 'none') {
+            if (prescription) setPrescription(null)
+          } else if (prescriptionMissing(rx.level, rxNow)) {
+            setRxPrompt({ level: rx.level, items: rx.items })
+            return
+          }
+        }
+      } catch {
+        // offline / network: the server checks again when the sale is posted
+      }
+    }
     let credit = 0
     if (selectedCustomer?.id) {
       try {
@@ -2467,6 +2491,7 @@ export default function POSPage() {
       // H5: cart promotions are not part of `discount` (manual); the server recomputes both
       promotionDiscount: cartPromotionDiscount > 0 ? cartPromotionDiscount : undefined,
       couponCodes: couponCode ? [couponCode] : undefined,
+      prescription: prescription || undefined,
       soldAt: online ? undefined : new Date().toISOString(),
     }
 
@@ -2856,7 +2881,7 @@ export default function POSPage() {
         onShowHeldSales={() => setShowHeldSalesModal(true)}
         holdingInProgress={holdingInProgress}
         onHoldSale={holdSale}
-        onOpenPayment={openPaymentModal}
+        onOpenPayment={() => openPaymentModal()}
         allowDiscount={allowDiscount}
         onShowDiscount={() => setShowDiscountModal(true)}
         loyaltyProgram={loyaltyProgram}
@@ -3090,6 +3115,18 @@ export default function POSPage() {
       />
 
       {/* H1: cash paid in / out of the drawer */}
+      {rxPrompt && (
+        <PrescriptionModal
+          level={rxPrompt.level}
+          items={rxPrompt.items}
+          initial={prescription}
+          customerName={selectedCustomer?.name}
+          customerPhone={selectedCustomer?.phone}
+          onClose={() => setRxPrompt(null)}
+          onSave={(p) => { setPrescription(p); setRxPrompt(null); void openPaymentModal(p) }}
+        />
+      )}
+
       <CashMovementModal
         isOpen={showCashMovementModal}
         onClose={() => setShowCashMovementModal(false)}

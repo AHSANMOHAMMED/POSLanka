@@ -48,6 +48,7 @@ export async function GET(request: NextRequest) {
             ilike(items.oemPartNumber, `%${escaped}%`),
             ilike(items.supplierPartNumber, `%${escaped}%`),
             ilike(items.pluCode, `%${escaped}%`),
+            ilike(items.genericName, `%${escaped}%`),
             sql`${items.alternatePartNumbers}::text ILIKE ${'%' + escaped + '%'}`,
             // H5: additional barcodes / unit barcodes (prefix match)
             // (uncorrelated IN: an unqualified "id" here must mean items.id in both the count and the list query)
@@ -382,6 +383,8 @@ export async function POST(request: NextRequest) {
       preparationTime, allergens, calories, isVegetarian, isVegan, isGlutenFree, spiceLevel, availableFrom, availableTo,
       // Supermarket fields
       pluCode, shelfLifeDays, storageTemp, expiryDate,
+      // Pharmacy fields
+      genericName, strength, dosageForm, drugSchedule,
       // Gift card
       isGiftCard,
       // Tax template
@@ -458,6 +461,11 @@ export async function POST(request: NextRequest) {
           shelfLifeDays: shelfLifeDays || null,
           storageTemp: storageTemp || null,
           expiryDate: expiryDate || null,
+          // Pharmacy fields
+          genericName: genericName || null,
+          strength: strength || null,
+          dosageForm: dosageForm || null,
+          drugSchedule: drugSchedule || null,
           // Gift card
           isGiftCard: isGiftCard || false,
           // Tax template

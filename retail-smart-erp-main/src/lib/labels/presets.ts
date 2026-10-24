@@ -199,7 +199,7 @@ export const LABEL_PRESETS: LabelPreset[] = [
     id: 'circle-price',
     name: 'Circle Price Sticker',
     description: 'Round price sticker (38 mm circle)',
-    businessTypes: ['retail', 'supermarket', 'all'],
+    businessTypes: ['retail', 'supermarket', 'pharmacy', 'all'],
     widthMm: 38,
     heightMm: 38,
     labelShape: 'circle',

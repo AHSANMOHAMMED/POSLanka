@@ -11,12 +11,20 @@ export function isServiceCapable(businessType?: string): boolean {
   return businessType === 'auto_service' || businessType === 'dealership'
 }
 
+/** Shops selling goods over a counter: retail (clothing, footwear, bags, stationery, fancy …),
+ * supermarket and pharmacy share the store features (departments, scales, velocity, expiry). */
+export function isStoreBusiness(businessType?: string | null): boolean {
+  return businessType === 'retail' || businessType === 'supermarket' || businessType === 'pharmacy'
+}
+
 export interface SidebarItem {
   href: string
   label: string
   icon: string
   autoServiceOnly?: boolean
+  /** Store-type businesses: retail, supermarket, pharmacy (departments, zones, velocity …) */
   supermarketOnly?: boolean
+  pharmacyOnly?: boolean
   restaurantOnly?: boolean
   dealershipOnly?: boolean
   permission?: Permission
@@ -95,6 +103,8 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/price-lists', 'selling'],
   ['/promotions', 'selling'],
   ['/layaways', 'selling'],
+  ['/pharmacy/prescriptions', 'selling'],
+  ['/pharmacy/expiry', 'stock'],
 
   // Barcode & Labels
   ['/barcode/print', 'barcode'],
@@ -331,6 +341,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/stock/reorder-dashboard', label: 'Reorder Dashboard', icon: 'ShoppingCart', permission: 'manageInventory' },
         { href: '/stock/temperature-zones', label: 'Temperature Zones', icon: 'Thermometer', supermarketOnly: true },
         { href: '/stock/departments', label: 'Departments', icon: 'LayoutGrid', supermarketOnly: true },
+        { href: '/pharmacy/expiry', label: 'Expiry Report', icon: 'CalendarClock', pharmacyOnly: true, permission: 'manageInventory' },
       ],
     },
     {
@@ -381,6 +392,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/debit-notes', label: 'Debit Notes', icon: 'Receipt', permission: 'manageSales' },
         { href: '/sales', label: 'Sales Invoices', icon: 'Receipt' },
         { href: '/layaways', label: 'Layaways', icon: 'CreditCard', permission: 'createSales' },
+        { href: '/pharmacy/prescriptions', label: 'Prescription Register', icon: 'FileText', pharmacyOnly: true, permission: 'createSales' },
       ],
     },
     {
@@ -890,7 +902,8 @@ export function getModuleSidebar(
   if (!sections) return []
 
   const isAutoServiceCapable = isServiceCapable(businessType)
-  const isSupermarket = businessType === 'supermarket'
+  const isStore = isStoreBusiness(businessType)
+  const isPharmacy = businessType === 'pharmacy'
   const isRestaurant = businessType === 'restaurant'
   const isDealership = businessType === 'dealership'
   const t = getTerms(businessType)
@@ -901,7 +914,8 @@ export function getModuleSidebar(
       items: section.items
         .filter((item) => {
           if (item.autoServiceOnly && !isAutoServiceCapable) return false
-          if (item.supermarketOnly && !isSupermarket) return false
+          if (item.supermarketOnly && !isStore) return false
+          if (item.pharmacyOnly && !isPharmacy) return false
           if (item.restaurantOnly && !isRestaurant) return false
           if (item.dealershipOnly && !isDealership) return false
           if (item.permission && role && !check(item.permission)) return false

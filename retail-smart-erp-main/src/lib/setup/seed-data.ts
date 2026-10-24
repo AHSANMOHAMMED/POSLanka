@@ -21,15 +21,19 @@ export interface ServiceGroupSeed {
 // ==================== RETAIL ====================
 
 export const retailCategories: CategorySeed[] = [
-  { name: 'Electronics', selected: true },
-  { name: 'Clothing & Apparel', selected: true },
-  { name: 'Food & Beverages', selected: true },
-  { name: 'Health & Beauty', selected: true },
-  { name: 'Home & Garden', selected: false },
-  { name: 'Sports & Outdoors', selected: false },
-  { name: 'Books & Stationery', selected: false },
+  { name: 'Clothing - Men', selected: true },
+  { name: 'Clothing - Women', selected: true },
+  { name: 'Kids Wear', selected: true },
+  { name: 'Footwear & Slippers', selected: true },
+  { name: 'Bags & Luggage', selected: true },
+  { name: 'Stationery & School Items', selected: true },
+  { name: 'Fancy & Gift Items', selected: true },
+  { name: 'Cosmetics & Beauty', selected: true },
   { name: 'Toys & Games', selected: false },
-  { name: 'Accessories', selected: true },
+  { name: 'Electronics & Mobile Accessories', selected: false },
+  { name: 'Home & Kitchenware', selected: false },
+  { name: 'Watches & Jewellery', selected: false },
+  { name: 'Sports & Outdoors', selected: false },
   { name: 'General', selected: true },
 ]
 
@@ -51,7 +55,10 @@ export const defaultTableAreas = ['Main Hall', 'Outdoor', 'VIP']
 
 // ==================== SUPERMARKET ====================
 
+// A Sri Lankan supermarket often runs grocery and non-food departments (clothing, footwear,
+// bags, stationery, fancy goods) through the same POS; each department is a category.
 export const supermarketCategories: CategorySeed[] = [
+  { name: 'Rice, Grains & Pulses', selected: true },
   { name: 'Fresh Produce', selected: true },
   { name: 'Dairy & Eggs', selected: true },
   { name: 'Meat & Seafood', selected: true },
@@ -60,8 +67,34 @@ export const supermarketCategories: CategorySeed[] = [
   { name: 'Beverages', selected: true },
   { name: 'Snacks & Confectionery', selected: true },
   { name: 'Frozen Foods', selected: false },
-  { name: 'Household & Cleaning', selected: false },
-  { name: 'Personal Care', selected: false },
+  { name: 'Household & Cleaning', selected: true },
+  { name: 'Personal Care & Cosmetics', selected: true },
+  { name: 'Baby Care', selected: false },
+  { name: 'Clothing & Textiles', selected: true },
+  { name: 'Footwear & Slippers', selected: true },
+  { name: 'Bags & Luggage', selected: true },
+  { name: 'Stationery & School Items', selected: true },
+  { name: 'Fancy & Gift Items', selected: true },
+  { name: 'Toys', selected: false },
+  { name: 'Kitchenware & Plastics', selected: false },
+  { name: 'Electrical & Hardware', selected: false },
+]
+
+// ==================== PHARMACY ====================
+
+export const pharmacyCategories: CategorySeed[] = [
+  { name: 'Prescription Medicines', selected: true },
+  { name: 'OTC Medicines', selected: true },
+  { name: 'Antibiotics', selected: true },
+  { name: 'Vitamins & Supplements', selected: true },
+  { name: 'Ayurvedic & Herbal', selected: true },
+  { name: 'Baby & Mother Care', selected: true },
+  { name: 'Personal Care & Cosmetics', selected: true },
+  { name: 'First Aid & Wound Care', selected: true },
+  { name: 'Medical Devices', selected: true },
+  { name: 'Surgical Items', selected: false },
+  { name: 'Diabetic Care', selected: false },
+  { name: 'Veterinary', selected: false },
 ]
 
 // ==================== AUTO SERVICE ====================
@@ -192,6 +225,14 @@ export function getCancellationReasonsForBusinessType(businessType: string): Can
       {
         const purchaseOrder = base.find(b => b.documentType === 'purchase_order')!
         purchaseOrder.reasons.push('Shelf life too short', 'Quality issue')
+      }
+      break
+    case 'pharmacy':
+      {
+        const purchaseOrder = base.find(b => b.documentType === 'purchase_order')!
+        purchaseOrder.reasons.push('Short expiry', 'Not NMRA registered', 'Cold chain broken')
+        const salesInvoice = base.find(b => b.documentType === 'sales_invoice')!
+        salesInvoice.reasons.push('Prescription not valid', 'Wrong medicine dispensed')
       }
       break
     case 'dealership':
@@ -492,6 +533,8 @@ export function getCategoriesForBusinessType(businessType: string): CategorySeed
       return restaurantCategories
     case 'supermarket':
       return supermarketCategories
+    case 'pharmacy':
+      return pharmacyCategories
     case 'auto_service':
       return autoServicePartCategories
     case 'dealership':

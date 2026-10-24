@@ -245,7 +245,7 @@ function getReportsBlocks(businessType?: string): WorkspaceBlock[] {
   const isAutoService = businessType === 'auto_service'
   const isDealership = businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
-  const isSupermarket = businessType === 'supermarket'
+  const isSupermarket = businessType === 'supermarket' || businessType === 'retail' || businessType === 'pharmacy'
 
   // Top shortcuts - most used reports
   const shortcuts: WorkspaceBlock[] = [

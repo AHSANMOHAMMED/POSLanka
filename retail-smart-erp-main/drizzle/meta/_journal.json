@@ -1135,6 +1135,13 @@
       "when": 1771446414033,
       "tag": "0169_admin_roles_coupons_refunds_push",
       "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1771446415033,
+      "tag": "0170_pharmacy",
+      "breakpoints": true
     }
   ]
 }

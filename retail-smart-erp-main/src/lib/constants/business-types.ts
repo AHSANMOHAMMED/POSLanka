@@ -4,6 +4,7 @@ import {
   ShoppingCart,
   Wrench,
   Car,
+  Pill,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -23,9 +24,9 @@ export const BUSINESS_TYPES: BusinessType[] = [
     label: 'Retail Store',
     icon: Store,
     emoji: '🏪',
-    description: 'General retail, electronics, clothing, etc.',
+    description: 'Clothing, footwear & slippers, bags, stationery, fancy & gift items, cosmetics, electronics',
     color: 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400',
-    features: ['POS & Sales', 'Inventory', 'Loyalty', 'Purchase Orders'],
+    features: ['Size / colour variants', 'Barcode labels', 'Exchanges & returns', 'Loyalty'],
   },
   {
     value: 'restaurant',
@@ -41,9 +42,18 @@ export const BUSINESS_TYPES: BusinessType[] = [
     label: 'Supermarket',
     icon: ShoppingCart,
     emoji: '🛒',
-    description: 'Grocery, wholesale, general store',
+    description: 'Grocery plus clothing, footwear, bags, stationery and fancy departments in one POS',
     color: 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400',
-    features: ['Multi-Dept POS', 'Barcode Scanning', 'Waste Tracking', 'Bulk Pricing'],
+    features: ['Multi-department POS', 'Weighing scale & PLU', 'Size / colour variants', 'Expiry tracking'],
+  },
+  {
+    value: 'pharmacy',
+    label: 'Pharmacy',
+    icon: Pill,
+    emoji: '💊',
+    description: 'Pharmacies and medical stores',
+    color: 'bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400',
+    features: ['Generic-name search', 'Batch & expiry (FEFO)', 'Prescriptions at the POS', 'Prescription register'],
   },
   {
     value: 'auto_service',

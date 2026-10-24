@@ -67,6 +67,7 @@ const HIGH_VALUE_THRESHOLD = 30_000
 const BUSINESS_TYPES: Array<{ value: string; label: string }> = [
   { value: 'all', label: 'All types' },
   { value: 'supermarket', label: 'Supermarket' },
+  { value: 'pharmacy', label: 'Pharmacy' },
   { value: 'retail', label: 'Retail' },
   { value: 'restaurant', label: 'Restaurant' },
   { value: 'auto_service', label: 'Auto service' },

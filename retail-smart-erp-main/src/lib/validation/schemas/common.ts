@@ -172,7 +172,7 @@ export const planSchema = z.enum(planValues) // schema.ts: planEnum
 export const tenantStatusValues = ['active', 'suspended', 'cancelled', 'locked'] as const
 export const tenantStatusSchema = z.enum(tenantStatusValues) // schema.ts: tenantStatusEnum
 
-export const businessTypeValues = ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership'] as const
+export const businessTypeValues = ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy'] as const
 export const businessTypeSchema = z.enum(businessTypeValues) // schema.ts: businessTypeEnum
 
 export const userRoleValues = [

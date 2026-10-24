@@ -26,6 +26,7 @@ import type { ReceiptInput } from '../lib/escpos'
 import type { CartLine } from './CartDrawerModal'
 import type { Customer } from './CustomerPickerModal'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from './SupervisorPinModal'
+import { PrescriptionSheet, type PrescriptionInput, type PrescriptionRequest } from './PrescriptionSheet'
 import { useHeaderPad } from '../lib/safeArea'
 import { useFeatureFlags } from '../lib/features'
 
@@ -143,13 +144,20 @@ export function TenderModal({
   const [busy, setBusy] = useState(false)
   // H1: supervisor approvals for this cart (credit limit override, …), sent with the sale
   const approvalTokensRef = useRef<string[]>([])
+  // Feature switches set by the platform (credit sales, loyalty …)
+  const features = useFeatureFlags()
   const [approvalRequest, setApprovalRequest] = useState<SupervisorApprovalRequest | null>(null)
+  // Pharmacy: prescription for prescription / controlled medicines (asked for when the server says so)
+  const prescriptionRef = useRef<PrescriptionInput | null>(null)
+  const [rxRequest, setRxRequest] = useState<PrescriptionRequest | null>(null)
 
   // Reset the form each time the modal opens for a (possibly new) cart.
   useEffect(() => {
     if (visible) {
       approvalTokensRef.current = []
       setApprovalRequest(null)
+      prescriptionRef.current = null
+      setRxRequest(null)
       setTender('cash')
       setCashTendered(netPayable.toFixed(2))
       setReference('')
@@ -196,7 +204,6 @@ export function TenderModal({
   const changeDue = roundCurrency(numericTendered - netPayable)
   const isTenderSufficient = tender !== 'cash' || changeDue >= -0.009
   const tenders = allowedTenders(shift.posProfile)
-  const features = useFeatureFlags()
   const creditAllowed = !!customer && shift.posProfile?.allowCreditSale !== false && features.has('credit_customer')
   if (!visible) return null
 
@@ -270,6 +277,7 @@ export function TenderModal({
       // H5: cart promotions are not part of `discount`; the device time prices an offline sale
       promotionDiscount: cartPromotionDiscount > 0 ? cartPromotionDiscount : undefined,
       couponCodes: couponCodes && couponCodes.length ? couponCodes : undefined,
+      prescription: prescriptionRef.current || undefined,
       soldAt: new Date().toISOString(),
     }
   }
@@ -392,7 +400,11 @@ export function TenderModal({
         return
       }
 
-      const body = res.data as unknown as { code?: string; scopes?: string[]; quote?: unknown } | null
+      const body = res.data as unknown as { code?: string; scopes?: string[]; quote?: unknown; level?: 'prescription' | 'controlled'; items?: Array<{ id: string; name: string }> } | null
+      if (res.status === 400 && body?.code === 'PRESCRIPTION_REQUIRED' && body.level) {
+        setRxRequest({ level: body.level, items: body.items || [], message: res.error })
+        return
+      }
       if (res.status === 409 && body?.code === 'PRICE_CHANGED' && body.quote && onPriceChanged) {
         onPriceChanged(body.quote)
         Alert.alert('Prices Changed', 'Prices or promotions changed. Review the cart and take payment again.')
@@ -624,6 +636,20 @@ export function TenderModal({
           </View>
         </ScrollView>
       </View>
+      {rxRequest ? (
+        <PrescriptionSheet
+          request={rxRequest}
+          initial={prescriptionRef.current}
+          customerName={customer?.name}
+          customerPhone={(customer as { phone?: string | null } | null)?.phone}
+          onClose={() => setRxRequest(null)}
+          onSave={(p) => {
+            prescriptionRef.current = p
+            setRxRequest(null)
+            void handleCompleteSale()
+          }}
+        />
+      ) : null}
       <SupervisorPinModal
         request={approvalRequest}
         onCancel={() => setApprovalRequest(null)}

@@ -4,6 +4,7 @@ import {
   cartItemSchema, paymentMethodSchema, discountTypeSchema,
   salesOrderStatusSchema, optimisticLockSchema,
 } from './common'
+import { prescriptionInputSchema } from './pharmacy'
 
 // ==================== SALES ====================
 
@@ -102,6 +103,8 @@ export const createSaleSchema = z.object({
    * OFFLINE_REF_CONFLICT; stored in sales.flags.offlineRefAlias so lookups by the printed number work.
    */
   offlineRefAlias: z.string().trim().min(1).max(40).optional(),
+  /** Pharmacy: prescription for prescription / controlled medicines in the cart (src/lib/pharmacy) */
+  prescription: prescriptionInputSchema.optional(),
   /** Returns: reason code (required for returns without an original invoice) */
   returnReason: z.string().trim().max(50).optional(),
   returnNotes: z.string().max(1000).optional(),

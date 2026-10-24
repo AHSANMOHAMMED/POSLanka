@@ -185,6 +185,8 @@ export function businessTypeLabel(t: string | null | undefined): string {
       return 'Auto service'
     case 'dealership':
       return 'Dealership'
+    case 'pharmacy':
+      return 'Pharmacy'
     default:
       return t || 'Unknown'
   }

@@ -28,6 +28,7 @@ export function getItemPartNumber(
     case 'dealership':
       return item.oemPartNumber || item.sku || null
     case 'supermarket':
+    case 'pharmacy':
       return item.pluCode || item.sku || null
     case 'restaurant':
       return null

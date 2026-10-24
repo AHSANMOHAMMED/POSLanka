@@ -117,6 +117,8 @@ export async function PUT(
       preparationTime, allergens, calories, isVegetarian, isVegan, isGlutenFree, spiceLevel, availableFrom, availableTo,
       // Supermarket fields
       pluCode, shelfLifeDays, storageTemp, expiryDate,
+      // Pharmacy fields
+      genericName, strength, dosageForm, drugSchedule,
       // Gift card
       isGiftCard,
       // Tax template
@@ -241,6 +243,11 @@ export async function PUT(
             shelfLifeDays: shelfLifeDays !== undefined ? (shelfLifeDays || null) : undefined,
             storageTemp: storageTemp !== undefined ? (storageTemp || null) : undefined,
             expiryDate: expiryDate !== undefined ? (expiryDate || null) : undefined,
+            // Pharmacy fields
+            genericName: genericName !== undefined ? (genericName || null) : undefined,
+            strength: strength !== undefined ? (strength || null) : undefined,
+            dosageForm: dosageForm !== undefined ? (dosageForm || null) : undefined,
+            drugSchedule: drugSchedule !== undefined ? (drugSchedule || null) : undefined,
             // Gift card
             isGiftCard: isGiftCard !== undefined ? isGiftCard : undefined,
             // Tax template

@@ -15,8 +15,8 @@ export async function GET(request: NextRequest) {
     const permError = requirePermission(session, 'viewReports')
     if (permError) return permError
 
-    if (session.user.businessType !== 'supermarket') {
-      return NextResponse.json({ error: 'This report is only available for supermarket businesses' }, { status: 403 })
+    if (!['retail', 'supermarket', 'pharmacy'].includes(session.user.businessType)) {
+      return NextResponse.json({ error: 'This report is for shops (retail, supermarket, pharmacy)' }, { status: 403 })
     }
 
     const { searchParams } = new URL(request.url)
