@@ -248,8 +248,11 @@ async function main() {
 
       const ret2 = await json(await returnPurchase(req('POST', { items: [{ purchaseItemId: lineId, returnQuantity: 2 }] }), ctx(d.body.id)))
       check('return 2 again after the cancelled return → balance 800', ret2.status === 201 && await balanceOf(S) === 800)
-      const del = await json(await deletePurchase(req('DELETE'), ctx(ret2.body.id)))
-      check('delete the (pending) return → balance restored to 1000, stock 10', del.status === 200 && await balanceOf(S) === 1000 && await stockOf(X) === 10,
+      // Pending documents are cancelled, not deleted (recycle-bin rule); same reversal
+      const refused = await json(await deletePurchase(req('DELETE'), ctx(ret2.body.id)))
+      check('delete of a pending return is refused (cancel instead)', refused.status === 400, JSON.stringify(refused.body))
+      const del = await cancel(ret2.body.id)
+      check('cancel the (pending) return → balance restored to 1000, stock 10', del.status === 200 && await balanceOf(S) === 1000 && await stockOf(X) === 10,
         `${del.status} ${JSON.stringify(del.body)} bal=${await balanceOf(S)}`)
       const rr = await json(await returnPurchase(req('POST', { items: [{ purchaseItemId: lineId, returnQuantity: 1 }] }), ctx(ret.body.id)))
       check('return against a purchase return → 400', rr.status === 400)
@@ -365,7 +368,8 @@ async function main() {
       const d = await draft(S, [{ itemName: 'Service', quantity: 1, unitPrice: 100 }])
       await cancel(d.body.id)
       const r = await json(await deleteSupplier(req('DELETE'), ctx(S)))
-      check('delete supplier with (cancelled) purchase history → 400, not 500', r.status === 400, `${r.status} ${JSON.stringify(r.body)}`)
+      // Recycle bin: a supplier with history is archived (restorable by the super admin), never a 500
+      check('delete supplier with (cancelled) purchase history → archived', r.status === 200 && r.body.archived === true, `${r.status} ${JSON.stringify(r.body)}`)
       const S2 = await newSupplier('Fresh Co')
       const r2 = await json(await deleteSupplier(req('DELETE'), ctx(S2)))
       check('delete unused supplier → 200', r2.status === 200, JSON.stringify(r2.body))

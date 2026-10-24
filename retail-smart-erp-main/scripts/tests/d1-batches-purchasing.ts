@@ -368,13 +368,16 @@ async function main() {
       check('purchase line linked to PO line with po_received_qty', pi.rows[0].purchase_order_item_id === lineId && pi.rows[0].q === 10)
       check('PO received 10', (await poState(poId, lineId)).rq === 10)
 
-      const del = await json(await deletePurchase(req('DELETE', '/x'), ctx(pid)))
-      check('delete purchase → 200', del.status === 200, JSON.stringify(del.body))
-      check('delete: cost restored exactly (150 → 100), stock back to 10', await costOf(Z) === 100 && await stockOf(admin, A.wh, Z) === 10, `cost=${await costOf(Z)}`)
+      // A posted purchase is no longer deletable (recycle-bin rule); cancelling reverses it all
+      const refused = await json(await deletePurchase(req('DELETE', '/x'), ctx(pid)))
+      check('delete of a posted purchase is refused (cancel instead)', refused.status === 400, JSON.stringify(refused.body))
+      const del = await json(await updatePurchase(req('PUT', '/x', { status: 'cancelled' }), ctx(pid)))
+      check('cancel purchase → 200', del.status === 200, JSON.stringify(del.body))
+      check('cancel: cost restored exactly (150 → 100), stock back to 10', await costOf(Z) === 100 && await stockOf(admin, A.wh, Z) === 10, `cost=${await costOf(Z)}`)
       const ps = await poState(poId, lineId)
-      check('delete: PO received quantity reversed (0) and status confirmed', ps.rq === 0 && ps.status === 'confirmed', JSON.stringify(ps))
+      check('cancel: PO received quantity reversed (0) and status confirmed', ps.rq === 0 && ps.status === 'confirmed', JSON.stringify(ps))
       const rev = await admin.query(`SELECT notes FROM item_cost_history WHERE reference_id=$1 AND source='purchase_cancellation'`, [pid])
-      check('delete: reversal logged (restore rule)', rev.rows.length === 1 && /restored previous cost/.test(rev.rows[0].notes), JSON.stringify(rev.rows))
+      check('cancel: reversal logged (restore rule)', rev.rows.length === 1 && /restored previous cost/.test(rev.rows[0].notes), JSON.stringify(rev.rows))
     })
 
     await step('cancel with later purchase → weighted average', async () => {

@@ -153,20 +153,21 @@ async function runSyncTests(admin: Client, A: Fx, B: Fx) {
   setTestSession(session(A))
   const del = await json(await deleteItem(req('DELETE', `/api/items/${deletedId}`), { params: Promise.resolve({ id: deletedId }) }))
   check('DELETE /api/items/[id] still works', del.status === 200, JSON.stringify(del.body))
-  const tomb = await admin.query(`SELECT * FROM item_tombstones WHERE tenant_id=$1 AND item_id=$2`, [A.tenantId, deletedId])
-  check('DELETE writes a tombstone', tomb.rows.length === 1)
+  // Vendor delete = archive (recycle bin): the item stays, inactive; a tombstone only on purge
+  const arch = await admin.query(`SELECT is_active FROM items WHERE tenant_id=$1 AND id=$2`, [A.tenantId, deletedId])
+  check('DELETE archives the item (inactive, restorable)', arch.rows[0]?.is_active === false)
   // other tenant change must not leak
   await admin.query(`UPDATE items SET selling_price = 7 WHERE tenant_id = $1`, [B.tenantId])
 
   const delta = await syncAll(A.tenantId, A.wh, full.cursor, 1000)
   const got = new Set(delta.items.map((i) => i.id))
-  const expected = new Set([...priceIds, ...stockIds, deactivated])
+  const expected = new Set([...priceIds, ...stockIds, deactivated, deletedId])
   check('delta: exactly the changed items (price, stock, deactivated)', got.size === expected.size && [...expected].every((id) => got.has(id)),
     `${delta.items.map((i) => i.itemCode).join(',')}`)
   check('delta: new prices', delta.items.filter((i) => priceIds.includes(i.id)).every((i) => i.sellingPrice === '125.00'))
   check('delta: stock changes surface with new availableStock', delta.items.filter((i) => stockIds.includes(i.id)).every((i) => i.availableStock === 4))
   check('delta: deactivated item delivered as inactive', delta.items.find((i) => i.id === deactivated)?.isActive === false)
-  check('delta: tombstone of the deleted item', delta.deleted.length === 1 && delta.deleted[0] === deletedId, JSON.stringify(delta.deleted))
+  check('delta: archived item delivered as inactive (devices drop it)', delta.items.find((i) => i.id === deletedId)?.isActive === false, JSON.stringify(delta.deleted))
   check('delta: no other tenant items', !delta.items.some((i) => i.itemCode.startsWith('B-')))
 
   // small pages still deliver everything once

@@ -211,8 +211,9 @@ async function main() {
       const c = await json(payLayaway(req('POST', `/api/layaways/${l.body.id}/payments`, { amount: 100, paymentMethod: 'credit' }), ctx(l.body.id)))
       check('layaway: store-credit payment rejected → 400', c.status === 400, short(c))
       const del = await json(deleteLayaway(req('DELETE', `/api/layaways/${l.body.id}`), ctx(l.body.id)))
-      check('layaway: delete with only the deposit → 200 and deposit leaves the GL (cash & advance net 0)',
-        del.status === 200 && await net(admin, F, A.cash, l.body.id) === 0 && await net(admin, F, A.adv, l.body.id) === 0,
+      // A layaway with money on it is cancelled (deposit → store credit), never deleted
+      check('layaway: delete with a deposit → 400, GL untouched (cash 200 still booked)',
+        del.status === 400 && await net(admin, F, A.cash, l.body.id) === 200,
         `${short(del)} cash=${await net(admin, F, A.cash, l.body.id)}`)
     })
 
@@ -270,7 +271,7 @@ async function main() {
       await admin.query(`INSERT INTO quotations (tenant_id, quotation_no, customer_id, subtotal, discount, tax, total, status)
         VALUES ($1,'QT-X',$2,0,0,0,0,'draft')`, [F.tenantId, cust2])
       const del2 = await json(deleteCustomer(req('DELETE', `/api/customers/${cust2}`), ctx(cust2)))
-      check('customer delete: other history (quotation) → 400, not a 500 FK error', del2.status === 400, short(del2))
+      check('customer delete: other history (quotation) → archived to the recycle bin, not a 500', del2.status === 200 && del2.body.archived === true, short(del2))
     })
 
     // ================= quotations =================

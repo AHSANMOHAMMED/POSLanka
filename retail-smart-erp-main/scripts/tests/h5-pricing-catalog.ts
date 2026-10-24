@@ -192,7 +192,7 @@ async function main() {
       check('duplicate unit code (case-insensitive) → 409', dup.status === 409, short(dup.body))
       const pcs = (u.body as unknown as Array<{ id: string; code: string }>).find((x) => x.code === 'pcs')!
       const del = await json(await deleteUnit(req('DELETE', `/api/units/${pcs.id}`), ctx(pcs.id)))
-      check('unit used as an item base unit cannot be deleted', del.status === 409, short(del.body))
+      check('unit used as an item base unit → archived (items keep their unit)', del.status === 200 && del.body.archived === true, short(del.body))
     })
 
     // ---------- 3. unit conversions + extra barcodes
@@ -376,7 +376,7 @@ async function main() {
       await admin.query(`UPDATE promotions SET usage_count = 3 WHERE id = $1`, [bogoId])
       const d = await json(await deletePromotion(req('DELETE', `/api/promotions/${bogoId}`), ctx(bogoId)))
       const row = (await admin.query(`SELECT is_active FROM promotions WHERE id=$1`, [bogoId])).rows[0]
-      check('used promotion is deactivated, not deleted', d.status === 200 && d.body.deactivated === true && row?.is_active === false, short(d.body))
+      check('used promotion is deactivated (recycle bin), not deleted', d.status === 200 && d.body.archived === true && row?.is_active === false, short(d.body))
     })
 
     // ---------- 10. checkout (POST /api/sales prices with the engine)
