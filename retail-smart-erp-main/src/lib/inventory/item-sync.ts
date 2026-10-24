@@ -71,6 +71,8 @@ export interface SyncItem {
   name: string
   barcode: string | null
   pluCode: string | null
+  /** Pharmacy: generic name (searchable on the device) */
+  genericName: string | null
   sku: string | null
   sellingPrice: string
   taxTemplateId: string | null
@@ -111,6 +113,7 @@ interface Row {
   name: string
   barcode: string | null
   plu_code: string | null
+  generic_name: string | null
   sku: string | null
   selling_price: string
   tax_template_id: string | null
@@ -160,7 +163,7 @@ export async function fetchItemSyncPage(db: TenantDb, opts: ItemSyncOptions): Pr
 
   const rows = rowsOf<Row>(await db.execute(sql`
     WITH c AS (
-      SELECT i.id, i.item_code, i.name, i.barcode, i.plu_code, i.sku, i.selling_price::text AS selling_price,
+      SELECT i.id, i.item_code, i.name, i.barcode, i.plu_code, i.generic_name, i.sku, i.selling_price::text AS selling_price,
              i.tax_template_id, i.unit, i.is_weighable, i.track_stock, i.track_serial_numbers, i.is_gift_card,
              i.category_id, cat.name AS category_name, i.image_url, i.is_active,
              i.updated_at AS item_updated_at,
@@ -171,7 +174,7 @@ export async function fetchItemSyncPage(db: TenantDb, opts: ItemSyncOptions): Pr
       LEFT JOIN categories cat ON cat.id = i.category_id
       WHERE ${sql.join(filters, sql` AND `)}
     )
-    SELECT c.id, c.item_code, c.name, c.barcode, c.plu_code, c.sku, c.selling_price, c.tax_template_id, c.unit,
+    SELECT c.id, c.item_code, c.name, c.barcode, c.plu_code, c.generic_name, c.sku, c.selling_price, c.tax_template_id, c.unit,
            c.is_weighable, c.track_stock, c.track_serial_numbers, c.is_gift_card, c.category_id, c.category_name,
            c.image_url, c.is_active, c.current_stock, c.reserved_stock,
            to_char(c.item_updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS updated_at,
@@ -217,6 +220,7 @@ export async function fetchItemSyncPage(db: TenantDb, opts: ItemSyncOptions): Pr
       name: r.name,
       barcode: r.barcode,
       pluCode: r.plu_code,
+      genericName: r.generic_name,
       sku: r.sku,
       sellingPrice: r.selling_price,
       taxTemplateId: r.tax_template_id,

@@ -26,6 +26,7 @@ export interface LocalItem {
   name: string
   barcode: string | null
   pluCode: string | null
+  genericName?: string | null
   sku: string | null
   sellingPrice: string
   taxTemplateId: string | null
@@ -292,7 +293,8 @@ async function applyPage(db: SQLite.SQLiteDatabase, page: SyncPage, gen: number)
           $id: it.id,
           $itemCode: it.itemCode || '',
           $name: it.name,
-          $nameLc: (it.name || '').toLowerCase(),
+          // Generic name (pharmacy) folded into the search text: "paracetamol" finds Panadol
+          $nameLc: `${it.name || ''}${it.genericName ? ` ${it.genericName}` : ''}`.toLowerCase(),
           $barcode: it.barcode || null,
           $plu: it.pluCode || null,
           $sku: it.sku || null,
