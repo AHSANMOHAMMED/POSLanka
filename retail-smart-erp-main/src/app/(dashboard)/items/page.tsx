@@ -267,7 +267,7 @@ export default function ItemsPage() {
         } else {
           refreshPaginated()
         }
-        toast.success('Item deleted successfully')
+        toast.success('Item moved to recycle bin')
       } else {
         toast.error('Failed to delete item')
       }
@@ -489,7 +489,7 @@ export default function ItemsPage() {
                     </button>
                     <button
                       onClick={() => setDeleteId(item.id)}
-                      aria-label={`Delete ${item.name}`}
+                      aria-label={`Move ${item.name} to recycle bin`}
                       className="p-2 text-red-600 hover:bg-red-50 rounded ml-1"
                     >
                       <Trash2 size={18} />
@@ -530,9 +530,9 @@ export default function ItemsPage() {
         isOpen={!!deleteId}
         onClose={() => setDeleteId(null)}
         onConfirm={handleDelete}
-        title="Delete Item"
-        message="Are you sure you want to delete this item? This action cannot be undone."
-        confirmText="Delete"
+        title="Move Item to Recycle Bin"
+        message="Move this item to the recycle bin? Only the platform administrator can restore it."
+        confirmText="Move to recycle bin"
         variant="danger"
         processing={deleting}
       />

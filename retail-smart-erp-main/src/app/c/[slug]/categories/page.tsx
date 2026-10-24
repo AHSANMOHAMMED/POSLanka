@@ -58,7 +58,7 @@ export default function CategoriesPage() {
       const res = await fetch(`/api/categories/${deleteConfirm.id}`, { method: 'DELETE' })
       if (res.ok) {
         fetchCategories()
-        toast.success('Category deleted')
+        toast.success('Category moved to recycle bin')
       } else {
         const data = await res.json()
         toast.error(data.error || 'Failed to delete category')
@@ -179,7 +179,7 @@ export default function CategoriesPage() {
                     </button>
                     <button
                       onClick={() => setDeleteConfirm({ open: true, id: category.id, name: category.name })}
-                      aria-label={`Delete ${category.name}`}
+                      aria-label={`Move ${category.name} to recycle bin`}
                       className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/50 rounded ml-1 transition-colors"
                     >
                       <Trash2 size={16} />
@@ -215,9 +215,9 @@ export default function CategoriesPage() {
         isOpen={deleteConfirm.open}
         onClose={() => setDeleteConfirm({ open: false, id: null, name: '' })}
         onConfirm={handleDelete}
-        title={`Delete ${t.category}`}
-        message={`Are you sure you want to delete "${deleteConfirm.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title={`Move ${t.category} to recycle bin`}
+        message={`Move "${deleteConfirm.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
       />
 

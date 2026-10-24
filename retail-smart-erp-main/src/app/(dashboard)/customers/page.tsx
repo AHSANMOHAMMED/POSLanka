@@ -191,7 +191,7 @@ export default function CustomersPage() {
         if (selectedCustomer?.id === deleteConfirm.id) {
           setSelectedCustomer(null)
         }
-        toast.success('Customer deleted')
+        toast.success('Customer moved to recycle bin')
       } else {
         const data = await res.json()
         toast.error(data.error || 'Failed to delete customer')
@@ -321,7 +321,7 @@ export default function CustomersPage() {
                         </button>
                         <button
                           onClick={() => setDeleteConfirm({ open: true, id: customer.id, name: customer.name })}
-                          aria-label={`Delete ${customer.name}`}
+                          aria-label={`Move ${customer.name} to recycle bin`}
                           className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/50 rounded ml-1 transition-colors"
                         >
                           <Trash2 size={16} />
@@ -581,9 +581,9 @@ export default function CustomersPage() {
         isOpen={deleteConfirm.open}
         onClose={() => setDeleteConfirm({ open: false, id: null, name: '' })}
         onConfirm={handleDelete}
-        title={`Delete ${t.customer}`}
-        message={`Are you sure you want to delete "${deleteConfirm.name}"? This action cannot be undone.`}
-        confirmText="Delete"
+        title={`Move ${t.customer} to recycle bin`}
+        message={`Move "${deleteConfirm.name}" to the recycle bin? Only the platform administrator can restore it.`}
+        confirmText="Move to recycle bin"
         variant="danger"
       />
 
