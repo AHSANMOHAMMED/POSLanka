@@ -2,6 +2,19 @@ import { z } from 'zod'
 import { receiptSettingsPatchSchema } from '@/lib/print/receipt-settings'
 import { uuidSchema, optionalUuid, paymentMethodSchema } from './common'
 
+/**
+ * pos_profiles.receipt_settings: receipt overrides plus the counter's cashier permissions
+ * (quick add, cart clear, no-sale drawer, customer display), which the POS profile form saves there.
+ */
+const posProfileReceiptSettingsSchema = receiptSettingsPatchSchema.extend({
+  cashierPermissions: z.object({
+    allowQuickItemAdd: z.boolean(),
+    allowCartClear: z.boolean(),
+    allowNoSaleDrawerOpen: z.boolean(),
+    customerDisplay: z.boolean(),
+  }).partial().strict().optional(),
+}).strict()
+
 // GET /api/pos-opening-entries
 export const posOpeningListSchema = z.object({
   status: z.enum(['open', 'closed', 'all']).optional(),
@@ -139,7 +152,7 @@ export const createPosProfileSchema = z.object({
   showLogoOnReceipt: z.boolean().default(true),
   receiptHeader: z.string().max(2000).nullish(),
   receiptFooter: z.string().max(2000).nullish(),
-  receiptSettings: receiptSettingsPatchSchema.optional(),
+  receiptSettings: posProfileReceiptSettingsSchema.optional(),
   // Payment
   defaultPaymentMethod: z.string().max(50).default('cash'),
   allowCreditSale: z.boolean().default(true),
@@ -177,7 +190,7 @@ export const updatePosProfileSchema = z.object({
   showLogoOnReceipt: z.boolean().optional(),
   receiptHeader: z.string().max(2000).nullish(),
   receiptFooter: z.string().max(2000).nullish(),
-  receiptSettings: receiptSettingsPatchSchema.optional(),
+  receiptSettings: posProfileReceiptSettingsSchema.optional(),
   defaultPaymentMethod: z.string().max(50).optional(),
   allowCreditSale: z.boolean().optional(),
   status: z.enum(['active', 'inactive']).optional(),

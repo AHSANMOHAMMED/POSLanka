@@ -34,10 +34,19 @@ export type PosDisplayState = {
   total: number
   status: PosDisplayStatus
   changeDue?: number
+  /** Amount the customer handed over (cash) */
+  amountPaid?: number
   invoiceNo?: string
+  /** Shop the POS belongs to: a display of another shop in the same browser ignores it */
+  tenantSlug?: string
   /** ISO timestamp of when this state was produced */
   updatedAt: string
+  /** ISO timestamp of the last (re)send: the POS re-sends every few seconds as a heartbeat */
+  sentAt?: string
 }
+
+/** How often the POS re-sends its state (the display shows "Waiting for POS" after a few missed beats) */
+export const POS_DISPLAY_HEARTBEAT_MS = 15_000
 
 export type PosDisplaySubscriber = (state: PosDisplayState) => void
 

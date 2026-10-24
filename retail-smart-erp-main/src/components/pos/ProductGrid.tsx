@@ -189,7 +189,7 @@ export function ProductGrid({
   }, [items, search, sortBy])
 
   return (
-    <div className="w-full lg:w-[60%] flex-1 flex flex-col min-w-0 overflow-hidden bg-slate-50/50">
+    <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden bg-slate-50/50 dark:bg-gray-900">
       {/* Search Header */}
       <div className="bg-white border-b px-4 py-3">
         <div className="flex flex-wrap items-center gap-3">
@@ -218,7 +218,8 @@ export function ProductGrid({
             <FormInput
               id={POS_SEARCH_INPUT_ID}
               type="text"
-              placeholder={terms.searchPlaceholder}
+              placeholder={`${terms.searchPlaceholder}  (F1)`}
+              title="Search / scan (F1 or Esc). ↓ = results or cart · * = cart · ? = all shortcuts"
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
               onKeyDown={handleSearchKeyDown}
@@ -248,10 +249,12 @@ export function ProductGrid({
           {!isReturnMode && (
             <button
               onClick={() => cartHasItems ? onReturnModeConfirm() : onOpenReturnLookup()}
+              title="Return / refund (F6)"
               className="flex items-center gap-2 px-4 py-3 bg-red-50 text-red-700 rounded-md font-medium hover:bg-red-100 transition-colors flex-shrink-0"
             >
               <RotateCcw size={18} />
-              Return
+              <span className="hidden sm:inline">Return</span>
+              <kbd className="text-[11px] bg-red-200/60 text-red-900 px-1 py-0.5 rounded font-mono font-extrabold">F6</kbd>
             </button>
           )}
         </div>
@@ -329,7 +332,7 @@ export function ProductGrid({
 
         {/* Products Grid or List */}
         {viewMode === 'grid' ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+          <div className="grid gap-3 min-[1920px]:gap-4 grid-cols-[repeat(auto-fill,minmax(150px,1fr))] sm:grid-cols-[repeat(auto-fill,minmax(170px,1fr))] min-[1920px]:grid-cols-[repeat(auto-fill,minmax(200px,1fr))] min-[2560px]:grid-cols-[repeat(auto-fill,minmax(230px,1fr))]">
             {filteredItems.map(item => {
               const stock = parseFloat(item.availableStock)
               const isLowStock = item.trackStock && stock <= 5 && stock > 0
@@ -340,7 +343,9 @@ export function ProductGrid({
                   key={item.id}
                   onClick={() => onAddToCart(item)}
                   disabled={isOutOfStock && !isReturnMode}
-                  className={`bg-white dark:bg-gray-800 rounded-xl border p-3.5 text-left transition-all hover:shadow-md hover:border-teal-600 group relative ${
+                  data-pos-tile="1"
+                  title={`${item.name} — click or Enter to add 1`}
+                  className={`bg-white dark:bg-gray-800 rounded-xl border p-3.5 min-[1920px]:p-4 text-left flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 transition-all hover:shadow-md hover:border-teal-600 group relative ${
                     isOutOfStock && !isReturnMode
                       ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-gray-700'
                       : 'border-slate-200 dark:border-gray-700 hover:-translate-y-0.5'
@@ -366,7 +371,7 @@ export function ProductGrid({
                     )}
                   </div>
 
-                  <h3 className="font-bold text-slate-900 dark:text-white text-sm leading-snug line-clamp-2 min-h-[36px] mb-1 group-hover:text-teal-700 dark:group-hover:text-teal-400 transition-colors">
+                  <h3 className="font-bold text-slate-900 dark:text-white text-sm min-[1920px]:text-base min-[2560px]:text-lg leading-snug line-clamp-2 min-h-[2.5em] mb-1 group-hover:text-teal-700 dark:group-hover:text-teal-400 transition-colors">
                     {item.name}
                   </h3>
                   {(item.genericName || item.drugSchedule === 'prescription' || item.drugSchedule === 'controlled') && (
@@ -406,17 +411,14 @@ export function ProductGrid({
                     </div>
                   )}
 
-                  <div className="flex items-end justify-between pt-2 border-t border-slate-100 dark:border-gray-700 mt-2">
-                    <span className="text-base font-bold text-teal-800 dark:text-teal-400 font-mono">
+                  <div className="flex items-end justify-between pt-2 border-t border-slate-100 dark:border-gray-700 mt-auto">
+                    <span className="text-base min-[1920px]:text-lg min-[2560px]:text-xl font-bold text-teal-800 dark:text-teal-400 font-mono">
                       {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
                       {config.enableWeighableItems && item.isWeighable ? (
                         <span className="text-xs font-normal text-slate-400">/{item.unit || 'kg'}</span>
                       ) : item.unit && item.unit !== 'pcs' ? (
                         <span className="text-xs font-normal text-slate-400">/{item.unit}</span>
                       ) : null}
-                    </span>
-                    <span className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-gray-700 group-hover:bg-teal-700 group-hover:text-white flex items-center justify-center text-slate-700 dark:text-gray-200 text-xs font-bold transition-colors">
-                      +
                     </span>
                   </div>
                 </button>
@@ -436,7 +438,8 @@ export function ProductGrid({
                   key={item.id}
                   onClick={() => onAddToCart(item)}
                   disabled={isOutOfStock && !isReturnMode}
-                  className={`w-full bg-white dark:bg-gray-800 rounded-xl border px-3.5 py-2.5 text-left transition-all hover:shadow-xs hover:border-teal-600 flex items-center justify-between gap-3 group ${
+                  data-pos-tile="1"
+                  className={`w-full bg-white dark:bg-gray-800 rounded-xl border px-3.5 py-2.5 min-[1920px]:py-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 transition-all hover:shadow-xs hover:border-teal-600 flex items-center justify-between gap-3 group ${
                     isOutOfStock && !isReturnMode
                       ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-gray-700'
                       : 'border-slate-200 dark:border-gray-700 hover:bg-teal-50/20 dark:hover:bg-teal-950/10'
@@ -448,7 +451,7 @@ export function ProductGrid({
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-900 dark:text-white text-sm truncate group-hover:text-teal-700 dark:group-hover:text-teal-400">
+                        <span className="font-bold text-slate-900 dark:text-white text-sm min-[1920px]:text-base truncate group-hover:text-teal-700 dark:group-hover:text-teal-400">
                           {item.name}
                         </span>
                         {item.categoryName && (
@@ -468,11 +471,8 @@ export function ProductGrid({
                   </div>
 
                   <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className="font-mono font-bold text-sm text-teal-800 dark:text-teal-400">
+                    <span className="font-mono font-bold text-sm min-[1920px]:text-base text-teal-800 dark:text-teal-400">
                       {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
-                    </span>
-                    <span className="w-6 h-6 rounded-md bg-slate-100 dark:bg-gray-700 group-hover:bg-teal-700 group-hover:text-white flex items-center justify-center text-slate-700 dark:text-gray-200 text-xs font-bold transition-colors">
-                      +
                     </span>
                   </div>
                 </button>

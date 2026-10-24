@@ -131,6 +131,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
     allowQuickItemAdd: true,
     allowCartClear: true,
     allowNoSaleDrawerOpen: true,
+    customerDisplay: true,
   })
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>([
     { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
@@ -198,12 +199,14 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
             allowQuickItemAdd: cp.allowQuickItemAdd !== false,
             allowCartClear: cp.allowCartClear !== false,
             allowNoSaleDrawerOpen: cp.allowNoSaleDrawerOpen !== false,
+            customerDisplay: cp.customerDisplay !== false,
           })
         } else {
           setCashierPermissions({
             allowQuickItemAdd: true,
             allowCartClear: true,
             allowNoSaleDrawerOpen: true,
+            customerDisplay: true,
           })
         }
       } else {
@@ -213,6 +216,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
           allowQuickItemAdd: true,
           allowCartClear: true,
           allowNoSaleDrawerOpen: true,
+          customerDisplay: true,
         })
         setPaymentMethods([
           { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
@@ -616,6 +620,18 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
                         />
                         <span className="text-sm dark:text-gray-300">
                           Allow No-Sale Cash Drawer Open without supervisor PIN
+                        </span>
+                      </label>
+
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={cashierPermissions.customerDisplay}
+                          onChange={(e) => setCashierPermissions(prev => ({ ...prev, customerDisplay: e.target.checked }))}
+                          className="rounded border-gray-300 dark:border-gray-600"
+                        />
+                        <span className="text-sm dark:text-gray-300">
+                          Customer display (second screen) on this counter
                         </span>
                       </label>
                     </div>

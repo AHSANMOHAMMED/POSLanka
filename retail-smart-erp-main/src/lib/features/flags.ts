@@ -24,6 +24,7 @@ export const FEATURE_FLAGS = [
   'sales_orders',
   'layaways',
   'commissions',
+  'customer_display',
   // Stock
   'multi_warehouse',
   'stock_takes',
@@ -96,6 +97,9 @@ export const FEATURE_DEFS: FeatureDef[] = [
   { key: 'commissions', group: 'Sales & POS', default: true, label: 'Sales commissions',
     description: 'Commission rates and payouts for staff.',
     hrefs: ['/settings/commissions'], api: ['/api/commissions', '/api/commission-rates', '/api/commission-payouts'] },
+  { key: 'customer_display', group: 'Sales & POS', default: true, label: 'Customer display (second screen)',
+    description: 'A customer-facing screen opened from the POS (Alt+D): live cart, totals, change due and a thank-you screen. Can also be turned off per counter (POS profile).',
+    businessTypes: ['retail', 'supermarket', 'pharmacy', 'restaurant'], hrefs: ['/pos/display'] },
 
   // ------------------------------------------------------------------ Stock
   { key: 'multi_warehouse', group: 'Stock', default: false, label: 'Multiple branches / warehouses',

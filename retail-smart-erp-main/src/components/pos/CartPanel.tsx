@@ -8,6 +8,13 @@ import { TableSelector } from './TableSelector'
 import { useTerminology } from '@/hooks/useTerminology'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { CartItem, Customer, Vehicle, HeldSale, SaleForReturn, LoyaltyProgram, POSBusinessConfig, RestaurantTable } from './types'
+import { useEffect, useRef } from 'react'
+import { Kbd } from './Kbd'
+
+/** DOM id of the focusable cart line list (keyboard: arrows select, digits = quantity, + - Del) */
+export const POS_CART_LIST_ID = 'pos-cart-list'
+/** DOM id wrapping the customer picker (Alt+C opens it) */
+export const POS_CUSTOMER_PICKER_ID = 'pos-customer-picker'
 
 interface CartPanelProps {
   cart: CartItem[]
@@ -73,6 +80,13 @@ interface CartPanelProps {
   cartPromotions?: Array<{ promotionId: string; label: string; amount: number }>
   couponCode?: string
   onCouponChange?: (code: string) => void
+
+  /** Keyboard cart: the selected line, the quantity being typed, and whether the cart has focus */
+  selectedLineId?: string | null
+  qtyBuffer?: string
+  cartFocused?: boolean
+  onSelectLine?: (cartLineId: string) => void
+  onCartFocusChange?: (focused: boolean) => void
 }
 
 export function CartPanel({
@@ -125,17 +139,30 @@ export function CartPanel({
   cartPromotions,
   couponCode,
   onCouponChange,
+  selectedLineId,
+  qtyBuffer = '',
+  cartFocused = false,
+  onSelectLine,
+  onCartFocusChange,
 }: CartPanelProps) {
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()
+  const listRef = useRef<HTMLDivElement>(null)
+
+  // Keep the selected line in view
+  useEffect(() => {
+    if (!selectedLineId) return
+    const el = listRef.current?.querySelector(`[data-cart-line="${CSS.escape(selectedLineId)}"]`) as HTMLElement | null
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [selectedLineId, cart.length])
 
   return (
-    <div className="w-full lg:w-[40%] min-w-[360px] xl:min-w-[420px] flex-shrink-0 flex flex-col bg-white border-l border-slate-200 shadow-xl">
+    <div className="w-full max-h-[60vh] md:max-h-none md:w-[clamp(340px,32vw,640px)] flex-shrink-0 flex flex-col min-h-0 bg-white dark:bg-gray-900 border-t md:border-t-0 md:border-l border-slate-200 dark:border-gray-700 shadow-xl">
       {/* Cart Header */}
       <div className={`px-5 py-4 border-b ${isReturnMode ? 'bg-red-50' : 'bg-white'}`}>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h2 className={`text-xl font-bold ${isReturnMode ? 'text-red-700' : 'text-gray-900'}`}>
+            <h2 className={`text-xl min-[1920px]:text-2xl font-bold ${isReturnMode ? 'text-red-700' : 'text-gray-900 dark:text-white'}`}>
               {isReturnMode ? 'Return' : terms.currentSale}
             </h2>
             {isReturnMode && returnAgainstSale && (
@@ -169,7 +196,7 @@ export function CartPanel({
             <div className="w-8 h-8 bg-blue-100 rounded flex items-center justify-center">
               <User size={16} className="text-blue-600" />
             </div>
-            <div className="flex-1">
+            <div className="flex-1 min-w-0" id={POS_CUSTOMER_PICKER_ID}>
               <CreatableSelect
                 options={customers.map(c => ({ value: c.id, label: c.name }))}
                 value={selectedCustomer?.id || ''}
@@ -179,6 +206,7 @@ export function CartPanel({
                 createLabel="Add customer"
               />
             </div>
+            <Kbd title="Select / add customer">Alt+C</Kbd>
           </div>
 
           {config.showVehicleSelector && (
@@ -238,8 +266,16 @@ export function CartPanel({
         )}
       </div>
 
-      {/* Cart Items */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Cart Items: focusable; arrows select a line, digits set its quantity, + - change it, Del removes it */}
+      <div
+        id={POS_CART_LIST_ID}
+        ref={listRef}
+        tabIndex={-1}
+        onFocus={() => onCartFocusChange?.(true)}
+        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onCartFocusChange?.(false) }}
+        aria-label="Cart lines"
+        className={`flex-1 min-h-0 overflow-y-auto outline-none ${cartFocused ? 'ring-2 ring-inset ring-teal-500/60' : ''}`}
+      >
         {cart.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
             <div className="w-20 h-20 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
@@ -249,17 +285,39 @@ export function CartPanel({
             <p className="text-gray-400 text-sm mt-1">Add items to get started</p>
           </div>
         ) : (
-          <div className="p-4 space-y-3">
-            {cart.map((item) => (
+          <div className="p-3 min-[1920px]:p-4 space-y-2.5">
+            {cartFocused && (
+              <p className="text-[11px] font-mono text-teal-700 dark:text-teal-400 px-1">
+                ↑↓ line · type qty + Enter · + / − · Del remove · Esc search
+              </p>
+            )}
+            {cart.map((item) => {
+              const isSelected = item.cartLineId === selectedLineId
+              const typing = isSelected && cartFocused && qtyBuffer !== ''
+              return (
               <div
                 key={item.cartLineId}
-                className={`rounded-md border-2 p-4 ${
-                  isReturnMode ? 'bg-red-50 border-red-200' : 'bg-gray-50 border-gray-100'
+                data-cart-line={item.cartLineId}
+                onMouseDown={(e) => {
+                  // Clicking the card (not an input / button inside it) selects the line and focuses the cart
+                  onSelectLine?.(item.cartLineId)
+                  const t = e.target as HTMLElement
+                  if (t.closest('input, select, button, textarea')) return
+                  e.preventDefault()
+                  listRef.current?.focus()
+                }}
+                aria-selected={isSelected}
+                className={`rounded-md border-2 p-3 min-[1920px]:p-4 cursor-pointer transition-colors ${
+                  isReturnMode
+                    ? `bg-red-50 ${isSelected ? 'border-red-500' : 'border-red-200'}`
+                    : isSelected
+                      ? `bg-teal-50/70 dark:bg-teal-950/30 ${cartFocused ? 'border-teal-600' : 'border-teal-300 dark:border-teal-800'}`
+                      : 'bg-gray-50 dark:bg-gray-800 border-gray-100 dark:border-gray-700'
                 }`}
               >
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1 min-w-0">
-                    <h4 className="font-semibold text-gray-900 truncate">{item.name}</h4>
+                    <h4 className="font-semibold text-gray-900 dark:text-white truncate min-[1920px]:text-lg">{item.name}</h4>
                     {isReturnMode && (
                       <span className="inline-block px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded mt-1">
                         Return Item
@@ -334,14 +392,21 @@ export function CartPanel({
                   <button
                     onClick={() => onRemoveFromCart(item.cartLineId)}
                     className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                    title="Remove line (select it and press Del)"
+                    aria-label={`Remove ${item.name}`}
                   >
                     <Trash2 size={18} />
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   {/* Quantity Controls */}
-                  <div className="flex items-center gap-1 bg-white rounded border p-1">
+                  <div className={`relative flex items-center gap-1 bg-white dark:bg-gray-900 rounded border p-1 ${typing ? 'ring-2 ring-teal-500' : ''}`}>
+                    {typing && (
+                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-1 rounded bg-teal-600 text-white font-mono font-extrabold text-lg">
+                        <span className="text-[11px] font-sans font-semibold opacity-80">Qty</span>{qtyBuffer}<span className="animate-pulse">▌</span>
+                      </div>
+                    )}
                     <button
                       onClick={() => onUpdateQuantity(item.cartLineId, -1)}
                       className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors"
@@ -377,7 +442,7 @@ export function CartPanel({
 
                   {/* Price */}
                   <div className="text-right">
-                    <div className={`text-lg font-bold ${item.total < 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                    <div className={`text-lg min-[1920px]:text-xl font-bold ${item.total < 0 ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
                       {currencyCode} {Math.abs(item.total - (item.promotionDiscount || 0)).toFixed(2)}
                     </div>
                     {!!item.promotionDiscount && item.promotionDiscount > 0 && (
@@ -403,7 +468,8 @@ export function CartPanel({
                   </div>
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
@@ -419,6 +485,7 @@ export function CartPanel({
             <div className="flex items-center gap-2 text-amber-700">
               <Clock size={18} />
               <span className="font-medium">{heldSales.length} Held Sale{heldSales.length !== 1 ? 's' : ''}</span>
+              <Kbd>F3</Kbd>
             </div>
             <ChevronRight size={18} className="text-amber-600" />
           </button>
@@ -463,6 +530,7 @@ export function CartPanel({
               <span className="flex items-center gap-1">
                 <Tag size={14} />
                 Discount
+                {allowDiscount && <Kbd className="ml-0.5">F5</Kbd>}
                 {saleDiscount.value > 0 && (
                   <span className="text-xs">
                     ({saleDiscount.type === 'percentage' ? `${saleDiscount.value}%` : 'Fixed'})
@@ -517,9 +585,9 @@ export function CartPanel({
               <span>-{currencyCode} {loyaltyRedeemValue.toFixed(2)}</span>
             </div>
           )}
-          <div className={`flex justify-between items-baseline text-2xl font-black pt-3 border-t border-slate-200 ${isReturnMode ? 'text-red-700' : 'text-teal-950 font-mono'}`}>
-            <span className="text-sm font-sans font-bold text-slate-500 uppercase tracking-wider">{isReturnMode ? 'Refund Due' : 'Total Payable'}</span>
-            <span className="text-2xl font-mono font-black text-teal-800">
+          <div className={`flex justify-between items-baseline gap-2 text-2xl font-black pt-3 border-t border-slate-200 ${isReturnMode ? 'text-red-700' : 'text-teal-950 font-mono'}`}>
+            <span className="text-sm min-[1920px]:text-base font-sans font-bold text-slate-500 uppercase tracking-wider">{isReturnMode ? 'Refund Due' : 'Total Payable'}</span>
+            <span className="text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-mono font-black text-teal-800 dark:text-teal-300 break-all text-right">
               {currencyCode} {Math.abs(isReturnMode ? total : Math.max(0, total - loyaltyRedeemValue + (config.enableTips ? (tipAmount || 0) : 0))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
@@ -543,30 +611,36 @@ export function CartPanel({
           <button
             onClick={onClearCart}
             disabled={cart.length === 0}
-            className="py-3.5 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors disabled:opacity-50"
+            title="New sale / clear cart (Ctrl+Del or Alt+N)"
+            className="py-3.5 min-[1920px]:py-4 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors disabled:opacity-50 flex flex-col items-center justify-center leading-tight"
           >
             Clear
+            <Kbd className="mt-0.5">Ctrl+Del</Kbd>
           </button>
           {!isReturnMode && (
             <button
               onClick={onHoldSale}
               disabled={cart.length === 0 || holdingInProgress}
-              className="py-3.5 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl font-bold hover:bg-amber-100 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+              title="Hold sale (F2)"
+              className="py-3.5 min-[1920px]:py-4 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl font-bold hover:bg-amber-100 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 flex-wrap"
             >
               <Pause size={17} />
               Hold
+              <Kbd>F2</Kbd>
             </button>
           )}
           <button
             onClick={onOpenPayment}
             disabled={cart.length === 0}
-            className={`py-3.5 text-white rounded-xl font-extrabold shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 ${
+            title="Payment (F9)"
+            className={`py-3.5 min-[1920px]:py-4 min-[1920px]:text-lg text-white rounded-xl font-extrabold shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-1.5 flex-wrap ${
               isReturnMode
                 ? 'bg-gradient-to-r from-red-600 to-red-500 col-span-2'
                 : 'bg-teal-700 hover:bg-teal-800 shadow-teal-900/20'
             }`}
           >
             {isReturnMode ? 'Process Refund' : `${terms.payNow} →`}
+            <Kbd tone="dark">F9</Kbd>
           </button>
         </div>
       </div>
