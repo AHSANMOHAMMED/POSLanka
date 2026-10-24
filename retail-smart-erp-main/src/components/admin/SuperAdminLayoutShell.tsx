@@ -305,9 +305,11 @@ function HealthPill() {
 const noopSubscribe = () => () => {}
 
 function ThemeToggle() {
-  const { theme, setTheme, resolvedTheme } = useTheme()
-  // Theme is read from localStorage on the client only; render a neutral icon until hydrated.
+  const { theme: storedTheme, setTheme, resolvedTheme } = useTheme()
+  // Theme is read from localStorage on the client only; render as "system" (what the server
+  // renders) until hydrated so the icon, title and aria-label match the server HTML.
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false)
+  const theme = mounted ? storedTheme : 'system'
   const next = theme === 'light' ? 'dark' : theme === 'dark' ? 'system' : 'light'
   const Icon = !mounted || theme === 'system' ? Monitor : resolvedTheme === 'dark' ? Moon : Sun
   const label = theme === 'system' ? 'System theme' : theme === 'dark' ? 'Dark theme' : 'Light theme'
@@ -484,6 +486,8 @@ function VendorSearch({ autoFocus }: { autoFocus?: boolean }) {
       <input
         ref={inputRef}
         type="search"
+        // Autofill / temp-mail extensions add style and data-* attributes before React hydrates
+        suppressHydrationWarning
         autoFocus={autoFocus}
         value={q}
         onChange={(e) => {
