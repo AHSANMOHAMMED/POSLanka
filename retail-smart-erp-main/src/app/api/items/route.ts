@@ -255,8 +255,15 @@ export async function GET(request: NextRequest) {
               .where(inArray(stockMovements.itemId, itemIds))
               .groupBy(stockMovements.itemId),
 
+            // Variants of these items, with their stock (a product's stock is on its sizes / colours)
             db
-              .select({ parentItemId: items.parentItemId })
+              .select({
+                parentItemId: items.parentItemId,
+                variantStock: sql<string>`COALESCE(SUM((
+                  SELECT COALESCE(SUM(CAST(ws.current_stock AS DECIMAL)), 0) FROM warehouse_stock ws
+                  WHERE ws.item_id = "items"."id" ${warehouseId ? sql`AND ws.warehouse_id = ${warehouseId}` : sql``}
+                )), 0)`,
+              })
               .from(items)
               .where(and(isNotNull(items.parentItemId), inArray(items.parentItemId, itemIds), eq(items.isActive, true)))
               .groupBy(items.parentItemId),
@@ -309,8 +316,11 @@ export async function GET(request: NextRequest) {
       }
 
       const parentIdSet = new Set<string>()
+      const variantStockMap = new Map<string, number>()
       for (const row of parentRows) {
-        if (row.parentItemId) parentIdSet.add(row.parentItemId)
+        if (!row.parentItemId) continue
+        parentIdSet.add(row.parentItemId)
+        variantStockMap.set(row.parentItemId, parseFloat(row.variantStock || '0'))
       }
 
       const auditUserMap = new Map((auditUsers as Array<{ id: string; name: string | null }>).map(u => [u.id, u]))
@@ -325,7 +335,8 @@ export async function GET(request: NextRequest) {
 
         // Get stock from warehouseStock (aggregated or warehouse-specific)
         const warehouseStockInfo = warehouseStockMap.get(item.id)
-        const current = warehouseStockInfo ? warehouseStockInfo.currentStock : 0
+        // A product with sizes / colours holds no stock itself: show the total of its variants
+        const current = (warehouseStockInfo ? warehouseStockInfo.currentStock : 0) + (variantStockMap.get(item.id) ?? 0)
 
         // Items that don't track stock should always appear available
         const available = item.trackStock

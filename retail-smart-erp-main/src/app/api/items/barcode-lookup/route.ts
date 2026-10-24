@@ -93,6 +93,12 @@ export async function GET(request: NextRequest) {
         }
       }
 
+      // A parent product (sizes / colours) is sold through its variants: the POS opens the picker
+      const variantChild = await db.query.items.findFirst({
+        where: and(eq(items.parentItemId, result.id), eq(items.isActive, true)),
+        columns: { id: true },
+      })
+
       // Scan-derived quantity / price (weighing scale, GS1 net weight / count / price)
       const scanInfo: Record<string, unknown> = {
         symbology: scan.symbology,
@@ -151,6 +157,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         id: result.id,
         productType: result.productType,
+        hasVariants: !!variantChild,
         uom: extra?.uom ?? null,
         uomFactor,
         packQty,
