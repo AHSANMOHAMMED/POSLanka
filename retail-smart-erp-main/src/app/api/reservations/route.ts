@@ -11,6 +11,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { reservationsListSchema, createReservationSchema } from '@/lib/validation/schemas/restaurant'
 import { findTableReservationConflict } from '@/lib/restaurant/reservation-conflicts'
+import { getBranchScope, branchFilter, resolveRecordBranch } from '@/lib/auth/branch-access'
 
 function generateConfirmationCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789' // Exclude confusing chars (0,O,1,I)
@@ -39,6 +40,10 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions
       const conditions = []
+
+      // K4: branch-restricted staff only see their own branches' bookings
+      const branchCond = branchFilter(await getBranchScope(session, db), reservations.warehouseId)
+      if (branchCond) conditions.push(branchCond)
 
       if (status) {
         conditions.push(eq(reservations.status, status))
@@ -139,6 +144,7 @@ export async function POST(request: NextRequest) {
       customerPhone,
       customerEmail,
       tableId,
+      warehouseId: requestedBranch,
       reservationDate,
       reservationTime,
       partySize,
@@ -151,12 +157,14 @@ export async function POST(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Validate table if provided, and refuse to double-book it. The table row is locked so
       // two bookings for the same slot made at the same moment cannot both pass the check.
+      let tableBranch: string | null = null
       if (tableId) {
-        const [table] = await db.select({ id: restaurantTables.id })
+        const [table] = await db.select({ id: restaurantTables.id, warehouseId: restaurantTables.warehouseId })
           .from(restaurantTables).where(eq(restaurantTables.id, tableId)).for('update')
         if (!table) {
           return NextResponse.json({ error: 'Table not found' }, { status: 404 })
         }
+        tableBranch = table.warehouseId
         const conflict = await findTableReservationConflict(db, {
           tableId, reservationDate, reservationTime, estimatedDuration,
         })
@@ -167,6 +175,14 @@ export async function POST(request: NextRequest) {
           }, { status: 409 })
         }
       }
+
+      // K4: the booking is in its table's branch (else the requested / the user's branch), which the
+      // user must be allowed to work with — a guest can't be seated at another branch's table
+      if (tableBranch && requestedBranch && requestedBranch !== tableBranch) {
+        return NextResponse.json({ error: 'That table belongs to another branch' }, { status: 400 })
+      }
+      const branch = await resolveRecordBranch(session, db, tableBranch || requestedBranch)
+      if (branch.error) return branch.error
 
       // Validate customer if provided
       if (customerId) {
@@ -198,6 +214,7 @@ export async function POST(request: NextRequest) {
         customerPhone: customerPhone || null,
         customerEmail: customerEmail || null,
         tableId: tableId || null,
+        warehouseId: branch.warehouseId,
         reservationDate,
         reservationTime,
         partySize,

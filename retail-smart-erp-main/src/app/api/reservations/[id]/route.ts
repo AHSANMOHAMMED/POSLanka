@@ -10,6 +10,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateReservationSchema, deleteReservationSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { findTableReservationConflict } from '@/lib/restaurant/reservation-conflicts'
+import { assertRecordBranch, getBranchScope, canAccessBranch } from '@/lib/auth/branch-access'
 
 // Valid status transitions
 const validStatusTransitions: Record<string, string[]> = {
@@ -40,6 +41,10 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a booking of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, reservations, id)
+      if (branchDenied) return branchDenied
+
       const reservation = await db.query.reservations.findFirst({
         where: eq(reservations.id, id),
         with: {
@@ -98,6 +103,10 @@ export async function PUT(
     } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a booking of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, reservations, id)
+      if (branchDenied) return branchDenied
+
       const result = await db.transaction(async (tx) => {
         // Lock and get current reservation
         const [current] = await tx
@@ -125,9 +134,12 @@ export async function PUT(
         const slotChanged = tableId !== undefined || reservationDate !== undefined
           || reservationTime !== undefined || estimatedDuration !== undefined
         if (nextTableId && slotChanged && ['pending', 'confirmed', 'seated'].includes(nextStatus)) {
-          const [table] = await tx.select({ id: restaurantTables.id })
+          const [table] = await tx.select({ id: restaurantTables.id, warehouseId: restaurantTables.warehouseId })
             .from(restaurantTables).where(eq(restaurantTables.id, nextTableId)).for('update')
           if (!table) throw new Error('TABLE_NOT_FOUND')
+          // K4: a booking stays in its branch — only that branch's tables (and ones the user may use)
+          if (current.warehouseId && table.warehouseId && table.warehouseId !== current.warehouseId) throw new Error('OTHER_BRANCH_TABLE')
+          if (!canAccessBranch(await getBranchScope(session, tx), table.warehouseId)) throw new Error('BRANCH_DENIED')
           const conflict = await findTableReservationConflict(tx, {
             tableId: nextTableId,
             reservationDate: reservationDate ?? String(current.reservationDate),
@@ -148,6 +160,11 @@ export async function PUT(
         if (customerPhone !== undefined) updateData.customerPhone = customerPhone || null
         if (customerEmail !== undefined) updateData.customerEmail = customerEmail || null
         if (tableId !== undefined) updateData.tableId = tableId || null
+        if (!current.warehouseId && nextTableId) {
+          // an older booking without a branch takes its table's
+          const [t] = await tx.select({ warehouseId: restaurantTables.warehouseId }).from(restaurantTables).where(eq(restaurantTables.id, nextTableId))
+          if (t?.warehouseId) updateData.warehouseId = t.warehouseId
+        }
         if (reservationDate !== undefined) updateData.reservationDate = reservationDate
         if (reservationTime !== undefined) updateData.reservationTime = reservationTime
         if (partySize !== undefined) updateData.partySize = partySize
@@ -213,6 +230,12 @@ export async function PUT(
     if (message === 'TABLE_NOT_FOUND') {
       return NextResponse.json({ error: 'Table not found' }, { status: 404 })
     }
+    if (message === 'OTHER_BRANCH_TABLE') {
+      return NextResponse.json({ error: 'That table belongs to another branch' }, { status: 400 })
+    }
+    if (message === 'BRANCH_DENIED') {
+      return NextResponse.json({ error: 'You can only work with your own branch.', code: 'BRANCH_ACCESS_DENIED' }, { status: 403 })
+    }
     if (message.startsWith('DOUBLE_BOOKED:')) {
       return NextResponse.json({ error: message.replace('DOUBLE_BOOKED:', ''), code: 'TABLE_DOUBLE_BOOKED' }, { status: 409 })
     }
@@ -244,6 +267,10 @@ export async function DELETE(
     const cancellationReason = parsed.success ? (parsed.data?.cancellationReason || null) : null
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a booking of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, reservations, id)
+      if (branchDenied) return branchDenied
+
       const result = await db.transaction(async (tx) => {
         // Lock and get current reservation
         const [current] = await tx

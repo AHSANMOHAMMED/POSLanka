@@ -53,6 +53,8 @@ import { GET as getROrder, PUT as updateROrder } from '@/app/api/restaurant-orde
 import { POST as addROrderItem } from '@/app/api/restaurant-orders/[id]/items/route'
 import { GET as listKitchen } from '@/app/api/kitchen-orders/route'
 import { GET as getKitchen } from '@/app/api/kitchen-orders/[id]/route'
+import { GET as listReservations, POST as createReservation } from '@/app/api/reservations/route'
+import { GET as getReservation, PUT as updateReservation } from '@/app/api/reservations/[id]/route'
 import { GET as listAppointments, POST as createAppointment } from '@/app/api/appointments/route'
 import { GET as getAppointment, PUT as updateAppointment } from '@/app/api/appointments/[id]/route'
 import { GET as listReqs, POST as createReq } from '@/app/api/purchase-requisitions/route'
@@ -478,6 +480,28 @@ async function main() {
       check('kitchen display of Colombo: no Kandy order', kitchen.status === 200 && kids.includes(take.body.id) && !kids.includes(oB.body.id), short(kids))
       const gk = await json(await getKitchen(req('GET', `/api/kitchen-orders/${kB}`), ctx(kB)))
       check('… opening the Kandy kitchen ticket → 403', denied(gk), short(gk.body))
+
+      // reservations: a booking is in its table's branch
+      const booking = { customerName: 'Guest', reservationDate: '2030-01-15', reservationTime: '19:00', partySize: 2 }
+      const rAtB = await json(await createReservation(req('POST', '/api/reservations', { ...booking, tableId: tB.body.id })))
+      check('Colombo waiter booking a Kandy table → 403', denied(rAtB), short(rAtB.body))
+      const rA = await json(await createReservation(req('POST', '/api/reservations', { ...booking, tableId: tA.body.id })))
+      check('Colombo waiter booking a Colombo table → Colombo', rA.status === 200 && rA.body.warehouseId === f.whA, short(rA.body))
+      const rNoTable = await json(await createReservation(req('POST', '/api/reservations', { ...booking, reservationTime: '20:00' })))
+      check('Colombo waiter booking without a table → Colombo', rNoTable.status === 200 && rNoTable.body.warehouseId === f.whA, short(rNoTable.body))
+      const moveToB = await json(await updateReservation(req('PUT', `/api/reservations/${rA.body.id}`, { tableId: tB.body.id }), ctx(rA.body.id)))
+      check('… moving the Colombo booking to a Kandy table → refused', moveToB.status === 400 || moveToB.status === 403, short(moveToB.body))
+      as(f, 'owner')
+      const rB = await json(await createReservation(req('POST', '/api/reservations', { ...booking, tableId: tB.body.id })))
+      check('owner booking the Kandy table → Kandy', rB.status === 200 && rB.body.warehouseId === f.whB, short(rB.body))
+      as(f, 'waiterA')
+      const rl = await json(await listReservations(req('GET', '/api/reservations?all=true')))
+      const rids = listOf(rl.body).map((r) => r.id)
+      check('Colombo waiter\'s bookings: no Kandy booking', rl.status === 200 && rids.includes(rA.body.id) && !rids.includes(rB.body.id), short(rids))
+      const gr = await json(await getReservation(req('GET', `/api/reservations/${rB.body.id}`), ctx(rB.body.id)))
+      check('… opening the Kandy booking → 403', denied(gr), short(gr.body))
+      const cr = await json(await updateReservation(req('PUT', `/api/reservations/${rB.body.id}`, { status: 'confirmed' }), ctx(rB.body.id)))
+      check('… confirming the Kandy booking → 403', denied(cr), short(cr.body))
 
       as(f, 'owner')
       const all = await json(await listROrders(req('GET', '/api/restaurant-orders?all=true')))

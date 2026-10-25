@@ -201,6 +201,8 @@ export const createReservationSchema = z.object({
   customerPhone: z.string().max(20).optional(),
   customerEmail: z.string().max(255).optional(),
   tableId: optionalUuid,
+  /** K4: branch of the booking without a table (default: the user's branch); with a table, the table's */
+  warehouseId: optionalUuid,
   reservationDate: dateStringSchema,
   reservationTime: timeStringSchema,
   partySize: z.coerce.number().int().min(1, 'Party size must be at least 1').default(2),

@@ -2672,6 +2672,8 @@ export const reservations = pgTable('reservations', {
   customerPhone: varchar('customer_phone', { length: 50 }),
   customerEmail: varchar('customer_email', { length: 255 }),
   tableId: uuid('table_id').references(() => restaurantTables.id),
+  /** K4: branch of the booking (its table's branch); restricted staff only see their branches' */
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
   reservationDate: date('reservation_date').notNull(),
   reservationTime: time('reservation_time').notNull(),
   partySize: integer('party_size').notNull().default(2),
