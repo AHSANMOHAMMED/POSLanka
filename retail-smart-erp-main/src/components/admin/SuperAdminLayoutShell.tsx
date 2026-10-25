@@ -33,6 +33,7 @@ import { useTheme } from '@/components/providers/ThemeProvider'
 import { cn } from '@/lib/utils'
 import { AdminSessionTimer, signOutAdmin } from './AdminSessionTimer'
 import { TextSizeControl, useTextScale } from '@/components/ui/text-size-control'
+import { TEXT_SCALES, TEXT_SCALE_LABELS } from '@/lib/ui/text-scale'
 import { AdminHealthProvider, useAdminHealth } from './AdminHealth'
 import { StatusDot } from './kit'
 import { LogoMark } from './kit/LogoMark'
@@ -178,6 +179,7 @@ function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellPr
             </button>
             <HealthPill />
             <AdminSessionTimer className="hidden md:inline-flex" />
+            <AdminTextSizeControl adminEmail={adminEmail} />
             <ThemeToggle />
             <UserMenu email={adminEmail} name={adminName} />
           </div>
@@ -326,6 +328,73 @@ function ThemeToggle() {
     >
       <Icon size={18} aria-hidden />
     </button>
+  )
+}
+
+/* ---------------------------------------------------------------- Text size control */
+
+function AdminTextSizeControl({ adminEmail }: { adminEmail?: string }) {
+  const { scale, setScale } = useTextScale('admin', adminEmail || null)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const currentIndex = TEXT_SCALES.indexOf(scale)
+
+  const stepDown = () => {
+    if (currentIndex > 0) setScale(TEXT_SCALES[currentIndex - 1])
+  }
+  const stepUp = () => {
+    if (currentIndex < TEXT_SCALES.length - 1) setScale(TEXT_SCALES[currentIndex + 1])
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative inline-flex items-center">
+      <div className="flex items-center rounded-lg border border-adm-border bg-adm-surface-2/60 p-0.5 text-adm-muted">
+        <button
+          type="button"
+          onClick={stepDown}
+          disabled={currentIndex <= 0}
+          title="Decrease text size (A-)"
+          aria-label="Decrease text size"
+          className="adm-focus flex h-7 w-7 items-center justify-center rounded text-xs font-bold hover:bg-adm-surface hover:text-adm-fg disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          A⁻
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          title={`Text size: ${TEXT_SCALE_LABELS[scale]} (click to choose)`}
+          aria-label={`Current text size: ${TEXT_SCALE_LABELS[scale]}`}
+          className="adm-focus px-1.5 py-0.5 text-[11px] font-mono font-medium hover:text-adm-fg transition-colors"
+        >
+          {TEXT_SCALE_LABELS[scale]}
+        </button>
+        <button
+          type="button"
+          onClick={stepUp}
+          disabled={currentIndex >= TEXT_SCALES.length - 1}
+          title="Increase text size (A+)"
+          aria-label="Increase text size"
+          className="adm-focus flex h-7 w-7 items-center justify-center rounded text-sm font-bold hover:bg-adm-surface hover:text-adm-fg disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          A⁺
+        </button>
+      </div>
+
+      {open && (
+        <div className="adm-fade-in absolute right-0 top-10 z-50 w-52 rounded-xl border border-adm-border bg-adm-surface p-3 shadow-[var(--adm-shadow-lg)]">
+          <TextSizeControl scope="admin" userId={adminEmail || null} />
+        </div>
+      )}
+    </div>
   )
 }
 

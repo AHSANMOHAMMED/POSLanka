@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { Layout, Tag, ShoppingCart, UtensilsCrossed, Car, Circle } from 'lucide-react'
 import { LABEL_PRESETS, type LabelPreset } from '@/lib/labels/presets'
 import { LabelPreview } from './LabelPreview'
+import { StickerRollPreview } from './StickerRollPreview'
+import { STICKER_PRESETS, setupFromPreset } from '@/lib/labels/sticker-stock'
 
 interface TemplatePresetPickerProps {
   businessType?: string
@@ -82,18 +84,59 @@ export function TemplatePresetPicker({ businessType, onSelect, onSkip }: Templat
       {/* Preview of selected preset */}
       {selectedPreset && (
         <div className="border rounded-lg p-4 bg-gray-50 mb-6">
-          <h4 className="text-sm font-medium text-gray-700 mb-3">Preview: {selectedPreset.name}</h4>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-medium text-gray-700">Preview: {selectedPreset.name}</h4>
+            {(selectedPreset.columns ?? 1) > 1 && (
+              <span className="text-xs text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                {selectedPreset.columns} stickers per line (Twin-sticker roll)
+              </span>
+            )}
+          </div>
           <div className="flex justify-center">
-            <LabelPreview
-              template={{
-                widthMm: selectedPreset.widthMm,
-                heightMm: selectedPreset.heightMm,
-                elements: selectedPreset.elements,
-                labelShape: selectedPreset.labelShape,
-                cornerRadius: selectedPreset.cornerRadius,
-              }}
-              maxWidth={350}
-            />
+            {(selectedPreset.columns ?? 1) > 1 ? (
+              <StickerRollPreview
+                setup={{
+                  id: 'preset-preview',
+                  name: selectedPreset.name,
+                  labelWidthMm: selectedPreset.widthMm,
+                  labelHeightMm: selectedPreset.heightMm,
+                  columns: selectedPreset.columns ?? 2,
+                  columnGapMm: 2,
+                  rowGapMm: 2,
+                  marginLeftMm: 1,
+                  offsetXMm: 0,
+                  offsetYMm: 0,
+                  dpi: 203,
+                  language: null,
+                  darkness: null,
+                  speed: null,
+                  direction: 1,
+                  warehouseId: null,
+                  locked: false,
+                  isDefault: false,
+                }}
+                template={{
+                  widthMm: selectedPreset.widthMm,
+                  heightMm: selectedPreset.heightMm,
+                  elements: selectedPreset.elements,
+                  labelShape: selectedPreset.labelShape,
+                  cornerRadius: selectedPreset.cornerRadius,
+                }}
+                items={[]}
+                showGuides={false}
+              />
+            ) : (
+              <LabelPreview
+                template={{
+                  widthMm: selectedPreset.widthMm,
+                  heightMm: selectedPreset.heightMm,
+                  elements: selectedPreset.elements,
+                  labelShape: selectedPreset.labelShape,
+                  cornerRadius: selectedPreset.cornerRadius,
+                }}
+                maxWidth={350}
+              />
+            )}
           </div>
         </div>
       )}

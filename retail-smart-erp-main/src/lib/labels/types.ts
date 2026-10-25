@@ -139,11 +139,12 @@ export interface PresetLabelSize {
   group: string
   shape?: LabelShape
   cornerRadius?: number
+  columns?: number
 }
 
 export const PRESET_LABEL_SIZES: PresetLabelSize[] = [
   // Standard Rectangle
-  { name: '38 x 25 mm', widthMm: 38, heightMm: 25, group: 'Standard' },
+  { name: '38 x 25 mm (2 across / Twin Sticker)', widthMm: 38, heightMm: 25, group: 'Standard', columns: 2 },
   { name: '50 x 25 mm', widthMm: 50, heightMm: 25, group: 'Standard' },
   { name: '50 x 30 mm', widthMm: 50, heightMm: 30, group: 'Standard' },
   { name: '50 x 50 mm', widthMm: 50, heightMm: 50, group: 'Standard' },
@@ -185,6 +186,7 @@ export interface LabelTemplate {
   description: string | null
   widthMm: number
   heightMm: number
+  columns?: number | null
   labelShape: LabelShape
   cornerRadius?: number | null
   elements: LabelElement[]

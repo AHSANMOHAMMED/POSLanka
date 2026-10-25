@@ -6,7 +6,7 @@
  * exactly as the printer will place it (same packing as the raw encoders).
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { LabelItemData, LabelTemplate } from '@/lib/labels/types'
+import type { LabelItemData, LabelTemplate, LabelShape } from '@/lib/labels/types'
 import { renderLabelHtml } from '@/lib/labels/label-renderer'
 import { packLabelRows } from '@/lib/print/label/common'
 import { stickerRollWidthMm, type StickerSetup } from '@/lib/labels/sticker-stock'
@@ -15,7 +15,10 @@ const PX_PER_MM = 96 / 25.4
 
 export interface StickerRollPreviewProps {
   setup: StickerSetup
-  template: Pick<LabelTemplate, 'widthMm' | 'heightMm' | 'elements'>
+  template: Pick<LabelTemplate, 'widthMm' | 'heightMm' | 'elements'> & {
+    labelShape?: LabelShape | string
+    cornerRadius?: number | null
+  }
   /** Items with quantities as they will print (empty = one sample label per column). */
   items: { item: LabelItemData | null; quantity: number }[]
   copies?: number
@@ -56,7 +59,7 @@ export function StickerRollPreview({
   }, [])
 
   const rows = useMemo(() => {
-    const list = items.length ? items : [{ item: null, quantity: setup.columns }]
+    const list = items.length ? items : [{ item: null, quantity: setup.columns * 2 }]
     return packLabelRows(list, setup.columns, copies)
   }, [items, setup.columns, copies])
 
@@ -82,9 +85,15 @@ export function StickerRollPreview({
     let cancelled = false
     ;(async () => {
       const next = new Map<string, string>()
-      for (const [key, item] of uniqueItems) {
-        next.set(key, await renderLabelHtml({ widthMm: template.widthMm, heightMm: template.heightMm, elements: template.elements }, item, currencySymbol, tenantName, codeWord))
-      }
+        for (const [key, item] of uniqueItems) {
+          next.set(key, await renderLabelHtml({
+            widthMm: template.widthMm,
+            heightMm: template.heightMm,
+            elements: template.elements,
+            labelShape: template.labelShape,
+            cornerRadius: template.cornerRadius,
+          }, item, currencySymbol, tenantName, codeWord))
+        }
       if (!cancelled) setHtmlByItem(next)
     })()
     return () => {
@@ -148,6 +157,7 @@ export function StickerRollPreview({
                   height: mm(setup.labelHeightMm),
                   borderRadius: mm(1.5),
                   boxShadow: '0 0 0 1px #d1d5db',
+                  overflow: showGuides ? 'visible' : 'hidden',
                 }}
               >
                 {cell && (

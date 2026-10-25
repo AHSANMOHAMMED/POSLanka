@@ -1,0 +1,93 @@
+# POSLanka — Low-Cost All-In-One ($6/mo) Docker Compose
+# Ideal for 1-5 vendors: App + PostgreSQL + Local Uploads + Caddy on a single Droplet.
+#
+# Usage:
+#   cp deploy/digitalocean/docker-compose.small.yml docker-compose.yml
+#   cp .env.production.example .env.production
+#   docker compose run --rm migrate
+#   docker compose up -d
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-poslanka}
+      POSTGRES_USER: ${POSTGRES_USER:-poslanka_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Please set POSTGRES_PASSWORD in .env.production}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-poslanka_app} -d ${POSTGRES_DB:-poslanka}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  app:
+    image: ${POSLANKA_IMAGE:-poslanka:latest}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env.production
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      SKIP_MIGRATIONS: "true"
+      ALLOW_LOCAL_UPLOADS: "true"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-poslanka_app}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-poslanka}
+      DATABASE_APP_ROLE: app_user
+    volumes:
+      - uploads_data:/app/public/uploads
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  migrate:
+    image: ${POSLANKA_IMAGE:-poslanka:latest}
+    env_file: .env.production
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-poslanka_app}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-poslanka}
+    profiles: ["tools"]
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "node scripts/migrate.mjs && node scripts/check-tenant-isolation.mjs"
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      BASE_DOMAIN: ${BASE_DOMAIN:-poslanka.lk}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@poslanka.lk}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  pgdata:
+  uploads_data:
+  caddy_data:
+  caddy_config:
+

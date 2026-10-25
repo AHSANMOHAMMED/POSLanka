@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
           description: p.description,
           widthMm: String(p.widthMm),
           heightMm: String(p.heightMm),
+          columns: p.columns ?? (p.widthMm === 38 && p.heightMm === 25 ? 2 : 1),
           labelShape: p.labelShape,
           cornerRadius: p.cornerRadius ?? null,
           elements: p.elements,
@@ -67,7 +68,7 @@ export async function POST(request: NextRequest) {
   try {
     const parsed = await validateBody(request, createLabelTemplateSchema)
     if (!parsed.success) return parsed.response
-    const { name, description, widthMm, heightMm, labelShape, cornerRadius, elements, isDefault } = parsed.data
+    const { name, description, widthMm, heightMm, columns, labelShape, cornerRadius, elements, isDefault } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
       const permError = requirePermission(session, 'manageSettings')
@@ -92,6 +93,7 @@ export async function POST(request: NextRequest) {
         description: description || null,
         widthMm: String(widthMm),
         heightMm: String(heightMm),
+        columns: columns ?? (Number(widthMm) === 38 && Number(heightMm) === 25 ? 2 : 1),
         labelShape: labelShape || 'rectangle',
         cornerRadius: cornerRadius ?? null,
         elements: elements || [],

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { HardDrive, RefreshCw, Server, Trash2 } from 'lucide-react'
+import { HardDrive, RefreshCw, Server, Trash2, Type } from 'lucide-react'
 import {
   AdminCard,
   AdminPage,
@@ -22,6 +22,7 @@ import { useAdminCan } from '@/components/admin/AdminRoleContext'
 import { TwoFactorCard } from '@/components/admin/TwoFactorCard'
 import { ChangePasswordCard } from '@/components/admin/AccountSetupGate'
 import { adminFetch } from '@/components/admin/console-helpers'
+import { TextSizeControl } from '@/components/ui/text-size-control'
 import { AnnouncementForm, BankDetailsForm, ContactForm, SeasonalOfferForm, VolumeDiscountsForm } from './setting-forms'
 import { CouponsCard } from './coupons'
 import type { SettingsPayload } from './use-setting'
@@ -200,6 +201,16 @@ function GeneralTab({ platform }: { platform: SettingsPayload['platform'] }) {
             { label: 'Card payments (PayHere)', value: ok(platform.payhere.configured, platform.payhere.sandbox ? 'Sandbox' : 'Live', 'Not configured') },
           ]}
         />
+      </AdminCard>
+
+      <AdminCard
+        title="Display & Text Size"
+        description="Scale the text and user interface size of the admin console for easier reading on your screen."
+        icon={<Type size={17} />}
+      >
+        <div className="max-w-xs py-1">
+          <TextSizeControl scope="admin" variant="field" />
+        </div>
       </AdminCard>
 
       <AdminCard

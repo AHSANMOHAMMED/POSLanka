@@ -76,6 +76,11 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
   const { theme, setTheme, palette, setPalette, resolvedTheme } = useTheme()
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -94,7 +99,7 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
     onThemeChange?.(value)
   }
 
-  const CurrentIcon = resolvedTheme === 'dark' ? Moon : Sun
+  const CurrentIcon = mounted && resolvedTheme === 'dark' ? Moon : Sun
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -104,6 +109,7 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
         className="p-2 rounded-xl hover:bg-white/10 dark:hover:bg-white/10 active:scale-95 transition-all duration-150 flex items-center gap-1.5 text-white/90 hover:text-white"
         aria-label="Customize theme"
         title="Customize theme & background colors"
+        suppressHydrationWarning
       >
         <CurrentIcon className="w-4.5 h-4.5 transition-transform hover:rotate-12 duration-200" />
       </button>

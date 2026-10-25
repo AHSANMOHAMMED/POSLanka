@@ -1,16 +1,12 @@
 # Keep the build context small and secret-free
 node_modules
-.next
-server.js
+.next/cache
+.next/dev
 .git
 .env
 .env.*
 !.env.example
-apps/mobile/node_modules
-apps/mobile/android
-apps/mobile/ios
-apps/mobile/.expo
-apps/mobile/dist
+apps/mobile
 coverage
 test-results
 playwright-report

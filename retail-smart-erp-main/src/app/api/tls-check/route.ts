@@ -30,12 +30,23 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ok: false }, { status: 400 })
   }
   const base = clean(process.env.NEXT_PUBLIC_BASE_DOMAIN || '')
-  const fixed = [base, process.env.NEXT_PUBLIC_APP_DOMAIN, process.env.NEXT_PUBLIC_LANDING_DOMAIN]
-    .filter(Boolean).map((d) => clean(String(d)))
+  const fixed = [
+    base,
+    process.env.NEXT_PUBLIC_APP_DOMAIN,
+    process.env.NEXT_PUBLIC_LANDING_DOMAIN,
+    'skyerpos.com',
+    'www.skyerpos.com',
+    'app.skyerpos.com',
+  ].filter(Boolean).map((d) => clean(String(d)))
   if (fixed.includes(domain)) return NextResponse.json({ ok: true })
 
-  if (!base || !domain.endsWith(`.${base}`)) return NextResponse.json({ ok: false }, { status: 404 })
-  const sub = domain.slice(0, -(base.length + 1))
+  let sub = ''
+  if (base && domain.endsWith(`.${base}`)) {
+    sub = domain.slice(0, -(base.length + 1))
+  } else if (domain.endsWith('.skyerpos.com')) {
+    sub = domain.slice(0, -('.skyerpos.com'.length))
+  }
+
   if (!sub || sub.includes('.') || RESERVED.has(sub)) return NextResponse.json({ ok: false }, { status: 404 })
   try {
     const tenant = await db.query.tenants.findFirst({ where: eq(tenants.slug, sub), columns: { id: true, status: true } })

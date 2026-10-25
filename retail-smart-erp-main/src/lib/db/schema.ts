@@ -6022,6 +6022,7 @@ export const labelTemplates = pgTable('label_templates', {
   description: text('description'),
   widthMm: decimal('width_mm', { precision: 6, scale: 2 }).notNull(),
   heightMm: decimal('height_mm', { precision: 6, scale: 2 }).notNull(),
+  columns: integer('columns').default(1),
   labelShape: varchar('label_shape', { length: 30 }).default('rectangle').notNull(),
   cornerRadius: real('corner_radius'),
   elements: jsonb('elements').$type<import('@/lib/labels/types').LabelElement[]>().notNull().default([]),

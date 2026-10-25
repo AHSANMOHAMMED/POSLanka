@@ -9,10 +9,12 @@ interface ElementToolboxProps {
   heightMm: number
   labelShape: LabelShape
   cornerRadius: number | null
+  columns?: number
   onWidthChange: (w: number) => void
   onHeightChange: (h: number) => void
   onShapeChange: (shape: LabelShape) => void
   onCornerRadiusChange: (r: number | null) => void
+  onColumnsChange?: (cols: number) => void
   onAddElement: (element: LabelElement) => void
 }
 
@@ -21,7 +23,7 @@ function genId() {
   return `el-${Date.now()}-${nextId++}`
 }
 
-export function ElementToolbox({ widthMm, heightMm, labelShape, cornerRadius, onWidthChange, onHeightChange, onShapeChange, onCornerRadiusChange, onAddElement }: ElementToolboxProps) {
+export function ElementToolbox({ widthMm, heightMm, labelShape, cornerRadius, columns, onWidthChange, onHeightChange, onShapeChange, onCornerRadiusChange, onColumnsChange, onAddElement }: ElementToolboxProps) {
   const centerX = (w: number) => Math.max(0, (widthMm - w) / 2)
   const centerY = (h: number) => Math.max(0, (heightMm - h) / 2)
 
@@ -98,6 +100,11 @@ export function ElementToolbox({ widthMm, heightMm, labelShape, cornerRadius, on
     if (preset) {
       onWidthChange(preset.widthMm)
       onHeightChange(preset.heightMm)
+      if (preset.columns && onColumnsChange) {
+        onColumnsChange(preset.columns)
+      } else if (onColumnsChange) {
+        onColumnsChange(preset.widthMm === 38 && preset.heightMm === 25 ? 2 : 1)
+      }
       if (preset.shape) {
         onShapeChange(preset.shape)
         if (preset.cornerRadius !== undefined) onCornerRadiusChange(preset.cornerRadius)
@@ -176,6 +183,25 @@ export function ElementToolbox({ widthMm, heightMm, labelShape, cornerRadius, on
             />
           </div>
         </div>
+      </div>
+
+      <div>
+        <h3 className="text-xs font-semibold text-gray-500 uppercase mb-2">Roll Layout</h3>
+        <select
+          value={columns || (widthMm === 38 && heightMm === 25 ? 2 : 1)}
+          onChange={(e) => onColumnsChange?.(Number(e.target.value))}
+          className="w-full px-2 py-1.5 text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          <option value={1}>1 across (Single label per row)</option>
+          <option value={2}>2 across (Twin stickers in 1 line - 38x25 standard)</option>
+          <option value={3}>3 across (3 labels per row)</option>
+          <option value={4}>4 across (4 labels per row)</option>
+        </select>
+        {(columns === 2 || (!columns && widthMm === 38 && heightMm === 25)) && (
+          <p className="text-[11px] text-blue-600 mt-1 font-medium">
+            2 stickers in 1 line on standard 80 mm thermal roll.
+          </p>
+        )}
       </div>
 
       <div>

@@ -41,6 +41,7 @@ import { ModifierPickerModal } from '@/components/pos/ModifierPickerModal'
 import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
 import { CameraScanModal } from '@/components/pos/CameraScanModal'
 import { ThemeToggle } from '@/components/ui/theme-toggle'
+import { AppTextSizeControl } from '@/components/ui/AppTextSizeControl'
 import type {
   Item,
   Category,
@@ -3143,6 +3144,9 @@ export default function POSPage() {
             <Keyboard className="w-3 h-3" />
             <Kbd tone="dark">?</Kbd>
           </button>
+          <div className="flex items-center text-slate-300">
+            <AppTextSizeControl variant="pos" userId={sessionData?.user?.id || null} />
+          </div>
           <div className="flex items-center text-slate-300">
             <ThemeToggle />
           </div>

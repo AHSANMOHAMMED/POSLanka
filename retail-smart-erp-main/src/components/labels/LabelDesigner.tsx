@@ -7,6 +7,8 @@ import { ElementToolbox } from './ElementToolbox'
 import { LabelCanvas } from './LabelCanvas'
 import { ElementProperties } from './ElementProperties'
 import { LabelPreview } from './LabelPreview'
+import { StickerRollPreview } from './StickerRollPreview'
+import { STICKER_PRESETS, setupFromPreset } from '@/lib/labels/sticker-stock'
 import { useUnsavedChangesWarning } from '@/hooks'
 import { toast } from '@/components/ui/toast'
 
@@ -15,6 +17,7 @@ interface PresetData {
   description: string
   widthMm: number
   heightMm: number
+  columns?: number
   labelShape: LabelShape
   cornerRadius: number | null
   elements: LabelElement[]
@@ -35,6 +38,12 @@ export function LabelDesigner({ templateId, initialData, presetData, tenantSlug 
   const [description, setDescription] = useState(src?.description || '')
   const [widthMm, setWidthMm] = useState(src ? Number(src.widthMm) : 50)
   const [heightMm, setHeightMm] = useState(src ? Number(src.heightMm) : 25)
+  const [columns, setColumns] = useState<number>(() => {
+    if (presetData?.columns) return Number(presetData.columns)
+    const w = src ? Number(src.widthMm) : 50
+    const h = src ? Number(src.heightMm) : 25
+    return (w === 38 && h === 25) ? 2 : 1
+  })
   const [labelShape, setLabelShape] = useState<LabelShape>((src?.labelShape as LabelShape) || 'rectangle')
   const [cornerRadius, setCornerRadius] = useState<number | null>(src?.cornerRadius ?? null)
   const [elements, setElements] = useState<LabelElement[]>(src?.elements || [])
@@ -147,6 +156,7 @@ export function LabelDesigner({ templateId, initialData, presetData, tenantSlug 
         description: description || undefined,
         widthMm,
         heightMm,
+        columns: columns || (widthMm === 38 && heightMm === 25 ? 2 : 1),
         labelShape,
         cornerRadius: labelShape === 'rounded-rectangle' ? cornerRadius : undefined,
         elements,
@@ -261,8 +271,21 @@ export function LabelDesigner({ templateId, initialData, presetData, tenantSlug 
           heightMm={heightMm}
           labelShape={labelShape}
           cornerRadius={cornerRadius}
-          onWidthChange={(w) => { setWidthMm(w); setIsDirty(true) }}
-          onHeightChange={(h) => { setHeightMm(h); setIsDirty(true) }}
+          columns={columns}
+          onColumnsChange={(cols) => {
+            setColumns(cols)
+            setIsDirty(true)
+          }}
+          onWidthChange={(w) => {
+            setWidthMm(w)
+            if (w === 38 && heightMm === 25) setColumns(2)
+            setIsDirty(true)
+          }}
+          onHeightChange={(h) => {
+            setHeightMm(h)
+            if (widthMm === 38 && h === 25) setColumns(2)
+            setIsDirty(true)
+          }}
           onShapeChange={(s) => { setLabelShape(s); setIsDirty(true) }}
           onCornerRadiusChange={(r) => { setCornerRadius(r); setIsDirty(true) }}
           onAddElement={handleAddElement}
@@ -285,13 +308,51 @@ export function LabelDesigner({ templateId, initialData, presetData, tenantSlug 
 
           {/* Preview panel */}
           {showPreview && (
-            <div className="border-t p-4 bg-gray-50">
-              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-2">Preview (sample data)</h4>
-              <LabelPreview
-                template={{ widthMm, heightMm, elements, labelShape, cornerRadius }}
-                codeWord={codeWord}
-                maxWidth={400}
-              />
+            <div className="border-t p-4 bg-gray-50 max-h-80 overflow-y-auto">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold text-gray-500 uppercase">
+                  {columns > 1 ? `Twin Sticker Roll Preview (${columns} across in 1 line)` : 'Preview (sample data)'}
+                </h4>
+                {columns > 1 && (
+                  <span className="text-[11px] text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                    Showing {columns} stickers per line on roll
+                  </span>
+                )}
+              </div>
+              {columns > 1 ? (
+                <StickerRollPreview
+                  setup={{
+                    id: 'preview-setup',
+                    name: `${widthMm}x${heightMm} (${columns} across)`,
+                    labelWidthMm: widthMm,
+                    labelHeightMm: heightMm,
+                    columns: columns,
+                    columnGapMm: 2,
+                    rowGapMm: 2,
+                    marginLeftMm: 1,
+                    offsetXMm: 0,
+                    offsetYMm: 0,
+                    dpi: 203,
+                    language: null,
+                    darkness: null,
+                    speed: null,
+                    direction: 1,
+                    warehouseId: null,
+                    locked: false,
+                    isDefault: false,
+                  }}
+                  template={{ widthMm, heightMm, elements, labelShape, cornerRadius }}
+                  items={[]}
+                  codeWord={codeWord}
+                  showGuides={false}
+                />
+              ) : (
+                <LabelPreview
+                  template={{ widthMm, heightMm, elements, labelShape, cornerRadius }}
+                  codeWord={codeWord}
+                  maxWidth={400}
+                />
+              )}
             </div>
           )}
         </div>

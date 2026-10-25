@@ -9,7 +9,8 @@ import { printLabels, printLabelsOnRoll, printLabelsRaw, isRawLabelPrinter } fro
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
 import { usePermission } from '@/hooks/usePermission'
-import { defaultStickerSetup, setupsForBranch } from '@/lib/labels/sticker-stock'
+import { defaultStickerSetup, setupsForBranch, STICKER_PRESETS, setupFromPreset } from '@/lib/labels/sticker-stock'
+import { LABEL_PRESETS } from '@/lib/labels/presets'
 import { usePrinters } from '@/hooks/usePrinter'
 import { LABEL_LANGUAGE_LABELS } from '@/lib/print/printer-profiles'
 import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
@@ -54,6 +55,7 @@ export default function BarcodePrintPage() {
   const [codeWord, setCodeWord] = useState<string>('')
   const [previewIndex, setPreviewIndex] = useState(0)
   const [showFullPreview, setShowFullPreview] = useState(false)
+  const [previewMode, setPreviewMode] = useState<'roll' | 'single'>('roll')
   const [visibleFields, setVisibleFields] = useState<VisibleBarcodeFields>(DEFAULT_VISIBLE_FIELDS)
   const [config, setConfig] = useState<PrintLabelConfig>({
     labelsPerRow: 3,
@@ -88,13 +90,25 @@ export default function BarcodePrintPage() {
       .catch(() => {})
   }, [])
   const setups = useMemo(() => setupsForBranch(allSetups, branchIds), [allSetups, branchIds])
-  const linkedSetup = setups.find((s) => s.id === chosenPrinter?.label.stickerSetupId) || null
-  const fallbackSetup = defaultStickerSetup(setups)
+
+  // Merge built-in presets (e.g. 38x25x2 twin stickers) so standard retail rolls are always available
+  const availableSetups = useMemo(() => {
+    const list = [...setups]
+    for (const preset of STICKER_PRESETS) {
+      if (!list.some(s => s.id === preset.id || (s.labelWidthMm === preset.labelWidthMm && s.labelHeightMm === preset.labelHeightMm && s.columns === preset.columns))) {
+        list.push(setupFromPreset(preset, { id: preset.id }))
+      }
+    }
+    return list
+  }, [setups])
+
+  const linkedSetup = availableSetups.find((s) => s.id === chosenPrinter?.label.stickerSetupId) || null
+  const fallbackSetup = defaultStickerSetup(availableSetups)
   // A locked setup linked to the printer (or a locked default) cannot be switched by cashiers
   const forcedSetup = !isAdmin ? (linkedSetup?.locked ? linkedSetup : !linkedSetup && fallbackSetup?.locked ? fallbackSetup : null) : null
   const [setupChoice, setSetupChoice] = useState<string | null>(null)
   const activeSetup = forcedSetup
-    ?? (setupChoice !== null ? setups.find((s) => s.id === setupChoice) || null : linkedSetup || fallbackSetup)
+    ?? (setupChoice !== null ? availableSetups.find((s) => s.id === setupChoice) || null : linkedSetup || fallbackSetup)
 
   // Fetch templates and label settings on mount
   useEffect(() => {
@@ -112,6 +126,65 @@ export default function BarcodePrintPage() {
       .then(data => setCodeWord(data.codeWord || ''))
       .catch(() => {})
   }, [])
+
+  // Merge built-in presets if not yet saved in tenant database (e.g. 38x25 twin tag)
+  const availableTemplates = useMemo(() => {
+    const list = [...templates]
+    for (const preset of LABEL_PRESETS) {
+      if (!list.some(t => Math.abs(Number(t.widthMm) - preset.widthMm) <= 0.5 && Math.abs(Number(t.heightMm) - preset.heightMm) <= 0.5)) {
+        list.push({
+          id: `preset-${preset.id}`,
+          name: `${preset.name} (Preset)`,
+          description: preset.description,
+          widthMm: String(preset.widthMm),
+          heightMm: String(preset.heightMm),
+          labelShape: preset.labelShape,
+          cornerRadius: preset.cornerRadius ?? null,
+          elements: preset.elements,
+          isDefault: false,
+          isActive: true,
+        } as unknown as LabelTemplate)
+      }
+    }
+    return list
+  }, [templates])
+
+  const selectedTemplate = availableTemplates.find(t => t.id === selectedTemplateId) || availableTemplates[0] || null
+
+  // Auto-sync roll when a 38x25 template is selected
+  useEffect(() => {
+    if (!selectedTemplate) return
+    const w = Number(selectedTemplate.widthMm)
+    const h = Number(selectedTemplate.heightMm)
+    if (w === 38 && h === 25) {
+      if (!activeSetup || activeSetup.labelWidthMm !== 38 || activeSetup.labelHeightMm !== 25) {
+        const match = availableSetups.find(s => s.labelWidthMm === 38 && s.labelHeightMm === 25 && s.columns === 2)
+        if (match) setSetupChoice(match.id)
+      }
+    }
+  }, [selectedTemplate, availableSetups, activeSetup])
+
+  // Handle switching roll layout: auto-switch template if dimension mismatches
+  const handleSetupChange = (id: string) => {
+    setSetupChoice(id)
+    if (!id) return
+    const chosen = availableSetups.find(s => s.id === id)
+    if (chosen) {
+      const currentMatches = selectedTemplate &&
+        Math.abs(Number(selectedTemplate.widthMm) - chosen.labelWidthMm) <= 0.5 &&
+        Math.abs(Number(selectedTemplate.heightMm) - chosen.labelHeightMm) <= 0.5
+
+      if (!currentMatches) {
+        const matchingTpl = availableTemplates.find(t =>
+          Math.abs(Number(t.widthMm) - chosen.labelWidthMm) <= 0.5 &&
+          Math.abs(Number(t.heightMm) - chosen.labelHeightMm) <= 0.5
+        )
+        if (matchingTpl) {
+          setSelectedTemplateId(matchingTpl.id)
+        }
+      }
+    }
+  }
 
   const searchItems = useCallback(async (search: string): Promise<AsyncSelectOption[]> => {
     const params = new URLSearchParams({ pageSize: '15' })
@@ -187,7 +260,6 @@ export default function BarcodePrintPage() {
     setItems(prev => prev.filter((_, i) => i !== index))
   }
 
-  const selectedTemplate = templates.find(t => t.id === selectedTemplateId)
   const totalLabels = items.reduce((sum, i) => sum + i.quantity, 0)
 
   // Auto-sync toggles to match initial elements of the chosen template
@@ -230,6 +302,79 @@ export default function BarcodePrintPage() {
     const resultElements: LabelElement[] = [...elements]
 
     // Injected fields if checked but not currently in template
+    if (visibleFields.showName && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.name')) {
+      resultElements.push({
+        id: 'dyn-name',
+        type: 'text',
+        dataField: 'item.name',
+        x: 2,
+        y: 1.5,
+        width: Math.max(10, widthMm - 4),
+        height: 4,
+        fontSize: widthMm <= 40 ? 6.5 : 8,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        maxLines: 1,
+        rotation: 0,
+        zIndex: 1,
+      })
+    }
+
+    if (visibleFields.showBarcode && !resultElements.some(el => el.type === 'barcode')) {
+      resultElements.push({
+        id: 'dyn-barcode',
+        type: 'barcode',
+        dataField: 'item.barcode',
+        format: 'code128',
+        barWidth: 2,
+        showText: true,
+        x: 2,
+        y: Math.max(5.5, heightMm - (widthMm <= 40 ? 12 : 14)),
+        width: Math.max(10, widthMm - 4),
+        height: widthMm <= 40 ? 8 : 10,
+        rotation: 0,
+        zIndex: 1,
+      })
+    }
+
+    if (visibleFields.showPrice && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.sellingPrice')) {
+      resultElements.push({
+        id: 'dyn-price',
+        type: 'text',
+        dataField: 'item.sellingPrice',
+        isCurrency: true,
+        x: 2,
+        y: Math.max(2, heightMm - 4.5),
+        width: Math.max(10, widthMm - 4),
+        height: 4,
+        fontSize: widthMm <= 40 ? 7.5 : 9,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        maxLines: 1,
+        rotation: 0,
+        zIndex: 2,
+      })
+    }
+
+    if (visibleFields.showSku && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.sku')) {
+      resultElements.push({
+        id: 'dyn-sku',
+        type: 'text',
+        dataField: 'item.sku',
+        x: 2,
+        y: Math.max(1, heightMm - 3.5),
+        width: 14,
+        height: 3,
+        fontSize: 5.5,
+        fontWeight: 'normal',
+        textAlign: 'left',
+        prefix: 'SKU: ',
+        maxLines: 1,
+        rotation: 0,
+        zIndex: 2,
+      })
+    }
+
     if (visibleFields.showCompany && !resultElements.some(el => el.type === 'text' && el.dataField === 'tenant.name')) {
       resultElements.push({
         id: 'dyn-company',
@@ -519,12 +664,12 @@ export default function BarcodePrintPage() {
               </div>
               <select
                 value={activeSetup?.id || ''}
-                onChange={(e) => setSetupChoice(e.target.value)}
+                onChange={(e) => handleSetupChange(e.target.value)}
                 disabled={!!forcedSetup}
                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm disabled:bg-gray-50"
               >
                 <option value="">Template size, 1 across</option>
-                {setups.map((s) => (
+                {availableSetups.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x {s.columns}){s.locked ? ' [locked]' : ''}
                   </option>
@@ -547,12 +692,12 @@ export default function BarcodePrintPage() {
             <div>
               <label className="text-sm font-medium text-gray-700 mb-1 block">Template</label>
               <select
-                value={selectedTemplateId}
+                value={selectedTemplate?.id || selectedTemplateId}
                 onChange={(e) => setSelectedTemplateId(e.target.value)}
                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
               >
                 <option value="">Select a template</option>
-                {templates.map(t => (
+                {availableTemplates.map(t => (
                   <option key={t.id} value={t.id}>
                     {t.name} ({parseFloat(String(t.widthMm))} x {parseFloat(String(t.heightMm))} mm)
                     {t.isDefault ? ' (Default)' : ''}
@@ -776,9 +921,38 @@ export default function BarcodePrintPage() {
               {selectedTemplate && (
                 <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
                   {parseFloat(String(selectedTemplate.widthMm))} × {parseFloat(String(selectedTemplate.heightMm))} mm
+                  {activeSetup && activeSetup.columns > 1 ? ` (${activeSetup.columns} across roll)` : ''}
                 </span>
               )}
             </div>
+
+            {/* View Mode Toggle for Multi-column rolls (e.g. 38x25 twin stickers) */}
+            {activeSetup && activeSetup.columns > 1 && (
+              <div className="flex items-center bg-slate-100 p-1 rounded-md text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode('roll')}
+                  className={`flex-1 py-1 px-2 rounded transition-colors text-center ${
+                    previewMode === 'roll'
+                      ? 'bg-white text-blue-700 shadow-sm font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Twin Sticker Roll ({activeSetup.columns} in 1 line)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode('single')}
+                  className={`flex-1 py-1 px-2 rounded transition-colors text-center ${
+                    previewMode === 'single'
+                      ? 'bg-white text-blue-700 shadow-sm font-semibold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Single Sticker ({parseFloat(String(selectedTemplate?.widthMm || activeSetup.labelWidthMm))} × {parseFloat(String(selectedTemplate?.heightMm || activeSetup.labelHeightMm))} mm)
+                </button>
+              </div>
+            )}
 
             {selectedTemplate ? (
               <div className="space-y-3">
@@ -806,23 +980,44 @@ export default function BarcodePrintPage() {
                   </div>
                 )}
 
-                <div className="p-4 bg-slate-100/70 dark:bg-slate-800/50 rounded-lg flex flex-col items-center justify-center border border-dashed border-gray-200 dark:border-gray-700 min-h-[160px]">
-                  <LabelPreview
-                    template={activeTemplate || selectedTemplate}
-                    item={items[previewIndex]?.item || null}
-                    currencySymbol={currencySymbol}
-                    tenantName={company?.tenantName}
-                    codeWord={codeWord}
-                    maxWidth={320}
-                  />
-                  {items.length === 0 && (
-                    <p className="text-[11px] text-gray-400 mt-2 italic">Sample preview • Add items on left to preview actual products</p>
-                  )}
-                </div>
+                {/* Main Preview Box */}
+                {activeSetup && activeSetup.columns > 1 && previewMode === 'roll' ? (
+                  <div className="p-3 bg-slate-100/80 dark:bg-slate-800/60 rounded-lg flex flex-col items-center justify-center border border-dashed border-gray-300 dark:border-gray-700">
+                    <div className="w-full">
+                      <StickerRollPreview
+                        setup={activeSetup}
+                        template={activeTemplate || selectedTemplate}
+                        items={items}
+                        currencySymbol={currencySymbol}
+                        tenantName={company?.tenantName}
+                        codeWord={codeWord}
+                        maxRows={2}
+                      />
+                    </div>
+                    <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-2 font-medium text-center">
+                      Twin-sticker roll: 2 stickers print side-by-side in each line (80 mm roll)
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-slate-100/70 dark:bg-slate-800/50 rounded-lg flex flex-col items-center justify-center border border-dashed border-gray-200 dark:border-gray-700 min-h-[160px]">
+                    <LabelPreview
+                      template={activeTemplate || selectedTemplate}
+                      item={items[previewIndex]?.item || null}
+                      currencySymbol={currencySymbol}
+                      tenantName={company?.tenantName}
+                      codeWord={codeWord}
+                      maxWidth={320}
+                    />
+                    {items.length === 0 && (
+                      <p className="text-[11px] text-gray-400 mt-2 italic">Sample preview • Add items on left to preview actual products</p>
+                    )}
+                  </div>
+                )}
 
-                {activeSetup && (
+                {/* Secondary Roll Preview if single sticker mode is chosen */}
+                {activeSetup && (previewMode === 'single' || activeSetup.columns === 1) && (
                   <div className="space-y-1">
-                    <div className="text-xs font-medium text-gray-600">On the roll</div>
+                    <div className="text-xs font-medium text-gray-600">On the roll layout:</div>
                     <StickerRollPreview
                       setup={activeSetup}
                       template={activeTemplate || selectedTemplate}
@@ -830,7 +1025,7 @@ export default function BarcodePrintPage() {
                       currencySymbol={currencySymbol}
                       tenantName={company?.tenantName}
                       codeWord={codeWord}
-                      maxRows={3}
+                      maxRows={2}
                     />
                   </div>
                 )}

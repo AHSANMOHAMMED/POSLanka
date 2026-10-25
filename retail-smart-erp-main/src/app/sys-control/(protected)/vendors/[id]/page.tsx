@@ -194,6 +194,9 @@ export default function VendorDetailPage() {
   const [tab, setTab] = useState<Tab>('overview')
   const [dialog, setDialog] = useState<Dialog>(null)
   const [flash, setFlash] = useState<{ tone: 'success' | 'warning' | 'danger'; text: string } | null>(null)
+  const [busyStaffId, setBusyStaffId] = useState<string | null>(null)
+  const [creatingCashier, setCreatingCashier] = useState(false)
+  const [credResult, setCredResult] = useState<{ title: string; email: string; password: string } | null>(null)
   const canManage = useAdminCan('vendors.manage')
   const canBill = useAdminCan('billing')
   const canImpersonate = useAdminCan('vendors.impersonate')
@@ -216,9 +219,10 @@ export default function VendorDetailPage() {
 
   useEffect(() => { load() }, [load])
 
-  const done = useCallback((text: string, tone: 'success' | 'warning' = 'success') => {
+  const done = useCallback((text: string, tone: 'success' | 'warning' = 'success', creds?: { title: string; email: string; password: string }) => {
     setDialog(null)
     setFlash({ tone, text })
+    if (creds) setCredResult(creds)
     load()
   }, [load])
 
@@ -242,6 +246,8 @@ export default function VendorDetailPage() {
   const { vendor: v, subscription: sub, usage, limits, owner } = data
   const bid = formatBusinessId(v.businessId)
   const isActive = v.status === 'active'
+  const cashiers = data.staff.filter((s) => s.role === 'cashier')
+  const otherStaff = data.staff.filter((s) => s.role !== 'owner' && s.role !== 'cashier')
   const trialEnds = sub?.status === 'trial' && sub.trialEndsAt ? sub.trialEndsAt : null
   const periodLabel = sub
     ? sub.neverExpires
@@ -250,6 +256,77 @@ export default function VendorDetailPage() {
         ? `Trial ends ${fmtDate(trialEnds)}`
         : `${(daysUntil(sub.currentPeriodEnd) ?? 0) < 0 ? 'Ended' : 'Renews'} ${fmtDate(sub.currentPeriodEnd)}`
     : 'No subscription'
+
+  async function handleResetStaffPassword(u: StaffRow) {
+    if (!data) return
+    setBusyStaffId(u.id)
+    try {
+      const res = await adminFetch<{ temporaryPassword: string | null; email: string }>(
+        `/api/sys-control/vendors/${data.vendor.id}/staff`,
+        { method: 'PATCH', json: { userId: u.id, action: 'reset_password' } }
+      )
+      if (res.temporaryPassword) {
+        setCredResult({
+          title: `New temporary password for ${u.fullName} (${ROLE_LABEL[u.role] ?? u.role})`,
+          email: res.email,
+          password: res.temporaryPassword,
+        })
+      }
+      setFlash({ tone: 'success', text: `Temporary password generated for ${u.fullName}.` })
+      load()
+    } catch (e) {
+      setFlash({ tone: 'danger', text: e instanceof Error ? e.message : 'Password reset failed' })
+    } finally {
+      setBusyStaffId(null)
+    }
+  }
+
+  async function handleCreateDefaultCashier() {
+    if (!data) return
+    setCreatingCashier(true)
+    try {
+      const res = await adminFetch<{ success: boolean; user: { fullName: string; email: string }; generatedPassword?: string }>(
+        `/api/sys-control/vendors/${data.vendor.id}/staff`,
+        {
+          method: 'POST',
+          json: {
+            fullName: 'Cashier',
+            role: 'cashier',
+            email: `cashier@${data.vendor.slug}`,
+          },
+        }
+      )
+      if (res.generatedPassword) {
+        setCredResult({
+          title: `Cashier account created for ${data.vendor.name}`,
+          email: res.user.email,
+          password: res.generatedPassword,
+        })
+      }
+      setFlash({ tone: 'success', text: `Cashier account created (${displayLogin(res.user.email)}).` })
+      load()
+    } catch (e) {
+      setFlash({ tone: 'danger', text: e instanceof Error ? e.message : 'Failed to create cashier' })
+    } finally {
+      setCreatingCashier(false)
+    }
+  }
+
+  function copyFullCredentials() {
+    if (!data) return
+    const adminLogin = data.owner?.email || 'N/A'
+    const primaryCashier = cashiers[0] ? displayLogin(cashiers[0].email) : 'None created yet'
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const text = [
+      `=== ${data.vendor.name} Sign-in Credentials ===`,
+      `Business ID: ${bid}`,
+      `Sign-in URL: ${origin}/c/${data.vendor.slug}/login`,
+      `Admin Login: ${adminLogin}`,
+      `Cashier Login: ${primaryCashier}`,
+    ].join('\n')
+    navigator.clipboard.writeText(text)
+    setFlash({ tone: 'success', text: 'Full sign-in credentials copied to clipboard!' })
+  }
 
   return (
     <AdminPage
@@ -276,6 +353,7 @@ export default function VendorDetailPage() {
       actions={
         <>
           <Button variant="ghost" icon={RefreshCw} onClick={load} loading={loading}>Refresh</Button>
+          <Button variant="ghost" icon={KeyRound} onClick={copyFullCredentials}>Copy Credentials</Button>
           <LinkButton href={`/sys-control/vendors/${v.id}/messaging`} icon={MessagesSquare}>SMS &amp; WhatsApp</LinkButton>
           {canImpersonate && <LinkButton href={`/sys-control/vendors/${v.id}/data`} icon={Database}>All data</LinkButton>}
           {canImpersonate && <LinkButton href={`/sys-control/vendors/${v.id}/recycle-bin`} icon={Trash2}>Recycle bin</LinkButton>}
@@ -285,6 +363,23 @@ export default function VendorDetailPage() {
     >
       {flash && (
         <Alert tone={flash.tone} action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash.text}</Alert>
+      )}
+      {credResult && (
+        <Alert tone="warning" title={`${credResult.title} (shown once)`}>
+          <div className="space-y-1">
+            <span className="inline-flex flex-wrap items-center gap-2">
+              Business ID <span className="font-mono font-bold text-adm-fg">{bid}</span> ·
+              Login <span className="font-mono font-bold text-adm-fg">{displayLogin(credResult.email)}</span> ·
+              Password <span className="font-mono font-semibold text-adm-fg">{credResult.password}</span>
+              <CopyButton
+                text={`Business ID: ${bid}\nLogin: ${displayLogin(credResult.email)}\nPassword: ${credResult.password}\nSign-in URL: ${typeof window !== 'undefined' ? window.location.origin : ''}/c/${v.slug}/login`}
+                label="Copy credentials"
+              />
+              <Button size="sm" variant="ghost" onClick={() => setCredResult(null)}>Dismiss</Button>
+            </span>
+            <span className="mt-1 block text-xs text-adm-muted">Sign in with the Business ID, this login and password at /c/{v.slug}/login.</span>
+          </div>
+        </Alert>
       )}
       {!isActive && (
         <Alert tone={v.status === 'locked' ? 'danger' : 'warning'} title={`${labelFor(VENDOR_STATUS_LABEL, v.status)}${v.lockedReason ? ` — ${labelFor(LOCK_REASON_LABEL, v.lockedReason)}` : ''}`}>
@@ -398,19 +493,144 @@ export default function VendorDetailPage() {
           </div>
 
           <div className="space-y-5">
-            <AdminCard title="Owner">
-              {owner ? (
-                <KeyValueList
-                  items={[
-                    { label: 'Name', value: owner.fullName },
-                    { label: 'Email', value: <span className="break-all">{owner.email}</span> },
-                    { label: 'Last sign-in', value: owner.lastLoginAt ? timeAgo(owner.lastLoginAt) : 'Never' },
-                    { label: 'Invitation', value: owner.inviteAccepted ? 'Accepted' : <Badge tone="warning">Not accepted yet</Badge> },
-                  ]}
-                />
-              ) : (
-                <Alert tone="warning">This vendor has no active owner user.</Alert>
-              )}
+            <AdminCard
+              title="Admin & Cashier Access"
+              description="Business ID, Vendor Admin, and Cashier sign-in credentials for testing or access."
+              actions={
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Button size="sm" variant="ghost" icon={KeyRound} onClick={copyFullCredentials}>
+                    Copy All
+                  </Button>
+                  <LinkButton href={`/c/${v.slug}/login`} target="_blank" icon={ExternalLink} size="sm">
+                    Sign-in Page
+                  </LinkButton>
+                </div>
+              }
+            >
+              {/* Business ID Bar */}
+              <div className="mb-3 rounded-lg border border-adm-border bg-adm-surface-2/60 px-3 py-2 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-adm-muted font-medium">Business ID:</span>
+                  <span className="font-mono text-sm font-bold text-adm-fg">{bid}</span>
+                </div>
+                <CopyButton text={bid} label="Copy Business ID" />
+              </div>
+
+              <div className="space-y-3">
+                {/* Admin Account */}
+                <div className="rounded-lg border border-adm-border p-3 space-y-2 bg-adm-surface">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-adm-muted flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-blue-500" />
+                      Vendor Admin (Owner)
+                    </span>
+                    {owner && <Badge tone={owner.inviteAccepted ? 'success' : 'warning'} dot>{owner.inviteAccepted ? 'Active' : 'Invited'}</Badge>}
+                  </div>
+
+                  {owner ? (
+                    <div className="space-y-1 text-[13px]">
+                      <div className="flex justify-between">
+                        <span className="text-adm-subtle">Name:</span>
+                        <span className="font-medium text-adm-fg">{owner.fullName}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-adm-subtle">Login / Email:</span>
+                        <span className="font-mono text-adm-fg flex items-center gap-1">
+                          {owner.email}
+                          <CopyButton text={owner.email} label="Copy admin login" />
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs text-adm-muted">
+                        <span>Last sign-in:</span>
+                        <span>{owner.lastLoginAt ? timeAgo(owner.lastLoginAt) : 'Never'}</span>
+                      </div>
+                      <div className="pt-2 flex flex-wrap gap-1.5">
+                        <Button size="sm" icon={KeyRound} onClick={() => setDialog('password')}>
+                          Reset Password
+                        </Button>
+                        {canImpersonate && isActive && (
+                          <Button size="sm" variant="ghost" icon={ExternalLink} onClick={() => setDialog('impersonate')}>
+                            Sign In As Admin
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <Alert tone="warning">No owner user found.</Alert>
+                  )}
+                </div>
+
+                {/* Cashier Account(s) */}
+                <div className="rounded-lg border border-adm-border p-3 space-y-2 bg-adm-surface">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-adm-muted flex items-center gap-1.5">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                      Cashier
+                    </span>
+                    {cashiers.length > 0 && <Badge tone="success" dot>{cashiers.length} Cashier{cashiers.length > 1 ? 's' : ''}</Badge>}
+                  </div>
+
+                  {cashiers.length > 0 ? (
+                    <div className="space-y-2.5">
+                      {cashiers.map((c) => (
+                        <div key={c.id} className="space-y-1 text-[13px] border-b border-adm-border/50 pb-2 last:border-none last:pb-0">
+                          <div className="flex justify-between">
+                            <span className="text-adm-subtle">Name:</span>
+                            <span className="font-medium text-adm-fg">{c.fullName}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-adm-subtle">Login:</span>
+                            <span className="font-mono text-adm-fg flex items-center gap-1">
+                              {displayLogin(c.email)}
+                              <CopyButton text={displayLogin(c.email)} label="Copy cashier login" />
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-xs text-adm-muted">
+                            <span>Status:</span>
+                            <span>{c.isActive ? 'Active' : 'Deactivated'} · {c.lastLoginAt ? timeAgo(c.lastLoginAt) : 'Never signed in'}</span>
+                          </div>
+                          <div className="pt-1.5 flex flex-wrap gap-1.5">
+                            <Button size="sm" icon={KeyRound} disabled={busyStaffId === c.id} onClick={() => handleResetStaffPassword(c)}>
+                              Reset Password
+                            </Button>
+                            <LinkButton size="sm" variant="ghost" icon={ExternalLink} href={`/c/${v.slug}/login`} target="_blank">
+                              Open Login
+                            </LinkButton>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-2 pt-1">
+                      <p className="text-xs text-adm-muted">No cashier created yet for this vendor.</p>
+                      {canManage && (
+                        <Button
+                          size="sm"
+                          variant="primary"
+                          icon={UserPlus}
+                          loading={creatingCashier}
+                          onClick={handleCreateDefaultCashier}
+                        >
+                          + Create Default Cashier
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Other staff summary */}
+                {otherStaff.length > 0 && (
+                  <div className="text-xs text-adm-muted pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setTab('staff')}
+                      className="text-adm-primary hover:underline font-medium"
+                    >
+                      View all {data.staff.length} staff members (including {otherStaff.length} other roles) &rarr;
+                    </button>
+                  </div>
+                )}
+              </div>
             </AdminCard>
 
             <AdminCard title="Subscription">
@@ -796,7 +1016,12 @@ function ActivityTab({ activity }: { activity: Detail['activity'] }) {
 
 /* ------------------------------------------------------------------ action dialogs */
 
-function ActionDialogs({ dialog, data, onClose, onDone }: { dialog: Dialog; data: Detail; onClose: () => void; onDone: (text: string, tone?: 'success' | 'warning') => void }) {
+function ActionDialogs({ dialog, data, onClose, onDone }: {
+  dialog: Dialog
+  data: Detail
+  onClose: () => void
+  onDone: (text: string, tone?: 'success' | 'warning', creds?: { title: string; email: string; password: string }) => void
+}) {
   const v = data.vendor
   const sub = data.subscription
   // State starts fresh for every dialog: the parent remounts this component per dialog (key)
@@ -949,7 +1174,22 @@ function ActionDialogs({ dialog, data, onClose, onDone }: { dialog: Dialog; data
           description={data.owner ? `${data.owner.fullName} · ${data.owner.email}` : undefined}
           footer={
             tempPassword ? (
-              <Button variant="primary" onClick={() => onDone('Temporary password set. The owner’s other sessions were signed out.')}>Done</Button>
+              <Button
+                variant="primary"
+                onClick={() =>
+                  onDone(
+                    'Temporary password set. The owner’s other sessions were signed out.',
+                    'success',
+                    {
+                      title: `New temporary password for Vendor Admin (${data.owner?.fullName})`,
+                      email: data.owner?.email || '',
+                      password: tempPassword,
+                    }
+                  )
+                }
+              >
+                Done
+              </Button>
             ) : (
               footer(pwMode === 'email' ? 'Send reset link' : 'Set temporary password', () =>
                 run({ action: 'reset_password', mode: pwMode }, (res) => {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant, db } from '@/lib/db'
-import { pricingTiers, subscriptions } from '@/lib/db/schema'
+import { pricingTiers, subscriptions, tenants } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 
@@ -21,7 +21,18 @@ export async function GET() {
       })
 
       if (!subscription) {
-        return NextResponse.json({ error: 'Subscription not found' }, { status: 404 })
+        const tenant = await tenantDb.query.tenants.findFirst({
+          where: eq(tenants.id, session.user.tenantId),
+        })
+        const plan = tenant?.plan || 'standard'
+        const tierName = plan.charAt(0).toUpperCase() + plan.slice(1)
+        return NextResponse.json({
+          status: tenant?.status || 'active',
+          trialEndsAt: tenant?.planExpiresAt ? new Date(tenant.planExpiresAt).toISOString() : null,
+          currentPeriodEnd: tenant?.planExpiresAt ? new Date(tenant.planExpiresAt).toISOString() : null,
+          tierName,
+          cancelAtPeriodEnd: false,
+        })
       }
 
       // Get tier name - pricingTiers is a global table without RLS

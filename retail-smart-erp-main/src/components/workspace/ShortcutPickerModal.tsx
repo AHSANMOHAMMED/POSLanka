@@ -201,39 +201,40 @@ export function ShortcutPickerModal({
                   className="border border-gray-200 dark:border-gray-700 rounded overflow-hidden"
                 >
                   {/* Module header */}
-                  <button
-                    type="button"
-                    onClick={() => toggleModule(group.moduleKey)}
-                    className="w-full flex items-center gap-2.5 px-3 py-2.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
-                  >
-                    {isExpanded ? (
-                      <ChevronDown size={14} className="text-gray-400 flex-shrink-0" />
-                    ) : (
-                      <ChevronRight size={14} className="text-gray-400 flex-shrink-0" />
-                    )}
-                    <ModuleIcon size={16} className="text-gray-500 dark:text-gray-400 flex-shrink-0" />
-                    <span className="text-sm font-medium text-gray-700 dark:text-gray-300 flex-1 text-left">
-                      {group.moduleLabel}
-                    </span>
-                    <span className="text-xs text-gray-400 dark:text-gray-500">
-                      {selectedInGroup}/{group.items.length}
-                    </span>
+                  <div className="w-full flex items-center justify-between gap-2.5 px-3 py-2.5 bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors">
+                    <button
+                      type="button"
+                      onClick={() => toggleModule(group.moduleKey)}
+                      className="flex-1 flex items-center gap-2.5 text-left min-w-0"
+                    >
+                      {isExpanded ? (
+                        <ChevronDown size={14} className="text-gray-400 flex-shrink-0" />
+                      ) : (
+                        <ChevronRight size={14} className="text-gray-400 flex-shrink-0" />
+                      )}
+                      <ModuleIcon size={16} className="text-gray-500 dark:text-gray-400 flex-shrink-0" />
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">
+                        {group.moduleLabel}
+                      </span>
+                      <span className="text-xs text-gray-400 dark:text-gray-500 flex-shrink-0">
+                        {selectedInGroup}/{group.items.length}
+                      </span>
+                    </button>
                     {/* Select all / deselect all */}
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
+                      onClick={() => {
                         if (allSelected) {
                           deselectAllInModule(group)
                         } else {
                           selectAllInModule(group)
                         }
                       }}
-                      className="text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                      className="text-xs text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 px-1.5 py-0.5 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors flex-shrink-0"
                     >
                       {allSelected ? 'Clear' : 'All'}
                     </button>
-                  </button>
+                  </div>
 
                   {/* Module items */}
                   {isExpanded && (

@@ -9,6 +9,7 @@ export interface LabelPreset {
   heightMm: number
   labelShape: LabelShape
   cornerRadius?: number
+  columns?: number
   elements: LabelElement[]
 }
 
@@ -19,6 +20,21 @@ function elId() {
 
 export const LABEL_PRESETS: LabelPreset[] = [
   // ─── Retail ──────────────────────────────────────────────
+  {
+    id: 'retail-38x25-barcode-2up',
+    name: '38 x 25 mm Barcode Tag (2 Across)',
+    description: 'Name + Barcode + Price (twin stickers in 1 line on 80 mm roll)',
+    businessTypes: ['retail', 'supermarket', 'all'],
+    widthMm: 38,
+    heightMm: 25,
+    columns: 2,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 1, y: 1, width: 36, height: 4.5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 7, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'barcode', x: 2, y: 5.5, width: 34, height: 11, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
+      { id: elId(), type: 'text', x: 1, y: 17.5, width: 36, height: 6.5, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 13, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
+    ],
+  },
   {
     id: 'retail-price-tag',
     name: 'Standard Price Tag',

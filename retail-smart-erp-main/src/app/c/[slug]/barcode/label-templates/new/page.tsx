@@ -27,6 +27,7 @@ export default function NewBarcodeLabelTemplatePage({ params }: { params: Promis
     description: preset.description,
     widthMm: preset.widthMm,
     heightMm: preset.heightMm,
+    columns: preset.columns,
     labelShape: preset.labelShape as LabelShape,
     cornerRadius: preset.cornerRadius ?? null,
     // Deterministic ids (pure during render); the designer re-keys elements on edit

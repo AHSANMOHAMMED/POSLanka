@@ -33,6 +33,7 @@ import { isModuleAllowedByFeatures } from '@/lib/features/nav-gate'
 import { getTerms } from '@/lib/terminology'
 import { ICON_MAP } from '@/components/workspace/icon-map'
 import { cn } from '@/lib/utils'
+import { AppTextSizeControl } from '@/components/ui/AppTextSizeControl'
 
 interface NavbarProps {
   tenantName: string
@@ -424,6 +425,11 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
               </a>
             </div>
           )}
+        </div>
+
+        {/* Text size control (desktop only) */}
+        <div className="hidden lg:block">
+          <AppTextSizeControl userId={session?.user?.id || null} />
         </div>
 
         {/* Theme toggle (desktop only) */}

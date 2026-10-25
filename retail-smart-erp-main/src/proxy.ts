@@ -34,6 +34,8 @@ function isOurOrigin(origin: string): boolean {
     return (
       host === base ||
       host.endsWith(`.${base}`) ||
+      host === 'skyerpos.com' ||
+      host.endsWith('.skyerpos.com') ||
       host === 'poslanka.lk' ||
       host.endsWith('.poslanka.lk') ||
       host.endsWith('.ondigitalocean.app') ||
@@ -200,6 +202,7 @@ export async function proxy(request: NextRequest) {
     if (clean.endsWith('.ondigitalocean.app')) return true
 
     // Allow skyERPOS official domains
+    if (clean === 'skyerpos.com' || clean.endsWith('.skyerpos.com')) return true
     if (clean === 'poslanka.lk' || clean.endsWith('.poslanka.lk')) return true
 
     // Allow the configured base domain and any subdomain of it
@@ -274,7 +277,7 @@ export async function proxy(request: NextRequest) {
   const extractSubdomain = (host: string): string | null => {
     const cleanHost = host.split(':')[0].toLowerCase() // Remove port and normalize case
 
-    const candidateBases = Array.from(new Set([baseDomain, 'poslanka.lk', 'retailsmarterp.com'])).filter(
+    const candidateBases = Array.from(new Set([baseDomain, 'skyerpos.com', 'poslanka.lk', 'retailsmarterp.com'])).filter(
       b => b && b !== 'localhost'
     )
 

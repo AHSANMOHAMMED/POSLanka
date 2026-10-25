@@ -68,6 +68,7 @@ export async function PUT(
       if (parsed.data.description !== undefined) updateData.description = parsed.data.description || null
       if (parsed.data.widthMm !== undefined) updateData.widthMm = String(parsed.data.widthMm)
       if (parsed.data.heightMm !== undefined) updateData.heightMm = String(parsed.data.heightMm)
+      if (parsed.data.columns !== undefined) updateData.columns = parsed.data.columns
       if (parsed.data.labelShape !== undefined) updateData.labelShape = parsed.data.labelShape
       if (parsed.data.cornerRadius !== undefined) updateData.cornerRadius = parsed.data.cornerRadius
       if (parsed.data.elements !== undefined) updateData.elements = parsed.data.elements
