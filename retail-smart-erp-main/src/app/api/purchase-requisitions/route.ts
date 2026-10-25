@@ -10,7 +10,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { purchaseRequisitionsListSchema, createPurchaseRequisitionSchema } from '@/lib/validation/schemas/purchases'
 import { nextDocNo } from '@/lib/documents/numbering'
-import { assertBranchAccess } from '@/lib/auth/branch-access'
+import { assertBranchAccess, getBranchScope, branchFilter, resolveRecordBranch } from '@/lib/auth/branch-access'
 
 export async function GET(request: NextRequest) {
   try {
@@ -23,6 +23,10 @@ export async function GET(request: NextRequest) {
       if (permError) return { error: permError }
 
       const conditions: ReturnType<typeof eq>[] = []
+
+      // K4: branch-restricted staff only see their own branches' requisitions
+      const branchCond = branchFilter(await getBranchScope(session, db), purchaseRequisitions.warehouseId)
+      if (branchCond) conditions.push(branchCond)
 
       if (search) {
         const escaped = escapeLikePattern(search)
@@ -127,6 +131,9 @@ export async function POST(request: NextRequest) {
       // K4: a branch-restricted user works with their own branches only
       const branchDenied = await assertBranchAccess(session, (body.items || []).map((i) => i.warehouseId), tx)
       if (branchDenied) return { error: branchDenied }
+      // The requisition's branch: the requested one, else its first line's, else the user's
+      const branch = await resolveRecordBranch(session, tx, body.warehouseId || body.items?.find((i) => i.warehouseId)?.warehouseId)
+      if (branch.error) return { error: branch.error }
 
       const quotaError = await requireQuota(session.user.tenantId, 'standard')
       if (quotaError) return { error: quotaError }
@@ -150,6 +157,7 @@ export async function POST(request: NextRequest) {
         purpose: body.purpose || null,
         notes: body.notes || null,
         estimatedTotal: estimatedTotal.toFixed(2),
+        warehouseId: branch.warehouseId,
       }).returning()
 
       if (body.items?.length) {

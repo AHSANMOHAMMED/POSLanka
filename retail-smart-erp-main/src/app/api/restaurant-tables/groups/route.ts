@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { tableGroups } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { getBranchScope, canAccessBranch } from '@/lib/auth/branch-access'
 
 // GET all active table groups with member tables and server info
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -38,7 +39,10 @@ export async function GET(request: NextRequest) {
         orderBy: (tg, { desc }) => [desc(tg.createdAt)],
       })
 
-      return NextResponse.json(groups)
+      // K4: branch-restricted staff only see groups of their own branches' tables
+      const scope = await getBranchScope(session, db)
+      return NextResponse.json(scope === null ? groups
+        : groups.filter((g) => g.members.every((m) => canAccessBranch(scope, m.table?.warehouseId))))
     })
   } catch (error) {
     logError('api/restaurant-tables/groups', error)

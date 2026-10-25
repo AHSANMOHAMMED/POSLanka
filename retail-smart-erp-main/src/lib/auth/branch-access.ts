@@ -22,7 +22,7 @@
  */
 import { NextResponse } from 'next/server'
 import { and, eq, inArray, isNull, or, sql, type SQL, type AnyColumn } from 'drizzle-orm'
-import { userWarehouses, warehouses } from '@/lib/db/schema'
+import { posOpeningEntries, userWarehouses, warehouses } from '@/lib/db/schema'
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core'
 import { withTenant, type TenantDb } from '@/lib/db/tenant-context'
 
@@ -198,4 +198,39 @@ export async function assertStaffInScope(
 export async function staffDeniedResponse(scope: BranchScope, db: BranchDb): Promise<NextResponse> {
   const message = (await branchDeniedMessage(scope, db)).replace('You can only work with', 'You can only manage staff of')
   return NextResponse.json({ error: message, code: 'BRANCH_ACCESS_DENIED' }, { status: 403 })
+}
+
+/**
+ * The branch a new record (restaurant table/order, appointment, requisition) belongs to.
+ * A branch from the request must exist, be active and be allowed for the user (else 403).
+ * Without one: the branch of the user's open POS shift (when allowed), else the user's first
+ * branch (restricted users), else the default branch, else any active branch, else null.
+ * Returns `{ warehouseId }` or `{ error }` with the response to send.
+ */
+export async function resolveRecordBranch(
+  session: BranchSessionLike | null | undefined,
+  db: BranchDb,
+  requested?: string | null,
+): Promise<{ warehouseId: string | null; error?: undefined } | { warehouseId?: undefined; error: NextResponse }> {
+  const scope = await getBranchScope(session, db)
+  if (requested) {
+    if (!canAccessBranch(scope, requested)) return { error: await branchDeniedResponse(scope, db) }
+    const [wh] = await db.select({ id: warehouses.id }).from(warehouses)
+      .where(and(eq(warehouses.id, requested), eq(warehouses.isActive, true))).limit(1)
+    if (!wh) return { error: NextResponse.json({ error: 'Selected branch not found or inactive' }, { status: 400 }) }
+    return { warehouseId: wh.id }
+  }
+  if (session?.user?.id) {
+    const [shift] = await db.select({ warehouseId: posOpeningEntries.warehouseId }).from(posOpeningEntries)
+      .where(and(eq(posOpeningEntries.userId, session.user.id), eq(posOpeningEntries.status, 'open'))).limit(1)
+    if (shift?.warehouseId && canAccessBranch(scope, shift.warehouseId)) return { warehouseId: shift.warehouseId }
+  }
+  if (scope) return { warehouseId: scope[0] }
+  const notQuarantine = sql`upper(coalesce(${warehouses.code}, '')) <> 'QUARANTINE'`
+  const [def] = await db.select({ id: warehouses.id }).from(warehouses)
+    .where(and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true), notQuarantine)).limit(1)
+  if (def) return { warehouseId: def.id }
+  const [any] = await db.select({ id: warehouses.id }).from(warehouses)
+    .where(and(eq(warehouses.isActive, true), notQuarantine)).limit(1)
+  return { warehouseId: any?.id ?? null }
 }

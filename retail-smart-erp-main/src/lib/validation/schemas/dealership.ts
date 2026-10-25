@@ -305,6 +305,7 @@ export const checkAppointmentConflictsSchema = z.object({
   scheduledTime: timeStringSchema,
   durationMinutes: z.coerce.number().int().min(1).max(480).default(60),
   excludeAppointmentId: optionalUuid,
+  warehouseId: optionalUuid, // K4: only that branch's appointments
 })
 
 // POST /api/appointments/check-customer

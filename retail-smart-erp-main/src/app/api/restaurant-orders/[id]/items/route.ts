@@ -11,6 +11,7 @@ import { recalculateOrderTotals } from '@/lib/restaurant/order-totals'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addRestaurantOrderItemSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // GET all items for a restaurant order
 export async function GET(
@@ -31,6 +32,10 @@ export async function GET(
     const { id: orderId } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: an order of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantOrders, orderId)
+      if (branchDenied) return branchDenied
+
       // Verify order exists
       const order = await db.query.restaurantOrders.findFirst({
         where: eq(restaurantOrders.id, orderId),
@@ -81,6 +86,10 @@ export async function POST(
     const { itemId, itemName, quantity, unitPrice, modifiers, notes } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: an order of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantOrders, orderId)
+      if (branchDenied) return branchDenied
+
       return await db.transaction(async (tx) => {
         // Verify order exists and is open
         const [order] = await tx

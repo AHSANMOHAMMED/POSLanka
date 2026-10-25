@@ -9,6 +9,19 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateTableGroupSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { getBranchScope, canAccessBranch, branchDeniedResponse } from '@/lib/auth/branch-access'
+import type { TenantDb } from '@/lib/db/tenant-context'
+
+/** K4: a group with a table of a branch the user may not work with is refused (403) */
+async function groupBranchDenied(session: Parameters<typeof getBranchScope>[0], db: TenantDb, groupId: string) {
+  const scope = await getBranchScope(session, db)
+  if (scope === null) return null
+  const rows = await db.select({ warehouseId: restaurantTables.warehouseId })
+    .from(tableGroupMembers)
+    .innerJoin(restaurantTables, eq(restaurantTables.id, tableGroupMembers.tableId))
+    .where(eq(tableGroupMembers.tableGroupId, groupId))
+  return rows.some((r) => !canAccessBranch(scope, r.warehouseId)) ? branchDeniedResponse(scope, db) : null
+}
 
 // GET single table group detail with member tables
 export async function GET(
@@ -29,6 +42,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      const branchDenied = await groupBranchDenied(session, db, id)
+      if (branchDenied) return branchDenied
+
       const group = await db.query.tableGroups.findFirst({
         where: eq(tableGroups.id, id),
         with: {
@@ -84,6 +100,9 @@ export async function PUT(
     const { name, serverId, notes } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      const branchDenied = await groupBranchDenied(session, db, id)
+      if (branchDenied) return branchDenied
+
       // Verify group exists and is active
       const existing = await db.query.tableGroups.findFirst({
         where: and(eq(tableGroups.id, id), eq(tableGroups.status, 'active')),
@@ -157,6 +176,9 @@ export async function DELETE(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      const branchDenied = await groupBranchDenied(session, db, id)
+      if (branchDenied) return branchDenied
+
       // Verify group exists and is active
       const existing = await db.query.tableGroups.findFirst({
         where: and(eq(tableGroups.id, id), eq(tableGroups.status, 'active')),

@@ -8,9 +8,13 @@
  * branches (Colombo = A, Kandy = B). Rule under test (src/lib/auth/branch-access.ts): the owner
  * and staff with no branch assignment work with every branch; anyone else only with the branches
  * assigned to them. Transfers: the sending branch sends, the receiving branch receives.
+ * Restaurant tables/orders, appointments and requisition headers carry a branch since 0176 (the
+ * backfill is re-run here on legacy rows of the test tenant).
  * Prints PASS/FAIL per check and exits non-zero on failure. KEEP_TEST_DATA=1 keeps the tenant.
  */
 import { Client } from 'pg'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { NextRequest } from 'next/server'
 import { setTestSession } from './w8-harness/auth-mock'
@@ -41,9 +45,23 @@ import { GET as taxReport } from '@/app/api/reports/tax-report/route'
 import { GET as ownerDashboard } from '@/app/api/dashboard/owner/route'
 import { GET as listUsers, POST as createUser } from '@/app/api/users/route'
 import { PUT as setUserWarehouses } from '@/app/api/users/[id]/warehouses/route'
+import { POST as createWarehouse } from '@/app/api/warehouses/route'
+import { GET as listTables, POST as createTable } from '@/app/api/restaurant-tables/route'
+import { GET as getTable, PUT as updateTable } from '@/app/api/restaurant-tables/[id]/route'
+import { GET as listROrders, POST as createROrder } from '@/app/api/restaurant-orders/route'
+import { GET as getROrder, PUT as updateROrder } from '@/app/api/restaurant-orders/[id]/route'
+import { POST as addROrderItem } from '@/app/api/restaurant-orders/[id]/items/route'
+import { GET as listKitchen } from '@/app/api/kitchen-orders/route'
+import { GET as getKitchen } from '@/app/api/kitchen-orders/[id]/route'
+import { GET as listAppointments, POST as createAppointment } from '@/app/api/appointments/route'
+import { GET as getAppointment, PUT as updateAppointment } from '@/app/api/appointments/[id]/route'
+import { GET as listReqs, POST as createReq } from '@/app/api/purchase-requisitions/route'
+import { GET as getReq } from '@/app/api/purchase-requisitions/[id]/route'
+import { GET as poAttachments } from '@/app/api/purchase-orders/[id]/attachments/route'
+import { GET as reqAttachments } from '@/app/api/purchase-requisitions/[id]/attachments/route'
 
 type J = Record<string, unknown> & { [k: string]: any } // eslint-disable-line @typescript-eslint/no-explicit-any
-type Who = 'owner' | 'cashierA' | 'keeperA' | 'keeperB' | 'managerA' | 'cashierFree'
+type Who = 'owner' | 'cashierA' | 'keeperA' | 'keeperB' | 'managerA' | 'cashierFree' | 'waiterA' | 'techA' | 'sysA'
 interface Fx {
   tenantId: string; slug: string; whA: string; whB: string; supplierId: string
   users: Record<Who, { id: string; role: string }>
@@ -94,6 +112,7 @@ async function makeTenant(admin: Client): Promise<Fx> {
   const users = {} as Fx['users']
   const roles: Record<Who, string> = {
     owner: 'owner', cashierA: 'cashier', keeperA: 'stock_manager', keeperB: 'stock_manager', managerA: 'manager', cashierFree: 'cashier',
+    waiterA: 'waiter', techA: 'technician', sysA: 'system_manager',
   }
   for (const who of Object.keys(roles) as Who[]) users[who] = { id: randomUUID(), role: roles[who] }
   const f: Fx = { tenantId, slug, whA: randomUUID(), whB: randomUUID(), supplierId: randomUUID(), users, profileA: randomUUID(), profileB: randomUUID() }
@@ -106,7 +125,7 @@ async function makeTenant(admin: Client): Promise<Fx> {
       [users[who].id, tenantId, `${who.toLowerCase()}-${slug}@example.test`, who, roles[who]])
   }
   // Branch assignments: the A staff to Colombo, keeperB to Kandy; cashierFree and the owner none
-  for (const [who, wh] of [['cashierA', f.whA], ['keeperA', f.whA], ['managerA', f.whA], ['keeperB', f.whB]] as Array<[Who, string]>) {
+  for (const [who, wh] of [['cashierA', f.whA], ['keeperA', f.whA], ['managerA', f.whA], ['keeperB', f.whB], ['waiterA', f.whA], ['techA', f.whA], ['sysA', f.whA]] as Array<[Who, string]>) {
     await admin.query(`INSERT INTO user_warehouses (tenant_id, user_id, warehouse_id, is_active) VALUES ($1,$2,$3,true)`, [tenantId, users[who].id, wh])
   }
   // Counters: one per branch. cashierA is (wrongly) also on the Kandy counter: the branch rule still applies
@@ -390,6 +409,150 @@ async function main() {
       as(f, 'cashierFree')
       const after = await json(await listWarehouses(req('GET', '/api/warehouses?all=true')))
       check('cached scope dropped: the cashier now sees Kandy only', listOf(before.body).length === 2 && listOf(after.body).length === 1 && listOf(after.body)[0].id === f.whB, short(after.body))
+    })
+
+    // ============================================================ 0176 backfill
+    await step('backfill of the new branch columns', async () => {
+      // Legacy rows without a branch, as they were before 0176
+      const legacyTable = randomUUID(); const legacyOrder = randomUUID(); const legacyBilled = randomUUID()
+      const legacyAppt = randomUUID(); const legacyReqLine = randomUUID(); const legacyReqPlain = randomUUID()
+      await admin.query(`INSERT INTO restaurant_tables (id, tenant_id, name) VALUES ($1,$2,'Old T1')`, [legacyTable, f.tenantId])
+      await admin.query(`INSERT INTO restaurant_orders (id, tenant_id, order_no, table_id) VALUES ($1,$2,'RO-OLD-1',$3)`, [legacyOrder, f.tenantId, legacyTable])
+      await admin.query(`INSERT INTO restaurant_orders (id, tenant_id, order_no, order_type, sale_id) VALUES ($1,$2,'RO-OLD-2','takeaway',$3)`, [legacyBilled, f.tenantId, saleOwnerB])
+      await admin.query(`INSERT INTO appointments (id, tenant_id, scheduled_date, scheduled_time) VALUES ($1,$2,$3,'09:00')`, [legacyAppt, f.tenantId, today])
+      await admin.query(`INSERT INTO purchase_requisitions (id, tenant_id, requisition_no) VALUES ($1,$2,'PR-OLD-1'), ($3,$2,'PR-OLD-2')`, [legacyReqLine, f.tenantId, legacyReqPlain])
+      await admin.query(`INSERT INTO purchase_requisition_items (tenant_id, requisition_id, item_name, quantity, warehouse_id) VALUES ($1,$2,'Rice',5,$3)`, [f.tenantId, legacyReqLine, f.whB])
+      // Re-run the backfill statements of the migration (they only touch rows without a branch)
+      const migration = readFileSync(join(process.cwd(), 'drizzle/0176_branch_columns.sql'), 'utf8')
+      const backfill = migration.slice(migration.indexOf('CREATE TEMP TABLE'))
+      for (const stmt of backfill.split('--> statement-breakpoint').map((s) => s.trim()).filter(Boolean)) await admin.query(stmt)
+      const wh = async (table: string, id: string) => (await admin.query(`SELECT warehouse_id FROM ${table} WHERE id=$1`, [id])).rows[0]?.warehouse_id
+      check('backfill: an old table goes to the default branch (Colombo)', (await wh('restaurant_tables', legacyTable)) === f.whA)
+      check('backfill: an old order follows its table (Colombo)', (await wh('restaurant_orders', legacyOrder)) === f.whA)
+      check('backfill: an old billed order follows its sale (Kandy)', (await wh('restaurant_orders', legacyBilled)) === f.whB)
+      check('backfill: an old appointment goes to the default branch', (await wh('appointments', legacyAppt)) === f.whA)
+      check('backfill: a requisition takes its line\'s branch (Kandy)', (await wh('purchase_requisitions', legacyReqLine)) === f.whB)
+      check('backfill: a requisition without lines goes to the default branch', (await wh('purchase_requisitions', legacyReqPlain)) === f.whA)
+    })
+
+    // ============================================================ restaurant tables + orders
+    await step('restaurant tables and orders', async () => {
+      as(f, 'owner')
+      const tB = await json(await createTable(req('POST', '/api/restaurant-tables', { name: 'K1', capacity: 4, warehouseId: f.whB })))
+      check('owner adds a Kandy table → 200 at Kandy', tB.status === 200 && tB.body.warehouseId === f.whB, short(tB.body))
+      const oB = await json(await createROrder(req('POST', '/api/restaurant-orders', { tableId: tB.body.id, orderType: 'dine_in', customerCount: 2 })))
+      check('owner opens an order on the Kandy table → order at Kandy', oB.status === 200 && oB.body.warehouseId === f.whB, short(oB.body))
+      const ownerList = await json(await listTables(req('GET', '/api/restaurant-tables?all=true')))
+      check('owner sees tables of both branches', listOf(ownerList.body).some((t) => t.id === tB.body.id), short(ownerList.body))
+
+      as(f, 'waiterA')
+      const tA = await json(await createTable(req('POST', '/api/restaurant-tables', { name: 'K1', capacity: 2 })))
+      check('Colombo waiter adds a table without a branch → Colombo (same name as Kandy\'s is fine)', tA.status === 200 && tA.body.warehouseId === f.whA, short(tA.body))
+      const tAtB = await json(await createTable(req('POST', '/api/restaurant-tables', { name: 'K9', warehouseId: f.whB })))
+      check('Colombo waiter adding a Kandy table → 403 naming Colombo', denied(tAtB) && /Colombo/.test(String(tAtB.body.error)), short(tAtB.body))
+      const list = await json(await listTables(req('GET', '/api/restaurant-tables?all=true')))
+      const ids = listOf(list.body).map((t) => t.id)
+      check('Colombo waiter\'s table list: no Kandy table', list.status === 200 && ids.includes(tA.body.id) && !ids.includes(tB.body.id), short(ids))
+      const g = await json(await getTable(req('GET', `/api/restaurant-tables/${tB.body.id}`), ctx(tB.body.id)))
+      check('… opening the Kandy table → 403', denied(g), short(g.body))
+      const u = await json(await updateTable(req('PUT', `/api/restaurant-tables/${tB.body.id}`, { status: 'unavailable' }), ctx(tB.body.id)))
+      check('… changing the Kandy table → 403', denied(u), short(u.body))
+      const seat = await json(await createROrder(req('POST', '/api/restaurant-orders', { tableId: tB.body.id, orderType: 'dine_in' })))
+      check('… opening an order on the Kandy table → 403', denied(seat), short(seat.body))
+      const take = await json(await createROrder(req('POST', '/api/restaurant-orders', { orderType: 'takeaway' })))
+      check('Colombo waiter takeaway order → Colombo', take.status === 200 && take.body.warehouseId === f.whA, short(take.body))
+      const orders = await json(await listROrders(req('GET', '/api/restaurant-orders?all=true')))
+      const oids = listOf(orders.body).map((o) => o.id)
+      check('Colombo waiter\'s order list: no Kandy order', orders.status === 200 && oids.includes(take.body.id) && !oids.includes(oB.body.id), short(oids))
+      const go = await json(await getROrder(req('GET', `/api/restaurant-orders/${oB.body.id}`), ctx(oB.body.id)))
+      check('… opening the Kandy order → 403', denied(go), short(go.body))
+      const co = await json(await updateROrder(req('PUT', `/api/restaurant-orders/${oB.body.id}`, { status: 'cancelled', cancellationReason: 'test' }), ctx(oB.body.id)))
+      check('… cancelling the Kandy order → 403', denied(co), short(co.body))
+      const add = await json(await addROrderItem(req('POST', `/api/restaurant-orders/${oB.body.id}/items`, { itemId: X, itemName: 'Rice 5kg', quantity: 1, unitPrice: 800 }), ctx(oB.body.id)))
+      check('… adding a dish to the Kandy order → 403', denied(add), short(add.body))
+      const status = (await admin.query(`SELECT status FROM restaurant_orders WHERE id=$1`, [oB.body.id])).rows[0]?.status
+      check('… and the Kandy order is still open', status === 'open', String(status))
+      const kB = (await admin.query(`SELECT id FROM kitchen_orders WHERE restaurant_order_id=$1`, [oB.body.id])).rows[0]?.id as string
+      const kitchen = await json(await listKitchen(req('GET', '/api/kitchen-orders')))
+      const kids = listOf(kitchen.body).map((k) => k.restaurantOrderId)
+      check('kitchen display of Colombo: no Kandy order', kitchen.status === 200 && kids.includes(take.body.id) && !kids.includes(oB.body.id), short(kids))
+      const gk = await json(await getKitchen(req('GET', `/api/kitchen-orders/${kB}`), ctx(kB)))
+      check('… opening the Kandy kitchen ticket → 403', denied(gk), short(gk.body))
+
+      as(f, 'owner')
+      const all = await json(await listROrders(req('GET', '/api/restaurant-orders?all=true')))
+      const allIds = listOf(all.body).map((o) => o.id)
+      check('owner sees orders of both branches', allIds.includes(take.body.id) && allIds.includes(oB.body.id), short(allIds))
+    })
+
+    // ============================================================ appointments
+    await step('appointments', async () => {
+      const customer = randomUUID(); const vehicle = randomUUID(); const service = randomUUID()
+      await admin.query(`INSERT INTO customers (id, tenant_id, name) VALUES ($1,$2,'Nimal')`, [customer, f.tenantId])
+      await admin.query(`INSERT INTO vehicles (id, tenant_id, customer_id, make, model) VALUES ($1,$2,$3,'Toyota','Axio')`, [vehicle, f.tenantId, customer])
+      await admin.query(`INSERT INTO service_types (id, tenant_id, name) VALUES ($1,$2,'Oil change')`, [service, f.tenantId])
+      const d = new Date(`${today}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 2)
+      const day = d.toISOString().slice(0, 10)
+      const body = { customerId: customer, vehicleId: vehicle, serviceTypeId: service, scheduledDate: day, scheduledTime: '10:00' }
+
+      as(f, 'owner')
+      const aB = await json(await createAppointment(req('POST', '/api/appointments', { ...body, warehouseId: f.whB })))
+      const idB = aB.body.appointment?.id as string
+      check('owner books an appointment at Kandy → 200 at Kandy', aB.status === 200 && aB.body.appointment?.warehouseId === f.whB, short(aB.body))
+
+      as(f, 'techA')
+      const aA = await json(await createAppointment(req('POST', '/api/appointments', { ...body, scheduledTime: '14:00' })))
+      const idA = aA.body.appointment?.id as string
+      check('Colombo technician books without a branch → Colombo', aA.status === 200 && aA.body.appointment?.warehouseId === f.whA, short(aA.body))
+      const toB = await json(await createAppointment(req('POST', '/api/appointments', { ...body, scheduledTime: '15:00', warehouseId: f.whB })))
+      check('Colombo technician booking at Kandy → 403', denied(toB), short(toB.body))
+      const list = await json(await listAppointments(req('GET', '/api/appointments?all=true')))
+      const ids = listOf(list.body).map((a) => a.id)
+      check('Colombo technician\'s appointments: no Kandy booking', list.status === 200 && ids.includes(idA) && !ids.includes(idB), short(ids))
+      const g = await json(await getAppointment(req('GET', `/api/appointments/${idB}`), ctx(idB)))
+      check('… opening the Kandy appointment → 403', denied(g), short(g.body))
+      const u = await json(await updateAppointment(req('PUT', `/api/appointments/${idB}`, { notes: 'moved' }), ctx(idB)))
+      check('… changing the Kandy appointment → 403', denied(u), short(u.body))
+
+      as(f, 'owner')
+      const all = await json(await listAppointments(req('GET', '/api/appointments?all=true')))
+      const allIds = listOf(all.body).map((a) => a.id)
+      check('owner sees appointments of both branches', allIds.includes(idA) && allIds.includes(idB), short(allIds))
+    })
+
+    // ============================================================ requisitions + attachments + branch creation
+    await step('requisitions, attachments and new branches', async () => {
+      as(f, 'owner')
+      const rB = await json(await createReq(req('POST', '/api/purchase-requisitions', { purpose: 'Kandy shelves', warehouseId: f.whB })))
+      check('owner raises a Kandy requisition → 201 at Kandy', rB.status === 201 && rB.body.warehouseId === f.whB, short(rB.body))
+      const rLine = await json(await createReq(req('POST', '/api/purchase-requisitions', { purpose: 'Kandy rice', items: [{ itemId: X, itemName: 'Rice 5kg', quantity: 3, warehouseId: f.whB }] })))
+      check('… a requisition without a branch takes its first line\'s (Kandy)', rLine.status === 201 && rLine.body.warehouseId === f.whB, short(rLine.body))
+      const poB = await json(await createPO(req('POST', '/api/purchase-orders', { supplierId: f.supplierId, warehouseId: f.whB })))
+      const poId = (poB.body.id || poB.body.data?.id) as string
+      const ownerAtt = await json(await poAttachments(req('GET', `/api/purchase-orders/${poId}/attachments`), ctx(poId)))
+      check('owner lists a Kandy order\'s attachments → 200', ownerAtt.status === 200, short(ownerAtt.body))
+
+      as(f, 'managerA')
+      const rA = await json(await createReq(req('POST', '/api/purchase-requisitions', { purpose: 'Colombo bags' })))
+      check('Colombo manager raises a requisition without a branch → Colombo', rA.status === 201 && rA.body.warehouseId === f.whA, short(rA.body))
+      const list = await json(await listReqs(req('GET', '/api/purchase-requisitions?pageSize=50')))
+      const ids = listOf(list.body).map((r) => r.id)
+      check('Colombo manager\'s requisitions: no Kandy one', list.status === 200 && ids.includes(rA.body.id) && !ids.includes(rB.body.id) && !ids.includes(rLine.body.id), short(ids))
+      const g = await json(await getReq(req('GET', `/api/purchase-requisitions/${rB.body.id}`), ctx(rB.body.id)))
+      check('… opening the Kandy requisition → 403', denied(g), short(g.body))
+      const att = await json(await poAttachments(req('GET', `/api/purchase-orders/${poId}/attachments`), ctx(poId)))
+      check('… the Kandy purchase order\'s attachments → 403', denied(att), short(att.body))
+      const ratt = await json(await reqAttachments(req('GET', `/api/purchase-requisitions/${rB.body.id}/attachments`), ctx(rB.body.id)))
+      check('… the Kandy requisition\'s attachments → 403', denied(ratt), short(ratt.body))
+      const rattA = await json(await reqAttachments(req('GET', `/api/purchase-requisitions/${rA.body.id}/attachments`), ctx(rA.body.id)))
+      check('… their own requisition\'s attachments → 200', rattA.status === 200, short(rattA.body))
+
+      as(f, 'sysA')
+      const nb = await json(await createWarehouse(req('POST', '/api/warehouses', { name: 'Galle', code: 'GLE' })))
+      check('branch-restricted settings user adding a branch → 403', denied(nb) && /owner/.test(String(nb.body.error)), short(nb.body))
+      as(f, 'owner')
+      const ob = await json(await createWarehouse(req('POST', '/api/warehouses', { name: 'Galle', code: 'GLE' })))
+      check('owner adds a branch → 200', (ob.status === 200 || ob.status === 201) && !!ob.body.id, short(ob.body))
     })
   } finally {
     if (!process.env.KEEP_TEST_DATA) {

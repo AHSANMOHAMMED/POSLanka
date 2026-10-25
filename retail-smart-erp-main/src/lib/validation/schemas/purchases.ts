@@ -108,6 +108,7 @@ export const createPurchaseRequisitionSchema = z.object({
   purpose: z.string().max(1000).optional(),
   notes: z.string().max(2000).optional(),
   items: z.array(requisitionItemSchema).optional(),
+  warehouseId: optionalUuid, // K4: branch (default: the first line's, else the user's branch)
 })
 
 // POST /api/purchase-requisitions/[id]/approve

@@ -10,6 +10,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateRestaurantTableSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // GET single restaurant table
 export async function GET(
@@ -30,6 +31,10 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a table of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantTables, id)
+      if (branchDenied) return branchDenied
+
       const table = await db.query.restaurantTables.findFirst({
         where: eq(restaurantTables.id, id),
       })
@@ -65,9 +70,14 @@ export async function PUT(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, updateRestaurantTableSchema)
     if (!parsed.success) return parsed.response
-    const { name, area, capacity, status, positionX, positionY, width, height, shape, rotation } = parsed.data
+    const { name, area, capacity, status, positionX, positionY, width, height, shape, rotation, warehouseId } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a table of another branch is refused; so is moving it to one
+      const branchDenied = await assertRecordBranch(session, db, restaurantTables, id)
+        || (warehouseId ? await assertBranchAccess(session, warehouseId, db) : null)
+      if (branchDenied) return branchDenied
+
       // Verify table exists
       const existing = await db.query.restaurantTables.findFirst({
         where: eq(restaurantTables.id, id),
@@ -76,14 +86,16 @@ export async function PUT(
       if (!existing) {
         return NextResponse.json({ error: 'Table not found' }, { status: 404 })
       }
+      const targetBranch = warehouseId || existing.warehouseId
 
-      // Check for duplicate name (if name is being changed)
-      if (name && name !== existing.name) {
+      // Check for duplicate name (if name or branch is being changed)
+      if ((name && name !== existing.name) || targetBranch !== existing.warehouseId) {
         const duplicate = await db.query.restaurantTables.findFirst({
           where: and(
-            eq(restaurantTables.name, name),
+            eq(restaurantTables.name, name || existing.name),
             eq(restaurantTables.isActive, true),
-            ne(restaurantTables.id, id)
+            ne(restaurantTables.id, id),
+            targetBranch ? eq(restaurantTables.warehouseId, targetBranch) : undefined,
           ),
         })
 
@@ -105,6 +117,7 @@ export async function PUT(
       if (height !== undefined) updateData.height = height
       if (shape !== undefined) updateData.shape = shape
       if (rotation !== undefined) updateData.rotation = rotation
+      if (warehouseId) updateData.warehouseId = warehouseId
 
       const [updated] = await db.update(restaurantTables)
         .set(updateData)
@@ -141,6 +154,10 @@ export async function DELETE(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a table of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantTables, id)
+      if (branchDenied) return branchDenied
+
       // Verify table exists
       const existing = await db.query.restaurantTables.findFirst({
         where: eq(restaurantTables.id, id),

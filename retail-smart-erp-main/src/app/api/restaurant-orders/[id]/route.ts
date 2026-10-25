@@ -24,7 +24,7 @@ import { billableOrderItems } from '@/lib/restaurant/order-totals'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
-import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
+import { getBranchScope, branchFilter, assertRecordBranch } from '@/lib/auth/branch-access'
 
 // Status workflow: open -> closed -> completed OR cancelled
 const validStatusTransitions: Record<string, string[]> = {
@@ -53,6 +53,10 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: an order of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantOrders, id)
+      if (branchDenied) return branchDenied
+
       const order = await db.query.restaurantOrders.findFirst({
         where: eq(restaurantOrders.id, id),
         with: {
@@ -120,6 +124,10 @@ export async function PUT(
       skipSaleCreation, saleId: providedSaleId } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: an order of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantOrders, id)
+      if (branchDenied) return branchDenied
+
       const ingredientChanges: Array<{ result: StockChangeResult; input: StockChangeInput }> = []
       const result = await db.transaction(async (tx) => {
         // Lock and get current order
@@ -254,8 +262,8 @@ export async function PUT(
 
               // E1: the sale's warehouse (default active warehouse, never the quarantine location)
               // so stock-tracked lines leave stock and returns / voids put it (and its batches) back.
-              // K4: a branch-restricted user's sale goes to one of their own branches
-              const [saleWarehouse] = await tx.select({ id: warehouses.id })
+              // K4: the order's branch; an order without one goes to one of the user's own branches
+              const [saleWarehouse] = currentOrder.warehouseId ? [{ id: currentOrder.warehouseId }] : await tx.select({ id: warehouses.id })
                 .from(warehouses)
                 .where(and(eq(warehouses.isActive, true), sql`upper(${warehouses.code}) <> 'QUARANTINE'`,
                   branchFilter(await getBranchScope(session, tx), warehouses.id)))
@@ -443,6 +451,7 @@ export async function PUT(
                   .from(sales).where(eq(sales.id, linkedSaleId))
                 orderWarehouseId = linked?.warehouseId || null
               }
+              if (!orderWarehouseId) orderWarehouseId = currentOrder.warehouseId
               if (!orderWarehouseId) {
                 const [def] = await tx.select({ id: warehouses.id })
                   .from(warehouses)
@@ -656,6 +665,10 @@ export async function DELETE(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: an order of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantOrders, id)
+      if (branchDenied) return branchDenied
+
       await db.transaction(async (tx) => {
         // Lock and get current order
         const [currentOrder] = await tx

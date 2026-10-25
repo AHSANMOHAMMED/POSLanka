@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateKitchenOrderSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertKitchenOrderBranch } from '@/lib/restaurant/branch'
 
 // GET single kitchen order
 export async function GET(
@@ -29,6 +30,10 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a kitchen order of another branch is refused
+      const branchDenied = await assertKitchenOrderBranch(session, db, id)
+      if (branchDenied) return branchDenied
+
       const kitchenOrder = await db.query.kitchenOrders.findFirst({
         where: eq(kitchenOrders.id, id),
         with: {
@@ -109,6 +114,10 @@ export async function PUT(
     const { status } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a kitchen order of another branch is refused
+      const branchDenied = await assertKitchenOrderBranch(session, db, id)
+      if (branchDenied) return branchDenied
+
       return await db.transaction(async (tx) => {
         // Lock and get current kitchen order
         const [currentKitchenOrder] = await tx

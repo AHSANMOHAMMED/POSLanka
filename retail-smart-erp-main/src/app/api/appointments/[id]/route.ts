@@ -12,7 +12,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateAppointmentSchema } from '@/lib/validation/schemas/work-orders'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { nextDocNo } from '@/lib/documents/numbering'
-import { getBranchScope, canAccessBranch, branchDeniedResponse } from '@/lib/auth/branch-access'
+import { getBranchScope, canAccessBranch, branchDeniedResponse, assertRecordBranch } from '@/lib/auth/branch-access'
 
 // A-C6: Helper to validate date/time is not in the past
 // 8L: Uses configurable tenant timezone instead of hardcoded offset
@@ -66,6 +66,9 @@ export async function GET(
     // Module Access: refused when the owner switched this module off for the caller's role
     const moduleError = requireModule(session, 'auto-service')
     if (moduleError) return { error: moduleError }
+    // K4: an appointment of another branch is refused
+    const branchDenied = await assertRecordBranch(session, db, appointments, id)
+    if (branchDenied) return { error: branchDenied }
     const appointment = await db.query.appointments.findFirst({
       where: eq(appointments.id, id),
       with: {
@@ -115,6 +118,10 @@ export async function PUT(
 
       const userId = await resolveUserId(session)
 
+      // K4: an appointment of another branch is refused
+      const branchDenied = await assertRecordBranch(session, tx, appointments, id)
+      if (branchDenied) return { error: branchDenied }
+
       // Lock appointment row
       const [lockedAppointment] = await tx
         .select()
@@ -131,7 +138,8 @@ export async function PUT(
       }
 
       // AEW-1: Validate warehouse - use provided or fall back to default active warehouse
-      let effectiveWarehouseId = warehouseId
+      // K4: default to the appointment's own branch
+      let effectiveWarehouseId = warehouseId || lockedAppointment.warehouseId
       // K4: a branch-restricted user opens job cards for their own branches (default: their first)
       const branchScope = await getBranchScope(session, tx)
       if (effectiveWarehouseId && !canAccessBranch(branchScope, effectiveWarehouseId)) return { error: await branchDeniedResponse(branchScope, tx) }
@@ -252,6 +260,10 @@ export async function PUT(
     if (permError) return { error: permError }
 
     const userId = await resolveUserId(session)
+
+    // K4: an appointment of another branch is refused
+    const branchDenied = await assertRecordBranch(session, db, appointments, id)
+    if (branchDenied) return { error: branchDenied }
 
     const currentAppointment = await db.query.appointments.findFirst({
       where: eq(appointments.id, id),
@@ -471,6 +483,10 @@ export async function DELETE(
     if (permError) return { error: permError }
 
     const userId = await resolveUserId(session)
+
+    // K4: an appointment of another branch is refused
+    const branchDenied = await assertRecordBranch(session, tx, appointments, id)
+    if (branchDenied) return { error: branchDenied }
 
     // Check if appointment exists (RLS filters by tenant)
     const existingAppointment = await tx.query.appointments.findFirst({

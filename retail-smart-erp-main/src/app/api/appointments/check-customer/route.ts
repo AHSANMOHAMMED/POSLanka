@@ -5,6 +5,7 @@ import { eq, and, inArray, gte } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateBody } from '@/lib/validation/helpers'
 import { checkCustomerAppointmentsSchema } from '@/lib/validation/schemas/dealership'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 // POST check for vehicle's existing scheduled/confirmed appointments
 export async function POST(request: NextRequest) {
@@ -28,7 +29,9 @@ export async function POST(request: NextRequest) {
       where: and(
         eq(appointments.vehicleId, vehicleId),
         inArray(appointments.status, ['scheduled', 'confirmed']),
-        gte(appointments.scheduledDate, today)
+        gte(appointments.scheduledDate, today),
+        // K4: a branch-restricted user only sees their own branches' bookings
+        branchFilter(await getBranchScope(session, db), appointments.warehouseId),
       ),
       with: {
         customer: true,

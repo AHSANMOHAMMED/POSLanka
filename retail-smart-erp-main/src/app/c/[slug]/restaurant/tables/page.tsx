@@ -8,6 +8,7 @@ import { Pagination } from '@/components/ui/pagination'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { Modal, ModalFooter } from '@/components/ui/modal'
 import { FormInput, FormLabel } from '@/components/ui/form-elements'
+import { BranchSelect } from '@/components/ui/branch-select'
 import { toast } from '@/components/ui/toast'
 
 interface Table {
@@ -69,6 +70,8 @@ export default function RestaurantTablesPage() {
     capacity: 4,
   })
   const [saving, setSaving] = useState(false)
+  // K4: branch of a new table (the picker only shows when the business has several branches)
+  const [branchId, setBranchId] = useState('')
 
   // Merge mode state
   const [mergeMode, setMergeMode] = useState(false)
@@ -181,6 +184,7 @@ export default function RestaurantTablesPage() {
           name: formData.name.trim(),
           area: formData.area.trim() || null,
           capacity: formData.capacity,
+          ...(!editingTable && branchId ? { warehouseId: branchId } : {}),
         }),
       })
 
@@ -706,6 +710,8 @@ export default function RestaurantTablesPage() {
               placeholder="e.g., Table 1, Booth A"
             />
           </div>
+
+          {!editingTable && <BranchSelect value={branchId} onChange={setBranchId} />}
 
           <div>
             <FormLabel optional>Area / Section</FormLabel>

@@ -12,6 +12,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { restaurantOrdersListSchema, createRestaurantOrderSchema } from '@/lib/validation/schemas/restaurant'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { getBranchScope, branchFilter, assertBranchAccess, resolveRecordBranch } from '@/lib/auth/branch-access'
 
 // GET all restaurant orders for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -31,6 +32,10 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions
       const conditions = []
+
+      // K4: branch-restricted staff only see their own branches' orders
+      const branchCond = branchFilter(await getBranchScope(session, db), restaurantOrders.warehouseId)
+      if (branchCond) conditions.push(branchCond)
 
       if (status && status !== 'all') {
         conditions.push(eq(restaurantOrders.status, status))
@@ -141,9 +146,12 @@ export async function POST(request: NextRequest) {
     const parsed = await validateBody(request, createRestaurantOrderSchema)
     if (!parsed.success) return parsed.response
     const { tableId, customerId, orderType, customerCount,
-      deliveryAddress, deliveryPhone, deliveryNotes, deliveryFee } = parsed.data
+      deliveryAddress, deliveryPhone, deliveryNotes, deliveryFee, warehouseId: requestedBranch } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: the order belongs to its table's branch, else the requested / the user's branch
+      let orderBranch: string | null = null
+
       // Validate table exists and is available (for dine_in)
       if (tableId) {
         const table = await db.query.restaurantTables.findFirst({
@@ -153,10 +161,19 @@ export async function POST(request: NextRequest) {
         if (!table) {
           return NextResponse.json({ error: 'Table not found' }, { status: 404 })
         }
+        const branchDenied = await assertBranchAccess(session, table.warehouseId, db, { requireBranch: true })
+        if (branchDenied) return branchDenied
+        orderBranch = table.warehouseId
 
         if (orderType === 'dine_in' && table.status !== 'available' && table.status !== 'reserved') {
           return NextResponse.json({ error: 'Table is not available' }, { status: 400 })
         }
+      }
+
+      if (!orderBranch) {
+        const branch = await resolveRecordBranch(session, db, requestedBranch)
+        if (branch.error) return branch.error
+        orderBranch = branch.warehouseId
       }
 
       // Validate customer if provided
@@ -208,6 +225,7 @@ export async function POST(request: NextRequest) {
             deliveryStatus: 'pending' as const,
           }),
           createdBy: userId,
+          warehouseId: orderBranch,
         }).returning()
         const newOrder = (orderResult as typeof restaurantOrders.$inferSelect[])[0]
 

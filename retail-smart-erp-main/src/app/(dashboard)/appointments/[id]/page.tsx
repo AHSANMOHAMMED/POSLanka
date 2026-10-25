@@ -8,6 +8,7 @@ import { CancellationReasonModal, CustomerFormModal, VehicleModal, ServiceTypeMo
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { CreatableSelect } from '@/components/ui/creatable-select'
 import { FormInput, FormSelect, FormTextarea, FormLabel } from '@/components/ui/form-elements'
+import { BranchSelect } from '@/components/ui/branch-select'
 import { toast } from '@/components/ui/toast'
 import { PageLoading } from '@/components/ui/loading-spinner'
 import { useRealtimeData } from '@/hooks'
@@ -102,6 +103,7 @@ const initialFormData = {
   notes: '',
   recurrencePattern: 'none',
   recurrenceEndDate: '',
+  warehouseId: '', // K4: branch (picker shown only with several branches)
 }
 
 export default function AppointmentDetailPage() {
@@ -238,7 +240,7 @@ export default function AppointmentDetailPage() {
   }, [fetchAppointment, isCreateMode])
 
   // Check for time slot conflicts
-  async function checkConflicts(date: string, time: string, duration: string) {
+  async function checkConflicts(date: string, time: string, duration: string, warehouseId?: string) {
     if (!date || !time) {
       setConflicts([])
       return
@@ -253,6 +255,7 @@ export default function AppointmentDetailPage() {
           scheduledDate: date,
           scheduledTime: time,
           durationMinutes: parseInt(duration) || 60,
+          ...(warehouseId ? { warehouseId } : {}),
         }),
       })
 
@@ -272,11 +275,11 @@ export default function AppointmentDetailPage() {
     if (!isCreateMode) return
     const timer = setTimeout(() => {
       if (formData.scheduledDate && formData.scheduledTime) {
-        checkConflicts(formData.scheduledDate, formData.scheduledTime, formData.durationMinutes)
+        checkConflicts(formData.scheduledDate, formData.scheduledTime, formData.durationMinutes, formData.warehouseId)
       }
     }, 300)
     return () => clearTimeout(timer)
-  }, [formData.scheduledDate, formData.scheduledTime, formData.durationMinutes, isCreateMode])
+  }, [formData.scheduledDate, formData.scheduledTime, formData.durationMinutes, formData.warehouseId, isCreateMode])
 
   // Filter vehicles by selected customer
   const filteredVehicles = useMemo(() => {
@@ -593,6 +596,10 @@ export default function AppointmentDetailPage() {
                 <option value="240">4 hours</option>
               </FormSelect>
             </div>
+            <BranchSelect
+              value={formData.warehouseId}
+              onChange={(warehouseId) => setFormData((prev) => ({ ...prev, warehouseId }))}
+            />
 
             {/* Recurring appointment fields */}
             <div>

@@ -10,6 +10,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateKitchenOrderItemSchema } from '@/lib/validation/schemas/restaurant'
 import { z } from 'zod'
 import { recalculateOrderTotals } from '@/lib/restaurant/order-totals'
+import { assertKitchenOrderBranch } from '@/lib/restaurant/branch'
 
 // Helper function to update kitchen order status based on item statuses
 async function updateKitchenOrderStatus(
@@ -88,6 +89,10 @@ export async function PUT(
     const { status } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a kitchen order of another branch is refused
+      const branchDenied = await assertKitchenOrderBranch(session, db, kitchenOrderId)
+      if (branchDenied) return branchDenied
+
       return await db.transaction(async (tx) => {
         // Verify kitchen order exists
         const kitchenOrder = await tx.query.kitchenOrders.findFirst({

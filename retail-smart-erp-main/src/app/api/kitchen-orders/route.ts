@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { kitchenOrders } from '@/lib/db/schema'
-import { eq, and, desc, asc, or } from 'drizzle-orm'
+import { kitchenOrders, restaurantOrders } from '@/lib/db/schema'
+import { eq, and, desc, asc, or, inArray } from 'drizzle-orm'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { kitchenOrdersListSchema } from '@/lib/validation/schemas/restaurant'
@@ -26,6 +27,12 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions
       const conditions = []
+
+      // K4: branch-restricted kitchen staff only see their own branches' orders
+      const branchCond = branchFilter(await getBranchScope(session, db), restaurantOrders.warehouseId)
+      if (branchCond) {
+        conditions.push(inArray(kitchenOrders.restaurantOrderId, db.select({ id: restaurantOrders.id }).from(restaurantOrders).where(branchCond)))
+      }
 
       if (status) {
         conditions.push(eq(kitchenOrders.status, status))

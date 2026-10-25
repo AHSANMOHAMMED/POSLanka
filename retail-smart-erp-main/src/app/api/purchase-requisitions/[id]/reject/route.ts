@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { rejectRequisitionSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // POST - Reject requisition (pending_approval -> rejected)
 export async function POST(
@@ -25,6 +26,9 @@ export async function POST(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'approveRequisitions')
     if (permError) return { error: permError }
+    // K4: a requisition of another branch is refused
+    const recordDenied = await assertRecordBranch(session, tx, purchaseRequisitions, id)
+    if (recordDenied) return { error: recordDenied }
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return { error: quotaError }

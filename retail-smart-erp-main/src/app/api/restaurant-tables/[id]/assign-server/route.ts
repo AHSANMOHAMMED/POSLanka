@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { assignServerSchema } from '@/lib/validation/schemas/restaurant'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 // PUT assign or unassign a server to a table
 export async function PUT(
@@ -32,6 +33,10 @@ export async function PUT(
     const { serverId } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a table of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantTables, id)
+      if (branchDenied) return branchDenied
+
       // Verify table exists
       const table = await db.query.restaurantTables.findFirst({
         where: eq(restaurantTables.id, id),

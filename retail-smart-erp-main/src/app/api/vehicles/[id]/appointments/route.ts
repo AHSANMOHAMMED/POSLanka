@@ -7,6 +7,7 @@ import { eq, and, isNull, notInArray } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 // GET pending appointments for a vehicle (not yet converted to work order)
 export async function GET(
@@ -34,7 +35,9 @@ export async function GET(
         where: and(
           eq(appointments.vehicleId, vehicleId),
           isNull(appointments.workOrderId),
-          notInArray(appointments.status, ['cancelled', 'no_show', 'completed'])
+          notInArray(appointments.status, ['cancelled', 'no_show', 'completed']),
+          // K4: a branch-restricted user only sees their own branches' appointments
+          branchFilter(await getBranchScope(session, db), appointments.warehouseId),
         ),
         with: {
           customer: true,

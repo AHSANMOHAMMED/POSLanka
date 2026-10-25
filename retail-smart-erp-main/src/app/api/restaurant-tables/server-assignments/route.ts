@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { restaurantTables, users } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 // GET list all server assignments (tables with their assigned servers)
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -19,6 +20,9 @@ export async function GET(request: NextRequest) {
     if (permError) return permError
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: branch-restricted staff only see their own branches' tables
+      const branchCond = branchFilter(await getBranchScope(session, db), restaurantTables.warehouseId)
+
       // Get all active tables with server info
       const tablesWithServers = await db
         .select({
@@ -34,7 +38,7 @@ export async function GET(request: NextRequest) {
         })
         .from(restaurantTables)
         .leftJoin(users, eq(restaurantTables.serverId, users.id))
-        .where(eq(restaurantTables.isActive, true))
+        .where(and(eq(restaurantTables.isActive, true), branchCond))
         .orderBy(users.fullName, restaurantTables.name)
 
       // Group by server for display

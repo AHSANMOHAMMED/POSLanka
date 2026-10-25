@@ -5,12 +5,13 @@ import { eq, and, ne, or } from 'drizzle-orm'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateBody } from '@/lib/validation/helpers'
 import { checkAppointmentConflictsSchema } from '@/lib/validation/schemas/dealership'
+import { getBranchScope, branchFilter, assertBranchAccess } from '@/lib/auth/branch-access'
 
 // A18: Check for appointment time slot conflicts
 export async function POST(request: NextRequest) {
   const parsed = await validateBody(request, checkAppointmentConflictsSchema)
   if (!parsed.success) return parsed.response
-  const { scheduledDate, scheduledTime, durationMinutes, excludeAppointmentId } = parsed.data
+  const { scheduledDate, scheduledTime, durationMinutes, excludeAppointmentId, warehouseId } = parsed.data
 
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'manageAppointments')
@@ -40,6 +41,16 @@ export async function POST(request: NextRequest) {
 
     if (excludeAppointmentId) {
       conditions.push(ne(appointments.id, excludeAppointmentId))
+    }
+
+    // K4: a branch-restricted user only sees their own branches' bookings; a branch narrows it further
+    const scope = await getBranchScope(session, db)
+    const branchCond = branchFilter(scope, appointments.warehouseId)
+    if (branchCond) conditions.push(branchCond)
+    if (warehouseId) {
+      const denied = await assertBranchAccess(session, warehouseId, db, { scope })
+      if (denied) return { error: denied }
+      conditions.push(eq(appointments.warehouseId, warehouseId))
     }
 
     // Find appointments on the same date

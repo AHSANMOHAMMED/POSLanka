@@ -8,7 +8,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addRequisitionItemSchema, updateRequisitionItemsSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
-import { assertBranchAccess } from '@/lib/auth/branch-access'
+import { assertBranchAccess, assertRecordBranch } from '@/lib/auth/branch-access'
 
 export async function GET(
   request: NextRequest,
@@ -19,6 +19,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
   const result = await withAuthTenant(async (session, db) => {
+    // K4: a requisition of another branch is refused
+    const recordDenied = await assertRecordBranch(session, db, purchaseRequisitions, id)
+    if (recordDenied) return { error: recordDenied }
     // Module Access: refused when the owner switched this module off for the caller's role
     const moduleError = requireModule(session, 'buying')
     if (moduleError) return { moduleError }
@@ -64,6 +67,9 @@ export async function POST(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'createRequisitions')
     if (permError) return { error: permError }
+    // K4: a requisition of another branch is refused
+    const recordDenied = await assertRecordBranch(session, tx, purchaseRequisitions, id)
+    if (recordDenied) return { error: recordDenied }
     // K4: a branch-restricted user works with their own branches only
     const branchDenied = await assertBranchAccess(session, body.warehouseId, tx)
     if (branchDenied) return { error: branchDenied }
@@ -130,6 +136,9 @@ export async function PUT(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'createRequisitions')
     if (permError) return { error: permError }
+    // K4: a requisition of another branch is refused
+    const recordDenied = await assertRecordBranch(session, tx, purchaseRequisitions, id)
+    if (recordDenied) return { error: recordDenied }
     // K4: a branch-restricted user works with their own branches only
     const branchDenied = await assertBranchAccess(session, body.map((u) => u.warehouseId), tx)
     if (branchDenied) return { error: branchDenied }

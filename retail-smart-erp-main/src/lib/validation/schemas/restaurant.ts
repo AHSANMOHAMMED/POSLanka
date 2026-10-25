@@ -51,6 +51,7 @@ export const createRestaurantOrderSchema = z.object({
   deliveryPhone: z.string().max(20).optional(),
   deliveryNotes: z.string().max(1000).optional(),
   deliveryFee: z.coerce.number().min(0).optional(),
+  warehouseId: optionalUuid, // K4: branch (dine-in: the table's; default: the user's branch)
 }).refine(
   (data) => {
     if (data.orderType === 'dine_in' && !data.tableId) {
@@ -111,6 +112,7 @@ export const updateRestaurantOrderItemSchema = z.object({
 export const restaurantTablesListSchema = paginatedSearchSchema.extend({
   status: tableStatusSchema.optional(),
   area: z.string().max(100).optional(),
+  warehouseId: optionalUuid, // K4: one branch's tables
 })
 
 const tableShapeSchema = z.enum(['rectangle', 'circle', 'square', 'oval']).optional()
@@ -126,6 +128,7 @@ export const createRestaurantTableSchema = z.object({
   height: z.coerce.number().optional().nullable(),
   shape: tableShapeSchema,
   rotation: z.coerce.number().min(0).max(360).default(0),
+  warehouseId: optionalUuid, // K4: branch (default: the user's branch)
 })
 
 // PUT /api/restaurant-tables/[id]
@@ -140,6 +143,7 @@ export const updateRestaurantTableSchema = z.object({
   height: z.coerce.number().optional().nullable(),
   shape: tableShapeSchema,
   rotation: z.coerce.number().min(0).max(360).optional(),
+  warehouseId: optionalUuid, // K4: move the table to another branch
 })
 
 // PUT /api/restaurant-tables/[id]/assign-server

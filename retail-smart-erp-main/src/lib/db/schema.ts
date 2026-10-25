@@ -2152,6 +2152,7 @@ export const appointments = pgTable('appointments', {
   recurrencePattern: recurrencePatternEnum('recurrence_pattern').default('none'),
   recurrenceEndDate: date('recurrence_end_date'),
   parentAppointmentId: uuid('parent_appointment_id'),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id), // K4 (0176): branch
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
@@ -2504,6 +2505,7 @@ export const restaurantTables = pgTable('restaurant_tables', {
   currentOrderId: uuid('current_order_id'),
   tableGroupId: uuid('table_group_id'),
   occupiedAt: timestamp('occupied_at'),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id), // K4 (0176): branch
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow(),
 })
@@ -2576,6 +2578,7 @@ export const restaurantOrders = pgTable('restaurant_orders', {
   deliveryFee: decimal('delivery_fee', { precision: 12, scale: 2 }).default('0'),
   serverId: uuid('server_id').references(() => users.id),
   createdBy: uuid('created_by').references(() => users.id),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id), // K4 (0176): branch
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
@@ -3674,6 +3677,7 @@ export const purchaseRequisitions = pgTable('purchase_requisitions', {
   cancelledAt: timestamp('cancelled_at'),
   // H3 (0159): 'reorder' (from reorder suggestions) | 'reorder_auto' (daily auto-reorder cron) | null (manual)
   source: varchar('source', { length: 30 }),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id), // K4 (0176): branch
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })

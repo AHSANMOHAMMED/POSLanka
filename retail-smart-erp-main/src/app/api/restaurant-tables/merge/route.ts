@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { mergeTablesSchema } from '@/lib/validation/schemas/restaurant'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // POST merge multiple tables into a group
 export async function POST(request: NextRequest) {
@@ -47,6 +48,13 @@ export async function POST(request: NextRequest) {
           { error: 'One or more tables not found or inactive' },
           { status: 404 }
         )
+      }
+
+      // K4: only tables of the user's own branches, and all of one branch
+      const branchDenied = await assertBranchAccess(session, tables.map((t) => t.warehouseId), db)
+      if (branchDenied) return branchDenied
+      if (new Set(tables.map((t) => t.warehouseId || '')).size > 1) {
+        return NextResponse.json({ error: 'Tables of different branches cannot be merged.' }, { status: 400 })
       }
 
       // Check that none of the tables are already in a group

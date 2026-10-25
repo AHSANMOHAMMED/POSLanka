@@ -133,6 +133,7 @@ export const createAppointmentSchema = z.object({
   recurrencePattern: z.enum(['none', 'daily', 'weekly', 'biweekly', 'monthly']).default('none'),
   recurrenceEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   confirmCustomerMismatch: z.boolean().optional(),
+  warehouseId: optionalUuid, // K4: branch (default: the user's branch)
 }).refine(
   (data) => {
     if (data.recurrencePattern !== 'none' && !data.recurrenceEndDate) {

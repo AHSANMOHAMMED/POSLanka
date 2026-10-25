@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody } from '@/lib/validation/helpers'
 import { createAppointmentSchema } from '@/lib/validation/schemas/work-orders'
+import { getBranchScope, branchFilter, resolveRecordBranch } from '@/lib/auth/branch-access'
 
 // A-C6: Helper to validate date/time is not in the past
 // 8L: Uses configurable tenant timezone instead of hardcoded offset
@@ -72,6 +73,9 @@ export async function GET(request: NextRequest) {
 
     // Build where conditions - RLS handles tenant filtering
     const conditions: ReturnType<typeof eq>[] = []
+    // K4: branch-restricted staff only see their own branches' appointments
+    const branchCond = branchFilter(await getBranchScope(session, db), appointments.warehouseId)
+    if (branchCond) conditions.push(branchCond)
     if (workOrderId) {
       conditions.push(eq(appointments.workOrderId, workOrderId))
     }
@@ -206,7 +210,7 @@ export async function POST(request: NextRequest) {
   const {
     customerId, vehicleId, serviceTypeId, scheduledDate, scheduledTime, durationMinutes: duration, notes,
     recurrencePattern: pattern, recurrenceEndDate,
-    confirmCustomerMismatch
+    confirmCustomerMismatch, warehouseId: requestedBranch,
   } = parsed.data
 
   const result = await withAuthTenantTransaction(async (session, tx) => {
@@ -231,6 +235,10 @@ export async function POST(request: NextRequest) {
 
     // Resolve valid user ID
     const userId = await resolveUserIdRequired(session)
+
+    // K4: the appointment belongs to a branch the user may work with (default: the user's branch)
+    const branch = await resolveRecordBranch(session, tx, requestedBranch)
+    if (branch.error) return { error: branch.error }
 
     // Verify foreign keys (RLS filters by tenant)
     const customer = await tx.query.customers.findFirst({
@@ -281,6 +289,7 @@ export async function POST(request: NextRequest) {
       recurrencePattern: pattern,
       recurrenceEndDate: pattern !== 'none' ? recurrenceEndDate : null,
       parentAppointmentId: null,
+      warehouseId: branch.warehouseId,
     }).returning()
 
     const created = [parent]
@@ -308,6 +317,7 @@ export async function POST(request: NextRequest) {
           recurrencePattern: pattern,
           recurrenceEndDate: recurrenceEndDate,
           parentAppointmentId: parent.id,
+          warehouseId: branch.warehouseId,
         }).returning()
 
         created.push(recurring)

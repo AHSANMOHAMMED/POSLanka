@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { restaurantTablesListSchema, createRestaurantTableSchema } from '@/lib/validation/schemas/restaurant'
+import { getBranchScope, branchFilter, assertBranchAccess, resolveRecordBranch } from '@/lib/auth/branch-access'
 
 // GET all restaurant tables for the tenant
 export async function GET(request: NextRequest) {
@@ -24,11 +25,21 @@ export async function GET(request: NextRequest) {
 
     const parsed = validateSearchParams(request, restaurantTablesListSchema)
     if (!parsed.success) return parsed.response
-    const { status, area, search, all, page, pageSize } = parsed.data
+    const { status, area, search, all, page, pageSize, warehouseId } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions
       const conditions = [eq(restaurantTables.isActive, true)]
+
+      // K4: branch-restricted staff only see their own branches' tables
+      const scope = await getBranchScope(session, db)
+      const branchCond = branchFilter(scope, restaurantTables.warehouseId)
+      if (branchCond) conditions.push(branchCond)
+      if (warehouseId) {
+        const denied = await assertBranchAccess(session, warehouseId, db, { scope })
+        if (denied) return denied
+        conditions.push(eq(restaurantTables.warehouseId, warehouseId))
+      }
 
       if (status) {
         conditions.push(eq(restaurantTables.status, status))
@@ -103,14 +114,19 @@ export async function POST(request: NextRequest) {
 
     const parsed = await validateBody(request, createRestaurantTableSchema)
     if (!parsed.success) return parsed.response
-    const { name, area, capacity, positionX, positionY, width, height, shape, rotation } = parsed.data
+    const { name, area, capacity, positionX, positionY, width, height, shape, rotation, warehouseId: requestedBranch } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
-      // Check for duplicate name
+      // K4: the table belongs to a branch the user may work with (default: the user's branch)
+      const branch = await resolveRecordBranch(session, db, requestedBranch)
+      if (branch.error) return branch.error
+
+      // Check for duplicate name (within the branch: two branches may both have a "T1")
       const existing = await db.query.restaurantTables.findFirst({
         where: and(
           eq(restaurantTables.name, name),
-          eq(restaurantTables.isActive, true)
+          eq(restaurantTables.isActive, true),
+          branch.warehouseId ? eq(restaurantTables.warehouseId, branch.warehouseId) : undefined,
         ),
       })
 
@@ -131,6 +147,7 @@ export async function POST(request: NextRequest) {
         shape: shape || 'rectangle',
         rotation: rotation || 0,
         isActive: true,
+        warehouseId: branch.warehouseId,
       }).returning()
 
       // Broadcast the change

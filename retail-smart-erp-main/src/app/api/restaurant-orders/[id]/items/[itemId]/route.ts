@@ -10,6 +10,7 @@ import { recalculateOrderTotals } from '@/lib/restaurant/order-totals'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateRestaurantOrderItemSchema } from '@/lib/validation/schemas/restaurant'
 import { z } from 'zod'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 
 // Helper function to check and update kitchen order status
@@ -90,6 +91,10 @@ export async function PUT(
     const { quantity, modifiers, notes, status } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: an order of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantOrders, orderId)
+      if (branchDenied) return branchDenied
+
       return await db.transaction(async (tx) => {
         // Verify order exists
         const order = await tx.query.restaurantOrders.findFirst({
@@ -242,6 +247,10 @@ export async function DELETE(
     const { id: orderId, itemId } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: an order of another branch is refused
+      const branchDenied = await assertRecordBranch(session, db, restaurantOrders, orderId)
+      if (branchDenied) return branchDenied
+
       return await db.transaction(async (tx) => {
         // Verify order exists and is open
         const order = await tx.query.restaurantOrders.findFirst({

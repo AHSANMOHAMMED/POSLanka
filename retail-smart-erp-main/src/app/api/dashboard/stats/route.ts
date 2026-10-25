@@ -44,7 +44,8 @@ export async function GET() {
               eq(appointments.status, 'scheduled'),
               eq(appointments.status, 'confirmed'),
               eq(appointments.status, 'arrived')
-            )
+            ),
+            branchFilter(scope, appointments.warehouseId),
           ))
           .then(([r]) => r),
 

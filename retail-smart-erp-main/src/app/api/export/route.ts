@@ -18,7 +18,7 @@ const ENTITY_TYPE_MAP: Record<string, EntityType> = {
 
 // GET - stream an export (CSV or XLSX). No row cap: rows are read in chunks of 1000.
 /** K4: exports without branch data, open to branch-restricted users */
-const MASTER_DATA_EXPORTS = new Set(['items', 'customers', 'suppliers', 'categories', 'vehicles', 'service-types', 'appointments'])
+const MASTER_DATA_EXPORTS = new Set(['items', 'customers', 'suppliers', 'categories', 'vehicles', 'service-types'])  // appointments belong to a branch (0176)
 
 export async function GET(request: NextRequest) {
   try {

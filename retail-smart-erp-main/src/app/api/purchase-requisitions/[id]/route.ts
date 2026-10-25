@@ -9,6 +9,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseRequisitionSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 export async function GET(
   request: NextRequest,
@@ -21,6 +22,9 @@ export async function GET(
   const result = await withAuthTenant(async (session, db) => {
     const permError = requireAnyPermission(session, [...PURCHASING_VIEW_PERMISSIONS, 'createRequisitions', 'approveRequisitions'])
     if (permError) return { error: permError }
+    // K4: a requisition of another branch is refused
+    const recordDenied = await assertRecordBranch(session, db, purchaseRequisitions, id)
+    if (recordDenied) return { error: recordDenied }
 
     const [requisition] = await db.select({
       id: purchaseRequisitions.id,
@@ -101,6 +105,9 @@ export async function PUT(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'createRequisitions')
     if (permError) return { error: permError }
+    // K4: a requisition of another branch is refused
+    const recordDenied = await assertRecordBranch(session, tx, purchaseRequisitions, id)
+    if (recordDenied) return { error: recordDenied }
 
     const [existing] = await tx.select()
       .from(purchaseRequisitions)
@@ -161,6 +168,9 @@ export async function DELETE(
   const result = await withAuthTenantTransaction(async (session, tx) => {
     const permError = requirePermission(session, 'createRequisitions')
     if (permError) return { error: permError }
+    // K4: a requisition of another branch is refused
+    const recordDenied = await assertRecordBranch(session, tx, purchaseRequisitions, id)
+    if (recordDenied) return { error: recordDenied }
 
     const [existing] = await tx.select()
       .from(purchaseRequisitions)

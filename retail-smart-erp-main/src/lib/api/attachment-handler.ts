@@ -8,6 +8,7 @@ import { broadcastChange } from '@/lib/websocket/broadcast'
 import type { EntityType } from '@/lib/websocket/events'
 import { validateFile, validateFileContent, storeFile, computeFileHash, deleteStoredFile } from '@/lib/files'
 import { invalidateStorageCache, requireQuota } from '@/lib/db/storage-quota'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 
 interface AttachmentHandlerOptions {
   entityType: string // The attachedToType value in files table
@@ -15,6 +16,9 @@ interface AttachmentHandlerOptions {
   permission: Permission
   // Validator to confirm the parent entity exists
   validateEntity: (db: Parameters<Parameters<typeof withTenant>[1]>[0], entityId: string) => Promise<boolean>
+  // K4: the parent document's table (with a warehouseId column); a branch-restricted user is
+  // refused the attachments of another branch's document
+  branchTable?: Parameters<typeof assertRecordBranch>[2]
 }
 
 export function createAttachmentHandler(options: AttachmentHandlerOptions) {
@@ -34,6 +38,10 @@ export function createAttachmentHandler(options: AttachmentHandlerOptions) {
       return await withTenant(session.user.tenantId, async (db) => {
         const exists = await options.validateEntity(db, id)
         if (!exists) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+        if (options.branchTable) {
+          const branchDenied = await assertRecordBranch(session, db, options.branchTable, id)
+          if (branchDenied) return branchDenied
+        }
 
         const fileRecords = await db.query.files.findMany({
           where: and(
@@ -83,6 +91,10 @@ export function createAttachmentHandler(options: AttachmentHandlerOptions) {
       return await withTenant(session.user.tenantId, async (db) => {
         const exists = await options.validateEntity(db, id)
         if (!exists) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+        if (options.branchTable) {
+          const branchDenied = await assertRecordBranch(session, db, options.branchTable, id)
+          if (branchDenied) return branchDenied
+        }
 
         const formData = await request.formData()
         const file = formData.get('file') as File | null
@@ -179,6 +191,10 @@ export function createAttachmentHandler(options: AttachmentHandlerOptions) {
       if (!attachmentId) return NextResponse.json({ error: 'Attachment ID required' }, { status: 400 })
 
       return await withTenant(session.user.tenantId, async (db) => {
+        if (options.branchTable) {
+          const branchDenied = await assertRecordBranch(session, db, options.branchTable, entityId)
+          if (branchDenied) return branchDenied
+        }
         const attachment = await db.query.files.findFirst({
           where: and(
             eq(files.id, attachmentId),

@@ -120,6 +120,14 @@ export async function POST(request: NextRequest) {
 
     // Execute with RLS tenant context
     return await withTenant(session!.user.tenantId, async (db) => {
+      // K4: a branch-restricted user (even with settings rights) cannot add branches
+      if (await getBranchScope(session, db)) {
+        return NextResponse.json({
+          error: 'Only the owner, or staff who work with every branch, can add a branch.',
+          code: 'BRANCH_ACCESS_DENIED',
+        }, { status: 403 })
+      }
+
       // Check for duplicate warehouse code within tenant (RLS scopes the query)
       const existingWarehouse = await db.query.warehouses.findFirst({
         where: ilike(warehouses.code, code),

@@ -231,7 +231,7 @@ export async function createSeedData(
   // 6. Business-type specific setup
   if (businessType === 'restaurant' && data.numberOfTables) {
     const clampedTables = Math.min(Math.max(1, data.numberOfTables), 200)
-    await createRestaurantTables(tx, tenantId, clampedTables, data.tableAreas || ['Main Hall'])
+    await createRestaurantTables(tx, tenantId, clampedTables, data.tableAreas || ['Main Hall'], defaultWarehouse?.id || null)
   }
 
   if (businessType === 'auto_service') {
@@ -707,7 +707,8 @@ async function createRestaurantTables(
   tx: any,
   tenantId: string,
   numberOfTables: number,
-  areas: string[]
+  areas: string[],
+  warehouseId: string | null, // K4: the tables stand in the default branch
 ) {
   const tables = []
   const tablesPerArea = Math.ceil(numberOfTables / areas.length)
@@ -722,6 +723,7 @@ async function createRestaurantTables(
         area,
         capacity: 4,
         isActive: true,
+        warehouseId,
       })
       tableNumber++
     }

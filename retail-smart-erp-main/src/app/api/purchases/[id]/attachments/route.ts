@@ -6,6 +6,7 @@ const handler = createAttachmentHandler({
   entityType: 'purchase',
   broadcastEntityType: 'purchase',
   permission: 'managePurchases',
+  branchTable: purchases, // K4
   validateEntity: async (db, id) => {
     const [record] = await db.select({ id: purchases.id })
       .from(purchases)

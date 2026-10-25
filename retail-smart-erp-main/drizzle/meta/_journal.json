@@ -1170,6 +1170,13 @@
       "when": 1771446420033,
       "tag": "0175_intake_price_confirm",
       "breakpoints": true
+    },
+    {
+      "idx": 176,
+      "version": "7",
+      "when": 1771446421033,
+      "tag": "0176_branch_columns",
+      "breakpoints": true
     }
   ]
 }

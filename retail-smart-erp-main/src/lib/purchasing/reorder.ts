@@ -152,6 +152,7 @@ export async function createReorderDocuments(
       purpose: opts.source === 'reorder_auto' ? 'Auto-reorder (stock at or below minimum)' : 'Reorder (stock at or below minimum)',
       estimatedTotal: estimatedTotal.toString(),
       source: opts.source || 'reorder',
+      warehouseId, // K4: the branch whose stock is low
     }).returning()
     await tx.insert(purchaseRequisitionItems).values(priced.map(({ l, price }) => ({
       tenantId: opts.tenantId,

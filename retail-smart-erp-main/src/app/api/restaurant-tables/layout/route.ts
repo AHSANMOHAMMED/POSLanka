@@ -3,11 +3,12 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { restaurantTables } from '@/lib/db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation/helpers'
 import { updateTableLayoutSchema } from '@/lib/validation/schemas/restaurant'
+import { getBranchScope, canAccessBranch, branchDeniedResponse } from '@/lib/auth/branch-access'
 
 // PUT batch update table positions
 export async function PUT(request: NextRequest) {
@@ -25,6 +26,14 @@ export async function PUT(request: NextRequest) {
     const { tables } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a branch-restricted user only moves their own branches' tables
+      const scope = await getBranchScope(session, db)
+      if (scope && tables.length > 0) {
+        const rows = await db.select({ warehouseId: restaurantTables.warehouseId }).from(restaurantTables)
+          .where(inArray(restaurantTables.id, tables.map((t) => t.id)))
+        if (rows.some((r) => !canAccessBranch(scope, r.warehouseId))) return branchDeniedResponse(scope, db)
+      }
+
       await db.transaction(async (tx) => {
         for (const table of tables) {
           await tx.update(restaurantTables)
