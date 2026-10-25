@@ -6,6 +6,8 @@
  *   - The owner may work with every branch.
  *   - Any other user with NO active user_warehouses assignment may also work with every branch.
  *     Single-branch shops and staff nobody has assigned keep working exactly as before.
+ *   - A user assigned to EVERY active branch is not restricted either (a one-branch shop whose
+ *     staff are all assigned to that branch keeps company-wide reports).
  *   - A non-owner with one or more active assignments is RESTRICTED to those branches: lists
  *     only show records of those branches, a foreign branch id is refused (403
  *     BRANCH_ACCESS_DENIED), and a single record of a foreign branch is refused the same way.
@@ -68,7 +70,15 @@ export async function getBranchScope(session: BranchSessionLike | null | undefin
   const rows = await db.select({ warehouseId: userWarehouses.warehouseId })
     .from(userWarehouses)
     .where(and(eq(userWarehouses.userId, session.user.id), eq(userWarehouses.isActive, true)))
-  const scope: BranchScope = rows.length > 0 ? [...new Set(rows.map(r => r.warehouseId))] : null
+  let scope: BranchScope = rows.length > 0 ? [...new Set(rows.map(r => r.warehouseId))] : null
+  if (scope) {
+    // Assigned to every active branch = not restricted (a new branch makes them restricted again;
+    // adding / switching a branch on or off invalidates this cache)
+    const active = await db.select({ id: warehouses.id }).from(warehouses)
+      .where(and(eq(warehouses.isActive, true), sql`upper(coalesce(${warehouses.code}, '')) <> 'QUARANTINE'`))
+    const assigned = new Set(scope)
+    if (active.length > 0 && active.every((w) => assigned.has(w.id))) scope = null
+  }
   if (gen === generation) cache.set(key, { scope, loadedAt: Date.now() })
   return scope
 }

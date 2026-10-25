@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { warehouses, warehouseStock, userWarehouses, stockTransfers, workOrders, posOpeningEntries } from '@/lib/db/schema'
 import { eq, and, ne, ilike, or, sql } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { logError } from '@/lib/ai/error-logger'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -221,6 +222,8 @@ export async function PUT(
 
       // Broadcast the change to connected clients
       logAndBroadcast(session!.user.tenantId, 'warehouse', 'updated', id)
+      // K4: staff assigned to every branch are unrestricted — the branch list changed
+      invalidatePermissionCache(session!.user.tenantId)
 
       return NextResponse.json(updated)
     })
@@ -326,6 +329,8 @@ export async function DELETE(
 
       // Broadcast the change to connected clients
       logAndBroadcast(session!.user.tenantId, 'warehouse', 'deleted', id)
+      // K4: staff assigned to every branch are unrestricted — the branch list changed
+      invalidatePermissionCache(session!.user.tenantId)
 
       return NextResponse.json({ success: true, archived: true, recycleBinId: binned.binId })
     })

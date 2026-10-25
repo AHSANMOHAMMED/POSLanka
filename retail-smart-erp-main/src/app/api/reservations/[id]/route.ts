@@ -209,7 +209,6 @@ export async function PUT(
       return NextResponse.json(result)
     })
   } catch (error) {
-    logError('api/reservations/[id]', error)
     const message = error instanceof Error ? error.message : ''
 
     if (message === 'NOT_FOUND') {
@@ -240,6 +239,7 @@ export async function PUT(
       return NextResponse.json({ error: message.replace('DOUBLE_BOOKED:', ''), code: 'TABLE_DOUBLE_BOOKED' }, { status: 409 })
     }
 
+    logError('api/reservations/[id]', error)
     return NextResponse.json({ error: 'Failed to update reservation' }, { status: 500 })
   }
 }
@@ -309,7 +309,6 @@ export async function DELETE(
       return NextResponse.json(result)
     })
   } catch (error) {
-    logError('api/reservations/[id]', error)
     const message = error instanceof Error ? error.message : ''
 
     if (message === 'NOT_FOUND') {
@@ -319,6 +318,7 @@ export async function DELETE(
       return NextResponse.json({ error: 'Cannot cancel a reservation that is already completed, cancelled, or marked as no-show' }, { status: 400 })
     }
 
+    logError('api/reservations/[id]', error)
     return NextResponse.json({ error: 'Failed to cancel reservation' }, { status: 500 })
   }
 }

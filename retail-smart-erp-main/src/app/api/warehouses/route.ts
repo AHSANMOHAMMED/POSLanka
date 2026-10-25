@@ -8,6 +8,7 @@ import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 import { eq, and, ilike, sql, or, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
@@ -156,6 +157,8 @@ export async function POST(request: NextRequest) {
 
       // Broadcast the change to connected clients
       logAndBroadcast(session!.user.tenantId, 'warehouse', 'created', newWarehouse.id)
+      // K4: staff assigned to every branch are unrestricted — the branch list changed
+      invalidatePermissionCache(session!.user.tenantId)
 
       return NextResponse.json(newWarehouse)
     })

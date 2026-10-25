@@ -41,6 +41,7 @@ import { GET as getPO } from '@/app/api/purchase-orders/[id]/route'
 import { POST as createIntake } from '@/app/api/stock-intake/route'
 import { GET as listExpenses, POST as createExpense } from '@/app/api/expenses/route'
 import { GET as salesSummary } from '@/app/api/reports/sales-summary/route'
+import { clearBranchScopeCache } from '@/lib/auth/branch-access'
 import { GET as taxReport } from '@/app/api/reports/tax-report/route'
 import { GET as ownerDashboard } from '@/app/api/dashboard/owner/route'
 import { GET as listUsers, POST as createUser } from '@/app/api/users/route'
@@ -387,6 +388,19 @@ async function main() {
       check('owner sales summary = both branches (4000)', Number(so.body.summary?.totalSales) === 4000, short(so.body.summary))
       const to = await json(await taxReport(req('GET', `/api/reports/tax-report?fromDate=${today}&toDate=${today}`)))
       check('owner tax report → 200', to.status === 200, short(to.body))
+
+      // A manager assigned to EVERY branch is not restricted (one-branch shops: all staff assigned)
+      await admin.query(`INSERT INTO user_warehouses (tenant_id, user_id, warehouse_id, is_active) VALUES ($1,$2,$3,true)`, [f.tenantId, f.users.managerA.id, f.whB])
+      clearBranchScopeCache(f.tenantId)
+      as(f, 'managerA')
+      const tAll = await json(await taxReport(req('GET', `/api/reports/tax-report?fromDate=${today}&toDate=${today}`)))
+      check('manager assigned to every branch → company-wide tax report 200', tAll.status === 200, short(tAll.body))
+      const sAll = await json(await salesSummary(req('GET', `/api/reports/sales-summary?fromDate=${today}&toDate=${today}`)))
+      check('… and sales summary of both branches (4000)', Number(sAll.body.summary?.totalSales) === 4000, short(sAll.body.summary))
+      await admin.query(`DELETE FROM user_warehouses WHERE user_id = $1 AND warehouse_id = $2`, [f.users.managerA.id, f.whB])
+      clearBranchScopeCache(f.tenantId)
+      const tBack = await json(await taxReport(req('GET', `/api/reports/tax-report?fromDate=${today}&toDate=${today}`)))
+      check('… back to Colombo only → tax report 403 again', denied(tBack), short(tBack.body))
     })
 
     // ============================================================ staff + assignment changes

@@ -20,6 +20,7 @@ import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { ChatHub } from '@/components/chat/ChatHub'
 import { SubdomainUrlCleaner } from '@/components/layout/SubdomainUrlCleaner'
 import { FeatureRouteGuard } from '@/components/layout/FeatureRouteGuard'
+import { RoutePermissionGuard } from '@/components/layout/RoutePermissionGuard'
 import { SetupPendingNotice } from './SetupPendingNotice'
 
 interface CompanyLayoutProps {
@@ -273,7 +274,7 @@ export default async function CompanyLayout({
                   <TrialBanner companySlug={slug} />
                   <StorageBanner companySlug={slug} />
                   <div className="p-5">
-                    <FeatureRouteGuard>{children}</FeatureRouteGuard>
+                    <FeatureRouteGuard><RoutePermissionGuard>{children}</RoutePermissionGuard></FeatureRouteGuard>
                   </div>
                 </main>
               </div>

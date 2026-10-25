@@ -942,3 +942,31 @@ export function getModuleSidebar(
     }))
     .filter((section) => section.items.length > 0)
 }
+
+/**
+ * Permissions a page needs (any one of them), taken from the menus so a page opened by URL is
+ * refused exactly when its menu link is hidden: the most specific sidebar link that covers the
+ * path, else a module tab's own landing page (its permission or alternatives). null = open to
+ * every signed-in role (pages without a menu entry keep their own checks; the API still enforces).
+ */
+export function routePermissionsFor(relativePath: string): Permission[] | null {
+  const path = relativePath.replace(/\/+$/, '') || '/'
+  let best: SidebarItem | null = null
+  for (const sections of Object.values(MODULE_SIDEBARS)) {
+    for (const section of sections) {
+      for (const item of section.items) {
+        if (path !== item.href && !path.startsWith(`${item.href}/`)) continue
+        if (!best || item.href.length > best.href.length) best = item
+      }
+    }
+  }
+  if (best) {
+    // The same href can appear in several modules (one per business type): any of them grants it
+    const same = Object.values(MODULE_SIDEBARS).flatMap((s) => s.flatMap((sec) => sec.items)).filter((i) => i.href === best!.href)
+    if (same.some((i) => !i.permission)) return null
+    return [...new Set(same.map((i) => i.permission as Permission))]
+  }
+  const tab = MODULE_TABS.find((t) => t.href === path)
+  if (tab?.permission) return [tab.permission, ...(tab.altPermissions || [])]
+  return null
+}
