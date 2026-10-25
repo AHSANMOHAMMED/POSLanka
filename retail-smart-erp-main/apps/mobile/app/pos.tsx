@@ -496,6 +496,12 @@ export default function PosScreen() {
     setLookupBusy(false)
     if (res.ok && res.data?.id) {
       const d = res.data
+      // A product with sizes / colours is sold by its variant: list them instead of adding the parent
+      if ((d as { hasVariants?: boolean }).hasVariants) {
+        setQuery(d.name)
+        Alert.alert('Choose the size / colour', `${d.name} comes in several sizes or colours. Tap the one the customer is buying.`)
+        return
+      }
       const isUnitCode = (d.scan as { matchedBy?: string } | null | undefined)?.matchedBy === 'item_barcode' || (d.scan as { matchedBy?: string } | null | undefined)?.matchedBy === 'uom_barcode'
       addScanned(d, isUnitCode ? null : d.scan, isUnitCode ? d : null)
       if (localReady) runCatalogSync()

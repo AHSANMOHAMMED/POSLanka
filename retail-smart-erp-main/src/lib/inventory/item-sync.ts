@@ -128,6 +128,7 @@ interface Row {
   is_active: boolean
   updated_at: string
   current_stock: string | null
+  has_variants: boolean
   reserved_stock: string | null
   sync_ts: string
 }
@@ -155,7 +156,7 @@ export async function fetchItemSyncPage(db: TenantDb, opts: ItemSyncOptions): Pr
 
   const filters = [sql`i.tenant_id = ${opts.tenantId}::uuid`]
   if (full) filters.push(sql`i.is_active = true`)
-  if (fromTs) filters.push(sql`(i.updated_at >= ${fromTs}::timestamp OR ws.updated_at >= ${fromTs}::timestamp)`)
+  if (fromTs) filters.push(sql`(i.updated_at >= ${fromTs}::timestamp OR ws.updated_at >= ${fromTs}::timestamp OR v.child_updated_at >= ${fromTs}::timestamp)`)
 
   const keyset = fromTs
     ? sql`WHERE (c.sync_key, c.id) > (${fromTs}::timestamp, ${fromId}::uuid)`
@@ -168,15 +169,22 @@ export async function fetchItemSyncPage(db: TenantDb, opts: ItemSyncOptions): Pr
              i.category_id, cat.name AS category_name, i.image_url, i.is_active,
              i.updated_at AS item_updated_at,
              ws.current_stock::text AS current_stock, ws.reserved_stock::text AS reserved_stock,
-             GREATEST(i.updated_at, COALESCE(ws.updated_at, i.updated_at)) AS sync_key
+             v.child_updated_at IS NOT NULL AS has_variants,
+             GREATEST(i.updated_at, COALESCE(ws.updated_at, i.updated_at), COALESCE(v.child_updated_at, i.updated_at)) AS sync_key
       FROM items i
       ${wsJoin}
+      -- A product with sizes / colours is sold through its variants (each its own item): it is sent
+      -- as not sellable, and again whenever a variant is added or changed
+      LEFT JOIN LATERAL (
+        SELECT MAX(ch.updated_at) AS child_updated_at FROM items ch
+        WHERE ch.parent_item_id = i.id AND ch.tenant_id = i.tenant_id AND ch.is_active = true
+      ) v ON true
       LEFT JOIN categories cat ON cat.id = i.category_id
       WHERE ${sql.join(filters, sql` AND `)}
     )
     SELECT c.id, c.item_code, c.name, c.barcode, c.plu_code, c.generic_name, c.sku, c.selling_price, c.tax_template_id, c.unit,
            c.is_weighable, c.track_stock, c.track_serial_numbers, c.is_gift_card, c.category_id, c.category_name,
-           c.image_url, c.is_active, c.current_stock, c.reserved_stock,
+           c.image_url, c.is_active, c.has_variants, c.current_stock, c.reserved_stock,
            to_char(c.item_updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.US') AS updated_at,
            c.sync_key::text AS sync_ts
     FROM c
@@ -235,7 +243,7 @@ export async function fetchItemSyncPage(db: TenantDb, opts: ItemSyncOptions): Pr
       availableStock: warehouseId
         ? Math.round(((Number(r.current_stock) || 0) - (Number(r.reserved_stock) || 0)) * 1000) / 1000
         : null,
-      isActive: r.is_active,
+      isActive: r.is_active && !r.has_variants,
       updatedAt: r.updated_at,
     })),
     deleted,
