@@ -69,12 +69,13 @@ export default function BarcodePrintPage() {
   // Label printers configured on this terminal (W9). '' = browser print dialog.
   const { printers } = usePrinters()
   const labelPrinters = printers.filter((p) => p.role === 'label')
+  const otherPrinters = printers.filter((p) => p.role !== 'label')
   const [printerChoice, setPrinterChoice] = useState<string | null>(null)
   const [showPrinterSettings, setShowPrinterSettings] = useState(false)
   const [printing, setPrinting] = useState(false)
-  const defaultPrinterId = labelPrinters.find((p) => isRawLabelPrinter(p))?.id || ''
+  const defaultPrinterId = labelPrinters.find((p) => isRawLabelPrinter(p))?.id || labelPrinters[0]?.id || ''
   const chosenPrinterId = printerChoice ?? defaultPrinterId
-  const chosenPrinter = labelPrinters.find((p) => p.id === chosenPrinterId) || null
+  const chosenPrinter = printers.find((p) => p.id === chosenPrinterId) || null
 
   // Sticker stock / roll setup (columns, gaps, calibration). '' = template size, one across.
   const isAdmin = usePermission('manageSettings')
@@ -630,8 +631,9 @@ export default function BarcodePrintPage() {
                 <button
                   type="button"
                   onClick={() => setShowPrinterSettings(true)}
-                  className="text-xs text-blue-600 hover:underline"
+                  className="text-xs text-blue-600 hover:underline flex items-center gap-1 font-medium"
                 >
+                  <Sliders size={12} />
                   Manage printers
                 </button>
               </div>
@@ -640,16 +642,43 @@ export default function BarcodePrintPage() {
                 onChange={(e) => setPrinterChoice(e.target.value)}
                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
               >
-                <option value="">Browser print dialog</option>
-                {labelPrinters.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({LABEL_LANGUAGE_LABELS[p.label.language]}, {p.label.dpi} dpi)
-                  </option>
-                ))}
+                <option value="">Browser print dialog (System driver / Any OS)</option>
+                {labelPrinters.length > 0 && (
+                  <optgroup label="Label Printers">
+                    {labelPrinters.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({LABEL_LANGUAGE_LABELS[p.label.language] || p.label.language.toUpperCase()}, {p.label.dpi} dpi)
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {otherPrinters.length > 0 && (
+                  <optgroup label="Other Connected Printers">
+                    {otherPrinters.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.role.toUpperCase()} · {p.transport.toUpperCase()})
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
-              {chosenPrinter && !isRawLabelPrinter(chosenPrinter) && (
-                <p className="text-xs text-gray-500 mt-1">This printer uses the browser print dialog.</p>
-              )}
+              <div className="flex items-center justify-between mt-1 text-xs">
+                <span className="text-gray-500">Zebra ZD220/ZD230 or USB printer?</span>
+                <button
+                  type="button"
+                  onClick={() => setShowPrinterSettings(true)}
+                  className="text-blue-600 font-semibold hover:underline flex items-center gap-1"
+                >
+                  Connect USB Printer
+                </button>
+              </div>
+              {chosenPrinter?.label?.language === 'zpl' ? (
+                <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800 flex items-center gap-1.5">
+                  <span className="font-semibold">🦓 Zebra ZPL Active:</span> Direct thermal ZPL II commands enabled for {chosenPrinter.name}.
+                </div>
+              ) : chosenPrinter && !isRawLabelPrinter(chosenPrinter) ? (
+                <p className="text-xs text-gray-500 mt-1">This printer uses the browser / system print dialog.</p>
+              ) : null}
             </div>
             <div>
               <div className="flex items-center justify-between mb-1">
@@ -1126,7 +1155,7 @@ export default function BarcodePrintPage() {
         </div>
       )}
 
-      <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} />
+      <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} initialRole="label" />
     </div>
   )
 }

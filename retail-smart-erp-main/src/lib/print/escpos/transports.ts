@@ -100,6 +100,30 @@ interface UsbLike {
 const USB_STORAGE_KEY = 'poslanka:printer:usb'
 const USB_PRINTER_CLASS = 7
 
+/**
+ * Universal USB vendor/class filters for POS receipt and label desktop printers.
+ * Explicitly includes Zebra Technologies (ZD220, ZD230, ZD420, etc.) which may
+ * advertise vendor-specific class codes under Windows/Linux rather than Class 7.
+ */
+export const PRINTER_USB_FILTERS: Array<{ vendorId?: number; productId?: number; classCode?: number }> = [
+  { classCode: USB_PRINTER_CLASS },
+  { vendorId: 0x0a5f }, // Zebra Technologies (ZD220, ZD230, ZD420, ZD421, GK420d, GX420d, ZT series)
+  { vendorId: 0x04b8 }, // Seiko Epson
+  { vendorId: 0x04f9 }, // Brother Industries
+  { vendorId: 0x0fe6 }, // HPRT / Rongta / Citizen
+  { vendorId: 0x20d1 }, // Xprinter / Posiflex
+  { vendorId: 0x1fc9 }, // NXP Semiconductors (thermal receipt/label boards)
+  { vendorId: 0x1a86 }, // QinHeng (CH340/CH341 USB-to-Serial POS printer boards)
+  { vendorId: 0x0416 }, // Winbond Electronics
+  { vendorId: 0x0483 }, // STMicroelectronics (common in ESC/POS and TSPL boards)
+  { vendorId: 0x1203 }, // TSC Auto ID Technology
+  { vendorId: 0x6868 }, // Rongta
+  { vendorId: 0x0525 }, // Netchip
+  { vendorId: 0x10c4 }, // Silicon Labs CP210x POS
+  { vendorId: 0x28e9 }, // GigaDevice POS
+  { vendorId: 0x0bda }, // Realtek
+]
+
 interface StoredUsbDevice {
   vendorId: number
   productId: number
@@ -160,19 +184,14 @@ export class WebUsbTransport implements PrinterTransport {
   }
 
   /** Prompt the user to pick a USB printer. Remembers the choice. */
-  async requestDevice(): Promise<string> {
+  async requestDevice(showAllDevices = false): Promise<string> {
     const usb = this.usb
     if (!usb) throw new TransportError('WebUSB is not available in this browser (use Chrome/Edge over HTTPS).', 'unsupported')
     let dev: UsbDeviceLike
     try {
-      dev = await usb.requestDevice({ filters: [{ classCode: USB_PRINTER_CLASS }] })
-    } catch {
-      // Some printers expose a vendor-specific class; retry without filter.
-      try {
-        dev = await usb.requestDevice({ filters: [] })
-      } catch (e) {
-        throw new TransportError(e instanceof Error ? e.message : 'No device selected', 'cancelled')
-      }
+      dev = await usb.requestDevice({ filters: showAllDevices ? [] : PRINTER_USB_FILTERS })
+    } catch (e) {
+      throw new TransportError(e instanceof Error ? e.message : 'No device selected', 'cancelled')
     }
     await this.close()
     this.device = dev
@@ -229,7 +248,7 @@ export class WebUsbTransport implements PrinterTransport {
         await d.claimInterface(chosen.iface.interfaceNumber)
       } catch (e) {
         throw new TransportError(
-          `Could not claim USB interface: ${e instanceof Error ? e.message : e}. On Windows the printer may need the WinUSB driver (Zadig); on Linux check udev permissions.`,
+          `Could not claim USB interface: ${e instanceof Error ? e.message : e}. If you have the Zebra Windows driver or Setup Utilities active, simply switch to "Browser" print connection above to print directly via the installed driver on any OS! (Or use Zadig to replace driver with WinUSB for raw access).`,
           'io'
         )
       }
@@ -275,7 +294,17 @@ export class WebUsbTransport implements PrinterTransport {
 
   describe(): string {
     const d = this.device
-    if (d) return d.productName || `USB ${d.vendorId.toString(16)}:${d.productId.toString(16)}`
+    if (d) {
+      if (d.productName) {
+        return d.manufacturerName && !d.productName.toLowerCase().includes(d.manufacturerName.toLowerCase())
+          ? `${d.manufacturerName} ${d.productName}`
+          : d.productName
+      }
+      if (d.vendorId === 0x0a5f) {
+        return `Zebra Direct Thermal Printer (${d.productId.toString(16).padStart(4, '0')})`
+      }
+      return `USB ${d.vendorId.toString(16).padStart(4, '0')}:${d.productId.toString(16).padStart(4, '0')}`
+    }
     return getStoredUsbDeviceName(this.deviceKey) || 'USB printer'
   }
 }

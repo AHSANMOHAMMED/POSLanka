@@ -366,20 +366,35 @@ export function usePrinters() {
     [printers, printTo]
   )
 
-  const pairDevice = useCallback(async (p: PrinterProfile): Promise<string | null> => {
+  const pairDevice = useCallback(async (p: PrinterProfile, showAllDevices = false): Promise<string | null> => {
     setStatus({ state: 'connecting' })
     try {
       let name: string | null = null
-      if (p.transport === 'webusb') name = await getUsbTransport(p.deviceKey).requestDevice()
+      if (p.transport === 'webusb') name = await getUsbTransport(p.deviceKey).requestDevice(showAllDevices)
       else if (p.transport === 'webbluetooth') name = await getBleTransport(p.deviceKey).requestDevice()
       setStatus({ state: 'idle' })
+      if (name) {
+        const isZebra = /zebra|zd2|zd4|gk4|gx4|zt2|zt4/i.test(name)
+        const isGenericName = p.name === 'Receipt printer' || p.name === 'Label printer' || p.name === 'Kitchen printer'
+        const patch: Partial<PrinterProfile> = {}
+        if (isGenericName) {
+          patch.name = name
+        }
+        if (isZebra) {
+          patch.role = 'label'
+          patch.label = { ...p.label, language: 'zpl', dpi: 203 }
+        }
+        if (Object.keys(patch).length > 0) {
+          updatePrinter(p.id, patch)
+        }
+      }
       touchPrinterProfiles()
       return name
     } catch (e) {
       setStatus({ state: 'error', message: errorMessage(e) })
       return null
     }
-  }, [])
+  }, [updatePrinter])
 
   const forgetDevice = useCallback(async (p: PrinterProfile) => {
     if (p.transport === 'webusb') await getUsbTransport(p.deviceKey).forget()
@@ -503,12 +518,12 @@ export function usePrinter() {
 
   /** Show the browser's device picker for USB / Bluetooth. Returns the device name. */
   const pairDevice = useCallback(
-    async (kind?: 'webusb' | 'webbluetooth'): Promise<string | null> => {
+    async (kind?: 'webusb' | 'webbluetooth', showAllDevices = false): Promise<string | null> => {
       const k = kind || profile.transport
       setStatus({ state: 'connecting' })
       try {
         let name: string
-        if (k === 'webusb') name = await getUsbTransport(profile.deviceKey).requestDevice()
+        if (k === 'webusb') name = await getUsbTransport(profile.deviceKey).requestDevice(showAllDevices)
         else if (k === 'webbluetooth') name = await getBleTransport(profile.deviceKey).requestDevice()
         else {
           setStatus({ state: 'idle' })

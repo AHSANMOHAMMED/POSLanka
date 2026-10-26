@@ -34,7 +34,7 @@ export function StickerSetupsManager() {
   const canCalibrate = usePermission('manageInventory') || isAdmin
   const { setups, loading, save } = useStickerSetups()
   const { printers } = usePrinters()
-  const labelPrinters = printers.filter((p) => isRawLabelPrinter(p))
+  const labelPrinters = printers.filter((p) => p.role === 'label' || isRawLabelPrinter(p))
   const [draft, setDraft] = useState<StickerSetup[] | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)

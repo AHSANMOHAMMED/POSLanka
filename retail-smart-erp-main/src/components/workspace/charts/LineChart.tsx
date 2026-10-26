@@ -68,7 +68,7 @@ export default function LineChart({ labels, datasets, height = 300, color = 'blu
 
   const defaultThemePair = GRADIENTS[color] || GRADIENTS.blue
 
-  const { maxValue, yTicks, totalValue, _hasData } = useMemo(() => {
+  const { maxValue, yTicks, totalValue, hasData: _hasData } = useMemo(() => {
     const allValues = datasets.flatMap(d => d.data.map(v => Number(v) || 0))
     const isAllZero = allValues.length === 0 || allValues.every(v => v === 0)
     if (isAllZero) {

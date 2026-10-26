@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Printer,
   X,
@@ -32,6 +32,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 export interface PrinterSettingsModalProps {
   isOpen: boolean
   onClose: () => void
+  initialRole?: PrinterRole
 }
 
 const TRANSPORTS: Array<{
@@ -48,9 +49,28 @@ const TRANSPORTS: Array<{
 
 const ROLE_ICONS: Record<PrinterRole, typeof Receipt> = { receipt: Receipt, label: Tag, kitchen: ChefHat }
 
-export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalProps) {
+export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSettingsModalProps) {
   const { printers, status, addPrinter, updatePrinter, removePrinter, printTo, pairDevice, forgetDevice, deviceNameOf } = usePrinters()
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  const initRef = useRef(false)
+  useEffect(() => {
+    if (!isOpen) {
+      initRef.current = false
+      return
+    }
+    if (initRef.current) return
+    initRef.current = true
+    if (initialRole) {
+      const match = printers.find((p) => p.role === initialRole)
+      if (match) {
+        setSelectedId(match.id)
+      } else {
+        const p = addPrinter(initialRole)
+        setSelectedId(p.id)
+      }
+    }
+  }, [isOpen, initialRole, printers, addPrinter])
   const [busy, setBusy] = useState<'test' | 'drawer' | 'pair' | null>(null)
   const [agentOk, setAgentOk] = useState<boolean | null>(null)
   const [agentTargets, setAgentTargets] = useState<PrintAgentTarget[]>([])
@@ -296,24 +316,36 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
                         </div>
                       )}
                     </div>
-                    <div className="flex gap-2 shrink-0">
-                      <button
-                        type="button"
-                        disabled={busy !== null || unsupported}
-                        onClick={() => run('pair', () => pairDevice(selected), 'Paired')}
-                        className="px-3 py-1.5 rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-1.5"
-                      >
-                        {busy === 'pair' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                        Pair / Select device
-                      </button>
-                      {deviceName && (
+                    <div className="flex flex-col gap-1.5 shrink-0">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          disabled={busy !== null || unsupported}
+                          onClick={() => run('pair', () => pairDevice(selected, false), 'Paired')}
+                          className="px-3 py-1.5 rounded-md bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm"
+                        >
+                          {busy === 'pair' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                          Pair / Select device
+                        </button>
+                        {deviceName && (
+                          <button
+                            type="button"
+                            disabled={busy !== null}
+                            onClick={() => forgetDevice(selected).then(() => toast.info('Device forgotten'))}
+                            className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 text-xs font-semibold"
+                          >
+                            Forget
+                          </button>
+                        )}
+                      </div>
+                      {selected.transport === 'webusb' && !unsupported && (
                         <button
                           type="button"
                           disabled={busy !== null}
-                          onClick={() => forgetDevice(selected).then(() => toast.info('Device forgotten'))}
-                          className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 text-xs font-semibold"
+                          onClick={() => run('pair', () => pairDevice(selected, true), 'Paired')}
+                          className="text-[11px] text-teal-700 dark:text-teal-300 hover:underline text-left"
                         >
-                          Forget
+                          Show all USB devices...
                         </button>
                       )}
                     </div>
@@ -388,6 +420,65 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
 
                 {isLabel ? (
                   <div className="space-y-3">
+                    {/* Quick Presets for Zebra ZD220/ZD230 and Desktop Label Printers */}
+                    <div className="rounded-xl border border-teal-200 dark:border-teal-800 bg-teal-50/50 dark:bg-teal-950/20 p-3 space-y-2">
+                      <span className="text-xs font-bold text-teal-900 dark:text-teal-200 block">
+                        Desktop Label Printer Presets (Auto-configure settings):
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            update({
+                              name: 'Zebra ZD220 / ZD230',
+                              label: { ...selected.label, language: 'zpl', dpi: 203, widthMm: 50, heightMm: 30 },
+                            })
+                            toast.success('Applied Zebra ZD220 / ZD230 (ZPL, 203 dpi) preset')
+                          }}
+                          className={`px-2.5 py-1 text-xs rounded-md border font-semibold transition-colors flex items-center gap-1 ${
+                            selected.label.language === 'zpl'
+                              ? 'bg-teal-600 text-white border-teal-700 shadow-sm'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          🦓 Zebra ZD220 / ZD230 (ZPL)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            update({
+                              name: 'TSC / Xprinter Label Printer',
+                              label: { ...selected.label, language: 'tspl', dpi: 203, widthMm: 50, heightMm: 30 },
+                            })
+                            toast.success('Applied TSPL (TSC / Xprinter) preset')
+                          }}
+                          className={`px-2.5 py-1 text-xs rounded-md border font-semibold transition-colors flex items-center gap-1 ${
+                            selected.label.language === 'tspl'
+                              ? 'bg-teal-600 text-white border-teal-700 shadow-sm'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          ⚡ TSC / Xprinter (TSPL)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            update({
+                              transport: 'browser',
+                              label: { ...selected.label, language: 'browser' },
+                            })
+                            toast.success('Set to Browser Print (works with any OS installed driver)')
+                          }}
+                          className={`px-2.5 py-1 text-xs rounded-md border font-semibold transition-colors flex items-center gap-1 ${
+                            selected.transport === 'browser'
+                              ? 'bg-teal-600 text-white border-teal-700 shadow-sm'
+                              : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300 hover:bg-slate-100'
+                          }`}
+                        >
+                          🌐 Browser / Windows Driver (Any OS)
+                        </button>
+                      </div>
+                    </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <FormField label="Printer language">
                         <FormSelect
