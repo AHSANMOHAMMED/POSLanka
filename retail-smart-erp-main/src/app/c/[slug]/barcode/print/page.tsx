@@ -9,7 +9,7 @@ import { printLabels, printLabelsOnRoll, printLabelsRaw, isRawLabelPrinter } fro
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
 import { usePermission } from '@/hooks/usePermission'
-import { defaultStickerSetup, setupsForBranch, STICKER_PRESETS, setupFromPreset, type StickerSetup } from '@/lib/labels/sticker-stock'
+import { defaultStickerSetup, setupsForBranch, stickerRollWidthMm, STICKER_PRESETS, setupFromPreset, type StickerSetup } from '@/lib/labels/sticker-stock'
 import { LABEL_PRESETS } from '@/lib/labels/presets'
 import { usePrinters } from '@/hooks/usePrinter'
 import { LABEL_LANGUAGE_LABELS } from '@/lib/print/printer-profiles'
@@ -145,6 +145,16 @@ export default function BarcodePrintPage() {
   })
   const activeSetup = forcedSetup
     ?? (setupChoice !== null ? availableSetups.find((s) => s.id === setupChoice) || null : linkedSetup || fallbackSetup || availableSetups[0] || null)
+
+  // Guard the 2-inch-printer trap: warn when the calibrated roll is physically
+  // wider than the chosen label printer's paper (e.g. twin 38x25 on a ZD230).
+  const rollWidthMm = activeSetup ? stickerRollWidthMm(activeSetup) : 0
+  const sizeMismatch = !!(
+    chosenPrinter &&
+    activeSetup &&
+    isRawLabelPrinter(chosenPrinter) &&
+    rollWidthMm > chosenPrinter.label.widthMm + 0.5
+  )
 
   const fetchTemplates = useCallback(async () => {
     try {
@@ -1160,6 +1170,15 @@ export default function BarcodePrintPage() {
                   <span className="text-[10px] block opacity-80">Triple · 105mm</span>
                 </button>
               </div>
+              {sizeMismatch && (
+                <div className="mt-1.5 p-2 bg-amber-50 border border-amber-300 rounded flex items-start gap-2 text-xs text-amber-800">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  <span>
+                    <b>{rollWidthMm} mm</b> roll won&apos;t print fully on <b>{chosenPrinter!.name}</b> (its paper is only <b>{chosenPrinter!.label.widthMm} mm</b> wide — a {chosenPrinter!.label.widthMm <= 58 ? '2-inch' : chosenPrinter!.label.widthMm <= 80 ? '3-inch' : '4-inch'} printer).
+                    The right sticker column would be clipped. Pick a 1-across setup, or use a printer that matches this roll.
+                  </span>
+                </div>
+              )}
             </div>
 
             <div>
