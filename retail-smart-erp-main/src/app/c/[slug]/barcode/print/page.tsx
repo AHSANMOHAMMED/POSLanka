@@ -842,9 +842,9 @@ export default function BarcodePrintPage() {
         <div>
           <div className="flex items-center gap-2">
             <Link
-              href={`/c/${company?.tenantSlug || ''}/inventory`}
+              href={`/c/${company?.tenantSlug || ''}/items`}
               className="p-1.5 text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
-              title="Back to Inventory"
+              title="Back to Items"
             >
               <ArrowLeft size={18} />
             </Link>

@@ -45,6 +45,20 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  async redirects() {
+    return [
+      {
+        source: '/c/:slug/inventory',
+        destination: '/c/:slug/items',
+        permanent: false,
+      },
+      {
+        source: '/inventory',
+        destination: '/items',
+        permanent: false,
+      },
+    ];
+  },
   // Security headers
   async headers() {
     const connectDomains = [
