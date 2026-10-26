@@ -131,11 +131,12 @@ export async function printLabels(
 }
 
 /**
- * Browser print on a multi-across roll: one page per physical row (page size =
- * liner width x label height), every label absolutely placed at its column
+ * Build the full print document (title, styles, page content) for a browser /
+ * OS-dialog print on a multi-across roll: one page per physical row (page size
+ * = liner width x label height), every label absolutely placed at its column
  * with the setup's margins, gaps and calibration offsets.
  */
-export async function printLabelsOnRoll(
+export async function buildRollPrintDocument(
   template: LabelTemplate,
   items: { item: LabelItemData; quantity: number }[],
   setup: StickerSetup,
@@ -143,7 +144,7 @@ export async function printLabelsOnRoll(
   tenantName?: string,
   codeWord?: string,
   copies = 1
-): Promise<boolean> {
+): Promise<{ title: string; styles: string; content: string }> {
   const isSingleCol = setup.columns === 1
   const rollW = isSingleCol
     ? (setup.marginLeftMm > 0 ? setup.labelWidthMm + setup.marginLeftMm * 2 : setup.labelWidthMm)
@@ -278,7 +279,21 @@ export async function printLabelsOnRoll(
       }
     }
   `
-  return executePrint('Barcode Labels', styles, pages.join(''))
+  return { title: 'Barcode Labels', styles, content: pages.join('') }
+}
+
+/** Send a roll print document to the OS / browser print dialog. */
+export async function printLabelsOnRoll(
+  template: LabelTemplate,
+  items: { item: LabelItemData; quantity: number }[],
+  setup: StickerSetup,
+  currencySymbol?: string,
+  tenantName?: string,
+  codeWord?: string,
+  copies = 1
+): Promise<boolean> {
+  const doc = await buildRollPrintDocument(template, items, setup, currencySymbol, tenantName, codeWord, copies)
+  return executePrint(doc.title, doc.styles, doc.content)
 }
 
 // ─── Raw label printers (W9: TSPL / ZPL / EPL / ESC/POS raster) ──────────

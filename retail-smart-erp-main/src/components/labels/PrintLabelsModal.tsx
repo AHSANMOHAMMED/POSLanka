@@ -4,9 +4,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { Printer, Minus, Plus } from 'lucide-react'
 import { Modal } from '@/components/ui/modal'
 import { LabelPreview } from './LabelPreview'
-import { printLabels } from '@/lib/labels/label-print'
+import { isRawLabelPrinter, printLabels, printLabelsOnRoll, printLabelsRaw } from '@/lib/labels/label-print'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
+import { usePrinters } from '@/hooks/usePrinter'
+import { defaultStickerSetup, sanitizeStickerSetups, type StickerSetup } from '@/lib/labels/sticker-stock'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 import type { LabelTemplate, LabelItemData, PrintLabelConfig } from '@/lib/labels/types'
 
@@ -26,7 +28,9 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
   const [items, setItems] = useState<ItemWithQty[]>([])
   const [loading, setLoading] = useState(false)
+  const [printing, setPrinting] = useState(false)
   const [codeWord, setCodeWord] = useState<string>('')
+  const [setups, setSetups] = useState<StickerSetup[]>([])
   const [config, setConfig] = useState<PrintLabelConfig>({
     labelsPerRow: 3,
     gapMm: 3,
@@ -35,6 +39,8 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
 
   const { symbol: currencySymbol } = useTenantCurrency()
   const company = useCompanyOptional()
+  const { printers } = usePrinters()
+  const labelPrinter = printers.find((printer) => printer.role === 'label') || null
 
   // Fetch templates and label settings on open, reset state on close
   useEffect(() => {
@@ -44,6 +50,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       setSelectedTemplateId('')
       setItems([])
       setCodeWord('')
+      setSetups([])
       return
     }
     fetch('/api/label-templates')
@@ -57,7 +64,10 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
 
     fetch('/api/label-settings')
       .then(r => { if (!r.ok) throw new Error('Failed'); return r.json() })
-      .then(data => setCodeWord(data.codeWord || ''))
+      .then(data => {
+        setCodeWord(data.codeWord || '')
+        setSetups(sanitizeStickerSetups(data.stickerSetups))
+      })
       .catch(() => {})
   }, [isOpen])
 
@@ -104,6 +114,12 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const selectedTemplate = templates.find(t => t.id === selectedTemplateId)
   const totalLabels = items.reduce((sum, i) => sum + i.quantity, 0)
 
+  // Sticker-roll setup: the printer's linked setup, else the tenant default.
+  // Drives multi-across roll placement for raw (TSPL/ZPL) and browser printing.
+  const linkedSetupId = labelPrinter?.label?.stickerSetupId || null
+  const activeSetup: StickerSetup | null =
+    (linkedSetupId ? setups.find(s => s.id === linkedSetupId) || null : null) || defaultStickerSetup(setups)
+
   function updateQuantity(index: number, qty: number) {
     setItems(prev => prev.map((item, i) => i === index ? { ...item, quantity: Math.max(1, Math.min(999, qty)) } : item))
   }
@@ -113,20 +129,61 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       toast.error('Please select a template')
       return
     }
+    if (items.length === 0) {
+      toast.error('Please add items to print')
+      return
+    }
+    const template = selectedTemplate
+
+    setPrinting(true)
     try {
-      const success = await printLabels(
-        selectedTemplate,
+      if (labelPrinter && isRawLabelPrinter(labelPrinter)) {
+        try {
+          const result = await printLabelsRaw(labelPrinter, template, items, {
+            currencySymbol,
+            tenantName: company?.tenantName,
+            codeWord,
+            ...(activeSetup ? { setup: activeSetup } : {}),
+          })
+          if (result.warnings.length) {
+            toast.warning(result.warnings.slice(0, 3).join('; '))
+          }
+          if (result.ok) {
+            toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${labelPrinter.name}`)
+            return
+          }
+          toast.warning(`USB printer: ${result.error || 'held by OS'}. Opening OS Print Dialog...`)
+        } catch {
+          toast.warning('USB connection issue. Opening OS Print Dialog...')
+        }
+        // Seamless fallback to the OS / browser print dialog (same as the barcode page)
+        const fallback = await printViaDialog()
+        if (!fallback) toast.error('Failed to open print dialog')
+        return
+      }
+
+      const success = await printViaDialog()
+      if (!success) {
+        toast.error('Failed to open print dialog')
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to generate labels')
+    } finally {
+      setPrinting(false)
+    }
+
+    async function printViaDialog(): Promise<boolean> {
+      if (config.pageSize === 'Label' && activeSetup) {
+        return printLabelsOnRoll(template, items, activeSetup, currencySymbol, company?.tenantName, codeWord)
+      }
+      return printLabels(
+        template,
         items,
         config,
         currencySymbol,
         company?.tenantName,
         codeWord
       )
-      if (!success) {
-        toast.error('Failed to open print dialog')
-      }
-    } catch {
-      toast.error('Failed to generate labels')
     }
   }
 
@@ -280,11 +337,11 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
           </button>
           <button
             onClick={handlePrint}
-            disabled={!selectedTemplate || items.length === 0}
+            disabled={!selectedTemplate || items.length === 0 || printing}
             className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 font-medium"
           >
             <Printer size={16} />
-            Print Labels
+            {printing ? 'Sending...' : 'Print Labels'}
           </button>
         </div>
       </div>
