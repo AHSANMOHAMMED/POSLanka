@@ -78,12 +78,12 @@ export const stickerSetupSchema = z.object({
 export const stickerSetupsSchema = z.array(stickerSetupSchema).max(50)
 
 export const DEFAULT_STICKER_SETUP: Omit<StickerSetup, 'id' | 'name'> = {
-  labelWidthMm: 38,
+  labelWidthMm: 50,
   labelHeightMm: 25,
-  columns: 2,
-  columnGapMm: 2,
+  columns: 1,
+  columnGapMm: 0,
   rowGapMm: 2,
-  marginLeftMm: 1,
+  marginLeftMm: 0,
   offsetXMm: 0,
   offsetYMm: 0,
   dpi: 203,

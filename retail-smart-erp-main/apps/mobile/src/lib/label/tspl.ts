@@ -78,6 +78,9 @@ export async function encodeTspl(
   buf.line(`GAP ${fmt(o.gapMm ?? 2)} mm,0 mm`)
   buf.line(`DIRECTION ${layout ? layout.direction : 1},0`)
   buf.line('REFERENCE 0,0')
+  buf.line('SET TEAR ON')
+  buf.line('SET PEEL OFF')
+  buf.line('OFFSET 0 mm')
   if (o.speed != null) buf.line(`SPEED ${Math.round(o.speed)}`)
   if (o.darkness != null) buf.line(`DENSITY ${Math.min(15, Math.max(0, Math.round(o.darkness)))}`)
 
@@ -121,7 +124,12 @@ async function emitElements(
         const charW = f.cw * f.mul
         const lineH = f.ch * f.mul
         const maxLines = Math.max(1, Math.min(el.maxLines || 1, Math.floor(h / lineH) || 1))
-        const lines = r === 0 ? wrapChars(text, Math.floor(w / charW), maxLines) : [text]
+        const maxChars = Math.max(1, Math.floor(w / charW))
+        let cleanText = text
+        if (maxLines === 1 && cleanText.length > maxChars) {
+          cleanText = cleanText.slice(0, maxChars)
+        }
+        const lines = r === 0 ? wrapChars(cleanText, maxChars, maxLines) : [cleanText]
         lines.forEach((ln, i) => {
           const lw = ln.length * charW
           const lx = el.textAlign === 'center' ? x + Math.max(0, (w - lw) / 2) : el.textAlign === 'right' ? x + Math.max(0, w - lw) : x

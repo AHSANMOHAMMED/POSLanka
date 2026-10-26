@@ -2439,10 +2439,16 @@ export default function POSPage() {
 
     // Barcode wedge scanner: Enter outside other inputs submits what was typed / scanned
     if (e.key === 'Enter' && !isOtherInput) {
-      const codeToScan = ks.barcodeBuffer.trim() || (isSearchInput ? search.trim() : '')
-      if (codeToScan.length >= 3) {
+      const searchCode = isSearchInput ? search.trim() : ''
+      const bufferCode = ks.barcodeBuffer.trim()
+      const codeToScan = (searchCode.length >= bufferCode.length && searchCode.length >= 2)
+        ? searchCode
+        : (bufferCode.length >= 2 ? bufferCode : searchCode)
+
+      if (codeToScan.length >= 2) {
         e.preventDefault()
         ks.barcodeBuffer = ''
+        if (isSearchInput) setSearch('')
         handleScanSubmit(codeToScan)
         return
       }

@@ -30,6 +30,7 @@ interface VisibleBarcodeFields {
   nameLengthMode: 'initial' | 'autofit' | 'multiline'
   nameFontSize: 'small' | 'normal' | 'large'
   showBarcode: boolean
+  barcodeType: 'code128' | 'qrcode'
   showBarcodeText: boolean
   showPrice: boolean
   showSku: boolean
@@ -45,6 +46,7 @@ const DEFAULT_VISIBLE_FIELDS: VisibleBarcodeFields = {
   nameLengthMode: 'initial',
   nameFontSize: 'normal',
   showBarcode: true,
+  barcodeType: 'code128',
   showBarcodeText: true,
   showPrice: true,
   showSku: true,
@@ -690,21 +692,26 @@ export default function BarcodePrintPage() {
 
     // ── 4. Barcode Graphic (Fills remaining height) ──
     if (hasBarcode) {
+      const isQr = visibleFields.barcodeType === 'qrcode'
       const barcodeTopY = currentY
       const bottomLimit = hasAnyFooter ? footerY - 0.5 : heightMm - 1.0
       const availableBarcodeH = Math.max(6, bottomLimit - barcodeTopY)
-      const barcodeH = Math.min(22, availableBarcodeH)
+      const barcodeH = isQr
+        ? Math.min(availableBarcodeH, Math.min(widthMm - 4, 18))
+        : Math.min(22, availableBarcodeH)
+      const barcodeW = isQr ? barcodeH : Math.max(10, widthMm - 4)
+      const barcodeX = isQr ? Math.max(2, (widthMm - barcodeW) / 2) : 2
 
       resultElements.push({
         id: 'dyn-barcode',
         type: 'barcode',
         dataField: 'item.barcode',
-        format: 'code128',
+        format: isQr ? 'qrcode' : 'code128',
         barWidth: 2,
-        showText: visibleFields.showBarcodeText,
-        x: 2,
+        showText: isQr ? false : visibleFields.showBarcodeText,
+        x: barcodeX,
         y: barcodeTopY,
-        width: Math.max(10, widthMm - 4),
+        width: barcodeW,
         height: barcodeH,
         rotation: 0,
         zIndex: 1,
@@ -1514,17 +1521,40 @@ export default function BarcodePrintPage() {
 
             {/* Barcode Options */}
             {visibleFields.showBarcode && (
-              <div className="flex items-center justify-between p-2 bg-slate-50 rounded-md border text-xs">
-                <span className="font-medium text-gray-700">Barcode Digits:</span>
-                <label className="flex items-center gap-1.5 cursor-pointer text-gray-700 select-none">
-                  <input
-                    type="checkbox"
-                    checked={visibleFields.showBarcodeText}
-                    onChange={(e) => setVisibleFields(prev => ({ ...prev, showBarcodeText: e.target.checked }))}
-                    className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
-                  />
-                  <span>Print numbers below bars</span>
-                </label>
+              <div className="flex flex-col gap-2 p-2 bg-slate-50 rounded-md border text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-gray-700">Barcode Symbology:</span>
+                  <div className="flex rounded-md shadow-xs bg-slate-200 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setVisibleFields(prev => ({ ...prev, barcodeType: 'code128' }))}
+                      className={`px-2 py-0.5 text-xs font-medium rounded ${visibleFields.barcodeType !== 'qrcode' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}
+                    >
+                      1D Barcode (Code 128)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setVisibleFields(prev => ({ ...prev, barcodeType: 'qrcode' }))}
+                      className={`px-2 py-0.5 text-xs font-medium rounded ${visibleFields.barcodeType === 'qrcode' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}
+                    >
+                      2D QR Code
+                    </button>
+                  </div>
+                </div>
+                {visibleFields.barcodeType !== 'qrcode' && (
+                  <div className="flex items-center justify-between pt-1 border-t border-slate-200">
+                    <span className="text-gray-600">Numbers Below Bars:</span>
+                    <label className="flex items-center gap-1.5 cursor-pointer text-gray-700 select-none">
+                      <input
+                        type="checkbox"
+                        checked={visibleFields.showBarcodeText}
+                        onChange={(e) => setVisibleFields(prev => ({ ...prev, showBarcodeText: e.target.checked }))}
+                        className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                      />
+                      <span>Print numbers below bars</span>
+                    </label>
+                  </div>
+                )}
               </div>
             )}
 

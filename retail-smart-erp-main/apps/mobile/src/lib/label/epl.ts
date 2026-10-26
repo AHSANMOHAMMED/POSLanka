@@ -121,7 +121,12 @@ async function emitElements(
         const charW = f.cw * f.mul
         const lineH = f.ch * f.mul
         const maxLines = Math.max(1, Math.min(el.maxLines || 1, Math.floor(h / lineH) || 1))
-        const lines = r === 0 ? wrapChars(text, Math.floor(w / charW), maxLines) : [text]
+        const maxChars = Math.max(1, Math.floor(w / charW))
+        let cleanText = text
+        if (maxLines === 1 && cleanText.length > maxChars) {
+          cleanText = cleanText.slice(0, maxChars)
+        }
+        const lines = r === 0 ? wrapChars(cleanText, maxChars, maxLines) : [cleanText]
         lines.forEach((ln, i) => {
           const lw = ln.length * charW
           const lx = el.textAlign === 'center' ? x + Math.max(0, (w - lw) / 2) : el.textAlign === 'right' ? x + Math.max(0, w - lw) : x

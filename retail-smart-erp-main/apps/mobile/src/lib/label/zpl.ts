@@ -50,11 +50,19 @@ export async function encodeZpl(
   for (const row of packLabelRows(items, columns, copies)) {
     buf.line('^XA')
     buf.line('^CI28')
+    buf.line('^MNY') // Non-continuous media with web / gap sensing (stops at die-cut gap)
+    buf.line('^MMT') // Tear-off mode (feeds precisely to the tear bar)
+    buf.line('^MTD') // Direct thermal media (no ribbon sensor error on ZD220/ZD230)
+    buf.line('^LS0') // Zero horizontal shift
     buf.line(`^PW${wDots}`)
     buf.line(`^LL${hDots}`)
     buf.line('^LH0,0')
     if (o.speed != null) buf.line(`^PR${Math.round(o.speed)}`)
-    if (o.darkness != null) buf.line(`~SD${String(Math.min(30, Math.max(0, Math.round(o.darkness)))).padStart(2, '0')}`)
+    if (o.darkness != null) {
+      buf.line(`~SD${String(Math.min(30, Math.max(0, Math.round(o.darkness)))).padStart(2, '0')}`)
+    } else {
+      buf.line('~SD20')
+    }
     for (let k = 0; k < row.cells.length; k++) {
       const cell = row.cells[k]
       if (cell) await emitElements(buf, template, cell.item, o, warnings, xs[k] ?? 0, oy)
@@ -92,9 +100,19 @@ async function emitElements(
         const fw = el.fontWeight === 'bold' ? Math.round(fh * 1.0) : Math.round(fh * 0.85)
         const just = el.textAlign === 'center' ? 'C' : el.textAlign === 'right' ? 'R' : 'L'
         const maxLines = Math.max(1, el.maxLines || 1)
+
+        let cleanText = text
+        if (maxLines === 1) {
+          // Keep initial name that fits on a single line so it never wraps down or overlaps the barcode below
+          const maxChars = Math.max(4, Math.floor(w / Math.max(1, Math.round(fw * 0.58))))
+          if (cleanText.length > maxChars) {
+            cleanText = cleanText.slice(0, maxChars)
+          }
+        }
+
         // utf8 field data (^CI28) with hex escapes for control characters.
         buf.raw(`^FO${x},${y}^A0${ori},${fh},${fw}^FB${w},${maxLines},0,${just},0^FH\\^FD`)
-        buf.utf8(zplEscape(text))
+        buf.utf8(zplEscape(cleanText))
         buf.line('^FS')
         break
       }
@@ -152,10 +170,13 @@ async function emitElements(
             break
           case 'code128':
           default:
-            cmd = `^BC${ori},${bh},${hr},N,N`
+            // Mode 'A' = Automatic subset selection (Subset A/B/C).
+            // Without 'A', Zebra requires manual subset specifiers (>:, >;) and will refuse to print unadorned data!
+            cmd = `^BC${ori},${bh},${hr},N,N,A`
             break
         }
-        buf.line(`^BY${module},${ratio},${bh}^FO${bx},${y}${cmd}^FH\\^FD${zplEscape(fd)}^FS`)
+        const cleanData = fd.replace(/[\^~]/g, '')
+        buf.line(`^BY${module},${ratio},${bh}^FO${bx},${y}${cmd}^FD${cleanData}^FS`)
         break
       }
       case 'shape': {

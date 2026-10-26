@@ -153,13 +153,22 @@ async function renderElement(
   switch (el.type) {
     case 'barcode': {
       const rawData = resolveField(el.dataField, item, el.customValue, currencySymbol, tenantName)
-      const barcodeData = (rawData && !validateBarcodeData(el.format, rawData))
-        ? rawData
+      // If the primary dataField (e.g. item.barcode) is empty, fall back to item.sku or item.pluCode
+      // before resorting to placeholder zeros, so scanned stickers correctly look up the real item!
+      const resolved = (rawData && rawData.trim())
+        ? rawData.trim()
+        : (item?.barcode?.trim() || item?.sku?.trim() || item?.pluCode?.trim() || '')
+
+      const barcodeData = (resolved && !validateBarcodeData(el.format, resolved))
+        ? resolved
         : getBarcodeFallbackData(el.format)
+
+      const is2D = ['qrcode', 'datamatrix', 'pdf417'].includes(el.format)
       const dataUrl = await renderBarcodeDataUrl(el.format, barcodeData, {
         showText: el.showText,
+        height: is2D ? 12 : Math.max(8, Math.round(el.height - (el.showText ? 4 : 1))),
       })
-      return `<div style="${baseStyle}z-index:${el.zIndex};"><img src="${dataUrl}" style="width:100%;height:100%;object-fit:contain;" alt="barcode"/></div>`
+      return `<div style="${baseStyle}z-index:${el.zIndex};background:#ffffff !important;display:flex;align-items:center;justify-content:center;"><img src="${dataUrl}" style="width:100%;height:100%;object-fit:contain;image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges;image-rendering:pixelated;display:block;" alt="barcode"/></div>`
     }
     case 'text': {
       const textEl = el as TextElement

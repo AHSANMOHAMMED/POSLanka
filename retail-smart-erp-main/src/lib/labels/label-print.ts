@@ -87,6 +87,9 @@ function generatePrintStyles(
       img {
         max-width: 100% !important;
         display: block !important;
+        image-rendering: -webkit-optimize-contrast !important;
+        image-rendering: crisp-edges !important;
+        image-rendering: pixelated !important;
       }
     }
   `
@@ -269,6 +272,9 @@ export async function printLabelsOnRoll(
       img {
         max-width: 100% !important;
         display: block !important;
+        image-rendering: -webkit-optimize-contrast !important;
+        image-rendering: crisp-edges !important;
+        image-rendering: pixelated !important;
       }
     }
   `

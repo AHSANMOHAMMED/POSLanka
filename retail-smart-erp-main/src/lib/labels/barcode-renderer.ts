@@ -14,6 +14,7 @@ export async function renderBarcodeDataUrl(
   options?: {
     width?: number    // bar module width in mils (1/1000 inch)
     height?: number   // bar height in mils
+    scale?: number
     showText?: boolean
   }
 ): Promise<string> {
@@ -25,22 +26,35 @@ export async function renderBarcodeDataUrl(
     const is2D = ['qrcode', 'datamatrix', 'pdf417'].includes(format)
     const symbology = FORMAT_TO_BWIP[format]
 
+    // ISO barcode standard quiet zones:
+    // Minimum 10-12 modules of white margin on both sides for 1D optical scanners (Code 128 / EAN).
+    // Minimum 4 modules for 2D QR codes / DataMatrix.
     const renderOpts = {
       bcid: symbology,
       text: data,
-      scale: 3,
-      height: is2D ? 10 : (options?.height ?? 10),
-      ...(is2D ? { width: 10 } : {}),
+      scale: options?.scale ? Math.max(2, Math.min(6, options.scale)) : 4,
+      height: is2D ? 12 : (options?.height ? Math.max(8, options.height) : 12),
+      ...(is2D ? { width: 12 } : {}),
       includetext: options?.showText ?? !is2D,
       textxalign: 'center' as const,
+      paddingwidth: is2D ? 4 : 12,
+      paddingheight: is2D ? 4 : 2,
       barcolor: '000000',
       backgroundcolor: 'FFFFFF',
     }
 
-    // Prefer SVG: no canvas dependency, resolution-independent, best for print
+    // Prefer SVG: no canvas dependency, crisp vector rendering
     try {
-      const svg = bwipjs.toSVG(renderOpts)
-      return `data:image/svg+xml;base64,${btoa(svg)}`
+      let svg = bwipjs.toSVG(renderOpts)
+      // Inject shape-rendering="crispEdges" to prevent thermal print spoolers and Chrome
+      // from anti-aliasing edges with gray pixels (which direct thermal printers dither into dot noise).
+      if (!svg.includes('shape-rendering')) {
+        svg = svg.replace('<svg ', '<svg shape-rendering="crispEdges" ')
+      }
+      const base64 = typeof window !== 'undefined'
+        ? btoa(unescape(encodeURIComponent(svg)))
+        : Buffer.from(svg).toString('base64')
+      return `data:image/svg+xml;base64,${base64}`
     } catch {
       // Fallback to canvas if SVG fails
     }
