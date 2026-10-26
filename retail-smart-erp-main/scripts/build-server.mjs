@@ -42,4 +42,18 @@ await esbuild.build({
   ],
 })
 
+// Ensure .next/server/preview-props.json exists for Next 16.4+ runtime compatibility
+try {
+  const fs = await import('fs')
+  const prerenderPath = join(root, '.next/prerender-manifest.json')
+  const previewPropsPath = join(root, '.next/server/preview-props.json')
+  if (fs.existsSync(prerenderPath) && !fs.existsSync(previewPropsPath)) {
+    const prerender = JSON.parse(fs.readFileSync(prerenderPath, 'utf8'))
+    fs.writeFileSync(previewPropsPath, JSON.stringify(prerender.preview || {}, null, 2))
+    console.log('Created .next/server/preview-props.json from prerender-manifest.json')
+  }
+} catch {
+  // Best-effort preview-props fallback
+}
+
 console.log('Built server.js (run with: node server.js)')
