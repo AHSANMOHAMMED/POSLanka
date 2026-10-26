@@ -242,6 +242,8 @@ export function executePrint(title: string, styles: string, content: string): Pr
 
         try {
           await waitForImages()
+          // Ensure SVG graphics, fonts and CSS media layout settle before opening print dialog
+          await new Promise((r) => setTimeout(r, 200))
 
           // Clean up iframe after print dialog closes (or after timeout)
           if ('onafterprint' in iframeWin) {

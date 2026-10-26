@@ -53,7 +53,11 @@ export async function encodeZpl(
     buf.line(`^LL${hDots}`)
     buf.line('^LH0,0')
     if (o.speed != null) buf.line(`^PR${Math.round(o.speed)}`)
-    if (o.darkness != null) buf.line(`~SD${String(Math.min(30, Math.max(0, Math.round(o.darkness)))).padStart(2, '0')}`)
+    if (o.darkness != null) {
+      buf.line(`~SD${String(Math.min(30, Math.max(0, Math.round(o.darkness)))).padStart(2, '0')}`)
+    } else {
+      buf.line('~SD20')
+    }
     for (let k = 0; k < row.cells.length; k++) {
       const cell = row.cells[k]
       if (cell) await emitElements(buf, template, cell.item, o, warnings, xs[k] ?? 0, oy)
@@ -151,10 +155,13 @@ async function emitElements(
             break
           case 'code128':
           default:
-            cmd = `^BC${ori},${bh},${hr},N,N`
+            // Mode 'A' = Automatic subset selection (Subset A/B/C).
+            // Without 'A', Zebra requires manual subset specifiers (>:, >;) and will refuse to print unadorned data!
+            cmd = `^BC${ori},${bh},${hr},N,N,A`
             break
         }
-        buf.line(`^BY${module},${ratio},${bh}^FO${bx},${y}${cmd}^FH\\^FD${zplEscape(fd)}^FS`)
+        const cleanData = fd.replace(/[\^~]/g, '')
+        buf.line(`^BY${module},${ratio},${bh}^FO${bx},${y}${cmd}^FD${cleanData}^FS`)
         break
       }
       case 'shape': {

@@ -61,9 +61,13 @@ function generatePrintStyles(
 
     @media print {
       * {
-        -webkit-print-color-adjust: exact;
-        print-color-adjust: exact;
-        color-adjust: exact;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      img {
+        max-width: 100% !important;
+        display: block !important;
       }
     }
   `
@@ -142,7 +146,17 @@ export async function printLabelsOnRoll(
     .row { position: relative; width: ${rollW}mm; height: ${h}mm; overflow: hidden; page-break-after: always; break-after: page; }
     .row:last-child { page-break-after: auto; break-after: auto; }
     .cell { position: absolute; width: ${Number(template.widthMm)}mm; height: ${Number(template.heightMm)}mm; overflow: hidden; }
-    @media print { * { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+    @media print {
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+      }
+      img {
+        max-width: 100% !important;
+        display: block !important;
+      }
+    }
   `
   return executePrint('Barcode Labels', styles, pages.join(''))
 }
@@ -157,7 +171,9 @@ export interface RawLabelPrintResult {
 
 /** True when the profile should receive raw printer commands instead of the browser dialog. */
 export function isRawLabelPrinter(profile: PrinterProfile | null | undefined): profile is PrinterProfile {
-  return !!profile && profile.role === 'label' && profile.label.language !== 'browser' && profile.transport !== 'browser'
+  if (!profile || profile.transport === 'browser') return false
+  const isZebra = /zebra|zd2|zd4|gk4|gx4|zt2|zt4/i.test(profile.name)
+  return profile.role === 'label' || isZebra || profile.label?.language !== 'browser'
 }
 
 /**
@@ -178,7 +194,11 @@ export async function printLabelsRaw(
     setup?: StickerSetup | null
   } = {}
 ): Promise<RawLabelPrintResult> {
-  const language = profile.label.language
+  let language = profile.label?.language || 'tspl'
+  const isZebra = /zebra|zd2|zd4|gk4|gx4|zt2|zt4/i.test(profile.name) || /zebra|zd2|zd4|gk4|gx4|zt2|zt4/i.test(profile.deviceKey)
+  if (isZebra) {
+    language = 'zpl'
+  }
   const setup = opts.setup || null
   if (language === 'browser') return { ok: false, warnings: [], error: 'Printer is set to browser printing' }
   const { encodeLabels } = await import('@/lib/print/label')
@@ -186,14 +206,14 @@ export async function printLabelsRaw(
   const { sendToPrinter } = await import('@/lib/print/printer-profiles')
   const res = await encodeLabels(template, items, {
     language,
-    dpi: setup?.dpi ?? profile.label.dpi,
+    dpi: setup?.dpi ?? profile.label?.dpi ?? 203,
     copies: opts.copies ?? 1,
     codeWord: opts.codeWord,
     currencySymbol: opts.currencySymbol,
     tenantName: opts.tenantName,
-    gapMm: setup?.rowGapMm ?? profile.label.gapMm,
-    darkness: setup?.darkness ?? profile.label.darkness,
-    speed: setup?.speed ?? profile.label.speed,
+    gapMm: setup?.rowGapMm ?? profile.label?.gapMm ?? 2,
+    darkness: setup?.darkness ?? profile.label?.darkness ?? 20,
+    speed: setup?.speed ?? profile.label?.speed,
     ...(setup ? { widthMm: setup.labelWidthMm, heightMm: setup.labelHeightMm, layout: stickerLayout(setup) } : {}),
     rasterizeElement: createImageElementRasterizer(opts.logoUrl),
     rasterizeLabel: createCanvasLabelRasterizer(opts.logoUrl),

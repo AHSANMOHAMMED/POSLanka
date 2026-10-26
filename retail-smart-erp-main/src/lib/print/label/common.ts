@@ -184,7 +184,10 @@ export function resolveBarcodeData(
   item: LabelItemData | null,
   o: EncodeLabelOptions
 ): { data: string } | { error: string } {
-  const raw = (resolveField(el.dataField, item, el.customValue, undefined, o.tenantName) || '').trim()
+  let raw = (resolveField(el.dataField, item, el.customValue, undefined, o.tenantName) || '').trim()
+  if (!raw && item) {
+    raw = (item.barcode || item.sku || item.pluCode || '1001').trim()
+  }
   if (!raw) return { error: 'no data' }
   const digits = (n: number[], name: string) => {
     if (!/^\d+$/.test(raw) || !n.includes(raw.length)) return { error: `${name} needs ${n.join(' or ')} digits (got "${raw}")` }
