@@ -8,6 +8,9 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { requirePermission } from '@/lib/auth/roles'
 import { validateBody } from '@/lib/validation'
 import { updateLabelTemplateSchema } from '@/lib/validation/schemas/label-templates'
+import { LABEL_PRESETS } from '@/lib/labels/presets'
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export async function GET(
   _request: NextRequest,
@@ -16,6 +19,27 @@ export async function GET(
   const { id } = await params
 
   try {
+    if (!UUID_REGEX.test(id)) {
+      const cleanId = id.startsWith('preset-') ? id.replace(/^preset-/, '') : id
+      const preset = LABEL_PRESETS.find(p => p.id === cleanId || p.id === id)
+      if (preset) {
+        return NextResponse.json({
+          id,
+          name: preset.name,
+          description: preset.description,
+          widthMm: String(preset.widthMm),
+          heightMm: String(preset.heightMm),
+          columns: preset.columns ?? (preset.widthMm === 38 && preset.heightMm === 25 ? 2 : 1),
+          labelShape: preset.labelShape,
+          cornerRadius: preset.cornerRadius ?? null,
+          elements: preset.elements,
+          isDefault: false,
+          isActive: true,
+        })
+      }
+      return NextResponse.json({ error: 'Template not found' }, { status: 404 })
+    }
+
     const result = await withAuthTenant(async (session, db) => {
       const [template] = await db.select().from(labelTemplates)
         .where(and(
@@ -52,6 +76,37 @@ export async function PUT(
     const result = await withAuthTenant(async (session, db) => {
       const permError = requirePermission(session, 'manageSettings')
       if (permError) return { _response: permError }
+
+      // If updating a preset (non-UUID), clone & insert it as a new tenant custom template
+      if (!UUID_REGEX.test(id)) {
+        if (parsed.data.isDefault) {
+          await db.update(labelTemplates)
+            .set({ isDefault: false })
+            .where(and(
+              eq(labelTemplates.tenantId, session.user.tenantId),
+              eq(labelTemplates.isDefault, true)
+            ))
+        }
+
+        const [created] = await db.insert(labelTemplates).values({
+          tenantId: session.user.tenantId,
+          name: parsed.data.name || 'Custom Label Template',
+          description: parsed.data.description || null,
+          widthMm: String(parsed.data.widthMm || 50),
+          heightMm: String(parsed.data.heightMm || 30),
+          columns: parsed.data.columns ?? (Number(parsed.data.widthMm) === 38 && Number(parsed.data.heightMm) === 25 ? 2 : 1),
+          labelShape: parsed.data.labelShape || 'rectangle',
+          cornerRadius: parsed.data.cornerRadius ?? null,
+          elements: (parsed.data.elements || []) as unknown as import('@/lib/labels/types').LabelElement[],
+          isDefault: parsed.data.isDefault || false,
+          isActive: true,
+          createdBy: session.user.id,
+        }).returning()
+
+        if (!created) return null
+        logAndBroadcast(session.user.tenantId, 'label-template', 'created', created.id, { userId: session.user.id, entityName: created.name })
+        return created
+      }
 
       // If setting as default, clear existing default
       if (parsed.data.isDefault) {
@@ -108,6 +163,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+
+  if (!UUID_REGEX.test(id)) {
+    return NextResponse.json({ error: 'Built-in presets cannot be deleted' }, { status: 400 })
+  }
 
   try {
     const result = await withAuthTenant(async (session, db) => {

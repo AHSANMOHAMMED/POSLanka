@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { Tag, Loader2, Scale, Save } from 'lucide-react'
+import Link from 'next/link'
+import { Tag, Loader2, Scale, Save, ArrowLeft } from 'lucide-react'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { SectionCard } from '@/components/ui/section-card'
 import { FormInput, FormField, FormSelect, FormCheckbox } from '@/components/ui/form-elements'
 import { useDebounce } from '@/hooks/useDebounce'
 import { toast } from '@/components/ui/toast'
+import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { StickerSetupsManager } from '@/components/labels/StickerSetupsManager'
 
 // ─── Weighing-scale barcode config ────────────────────────────────────────
@@ -80,6 +82,7 @@ function buildExample(cfg: ScaleBarcodeConfig): string {
 }
 
 export default function BarcodeLabelSettingsPage() {
+  const { tenantSlug } = useCompany()
   const [codeWord, setCodeWord] = useState('')
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -194,6 +197,15 @@ export default function BarcodeLabelSettingsPage() {
       module="Barcode & Labels"
       moduleHref="/barcode"
       title="Label Settings"
+      actionContent={
+        <Link
+          href={`/c/${tenantSlug}/barcode/print`}
+          className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm font-medium rounded hover:bg-gray-50 transition-colors"
+        >
+          <ArrowLeft size={16} />
+          Back to Print
+        </Link>
+      }
     >
       <div className="max-w-3xl space-y-4">
         <StickerSetupsManager />

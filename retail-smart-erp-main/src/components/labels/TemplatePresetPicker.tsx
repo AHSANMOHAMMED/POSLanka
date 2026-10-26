@@ -1,13 +1,15 @@
 'use client'
 
 import { useState } from 'react'
-import { Layout, Tag, ShoppingCart, UtensilsCrossed, Car, Circle } from 'lucide-react'
+import Link from 'next/link'
+import { Layout, Tag, ShoppingCart, UtensilsCrossed, Car, Circle, ArrowLeft } from 'lucide-react'
 import { LABEL_PRESETS, type LabelPreset } from '@/lib/labels/presets'
 import { LabelPreview } from './LabelPreview'
 import { StickerRollPreview } from './StickerRollPreview'
 
 interface TemplatePresetPickerProps {
   businessType?: string
+  tenantSlug?: string
   onSelect: (preset: LabelPreset) => void
   onSkip: () => void
 }
@@ -21,7 +23,7 @@ const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   special: <Circle size={14} />,
 }
 
-export function TemplatePresetPicker({ businessType, onSelect, onSkip }: TemplatePresetPickerProps) {
+export function TemplatePresetPicker({ businessType, tenantSlug, onSelect, onSkip }: TemplatePresetPickerProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   // Filter presets by business type, show all if none specified
@@ -50,6 +52,17 @@ export function TemplatePresetPicker({ businessType, onSelect, onSkip }: Templat
 
   return (
     <div className="max-w-3xl mx-auto py-8">
+      <div className="flex items-center justify-between mb-4 pb-2 border-b">
+        <Link
+          href={`/c/${tenantSlug || ''}/barcode/print`}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-gray-700 bg-gray-100 hover:bg-gray-200 rounded font-medium transition-colors"
+        >
+          <ArrowLeft size={14} />
+          Back to Barcode Print
+        </Link>
+        <span className="text-xs text-gray-400">Choose a layout to start</span>
+      </div>
+
       <div className="text-center mb-6">
         <h2 className="text-xl font-semibold text-gray-900">Start from a Preset</h2>
         <p className="text-sm text-gray-500 mt-1">Choose a pre-configured label template or start blank</p>

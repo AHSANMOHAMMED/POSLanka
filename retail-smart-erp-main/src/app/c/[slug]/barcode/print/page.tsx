@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3, Lock, Ruler } from 'lucide-react'
+import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3, Lock, Ruler, ArrowLeft, Layout, AlertTriangle } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
 import { LabelPreview } from '@/components/labels/LabelPreview'
 import { printLabels, printLabelsOnRoll, printLabelsRaw, isRawLabelPrinter } from '@/lib/labels/label-print'
@@ -77,6 +77,17 @@ export default function BarcodePrintPage() {
   const chosenPrinterId = printerChoice ?? defaultPrinterId
   const chosenPrinter = printers.find((p) => p.id === chosenPrinterId) || null
 
+  const [isSecure, setIsSecure] = useState(true)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsSecure(window.isSecureContext)
+      // Auto-jump to HTTPS if accessing via HTTP on production host
+      if (window.location.protocol === 'http:' && (window.location.hostname === '168.144.216.104' || window.location.hostname.endsWith('.sslip.io'))) {
+        window.location.href = `https://168-144-216-104.sslip.io${window.location.pathname}${window.location.search}`
+      }
+    }
+  }, [])
+
   // Sticker stock / roll setup (columns, gaps, calibration). '' = template size, one across.
   const isAdmin = usePermission('manageSettings')
   const { setups: allSetups } = useStickerSetups()
@@ -111,34 +122,52 @@ export default function BarcodePrintPage() {
   const activeSetup = forcedSetup
     ?? (setupChoice !== null ? availableSetups.find((s) => s.id === setupChoice) || null : linkedSetup || fallbackSetup)
 
-  // Fetch templates and label settings on mount
-  useEffect(() => {
-    fetch('/api/label-templates')
-      .then(r => r.json())
-      .then((data: LabelTemplate[]) => {
+  const fetchTemplates = useCallback(async () => {
+    try {
+      const res = await fetch('/api/label-templates')
+      if (res.ok) {
+        const data = await res.json()
         setTemplates(data)
-        const defaultTpl = data.find(t => t.isDefault) || data[0]
-        if (defaultTpl) setSelectedTemplateId(defaultTpl.id)
-      })
-      .catch(() => toast.error('Failed to load templates'))
+        const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
+        const reqTplId = params?.get('templateId')
+        if (reqTplId) {
+          setSelectedTemplateId(reqTplId)
+        } else {
+          const defaultTpl = data.find((t: LabelTemplate) => t.isDefault) || data[0]
+          if (defaultTpl) setSelectedTemplateId((prev) => prev || defaultTpl.id)
+        }
+      }
+    } catch {
+      toast.error('Failed to load templates')
+    }
+  }, [])
+
+  // Fetch templates and label settings on mount, and re-fetch on window focus
+  useEffect(() => {
+    fetchTemplates()
 
     fetch('/api/label-settings')
       .then(r => { if (!r.ok) throw new Error('Failed'); return r.json() })
       .then(data => setCodeWord(data.codeWord || ''))
       .catch(() => {})
-  }, [])
+
+    const onFocus = () => fetchTemplates()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [fetchTemplates])
 
   // Merge built-in presets if not yet saved in tenant database (e.g. 38x25 twin tag)
   const availableTemplates = useMemo(() => {
     const list = [...templates]
     for (const preset of LABEL_PRESETS) {
-      if (!list.some(t => Math.abs(Number(t.widthMm) - preset.widthMm) <= 0.5 && Math.abs(Number(t.heightMm) - preset.heightMm) <= 0.5)) {
+      if (!list.some(t => t.name === preset.name || (Math.abs(Number(t.widthMm) - preset.widthMm) <= 0.5 && Math.abs(Number(t.heightMm) - preset.heightMm) <= 0.5 && (t.columns ?? 1) === (preset.columns ?? 1)))) {
         list.push({
           id: `preset-${preset.id}`,
-          name: `${preset.name} (Preset)`,
+          name: `${preset.name}`,
           description: preset.description,
           widthMm: String(preset.widthMm),
           heightMm: String(preset.heightMm),
+          columns: preset.columns ?? (preset.widthMm === 38 && preset.heightMm === 25 ? 2 : 1),
           labelShape: preset.labelShape,
           cornerRadius: preset.cornerRadius ?? null,
           elements: preset.elements,
@@ -296,22 +325,55 @@ export default function BarcodePrintPage() {
         if (el.dataField === 'item.priceCode') return visibleFields.showPriceCode
       }
       return true
+    }).map((el) => {
+      // Enforce single-line for item.name so it never spills over or overlaps the barcode below
+      if (el.type === 'text' && el.dataField === 'item.name') {
+        return { ...el, maxLines: 1 }
+      }
+      return el
     })
 
     const widthMm = Number(selectedTemplate.widthMm) || 50
     const heightMm = Number(selectedTemplate.heightMm) || 30
     const resultElements: LabelElement[] = [...elements]
 
-    // Injected fields if checked but not currently in template
-    if (visibleFields.showName && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.name')) {
+    const hasCompany = visibleFields.showCompany
+    const hasName = visibleFields.showName
+    const hasPrice = visibleFields.showPrice
+    const hasSku = visibleFields.showSku
+    const hasBarcode = visibleFields.showBarcode
+
+    // 1. Company Name (top banner)
+    if (hasCompany && !resultElements.some(el => el.type === 'text' && el.dataField === 'tenant.name')) {
+      resultElements.push({
+        id: 'dyn-company',
+        type: 'text',
+        dataField: 'tenant.name',
+        x: 1,
+        y: 1,
+        width: Math.max(10, widthMm - 2),
+        height: 3,
+        fontSize: widthMm <= 40 ? 6 : 7,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        maxLines: 1,
+        rotation: 0,
+        zIndex: 1,
+      })
+    }
+
+    // 2. Product Name (initial name, single line)
+    if (hasName && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.name')) {
+      const nameY = hasCompany ? 4.2 : 1
+      const nameH = hasCompany ? 3.5 : 4.5
       resultElements.push({
         id: 'dyn-name',
         type: 'text',
         dataField: 'item.name',
-        x: 2,
-        y: 1.5,
-        width: Math.max(10, widthMm - 4),
-        height: 4,
+        x: 1,
+        y: nameY,
+        width: Math.max(10, widthMm - 2),
+        height: nameH,
         fontSize: widthMm <= 40 ? 6.5 : 8,
         fontWeight: 'bold',
         textAlign: 'center',
@@ -321,7 +383,11 @@ export default function BarcodePrintPage() {
       })
     }
 
-    if (visibleFields.showBarcode && !resultElements.some(el => el.type === 'barcode')) {
+    // 3. Barcode graphic
+    if (hasBarcode && !resultElements.some(el => el.type === 'barcode')) {
+      const topY = (hasCompany && hasName) ? 8 : (hasCompany || hasName) ? 5.8 : 1.5
+      const botReserved = (hasPrice || hasSku) ? 6 : 1
+      const barH = Math.max(6, Math.min(14, heightMm - topY - botReserved))
       resultElements.push({
         id: 'dyn-barcode',
         type: 'barcode',
@@ -330,42 +396,25 @@ export default function BarcodePrintPage() {
         barWidth: 2,
         showText: true,
         x: 2,
-        y: Math.max(5.5, heightMm - (widthMm <= 40 ? 12 : 14)),
+        y: topY,
         width: Math.max(10, widthMm - 4),
-        height: widthMm <= 40 ? 8 : 10,
+        height: barH,
         rotation: 0,
         zIndex: 1,
       })
     }
 
-    if (visibleFields.showPrice && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.sellingPrice')) {
-      resultElements.push({
-        id: 'dyn-price',
-        type: 'text',
-        dataField: 'item.sellingPrice',
-        isCurrency: true,
-        x: 2,
-        y: Math.max(2, heightMm - 4.5),
-        width: Math.max(10, widthMm - 4),
-        height: 4,
-        fontSize: widthMm <= 40 ? 7.5 : 9,
-        fontWeight: 'bold',
-        textAlign: 'center',
-        maxLines: 1,
-        rotation: 0,
-        zIndex: 2,
-      })
-    }
-
-    if (visibleFields.showSku && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.sku')) {
+    // 4. Footer fields: Price & SKU (strictly non-overlapping)
+    const footerY = Math.max(1, heightMm - 5)
+    if (hasSku && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.sku')) {
       resultElements.push({
         id: 'dyn-sku',
         type: 'text',
         dataField: 'item.sku',
-        x: 2,
-        y: Math.max(1, heightMm - 3.5),
-        width: 14,
-        height: 3,
+        x: 1,
+        y: footerY + 1,
+        width: hasPrice ? Math.min(22, Math.floor(widthMm * 0.45)) : Math.max(10, widthMm - 2),
+        height: 3.5,
         fontSize: 5.5,
         fontWeight: 'normal',
         textAlign: 'left',
@@ -376,21 +425,24 @@ export default function BarcodePrintPage() {
       })
     }
 
-    if (visibleFields.showCompany && !resultElements.some(el => el.type === 'text' && el.dataField === 'tenant.name')) {
+    if (hasPrice && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.sellingPrice')) {
+      const priceX = hasSku ? Math.min(24, Math.floor(widthMm * 0.45)) : 1
+      const priceW = hasSku ? (widthMm - priceX - 1) : (widthMm - 2)
       resultElements.push({
-        id: 'dyn-company',
+        id: 'dyn-price',
         type: 'text',
-        dataField: 'tenant.name',
-        x: 2,
-        y: 1.5,
-        width: Math.max(10, widthMm - 4),
-        height: 3.5,
-        fontSize: 7,
+        dataField: 'item.sellingPrice',
+        isCurrency: true,
+        x: priceX,
+        y: footerY,
+        width: Math.max(10, priceW),
+        height: 5,
+        fontSize: widthMm <= 40 ? 8 : 10,
         fontWeight: 'bold',
-        textAlign: 'center',
+        textAlign: hasSku ? 'right' : 'center',
         maxLines: 1,
         rotation: 0,
-        zIndex: 1,
+        zIndex: 2,
       })
     }
 
@@ -400,7 +452,7 @@ export default function BarcodePrintPage() {
         type: 'text',
         dataField: 'item.priceCode',
         x: Math.max(2, widthMm - 16),
-        y: Math.max(1, heightMm - 4),
+        y: 1,
         width: 14,
         height: 3,
         fontSize: 6,
@@ -419,7 +471,7 @@ export default function BarcodePrintPage() {
         type: 'text',
         dataField: 'item.category',
         x: 2,
-        y: Math.max(1, heightMm - 4),
+        y: footerY,
         width: 18,
         height: 3,
         fontSize: 6,
@@ -437,7 +489,7 @@ export default function BarcodePrintPage() {
         type: 'text',
         dataField: 'item.unit',
         x: Math.max(2, widthMm / 2 - 8),
-        y: Math.max(1, heightMm - 4),
+        y: footerY,
         width: 16,
         height: 3,
         fontSize: 6,
@@ -477,7 +529,12 @@ export default function BarcodePrintPage() {
         })
         if (res.warnings.length) toast.warning(res.warnings.slice(0, 3).join('; '))
         if (res.ok) toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${chosenPrinter.name}`)
-        else toast.error(`Label printer: ${res.error || 'failed'}`)
+        else {
+          toast.error(`Label printer: ${res.error || 'failed'}`)
+          if (res.error?.includes('paired') || res.error?.includes('USB') || res.error?.includes('device') || res.error?.includes('claim')) {
+            setShowPrinterSettings(true)
+          }
+        }
       } catch {
         toast.error('Failed to generate labels')
       } finally {
@@ -506,20 +563,86 @@ export default function BarcodePrintPage() {
 
   return (
     <div className="space-y-4">
+      {/* Insecure HTTP Warning Banner */}
+      {!isSecure && (
+        <div className="p-3 bg-amber-50 border border-amber-300 rounded-lg flex flex-wrap items-center justify-between text-xs text-amber-800 gap-2 shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+            <span>
+              <strong>HTTP Insecure Context:</strong> Direct raw WebUSB is blocked by Chrome/Edge on HTTP. Open over HTTPS or use Browser Print below.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined') {
+                window.location.href = `https://168-144-216-104.sslip.io${window.location.pathname}${window.location.search}`
+              }
+            }}
+            className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded font-semibold shrink-0 shadow-sm transition-colors"
+          >
+            🔒 Switch to HTTPS Now
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Print Barcode Labels</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Search items, configure labels, and print</p>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/c/${company?.tenantSlug || ''}/inventory`}
+              className="p-1.5 text-gray-400 hover:text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+              title="Back to Inventory"
+            >
+              <ArrowLeft size={18} />
+            </Link>
+            <h1 className="text-xl font-semibold text-gray-900">Print Barcode Labels</h1>
+          </div>
+          <p className="text-sm text-gray-500 mt-0.5 ml-8">Search items, configure labels, and print</p>
         </div>
-        <button
-          onClick={handlePrint}
-          disabled={!selectedTemplate || items.length === 0 || printing}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 font-medium"
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/c/${company?.tenantSlug || ''}/barcode/label-templates`}
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-50 font-medium transition-colors"
+          >
+            <Layout size={15} />
+            Label Templates
+          </Link>
+          <button
+            onClick={handlePrint}
+            disabled={!selectedTemplate || items.length === 0 || printing}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 font-medium shadow-sm transition-colors"
+          >
+            <Printer size={16} />
+            {printing ? 'Sending to Printer...' : 'Print Labels'}
+          </button>
+        </div>
+      </div>
+
+      {/* Barcode Navigation Tabs */}
+      <div className="flex items-center gap-2 border-b border-gray-200 pb-2">
+        <Link
+          href={`/c/${company?.tenantSlug || ''}/barcode/print`}
+          className="px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1.5"
         >
-          <Printer size={16} />
+          <Printer size={13} />
           Print Labels
-        </button>
+        </Link>
+        <Link
+          href={`/c/${company?.tenantSlug || ''}/barcode/label-templates`}
+          className="px-3 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors flex items-center gap-1.5"
+        >
+          <Layout size={13} />
+          Templates & Customization
+        </Link>
+        <Link
+          href={`/c/${company?.tenantSlug || ''}/barcode/settings`}
+          className="px-3 py-1.5 text-xs font-medium rounded-md text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors flex items-center gap-1.5"
+        >
+          <Sliders size={13} />
+          Roll Setups & Calibration
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -719,7 +842,25 @@ export default function BarcodePrintPage() {
                 )}
             </div>
             <div>
-              <label className="text-sm font-medium text-gray-700 mb-1 block">Template</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-sm font-medium text-gray-700">Template</label>
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/new`}
+                    className="text-xs text-blue-600 hover:underline flex items-center gap-0.5"
+                  >
+                    <Plus size={11} /> New
+                  </Link>
+                  {selectedTemplate && (
+                    <Link
+                      href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/${selectedTemplate.id}`}
+                      className="text-xs text-blue-600 hover:underline flex items-center gap-0.5 font-medium"
+                    >
+                      <Edit3 size={11} /> Edit in Designer
+                    </Link>
+                  )}
+                </div>
+              </div>
               <select
                 value={selectedTemplate?.id || selectedTemplateId}
                 onChange={(e) => setSelectedTemplateId(e.target.value)}

@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Save, ZoomIn, ZoomOut, Grid3x3, Eye, Undo2 } from 'lucide-react'
+import Link from 'next/link'
+import { Save, ZoomIn, ZoomOut, Grid3x3, Eye, Undo2, ArrowLeft, Check } from 'lucide-react'
 import type { LabelElement, LabelTemplate, LabelShape } from '@/lib/labels/types'
 import { ElementToolbox } from './ElementToolbox'
 import { LabelCanvas } from './LabelCanvas'
@@ -147,7 +148,7 @@ export function LabelDesigner({ templateId, initialData, presetData, tenantSlug 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleDeleteElement, handleDuplicateElement])
 
-  async function handleSave() {
+  async function handleSave(returnToPrint = false) {
     setSaving(true)
     try {
       const body = {
@@ -175,9 +176,11 @@ export function LabelDesigner({ templateId, initialData, presetData, tenantSlug 
         toast.success('Template saved successfully')
         setIsDirty(false)
 
-        // If creating new, redirect to edit page
-        if (!templateId && data.id) {
-          window.location.href = `/c/${tenantSlug}/settings/label-templates/${data.id}`
+        const finalId = data.id || templateId
+        if (returnToPrint) {
+          window.location.href = `/c/${tenantSlug}/barcode/print?templateId=${finalId || ''}`
+        } else if ((!templateId || templateId.startsWith('preset-')) && data.id) {
+          window.location.href = `/c/${tenantSlug}/barcode/label-templates/${data.id}`
         }
       } else {
         const err = await res.json().catch(() => null)
@@ -197,6 +200,14 @@ export function LabelDesigner({ templateId, initialData, presetData, tenantSlug 
       {/* Toolbar */}
       <div className="flex items-center justify-between px-4 py-2 border-b bg-white">
         <div className="flex items-center gap-3">
+          <Link
+            href={`/c/${tenantSlug}/barcode/print${templateId ? `?templateId=${templateId}` : ''}`}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-gray-700 bg-gray-100 hover:bg-gray-200 rounded font-medium transition-colors"
+            title="Return to Barcode Print"
+          >
+            <ArrowLeft size={14} />
+            Back to Print
+          </Link>
           <input
             type="text"
             value={name}
@@ -253,12 +264,21 @@ export function LabelDesigner({ templateId, initialData, presetData, tenantSlug 
             <Eye size={16} />
           </button>
           <button
-            onClick={handleSave}
+            onClick={() => handleSave(false)}
             disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-medium rounded disabled:opacity-50 transition-colors"
           >
             <Save size={14} />
             {saving ? 'Saving...' : 'Save'}
+          </button>
+          <button
+            onClick={() => handleSave(true)}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm"
+            title="Save template and return to Print Labels"
+          >
+            <Check size={14} />
+            Save & Print
           </button>
         </div>
       </div>

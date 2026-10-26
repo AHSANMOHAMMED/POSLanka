@@ -189,6 +189,9 @@ function TextPreview({ element, zoom, codeWord }: { element: LabelElementType & 
   if (element.prefix) text = element.prefix + text
   if (element.suffix) text = text + element.suffix
 
+  const isName = element.dataField === 'item.name'
+  const effectiveMaxLines = isName ? 1 : Math.max(1, element.maxLines || 1)
+
   // Use pt units (matching print output) scaled by zoom for WYSIWYG fidelity.
   // 1pt = 1/72in; at 96dpi, 1pt = 96/72 = 1.333px. Zoom scales the container
   // already via mmToPx, so we just need to match the pt size at the current zoom.
@@ -196,7 +199,7 @@ function TextPreview({ element, zoom, codeWord }: { element: LabelElementType & 
   if (textEl.autoFit && text) {
     const widthPx = element.width * (96 / 25.4)
     const heightPx = element.height * (96 / 25.4)
-    fontSize = calculateAutoFitFontSize(text, widthPx, heightPx, element.fontWeight, element.fontSize, element.maxLines)
+    fontSize = calculateAutoFitFontSize(text, widthPx, heightPx, element.fontWeight, element.fontSize, effectiveMaxLines)
   }
   const fontSizePx = fontSize * (96 / 72) * zoom
 
@@ -208,10 +211,12 @@ function TextPreview({ element, zoom, codeWord }: { element: LabelElementType & 
         textAlign: element.textAlign,
         lineHeight: 1.2,
         overflow: 'hidden',
-        wordBreak: 'break-word',
-        display: '-webkit-box',
-        WebkitLineClamp: element.maxLines,
-        WebkitBoxOrient: 'vertical' as const,
+        whiteSpace: effectiveMaxLines === 1 ? 'nowrap' : undefined,
+        textOverflow: effectiveMaxLines === 1 ? 'ellipsis' : undefined,
+        display: effectiveMaxLines === 1 ? 'block' : '-webkit-box',
+        WebkitLineClamp: effectiveMaxLines === 1 ? undefined : effectiveMaxLines,
+        WebkitBoxOrient: effectiveMaxLines === 1 ? undefined : ('vertical' as const),
+        wordBreak: effectiveMaxLines === 1 ? undefined : 'break-word',
         width: '100%',
         height: '100%',
       }}

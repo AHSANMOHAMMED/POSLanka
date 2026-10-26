@@ -16,6 +16,7 @@ export default function NewBarcodeLabelTemplatePage({ params }: { params: Promis
     return (
       <TemplatePresetPicker
         businessType={company?.businessType}
+        tenantSlug={slug}
         onSelect={(p) => setPreset(p)}
         onSkip={() => setPreset(null)}
       />

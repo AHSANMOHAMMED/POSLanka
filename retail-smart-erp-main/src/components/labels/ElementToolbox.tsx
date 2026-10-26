@@ -44,7 +44,7 @@ export function ElementToolbox({ widthMm, heightMm, labelShape, cornerRadius, co
       id: genId(), type: 'text', x: centerX(w), y: 1,
       width: w, height: 5, rotation: 0, zIndex: 10,
       dataField: 'item.name', fontSize: 8, fontWeight: 'bold',
-      textAlign: 'center', maxLines: 2,
+      textAlign: 'center', maxLines: 1,
     })
   }
 

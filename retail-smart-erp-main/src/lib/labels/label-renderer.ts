@@ -165,14 +165,22 @@ async function renderElement(
       if (el.prefix) text = el.prefix + text
       if (el.suffix) text = text + el.suffix
 
+      const isName = el.dataField === 'item.name'
+      // If the name is over length, keep initial name on a single line so it never wraps down or overlaps the barcode/price below
+      const effectiveMaxLines = isName ? 1 : Math.max(1, el.maxLines || 1)
+
       let fontSize = el.fontSize
       if (textEl.autoFit && text) {
         const widthPx = el.width * (96 / 25.4)
         const heightPx = el.height * (96 / 25.4)
-        fontSize = calculateAutoFitFontSize(text, widthPx, heightPx, el.fontWeight, el.fontSize, el.maxLines)
+        fontSize = calculateAutoFitFontSize(text, widthPx, heightPx, el.fontWeight, el.fontSize, effectiveMaxLines)
       }
 
-      const textStyle = `font-size:${fontSize}pt;font-weight:${el.fontWeight};text-align:${el.textAlign};line-height:1.2;word-break:break-word;display:-webkit-box;-webkit-line-clamp:${el.maxLines};-webkit-box-orient:vertical;overflow:hidden;`
+      const singleLineStyle = effectiveMaxLines === 1
+        ? 'white-space:nowrap;text-overflow:ellipsis;overflow:hidden;display:block;'
+        : `word-break:break-word;display:-webkit-box;-webkit-line-clamp:${effectiveMaxLines};-webkit-box-orient:vertical;overflow:hidden;`
+
+      const textStyle = `font-size:${fontSize}pt;font-weight:${el.fontWeight};text-align:${el.textAlign};line-height:1.2;${singleLineStyle}`
       return `<div style="${baseStyle}z-index:${el.zIndex};${textStyle}">${escapeHtml(text)}</div>`
     }
     case 'image': {

@@ -164,22 +164,25 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams, hostname } = request.nextUrl
 
+  // Auto-redirect insecure HTTP to HTTPS on production host so WebUSB works without errors
+  const forwardedHost = request.headers.get('x-forwarded-host')
+  const hostHeader = request.headers.get('host')
+  const originalHostHeader = request.headers.get('x-original-host')
+  const candidateHost = forwardedHost || hostHeader || originalHostHeader || hostname
+  const hostOnly = candidateHost.split(':')[0].toLowerCase()
+  const proto = request.headers.get('x-forwarded-proto') || request.nextUrl.protocol.replace(':', '')
+
+  if (proto === 'http' && (hostOnly === '168.144.216.104' || hostOnly.endsWith('.sslip.io'))) {
+    const targetUrl = new URL(request.url)
+    targetUrl.protocol = 'https:'
+    targetUrl.host = '168-144-216-104.sslip.io'
+    return NextResponse.redirect(targetUrl.toString(), 301)
+  }
+
   // API routes: only request id + CSRF; no host routing / tenant rewrites (unchanged behaviour)
   if (pathname === '/api' || pathname.startsWith('/api/')) {
     return handleApi(request)
   }
-  
-  // Get the actual host from headers (respecting x-forwarded-host and Host header)
-  // Try multiple headers in order of preference:
-  // 1. x-forwarded-host (standard proxy header)
-  // 2. host (direct Host header from request)
-  // 3. x-original-host (some proxies use this)
-  // 4. Fallback to request.nextUrl.hostname
-  const forwardedHost = request.headers.get('x-forwarded-host')
-  const hostHeader = request.headers.get('host')
-  const originalHostHeader = request.headers.get('x-original-host')
-  
-  const candidateHost = forwardedHost || hostHeader || originalHostHeader || hostname
 
   // ==================== SECURITY: Host Header Validation ====================
   // Validate the candidate host against allowed patterns to prevent host header

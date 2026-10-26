@@ -96,7 +96,7 @@ export async function POST(request: NextRequest) {
         columns: columns ?? (Number(widthMm) === 38 && Number(heightMm) === 25 ? 2 : 1),
         labelShape: labelShape || 'rectangle',
         cornerRadius: cornerRadius ?? null,
-        elements: elements || [],
+        elements: (elements || []) as unknown as import('@/lib/labels/types').LabelElement[],
         isDefault: isDefault || false,
         createdBy: session.user.id,
       }).returning()

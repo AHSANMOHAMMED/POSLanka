@@ -304,14 +304,17 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
                             >
                               Switch to Browser Print
                             </button>
-                            <a
-                              href="https://168-144-216-104.sslip.io"
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[11px] text-blue-600 dark:text-blue-400 underline font-medium hover:text-blue-800"
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (typeof window !== 'undefined') {
+                                  window.location.href = `https://168-144-216-104.sslip.io${window.location.pathname}${window.location.search}`
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded bg-blue-600 text-white font-semibold text-[11px] hover:bg-blue-700 shadow-sm"
                             >
-                              Open over HTTPS for direct USB
-                            </a>
+                              🔒 Switch to HTTPS (Unlocks Direct USB)
+                            </button>
                           </div>
                         </div>
                       )}

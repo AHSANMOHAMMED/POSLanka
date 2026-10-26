@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Star, Trash2, MoreHorizontal } from 'lucide-react'
+import { Plus, Star, Trash2, MoreHorizontal, ArrowLeft } from 'lucide-react'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { PageLoading } from '@/components/ui/loading-spinner'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
@@ -91,13 +91,22 @@ export default function BarcodeLabelTemplatesPage() {
       moduleHref="/barcode"
       title="Label Templates"
       actionContent={
-        <Link
-          href={`/c/${tenantSlug}/barcode/label-templates/new`}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
-        >
-          <Plus size={16} />
-          New Template
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/c/${tenantSlug}/barcode/print`}
+            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 text-gray-700 text-sm font-medium rounded hover:bg-gray-50 transition-colors"
+          >
+            <ArrowLeft size={16} />
+            Back to Print
+          </Link>
+          <Link
+            href={`/c/${tenantSlug}/barcode/label-templates/new`}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
+          >
+            <Plus size={16} />
+            New Template
+          </Link>
+        </div>
       }
       search={search}
       setSearch={setSearch}

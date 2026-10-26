@@ -78,7 +78,7 @@ export const createLabelTemplateSchema = z.object({
   heightMm: z.number().min(10).max(300),
   columns: z.number().int().min(1).max(4).optional(),
   labelShape: labelShapeSchema.optional(),
-  cornerRadius: z.number().min(0).max(50).optional(),
+  cornerRadius: z.number().min(0).max(50).nullable().optional(),
   elements: z.array(labelElementSchema).max(50),
   isDefault: z.boolean().optional(),
 })

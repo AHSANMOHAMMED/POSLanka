@@ -19,11 +19,11 @@ function elId() {
 }
 
 export const LABEL_PRESETS: LabelPreset[] = [
-  // ─── Retail ──────────────────────────────────────────────
+  // ─── Retail / Universal (Most Common) ─────────────────────
   {
     id: 'retail-38x25-barcode-2up',
-    name: '38 x 25 mm Barcode Tag (2 Across)',
-    description: 'Name + Barcode + Price (twin stickers in 1 line on 80 mm roll)',
+    name: '🦓 Zebra / Universal 38 x 25 mm (Twin / 80mm Roll - 2 Across)',
+    description: 'Name + Barcode + Price (twin stickers in 1 line on standard 80 mm roll)',
     businessTypes: ['retail', 'supermarket', 'all'],
     widthMm: 38,
     heightMm: 25,
@@ -36,12 +36,59 @@ export const LABEL_PRESETS: LabelPreset[] = [
     ],
   },
   {
+    id: 'retail-38x25-single',
+    name: '🦓 Zebra 38 x 25 mm (Single Sticker - 1 Across)',
+    description: 'Name + Barcode + Price (1 sticker per line on 38 mm roll)',
+    businessTypes: ['retail', 'supermarket', 'all'],
+    widthMm: 38,
+    heightMm: 25,
+    columns: 1,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 1, y: 1, width: 36, height: 4.5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 7, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'barcode', x: 2, y: 5.5, width: 34, height: 11, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
+      { id: elId(), type: 'text', x: 1, y: 17.5, width: 36, height: 6.5, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 13, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
+    ],
+  },
+  {
+    id: 'retail-80x50-barcode',
+    name: '🦓 Zebra 80 mm Thermal Label (80 x 50 mm)',
+    description: 'Name + Barcode + Price + SKU (80 mm direct thermal roll)',
+    businessTypes: ['retail', 'supermarket', 'all'],
+    widthMm: 80,
+    heightMm: 50,
+    columns: 1,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 2, y: 2, width: 76, height: 6, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 11, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'barcode', x: 5, y: 10, width: 70, height: 22, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
+      { id: elId(), type: 'text', x: 2, y: 35, width: 36, height: 6, rotation: 0, zIndex: 10, dataField: 'item.sku', fontSize: 7, fontWeight: 'normal', textAlign: 'left', prefix: 'SKU: ', maxLines: 1 },
+      { id: elId(), type: 'text', x: 40, y: 35, width: 38, height: 10, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 16, fontWeight: 'bold', textAlign: 'right', isCurrency: true, maxLines: 1 },
+    ],
+  },
+  {
+    id: 'retail-80x40-barcode',
+    name: '🦓 Zebra 80 mm Thermal Label (80 x 40 mm)',
+    description: 'Name + Barcode + Price (80 mm direct thermal roll)',
+    businessTypes: ['retail', 'supermarket', 'all'],
+    widthMm: 80,
+    heightMm: 40,
+    columns: 1,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 2, y: 2, width: 76, height: 5.5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 10, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'barcode', x: 5, y: 9, width: 70, height: 18, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
+      { id: elId(), type: 'text', x: 2, y: 29, width: 76, height: 8, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 14, fontWeight: 'bold', textAlign: 'center', isCurrency: true, maxLines: 1 },
+    ],
+  },
+  {
     id: 'retail-price-tag',
-    name: 'Standard Price Tag',
-    description: 'Barcode + name + price (50 x 30 mm)',
+    name: '🦓 Zebra 50 x 30 mm Direct Thermal (Standard)',
+    description: 'Name + Barcode + Price (Standard Zebra ZD220 / ZD230 roll)',
     businessTypes: ['retail', 'all'],
     widthMm: 50,
     heightMm: 30,
+    columns: 1,
     labelShape: 'rectangle',
     elements: [
       { id: elId(), type: 'text', x: 1, y: 1, width: 48, height: 5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 8, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
@@ -58,7 +105,7 @@ export const LABEL_PRESETS: LabelPreset[] = [
     heightMm: 20,
     labelShape: 'rectangle',
     elements: [
-      { id: elId(), type: 'text', x: 1, y: 1, width: 28, height: 5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 6, fontWeight: 'bold', textAlign: 'center', maxLines: 2 },
+      { id: elId(), type: 'text', x: 1, y: 1, width: 28, height: 5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 6, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
       { id: elId(), type: 'text', x: 1, y: 7, width: 28, height: 4, rotation: 0, zIndex: 10, dataField: 'item.sku', fontSize: 5, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
       { id: elId(), type: 'text', x: 1, y: 13, width: 28, height: 6, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 10, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
     ],
@@ -73,7 +120,7 @@ export const LABEL_PRESETS: LabelPreset[] = [
     labelShape: 'rectangle',
     elements: [
       { id: elId(), type: 'text', x: 2, y: 2, width: 36, height: 5, rotation: 0, zIndex: 10, dataField: 'item.brand', fontSize: 7, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
-      { id: elId(), type: 'text', x: 2, y: 8, width: 36, height: 8, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 8, fontWeight: 'bold', textAlign: 'center', maxLines: 2 },
+      { id: elId(), type: 'text', x: 2, y: 8, width: 36, height: 6, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 8, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
       { id: elId(), type: 'shape', x: 2, y: 17, width: 36, height: 0.5, rotation: 0, zIndex: 5, shape: 'line', borderWidth: 1, borderColor: '#cccccc', borderStyle: 'solid' },
       { id: elId(), type: 'barcode', x: 5, y: 19, width: 30, height: 18, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
       { id: elId(), type: 'text', x: 2, y: 40, width: 36, height: 8, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 16, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
@@ -141,7 +188,7 @@ export const LABEL_PRESETS: LabelPreset[] = [
     labelShape: 'rectangle',
     elements: [
       { id: elId(), type: 'text', x: 1, y: 1, width: 36, height: 6, rotation: 0, zIndex: 10, dataField: 'item.pluCode', fontSize: 12, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
-      { id: elId(), type: 'text', x: 1, y: 8, width: 36, height: 5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 6, fontWeight: 'normal', textAlign: 'center', maxLines: 2 },
+      { id: elId(), type: 'text', x: 1, y: 8, width: 36, height: 5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 6, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
       { id: elId(), type: 'text', x: 1, y: 16, width: 36, height: 7, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 12, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
     ],
   },
@@ -220,7 +267,7 @@ export const LABEL_PRESETS: LabelPreset[] = [
     heightMm: 38,
     labelShape: 'circle',
     elements: [
-      { id: elId(), type: 'text', x: 4, y: 6, width: 30, height: 6, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 6, fontWeight: 'normal', textAlign: 'center', maxLines: 2 },
+      { id: elId(), type: 'text', x: 4, y: 6, width: 30, height: 6, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 6, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
       { id: elId(), type: 'text', x: 4, y: 15, width: 30, height: 10, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 14, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
     ],
   },
