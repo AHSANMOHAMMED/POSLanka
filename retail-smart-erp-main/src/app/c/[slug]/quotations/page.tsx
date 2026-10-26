@@ -83,18 +83,34 @@ export default function QuotationsPage() {
             </thead>
             <tbody>
               {rows.map((q) => (
-                <tr key={q.id} className="border-t">
-                  <td className="px-3 py-2 font-medium">{q.quotationNo}</td>
+                <tr key={q.id} className="border-t hover:bg-slate-50 transition-colors">
+                  <td className="px-3 py-2 font-medium">
+                    <Link href={`/c/${slug}/quotations/${q.id}`} className="text-teal-700 hover:underline font-bold">
+                      {q.quotationNo}
+                    </Link>
+                  </td>
                   <td className="px-3 py-2">{q.customerName || '—'}</td>
-                  <td className="px-3 py-2 capitalize">{q.status}</td>
-                  <td className="px-3 py-2">{Number(q.total).toFixed(2)}</td>
+                  <td className="px-3 py-2 capitalize">
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                      q.status === 'converted' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'
+                    }`}>
+                      {q.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 font-mono font-bold">{Number(q.total).toFixed(2)}</td>
                   <td className="px-3 py-2">{q.validUntil || '—'}</td>
-                  <td className="px-3 py-2 space-x-2">
+                  <td className="px-3 py-2 flex items-center gap-3">
+                    <Link
+                      href={`/c/${slug}/quotations/${q.id}`}
+                      className="text-xs font-bold text-slate-700 hover:text-teal-700 hover:underline"
+                    >
+                      View / Print
+                    </Link>
                     {q.status !== 'converted' && (
                       <button
                         type="button"
                         onClick={() => convert(q.id)}
-                        className="text-teal-700 hover:underline"
+                        className="text-xs font-bold text-teal-700 hover:underline"
                       >
                         Convert to sale
                       </button>

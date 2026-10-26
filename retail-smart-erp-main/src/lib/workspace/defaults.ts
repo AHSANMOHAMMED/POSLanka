@@ -273,6 +273,7 @@ function getReportsBlocks(businessType?: string): WorkspaceBlock[] {
     ] } },
     { id: 'c2', type: 'card', colSpan: 6, data: { title: 'Sales Reports', links: [
       { label: 'Sales Summary', href: '/accounting/reports/sales-summary' },
+      { label: 'Staff Performance & Points', href: '/reports/staff-performance' },
       { label: 'Sales by Item', href: '/accounting/reports/sales-by-item' },
       { label: 'Sales by Customer', href: '/accounting/reports/sales-by-customer' },
       { label: 'Daily Sales', href: '/accounting/reports/daily-sales' },

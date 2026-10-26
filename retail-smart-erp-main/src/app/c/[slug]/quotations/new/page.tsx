@@ -1,16 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Plus, Trash2, FileText } from 'lucide-react'
 
 interface QuotationLine {
   id: string
+  itemId?: string | null
   itemName: string
   quantity: number
   unitPrice: number
   discount: number
+}
+
+interface CatalogItem {
+  id: string
+  name: string
+  sku: string | null
+  barcode: string | null
+  sellingPrice: string
 }
 
 export default function NewQuotationStudioPage() {
@@ -23,18 +32,43 @@ export default function NewQuotationStudioPage() {
   const [validUntil, setValidUntil] = useState('')
   const [notes, setNotes] = useState('Thank you for choosing us! Quotation valid for 14 days.')
   
+  const [catalogItems, setCatalogItems] = useState<CatalogItem[]>([])
   const [items, setItems] = useState<QuotationLine[]>([
-    { id: '1', itemName: '', quantity: 1, unitPrice: 0, discount: 0 }
+    { id: '1', itemId: null, itemName: '', quantity: 1, unitPrice: 0, discount: 0 }
   ])
 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  function addItem() {
-    setItems(prev => [
-      ...prev,
-      { id: Date.now().toString(), itemName: '', quantity: 1, unitPrice: 0, discount: 0 }
-    ])
+  useEffect(() => {
+    fetch('/api/items?all=true&activeOnly=true')
+      .then(res => res.ok ? res.json() : [])
+      .then(data => {
+        const list = Array.isArray(data) ? data : data.data || []
+        setCatalogItems(list)
+      })
+      .catch(() => {})
+  }, [])
+
+  function addItem(catalogItem?: CatalogItem) {
+    if (catalogItem) {
+      setItems(prev => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          itemId: catalogItem.id,
+          itemName: catalogItem.name,
+          quantity: 1,
+          unitPrice: parseFloat(catalogItem.sellingPrice) || 0,
+          discount: 0,
+        }
+      ])
+    } else {
+      setItems(prev => [
+        ...prev,
+        { id: Date.now().toString(), itemId: null, itemName: '', quantity: 1, unitPrice: 0, discount: 0 }
+      ])
+    }
   }
 
   function removeItem(id: string) {
@@ -45,6 +79,19 @@ export default function NewQuotationStudioPage() {
   function updateItem(id: string, field: keyof QuotationLine, val: string | number) {
     setItems(prev => prev.map(i => {
       if (i.id !== id) return i
+      if (field === 'itemName') {
+        const typed = String(val)
+        // Check if typed name exactly matches a catalog item to auto-populate price
+        const matched = catalogItems.find(c => c.name.toLowerCase() === typed.toLowerCase())
+        if (matched) {
+          return {
+            ...i,
+            itemName: matched.name,
+            itemId: matched.id,
+            unitPrice: parseFloat(matched.sellingPrice) || i.unitPrice,
+          }
+        }
+      }
       return { ...i, [field]: val }
     }))
   }
@@ -80,6 +127,7 @@ export default function NewQuotationStudioPage() {
           tax: 0,
           total: grandTotal,
           items: validLines.map(i => ({
+            itemId: i.itemId || undefined,
             itemName: i.itemName,
             quantity: Number(i.quantity) || 1,
             unitPrice: Number(i.unitPrice) || 0,
@@ -198,16 +246,51 @@ export default function NewQuotationStudioPage() {
 
           {/* Line Items Table */}
           <div>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-base font-bold text-slate-800 dark:text-white">Items & Pricing</h3>
-              <button
-                type="button"
-                onClick={addItem}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-50 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 text-xs font-bold hover:bg-teal-100 transition-colors"
-              >
-                <Plus size={15} /> Add Line Item
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-base font-bold text-slate-800 dark:text-white">Items & Pricing</h3>
+                <p className="text-xs text-slate-500">Pick products from your catalog or enter custom service lines</p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {catalogItems.length > 0 && (
+                  <select
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                    onChange={(e) => {
+                      const item = catalogItems.find(c => c.id === e.target.value)
+                      if (item) {
+                        addItem(item)
+                        e.target.value = ''
+                      }
+                    }}
+                    defaultValue=""
+                  >
+                    <option value="" disabled>+ Add from Catalog...</option>
+                    {catalogItems.map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} — LKR {parseFloat(c.sellingPrice).toFixed(2)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  onClick={() => addItem()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal-50 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300 text-xs font-bold hover:bg-teal-100 transition-colors"
+                >
+                  <Plus size={15} /> Custom Line
+                </button>
+              </div>
             </div>
+
+            {/* Datalist for fast autocomplete */}
+            <datalist id="catalog-items-list">
+              {catalogItems.map(c => (
+                <option key={c.id} value={c.name}>
+                  {c.sku ? `[${c.sku}] ` : ''}LKR {parseFloat(c.sellingPrice).toFixed(2)}
+                </option>
+              ))}
+            </datalist>
 
             <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
               <table className="w-full text-left border-collapse text-sm">
@@ -231,11 +314,17 @@ export default function NewQuotationStudioPage() {
                           <input
                             type="text"
                             required
-                            placeholder="Type item or service name"
+                            list="catalog-items-list"
+                            placeholder="Type or pick from catalog..."
                             value={item.itemName}
                             onChange={(e) => updateItem(item.id, 'itemName', e.target.value)}
                             className="w-full bg-transparent border-0 border-b border-transparent focus:border-teal-500 focus:outline-none py-1 font-medium text-slate-800 dark:text-white"
                           />
+                          {item.itemId && (
+                            <span className="inline-block text-[10px] font-mono font-bold text-teal-700 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/40 px-1.5 py-0.2 rounded mt-0.5">
+                              Catalog Item
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 px-3 text-right">
                           <input

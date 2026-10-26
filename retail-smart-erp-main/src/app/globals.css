@@ -159,6 +159,12 @@
 }
 
 /* Carbon OLED (Ultra-High Contrast Black) */
+[data-theme="charcoal"] {
+  --primary: #0284c7;
+  --primary-hover: #0369a1;
+  --page-bg: #f8fafc;
+  --content-bg: #ffffff;
+}
 [data-theme="charcoal"].dark,
 .dark[data-theme="charcoal"] {
   --page-bg: #000000;
@@ -173,6 +179,40 @@
   --border: 0 0% 15%;
   --card: 0 0% 7%;
   --background: 0 0% 0%;
+}
+
+/* ==================== DYNAMIC THEME SYSTEM UTILITIES ==================== */
+.theme-btn-primary {
+  background-color: var(--primary) !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px 0 color-mix(in srgb, var(--primary) 30%, transparent) !important;
+  transition: all 0.15s ease-in-out !important;
+}
+.theme-btn-primary:hover:not(:disabled) {
+  background-color: var(--primary-hover) !important;
+  box-shadow: 0 6px 20px 0 color-mix(in srgb, var(--primary) 40%, transparent) !important;
+}
+.theme-btn-subtle {
+  background-color: color-mix(in srgb, var(--primary) 10%, transparent) !important;
+  color: var(--primary) !important;
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent) !important;
+  transition: all 0.15s ease-in-out !important;
+}
+.theme-btn-subtle:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--primary) 20%, transparent) !important;
+}
+.theme-text-primary {
+  color: var(--primary) !important;
+}
+.theme-border-primary {
+  border-color: var(--primary) !important;
+}
+.theme-bg-subtle {
+  background-color: color-mix(in srgb, var(--primary) 8%, transparent) !important;
+}
+.theme-ring-primary {
+  --tw-ring-color: var(--primary) !important;
+  outline-color: var(--primary) !important;
 }
 
 /* Warm Amber / Bistro */

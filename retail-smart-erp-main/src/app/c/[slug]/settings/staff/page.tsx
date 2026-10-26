@@ -17,6 +17,7 @@ interface User {
   id: string
   email: string
   fullName: string
+  employeeCode?: string | null
   role: UserRole
   customRoleId?: string | null
   customRoleName?: string | null
@@ -812,6 +813,7 @@ export default function StaffPage() {
             <thead className="bg-gray-50 border-b table-sticky-header">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Name</th>
+                <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Code</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Email</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Role</th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-gray-600">Last Login</th>
@@ -833,6 +835,15 @@ export default function StaffPage() {
                     <div className="text-xs text-gray-500">
                       Joined {formatDate(user.createdAt)}
                     </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {user.employeeCode ? (
+                      <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-800 border border-slate-200">
+                        {user.employeeCode}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-400 font-mono">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-600">
                     {displayLogin(user.email)}

@@ -73,7 +73,7 @@ function CategoryPillBar({ categories, selectedCategory, onCategoryChange, allLa
 
   const pillClasses = (active: boolean) =>
     `px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${
-      active ? 'bg-teal-700 text-white shadow-md font-semibold' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+      active ? 'theme-btn-primary shadow-md font-semibold' : 'bg-slate-100 dark:bg-gray-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-gray-700'
     }`
 
   return (
@@ -236,12 +236,12 @@ export function ProductGrid({
             <button
               type="button"
               onClick={onOpenQuickAdd}
-              className="flex items-center gap-1.5 px-3.5 py-3 bg-teal-50 text-teal-800 border border-teal-200/80 rounded-xl font-bold text-xs hover:bg-teal-100 transition-colors flex-shrink-0 shadow-sm"
+              className="flex items-center gap-1.5 px-3.5 py-3 theme-btn-subtle border rounded-xl font-bold text-xs flex-shrink-0 shadow-sm"
               title="Quick Add unlisted item to POS (F4)"
             >
-              <PlusCircle size={16} className="text-teal-700" />
+              <PlusCircle size={16} />
               <span className="hidden md:inline">Quick Add</span>
-              <span className="text-[11px] bg-teal-200/60 text-teal-900 px-1 py-0.5 rounded font-mono font-extrabold">F4</span>
+              <span className="text-[11px] px-1 py-0.5 rounded font-mono font-extrabold opacity-80">F4</span>
             </button>
           )}
 
@@ -412,7 +412,7 @@ export function ProductGrid({
                   )}
 
                   <div className="flex items-end justify-between pt-2 border-t border-slate-100 dark:border-gray-700 mt-auto">
-                    <span className="text-base min-[1920px]:text-lg min-[2560px]:text-xl font-bold text-teal-800 dark:text-teal-400 font-mono">
+                    <span className="text-base min-[1920px]:text-lg min-[2560px]:text-xl font-bold theme-text-primary font-mono">
                       {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
                       {config.enableWeighableItems && item.isWeighable ? (
                         <span className="text-xs font-normal text-slate-400">/{item.unit || 'kg'}</span>
@@ -439,10 +439,10 @@ export function ProductGrid({
                   onClick={() => onAddToCart(item)}
                   disabled={isOutOfStock && !isReturnMode}
                   data-pos-tile="1"
-                  className={`w-full bg-white dark:bg-gray-800 rounded-xl border px-3.5 py-2.5 min-[1920px]:py-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 transition-all hover:shadow-xs hover:border-teal-600 flex items-center justify-between gap-3 group ${
+                  className={`w-full bg-white dark:bg-gray-800 rounded-xl border px-3.5 py-2.5 min-[1920px]:py-3 text-left focus:outline-none focus-visible:ring-2 theme-ring-primary transition-all hover:shadow-xs flex items-center justify-between gap-3 group ${
                     isOutOfStock && !isReturnMode
                       ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-gray-700'
-                      : 'border-slate-200 dark:border-gray-700 hover:bg-teal-50/20 dark:hover:bg-teal-950/10'
+                      : 'border-slate-200 dark:border-gray-700 hover:theme-bg-subtle'
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -451,7 +451,7 @@ export function ProductGrid({
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-bold text-slate-900 dark:text-white text-sm min-[1920px]:text-base truncate group-hover:text-teal-700 dark:group-hover:text-teal-400">
+                        <span className="font-bold text-slate-900 dark:text-white text-sm min-[1920px]:text-base truncate group-hover:opacity-80">
                           {item.name}
                         </span>
                         {item.categoryName && (
@@ -471,7 +471,7 @@ export function ProductGrid({
                   </div>
 
                   <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className="font-mono font-bold text-sm min-[1920px]:text-base text-teal-800 dark:text-teal-400">
+                    <span className="font-mono font-bold text-sm min-[1920px]:text-base theme-text-primary">
                       {currencyCode} {parseFloat(item.sellingPrice).toFixed(0)}
                     </span>
                   </div>
@@ -489,7 +489,7 @@ export function ProductGrid({
               <button
                 type="button"
                 onClick={onOpenQuickAdd}
-                className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-teal-700 text-white rounded-xl text-xs font-bold hover:bg-teal-800 transition-colors shadow-sm"
+                className="mt-3 inline-flex items-center gap-2 px-4 py-2 theme-btn-primary rounded-xl text-xs font-bold transition-all shadow-sm"
               >
                 <PlusCircle size={15} />
                 Quick Add {search ? `"${search}"` : 'New Item'} to POS (F4)

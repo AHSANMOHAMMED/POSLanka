@@ -101,20 +101,25 @@ export function ShiftOpenModal({ isOpen, onClose, onShiftOpened }: ShiftOpenModa
     }
   }, [isOpen])
 
-  // Update balances when profile changes
+  // Update balances when profile changes (auto-fill cash float from last shift handover if available)
   useEffect(() => {
     if (selectedProfileId) {
       const profile = profiles.find(p => p.id === selectedProfileId)
+      let rememberedFloat = 0
+      try {
+        rememberedFloat = parseFloat(localStorage.getItem(`sky_last_cash_float_${selectedProfileId}`) || localStorage.getItem('sky_last_cash_float') || '0') || 0
+      } catch {}
+
       if (profile?.paymentMethods) {
         setOpeningBalances(
           profile.paymentMethods.map(pm => ({
             paymentMethod: pm.paymentMethod,
-            amount: 0,
+            amount: pm.paymentMethod === 'cash' && rememberedFloat > 0 ? rememberedFloat : 0,
           }))
         )
       } else {
         // Default to cash only if no payment methods configured
-        setOpeningBalances([{ paymentMethod: 'cash', amount: 0 }])
+        setOpeningBalances([{ paymentMethod: 'cash', amount: rememberedFloat > 0 ? rememberedFloat : 0 }])
       }
     }
   }, [selectedProfileId, profiles])

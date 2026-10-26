@@ -70,6 +70,7 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
   const [actualAmounts, setActualAmounts] = useState<Record<string, number>>({})
   /** Methods the cashier actually counted (a counted 0 is valid: empty drawer, takings banked) */
   const [countedMethods, setCountedMethods] = useState<Set<string>>(new Set())
+  const [carryForwardFloat, setCarryForwardFloat] = useState(true)
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
   const [varianceReason, setVarianceReason] = useState('')
@@ -210,6 +211,14 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
 
       if (res.ok) {
         toast.success('Shift closed successfully')
+        if (carryForwardFloat && actualAmounts['cash'] != null) {
+          try {
+            localStorage.setItem('sky_last_cash_float', String(actualAmounts['cash']))
+            if (shiftDetails?.posProfile?.id) {
+              localStorage.setItem(`sky_last_cash_float_${shiftDetails.posProfile.id}`, String(actualAmounts['cash']))
+            }
+          } catch {}
+        }
         // Stay open on the result so the Z report can be printed; onShiftClosed runs on Done
         setCloseResult(data)
       } else {
@@ -353,6 +362,21 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
                   className="w-full px-3 py-2 border rounded dark:bg-gray-800 dark:border-gray-700 dark:text-white"
                 />
               </div>
+            </div>
+          )}
+
+          {/* Shift Handover Option */}
+          {actualAmounts['cash'] != null && actualAmounts['cash'] > 0 && (
+            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg flex items-center justify-between text-sm">
+              <label className="flex items-center gap-2.5 cursor-pointer text-blue-900 dark:text-blue-200 font-medium select-none">
+                <input
+                  type="checkbox"
+                  checked={carryForwardFloat}
+                  onChange={(e) => setCarryForwardFloat(e.target.checked)}
+                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                />
+                Carry forward cash in drawer as Opening Float for next shift ({formatCurrency(actualAmounts['cash'])})
+              </label>
             </div>
           )}
 

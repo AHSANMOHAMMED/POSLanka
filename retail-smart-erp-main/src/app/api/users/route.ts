@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { db } from '@/lib/db'
-import { users, userWarehouses, warehouses, accounts, staffInvites, tenants, posProfiles, posProfileUsers } from '@/lib/db/schema'
+import { users, userWarehouses, warehouses, accounts, staffInvites, tenants, posProfiles, posProfileUsers, employeeProfiles } from '@/lib/db/schema'
 import { eq, and, inArray, isNull, gt, or } from 'drizzle-orm'
 import { requirePermission, canModifyUser, rolePermissionsNotHeld } from '@/lib/auth/roles'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -75,9 +75,26 @@ export async function GET(request: NextRequest) {
         },
       })
       const tenantId = session.user.tenantId
+      const userIds = rows.map(u => u.id)
+      const profilesByUser = new Map<string, string>()
+
+      if (userIds.length > 0) {
+        const profileRows = await db
+          .select({
+            userId: employeeProfiles.userId,
+            employeeCode: employeeProfiles.employeeCode,
+          })
+          .from(employeeProfiles)
+          .where(and(eq(employeeProfiles.tenantId, tenantId), inArray(employeeProfiles.userId, userIds)))
+        for (const p of profileRows) {
+          if (p.employeeCode) profilesByUser.set(p.userId, p.employeeCode)
+        }
+      }
+
       const result = rows.map((u) => ({
         ...u,
         customRoleName: u.customRoleId ? getCustomRoleName(tenantId, u.customRoleId) ?? null : null,
+        employeeCode: profilesByUser.get(u.id) || null,
       }))
 
       // Include warehouse assignments if requested (RLS scopes the query)

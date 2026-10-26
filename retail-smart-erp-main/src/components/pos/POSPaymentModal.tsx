@@ -625,8 +625,8 @@ export function POSPaymentModal({
             </div>
           )}
 
-          {/* Amount Input — hidden for credit sales (no money received) */}
-          {!isReturnMode && paymentMethod !== 'credit' && (
+          {/* Amount Input — for cash & other manual tenders */}
+          {!isReturnMode && paymentMethod !== 'credit' && paymentMethod !== 'card' && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
                 Amount Received
@@ -637,6 +637,8 @@ export function POSPaymentModal({
                 step="0.01"
                 min={0}
                 value={amountPaid}
+                onFocus={(e) => e.target.select()}
+                onClick={(e) => (e.target as HTMLInputElement).select()}
                 onChange={(e) => {
                   let val = Math.max(0, parseFloat(e.target.value) || 0)
                   if (paymentMethod !== 'cash' && val > remainingAfterCredit) val = remainingAfterCredit
@@ -677,14 +679,16 @@ export function POSPaymentModal({
                       type="button"
                       onClick={() => {
                         const cur = amountPaid || ''
+                        const isExactDefault = cur === remainingAfterCredit.toFixed(2)
                         if (btn === '⌫') {
                           setAmountPaid(cur.length > 1 ? cur.slice(0, -1) : '0')
                         } else if (btn === '.') {
                           if (!cur.includes('.')) {
-                            setAmountPaid((cur === '0' || !cur) ? '0.' : cur + '.')
+                            setAmountPaid((cur === '0' || !cur || isExactDefault) ? '0.' : cur + '.')
                           }
                         } else {
-                          setAmountPaid((cur === '0' || !cur) ? btn : cur + btn)
+                          // If current amount is the pre-filled default bill amount, typing a number replaces it
+                          setAmountPaid((cur === '0' || !cur || isExactDefault) ? btn : cur + btn)
                         }
                       }}
                       className="h-12 bg-white hover:bg-slate-50 active:bg-slate-200 border border-slate-200 rounded-xl text-lg font-bold text-slate-700 shadow-sm flex items-center justify-center transition-all select-none"
@@ -697,16 +701,48 @@ export function POSPaymentModal({
             </div>
           )}
 
+          {/* Card payment quick action */}
+          {!isReturnMode && paymentMethod === 'card' && (
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 text-center space-y-3">
+              <div className="flex items-center justify-center gap-2 text-blue-700">
+                <CreditCard size={28} />
+                <span className="text-lg font-bold">Card Payment: {currencyCode} {remainingAfterCredit.toFixed(2)}</span>
+              </div>
+              <p className="text-xs text-blue-600">
+                Tap or insert card on the POS terminal. When approved, click Complete or press Enter.
+              </p>
+              <button
+                type="button"
+                onClick={onCompleteSale}
+                disabled={completeDisabled}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl font-bold text-base shadow-md transition-all flex items-center justify-center gap-2"
+              >
+                <CheckCircle size={20} />
+                Complete Card Payment (Enter)
+              </button>
+            </div>
+          )}
+
           {/* Credit sale notice */}
           {!isReturnMode && paymentMethod === 'credit' && (
-            <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 text-center">
-              <Wallet className="mx-auto text-blue-600 mb-2" size={24} />
-              <p className="text-sm font-semibold text-blue-800">Full amount on credit</p>
-              <p className="text-xs text-blue-600 mt-1">
-                {selectedCustomer
-                  ? `${selectedCustomer.name} will owe ${currencyCode} ${payableTotal.toFixed(2)}`
-                  : 'Please select a customer for credit sales'}
-              </p>
+            <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 space-y-2">
+              <div className="flex items-center gap-2 text-amber-800">
+                <Wallet className="text-amber-600" size={24} />
+                <span className="font-bold text-base">Store Credit Sale</span>
+              </div>
+              {selectedCustomer ? (
+                <div className="text-xs text-amber-800 space-y-1">
+                  <p>Customer: <b>{selectedCustomer.name}</b> {selectedCustomer.phone ? `(${selectedCustomer.phone})` : ''}</p>
+                  <p>Current Credit Balance: <b>{currencyCode} {(customerCredit || 0).toFixed(2)}</b></p>
+                  <p className="font-semibold text-sm text-amber-900 mt-2">
+                    Amount to add to customer credit: {currencyCode} {payableTotal.toFixed(2)}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-red-600 font-semibold">
+                  ⚠️ Please select a customer from the cart first to record a credit sale.
+                </p>
+              )}
             </div>
           )}
 

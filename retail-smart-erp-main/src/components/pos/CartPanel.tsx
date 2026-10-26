@@ -311,7 +311,7 @@ export function CartPanel({
                   isReturnMode
                     ? `bg-red-50 ${isSelected ? 'border-red-500' : 'border-red-200'}`
                     : isSelected
-                      ? `bg-teal-50/70 dark:bg-teal-950/30 ${cartFocused ? 'border-teal-600' : 'border-teal-300 dark:border-teal-800'}`
+                      ? `theme-bg-subtle ${cartFocused ? 'theme-border-primary ring-1' : 'border-slate-300 dark:border-gray-700'}`
                       : 'bg-gray-50 dark:bg-gray-800 border-gray-100 dark:border-gray-700'
                 }`}
               >
@@ -401,15 +401,19 @@ export function CartPanel({
 
                 <div className="flex items-center justify-between gap-2">
                   {/* Quantity Controls */}
-                  <div className={`relative flex items-center gap-1 bg-white dark:bg-gray-900 rounded border p-1 ${typing ? 'ring-2 ring-teal-500' : ''}`}>
+                  <div className={`relative flex items-center gap-1 bg-white dark:bg-gray-900 rounded border p-1 ${typing ? 'ring-2 theme-ring-primary' : ''}`}>
                     {typing && (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-1 rounded bg-teal-600 text-white font-mono font-extrabold text-lg">
+                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-1 rounded theme-btn-primary text-white font-mono font-extrabold text-lg">
                         <span className="text-[11px] font-sans font-semibold opacity-80">Qty</span>{qtyBuffer}<span className="animate-pulse">▌</span>
                       </div>
                     )}
                     <button
-                      onClick={() => onUpdateQuantity(item.cartLineId, -1)}
-                      className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors"
+                      onClick={() => {
+                        onSelectLine?.(item.cartLineId)
+                        onUpdateQuantity(item.cartLineId, -1)
+                      }}
+                      className="w-9 h-9 flex items-center justify-center rounded-md hover:bg-gray-100 active:scale-95 transition-all text-gray-700 dark:text-gray-200"
+                      aria-label="Decrease quantity"
                     >
                       <Minus size={16} />
                     </button>
@@ -419,6 +423,14 @@ export function CartPanel({
                       inputSize="sm"
                       key={`qty-${item.cartLineId}-${item.isWeighable ? item.weight : item.quantity}`}
                       defaultValue={item.isWeighable ? item.weight : item.quantity}
+                      onFocus={(e) => {
+                        onSelectLine?.(item.cartLineId)
+                        e.target.select()
+                      }}
+                      onClick={(e) => {
+                        onSelectLine?.(item.cartLineId)
+                        ;(e.target as HTMLInputElement).select()
+                      }}
                       onBlur={(e) => {
                         const newQty = parseFloat(e.currentTarget.value) || 0
                         const current = item.isWeighable ? (item.weight || 1) : item.quantity
@@ -428,8 +440,12 @@ export function CartPanel({
                       className="w-16 text-center font-bold !border-0 !ring-0 !shadow-none"
                     />
                     <button
-                      onClick={() => onUpdateQuantity(item.cartLineId, 1)}
-                      className="w-8 h-8 flex items-center justify-center rounded-md hover:bg-gray-100 transition-colors"
+                      onClick={() => {
+                        onSelectLine?.(item.cartLineId)
+                        onUpdateQuantity(item.cartLineId, 1)
+                      }}
+                      className="w-9 h-9 flex items-center justify-center rounded-md hover:bg-gray-100 active:scale-95 transition-all text-gray-700 dark:text-gray-200"
+                      aria-label="Increase quantity"
                     >
                       <Plus size={16} />
                     </button>
@@ -542,8 +558,8 @@ export function CartPanel({
               </span>
             </button>
           )}
-          {/* Tax Row */}
-          {(tax > 0 || !isTaxExempt) && (
+          {/* Tax Row - Only display if tax is actively configured and applied */}
+          {tax > 0 && (
             <div className="flex justify-between text-gray-600">
               <span>
                 Tax
@@ -585,9 +601,9 @@ export function CartPanel({
               <span>-{currencyCode} {loyaltyRedeemValue.toFixed(2)}</span>
             </div>
           )}
-          <div className={`flex justify-between items-baseline gap-2 text-2xl font-black pt-3 border-t border-slate-200 ${isReturnMode ? 'text-red-700' : 'text-teal-950 font-mono'}`}>
+          <div className={`flex justify-between items-baseline gap-2 text-2xl font-black pt-3 border-t border-slate-200 ${isReturnMode ? 'text-red-700' : 'text-slate-900 dark:text-white font-mono'}`}>
             <span className="text-sm min-[1920px]:text-base font-sans font-bold text-slate-500 uppercase tracking-wider">{isReturnMode ? 'Refund Due' : 'Total Payable'}</span>
-            <span className="text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-mono font-black text-teal-800 dark:text-teal-300 break-all text-right">
+            <span className={`text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-mono font-black break-all text-right ${isReturnMode ? 'text-red-600' : 'theme-text-primary'}`}>
               {currencyCode} {Math.abs(isReturnMode ? total : Math.max(0, total - loyaltyRedeemValue + (config.enableTips ? (tipAmount || 0) : 0))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
@@ -636,7 +652,7 @@ export function CartPanel({
             className={`py-3.5 min-[1920px]:py-4 min-[1920px]:text-lg text-white rounded-xl font-extrabold shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-1.5 flex-wrap ${
               isReturnMode
                 ? 'bg-gradient-to-r from-red-600 to-red-500 col-span-2'
-                : 'bg-teal-700 hover:bg-teal-800 shadow-teal-900/20'
+                : 'theme-btn-primary'
             }`}
           >
             {isReturnMode ? 'Process Refund' : `${terms.payNow} →`}

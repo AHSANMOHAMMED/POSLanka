@@ -60,10 +60,6 @@ export function DiscountModal({
       setError('Discount value must be greater than 0')
       return false
     }
-    if (!reason.trim()) {
-      setError('Discount reason is required')
-      return false
-    }
     if (type === 'percentage' && numericValue > maxDiscountPercent) {
       setError(`Maximum discount is ${maxDiscountPercent}%`)
       return false
@@ -88,7 +84,7 @@ export function DiscountModal({
   }
 
   function exceedsLimit(): boolean {
-    if (numericValue <= 0 || !reason.trim()) return false
+    if (numericValue <= 0) return false
     if (type === 'percentage') return numericValue > maxDiscountPercent && numericValue <= 100
     if (subtotal <= 0 || numericValue > subtotal) return false
     return (numericValue / subtotal) * 100 > maxDiscountPercent
@@ -96,13 +92,14 @@ export function DiscountModal({
 
   function handleApply() {
     setError('')
+    const effectiveReason = reason.trim() || 'Manual discount'
     if (onRequestOverride && exceedsLimit()) {
-      onRequestOverride({ type, value: numericValue, reason: reason.trim() })
+      onRequestOverride({ type, value: numericValue, reason: effectiveReason })
       onClose()
       return
     }
     if (!validate()) return
-    onApply({ type, value: numericValue, reason: reason.trim() })
+    onApply({ type, value: numericValue, reason: effectiveReason })
     onClose()
   }
 
@@ -197,16 +194,16 @@ export function DiscountModal({
             </div>
           )}
 
-          {/* Reason */}
+          {/* Reason (Optional) */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Reason (required)</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Reason (Optional)</label>
             <input
               type="text"
               value={reason}
               onChange={(e) => { setReason(e.target.value); setError('') }}
               disabled={!allowDiscount}
-              placeholder="e.g., Loyal customer, Bulk purchase, Promotion"
-              className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+              placeholder="e.g., Promotion, Clearance (optional)"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm disabled:opacity-50"
             />
           </div>
 

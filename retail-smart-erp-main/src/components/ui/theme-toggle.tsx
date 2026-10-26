@@ -104,12 +104,17 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="p-2 rounded-xl hover:bg-white/10 dark:hover:bg-white/10 active:scale-95 transition-all duration-150 flex items-center gap-1.5 text-white/90 hover:text-white"
-        aria-label="Customize theme"
-        title="Customize theme & background colors"
+        className="px-2.5 py-1.5 rounded-xl hover:bg-white/10 dark:hover:bg-white/10 active:scale-95 transition-all duration-150 flex items-center gap-1.5 text-white/90 hover:text-white border border-white/10"
+        aria-label="Customize theme & colors"
+        title="Customize theme, accent colors & display mode"
         suppressHydrationWarning
       >
-        <CurrentIcon className="w-4.5 h-4.5 transition-transform hover:rotate-12 duration-200" />
+        <CurrentIcon className="w-4 h-4 transition-transform hover:rotate-12 duration-200" />
+        <Palette className="w-3.5 h-3.5 opacity-80" />
+        <span
+          className="w-2.5 h-2.5 rounded-full border border-white/40 shadow-xs"
+          style={{ backgroundColor: paletteOptions.find((p) => p.value === palette)?.accentColor || '#2563eb' }}
+        />
       </button>
 
       {isOpen && (
