@@ -89,15 +89,10 @@ export const sortOrderSchema = z.enum(['asc', 'desc']).default('desc')
 // Platform admins have their own, stricter rule (src/lib/admin).
 export const PASSWORD_MIN_LENGTH = 4
 
-/** Normalize login input (convert internal spaces to dots, strip whitespace around email @, etc.) */
+/** Normalize login input (trim and lowercase) */
 export function normalizeStaffLogin(raw: unknown): unknown {
   if (typeof raw !== 'string') return raw
-  const v = raw.trim().toLowerCase()
-  if (!v) return v
-  if (v.includes('@')) {
-    return v.replace(/\s*@\s*/, '@').replace(/\s+/g, '')
-  }
-  return v.replace(/\s+/g, '.').replace(/^\.+|\.+$/g, '')
+  return raw.trim().toLowerCase()
 }
 
 /** Staff login: an email, a phone number (+94771234567), or a simple username (cashier1, 1, nimal.perera) */

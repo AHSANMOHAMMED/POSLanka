@@ -188,6 +188,9 @@ export async function createStaffUser(tx: Tx, input: CreateStaffInput): Promise<
   // Email as given; a plain username becomes the shop's own login (cashier1@<slug>.poslanka.local);
   // nothing → one made from the name
   const given = input.email?.trim().toLowerCase()
+  if (given && !given.includes('@') && /\s/.test(given)) {
+    throw new StaffError('Username cannot contain spaces', 400)
+  }
   const email = given
     ? given.includes('@') ? given : placeholderLogin(given, await tenantSlug(tx, tenantId))
     : await freePlaceholderLogin(tx, tenantId, fullName)
