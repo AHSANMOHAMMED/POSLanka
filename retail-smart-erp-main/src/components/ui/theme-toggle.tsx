@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useSyncExternalStore } from 'react'
 import { Sun, Moon, Monitor, Palette } from 'lucide-react'
 import { useTheme, type ThemePalette, type Theme } from '@/components/providers/ThemeProvider'
 
@@ -72,15 +72,13 @@ interface ThemeToggleProps {
   onThemeChange?: (theme: Theme) => void
 }
 
+const emptySubscribe = () => () => {}
+
 export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
   const { theme, setTheme, palette, setPalette, resolvedTheme } = useTheme()
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    setMounted(true)
-  }, [])
+  const mounted = useSyncExternalStore(emptySubscribe, () => true, () => false)
 
   // Close dropdown when clicking outside
   useEffect(() => {

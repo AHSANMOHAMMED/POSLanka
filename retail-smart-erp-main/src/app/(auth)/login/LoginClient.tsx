@@ -65,18 +65,14 @@ function LoginForm() {
   const storedRecent = useMemo(() => parseRecent(recentRaw), [recentRaw])
   const recent = recentDismissed ? null : storedRecent
 
-  // One form for everyone: the server works out owner vs staff and the role's landing page
+  // One form for everyone: Business ID is required to route staff and store owners to their workspace
+  const [businessIdInput, setBusinessId] = useState<string | null>(searchParams.get('company'))
   const [login, setLogin] = useState('')
   const [password, setPassword] = useState('')
-  // null until typed: then a remembered shop pre-fills it
-  const [businessIdInput, setBusinessId] = useState<string | null>(searchParams.get('company'))
-  const [showBusinessId, setShowBusinessId] = useState(!!searchParams.get('company'))
   const [choices, setChoices] = useState<Array<{ slug: string; name: string }> | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const businessId = businessIdInput ?? recent?.slug ?? ''
-  const isUsername = login.trim() !== '' && !login.includes('@')
-  const businessIdVisible = showBusinessId || isUsername || !!recent
 
   useEffect(() => {
     // Already signed in to the owner portal → go straight there
@@ -121,6 +117,11 @@ function LoginForm() {
 
   async function submit(e?: React.FormEvent<HTMLFormElement>, pickedSlug?: string) {
     e?.preventDefault()
+    const bid = (pickedSlug ?? businessId).trim()
+    if (!bid) {
+      setError('Please enter your Business ID or Store Code (e.g. demo-retail).')
+      return
+    }
     if (!login.trim() || !password) {
       setError('Enter your username or email and your password.')
       return
@@ -129,16 +130,14 @@ function LoginForm() {
     setError('')
     setChoices(null)
     try {
-      const bid = (pickedSlug ?? (businessIdVisible ? businessId : '')).trim()
       const res = await fetch('/api/auth/resolve-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ login: login.trim(), password, ...(bid ? { businessId: bid } : {}) }),
+        body: JSON.stringify({ login: login.trim(), password, businessId: bid }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
-        if (data?.field === 'businessId') setShowBusinessId(true)
-        setError(data?.error || 'Those details don’t match.')
+        setError(data?.error || 'Those details don’t match. Check your Business ID, username and password.')
         setLoading(false)
         return
       }
@@ -150,7 +149,7 @@ function LoginForm() {
           return
         }
         broadcastAuthEvent('login', 'account')
-        router.push('/account')
+        router.push(`/c/${bid}/dashboard`)
         router.refresh()
         return
       }
@@ -191,7 +190,7 @@ function LoginForm() {
                 <button
                   key={c.slug}
                   type="button"
-                  onClick={() => { setBusinessId(c.slug); setShowBusinessId(true); void submit(undefined, c.slug) }}
+                  onClick={() => { setBusinessId(c.slug); void submit(undefined, c.slug) }}
                   className="adm-focus flex w-full items-center gap-3 rounded-lg border border-adm-border bg-adm-surface p-2.5 text-left hover:border-adm-primary"
                 >
                   <CompanyAvatar name={c.name} logoUrl={null} />
@@ -207,6 +206,45 @@ function LoginForm() {
         )}
 
         <form onSubmit={(e) => submit(e)} className="space-y-4" noValidate>
+          <Field
+            label="Business ID / Store Code"
+            htmlFor="business-id"
+            hint="Your shop’s identifier (e.g. demo-retail or PL493098). Required for sign in."
+          >
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <Input
+                  id="business-id"
+                  leftIcon={Building2}
+                  size="lg"
+                  value={businessId}
+                  onChange={(e) => setBusinessId(e.target.value)}
+                  placeholder="e.g. demo-retail"
+                  autoComplete="organization"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  required
+                  autoFocus={!businessId}
+                />
+              </div>
+              {recent && businessId === recent.slug && (
+                <button
+                  type="button"
+                  aria-label={`Forget ${recent.name} on this device`}
+                  onClick={() => {
+                    try { localStorage.removeItem(RECENT_KEY) } catch { /* ignore */ }
+                    setRecentDismissed(true)
+                    setBusinessId('')
+                  }}
+                  className="adm-focus flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-adm-border text-adm-subtle hover:bg-adm-surface-2 hover:text-adm-fg"
+                  title={`Clear remembered ${recent.name}`}
+                >
+                  <X size={16} aria-hidden />
+                </button>
+              )}
+            </div>
+          </Field>
+
           <Field label="Username or email" htmlFor="login">
             <Input
               id="login"
@@ -215,11 +253,11 @@ function LoginForm() {
               size="lg"
               value={login}
               onChange={(e) => setLogin(e.target.value)}
-              placeholder="e.g. cashier1 or you@business.lk"
+              placeholder="e.g. cashier1 or admin@demo.poslanka.lk"
               autoComplete="username"
               autoCapitalize="none"
               spellCheck={false}
-              autoFocus
+              autoFocus={!!businessId}
               required
             />
           </Field>
@@ -240,48 +278,6 @@ function LoginForm() {
               required
             />
           </Field>
-
-          {businessIdVisible ? (
-            <Field
-              label={isUsername ? 'Business ID' : 'Business ID (optional)'}
-              htmlFor="business-id"
-              hint="Your shop’s name, e.g. alisha-shop. Owners can leave it blank."
-            >
-              <div className="flex items-center gap-2">
-                <div className="min-w-0 flex-1">
-                  <Input
-                    id="business-id"
-                    leftIcon={Building2}
-                    size="lg"
-                    value={businessId}
-                    onChange={(e) => setBusinessId(e.target.value)}
-                    placeholder="e.g. alisha-shop"
-                    autoComplete="organization"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                  />
-                </div>
-                {recent && businessId === recent.slug && (
-                  <button
-                    type="button"
-                    aria-label={`Forget ${recent.name} on this device`}
-                    onClick={() => {
-                      try { localStorage.removeItem(RECENT_KEY) } catch { /* ignore */ }
-                      setRecentDismissed(true)
-                      setBusinessId('')
-                    }}
-                    className="adm-focus flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-adm-border text-adm-subtle hover:bg-adm-surface-2 hover:text-adm-fg"
-                  >
-                    <X size={16} aria-hidden />
-                  </button>
-                )}
-              </div>
-            </Field>
-          ) : (
-            <button type="button" onClick={() => setShowBusinessId(true)} className="text-[13px] font-medium text-adm-primary hover:underline">
-              Staff of a shop? Add your Business ID
-            </button>
-          )}
 
           <Button type="submit" variant="primary" size="lg" fullWidth loading={loading} iconRight={loading ? undefined : ArrowRight}>
             {loading ? 'Signing in…' : 'Sign in'}

@@ -7,7 +7,7 @@
     "dev:next": "next dev",
     "preview": "npm run build && node scripts/prod-server.mjs",
     "preview:run": "node scripts/prod-server.mjs",
-    "build": "NODE_OPTIONS='--max-old-space-size=4096' next build",
+    "build": "NODE_OPTIONS='--max-old-space-size=6144' next build",
     "prebuild": "npm run validate:migrations",
     "postbuild": "node scripts/build-server.mjs",
     "build:server": "node scripts/build-server.mjs",

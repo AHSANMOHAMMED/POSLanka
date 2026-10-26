@@ -5,7 +5,6 @@ import { Layout, Tag, ShoppingCart, UtensilsCrossed, Car, Circle } from 'lucide-
 import { LABEL_PRESETS, type LabelPreset } from '@/lib/labels/presets'
 import { LabelPreview } from './LabelPreview'
 import { StickerRollPreview } from './StickerRollPreview'
-import { STICKER_PRESETS, setupFromPreset } from '@/lib/labels/sticker-stock'
 
 interface TemplatePresetPickerProps {
   businessType?: string

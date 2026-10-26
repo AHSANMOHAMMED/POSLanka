@@ -13,12 +13,12 @@
     "preview": {
       "distribution": "internal",
       "android": { "buildType": "apk" },
-      "env": { "EXPO_PUBLIC_API_URL": "https://app.poslanka.lk" }
+      "env": { "EXPO_PUBLIC_API_URL": "http://168.144.216.104" }
     },
     "production": {
       "autoIncrement": true,
       "android": { "buildType": "app-bundle" },
-      "env": { "EXPO_PUBLIC_API_URL": "https://app.poslanka.lk" }
+      "env": { "EXPO_PUBLIC_API_URL": "http://168.144.216.104" }
     }
   },
   "submit": {

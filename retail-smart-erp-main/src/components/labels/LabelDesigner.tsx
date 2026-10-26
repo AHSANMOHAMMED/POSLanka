@@ -8,7 +8,6 @@ import { LabelCanvas } from './LabelCanvas'
 import { ElementProperties } from './ElementProperties'
 import { LabelPreview } from './LabelPreview'
 import { StickerRollPreview } from './StickerRollPreview'
-import { STICKER_PRESETS, setupFromPreset } from '@/lib/labels/sticker-stock'
 import { useUnsavedChangesWarning } from '@/hooks'
 import { toast } from '@/components/ui/toast'
 

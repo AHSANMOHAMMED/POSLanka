@@ -56,7 +56,6 @@ export default function LoginScreen() {
   // This build's sign-in: platform admins (skyERPOS Admin app) or shop staff (skyERPOS app)
   const adminMode = IS_ADMIN_APP
   const [showPassword, setShowPassword] = useState(false)
-  const [showServer, setShowServer] = useState(false)
   const [totpCode, setTotpCode] = useState('')
   const [needsTotp, setNeedsTotp] = useState(false)
 
@@ -335,31 +334,10 @@ export default function LoginScreen() {
           )}
         </Pressable>
 
-        {/* Server address (and the old company-slug sign-in) — set once, rarely changed */}
-        <Pressable onPress={() => setShowServer((v) => !v)} style={styles.settingsToggle} hitSlop={8}>
-          <Text style={styles.settingsToggleText}>{showServer ? '▾' : '▸'} Server settings</Text>
-          {!showServer && <Text style={styles.settingsValue} numberOfLines={1}>{apiUrl.replace(/^https?:\/\//, '')}</Text>}
-        </Pressable>
-        {showServer && (
-          <View style={styles.settingsBox}>
-            <Text style={styles.label}>Server address</Text>
-            <TextInput
-              style={styles.input}
-              placeholder={DEFAULT_API_URL}
-              placeholderTextColor={THEME.colors.textSubtle}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              value={apiUrl}
-              onChangeText={setApiUrl}
-            />
-            {!IS_ADMIN_APP && (
-              <Pressable onPress={() => setUseSlug((v) => !v)} style={styles.linkBtn} hitSlop={8}>
-                <Text style={styles.linkText}>{useSlug ? 'Sign in with Business ID' : 'Sign in with company web address (older setups)'}</Text>
-              </Pressable>
-            )}
-            <Text style={styles.hint}>Remembered on this device.</Text>
-          </View>
+        {!IS_ADMIN_APP && (
+          <Pressable onPress={() => setUseSlug((v) => !v)} style={styles.linkBtn} hitSlop={8}>
+            <Text style={styles.linkText}>{useSlug ? 'Sign in with Business ID' : 'Sign in with company web address (older setups)'}</Text>
+          </Pressable>
         )}
       </View>
 
