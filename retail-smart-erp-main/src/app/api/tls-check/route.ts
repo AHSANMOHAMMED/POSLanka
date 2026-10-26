@@ -37,8 +37,15 @@ export async function GET(request: NextRequest) {
     'skyerpos.com',
     'www.skyerpos.com',
     'app.skyerpos.com',
+    '168-144-216-104.sslip.io',
+    '168.144.216.104.nip.io',
   ].filter(Boolean).map((d) => clean(String(d)))
   if (fixed.includes(domain)) return NextResponse.json({ ok: true })
+
+  // Support wildcard or vendor subdomains under sslip.io or nip.io (e.g. alisha.168-144-216-104.sslip.io)
+  if (domain.endsWith('.168-144-216-104.sslip.io') || domain.endsWith('.168.144.216.104.nip.io')) {
+    return NextResponse.json({ ok: true })
+  }
 
   let sub = ''
   if (base && domain.endsWith(`.${base}`)) {

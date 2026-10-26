@@ -204,6 +204,7 @@ export async function proxy(request: NextRequest) {
     // Allow skyERPOS official domains
     if (clean === 'skyerpos.com' || clean.endsWith('.skyerpos.com')) return true
     if (clean === 'poslanka.lk' || clean.endsWith('.poslanka.lk')) return true
+    if (clean.endsWith('.sslip.io') || clean.endsWith('.nip.io')) return true
 
     // Allow the configured base domain and any subdomain of it
     const base = BASE_DOMAIN.toLowerCase()

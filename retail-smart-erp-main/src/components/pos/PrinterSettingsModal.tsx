@@ -268,9 +268,31 @@ export function PrinterSettingsModal({ isOpen, onClose }: PrinterSettingsModalPr
                       <div className="font-medium">Device</div>
                       <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{deviceName || 'No device paired yet'}</div>
                       {unsupported && (
-                        <div className="text-xs text-amber-700 dark:text-amber-300 mt-1 flex items-center gap-1">
-                          <AlertTriangle className="w-3.5 h-3.5" />
-                          This browser cannot use {selected.transport === 'webusb' ? 'WebUSB' : 'Web Bluetooth'}. Use Chrome or Edge over HTTPS.
+                        <div className="text-xs text-amber-700 dark:text-amber-300 mt-2 space-y-1.5 p-2 rounded-lg bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800">
+                          <div className="flex items-start gap-1.5 font-medium">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-600" />
+                            <span>This browser cannot access direct {selected.transport === 'webusb' ? 'WebUSB' : 'Web Bluetooth'} over unencrypted HTTP.</span>
+                          </div>
+                          <p className="text-[11.5px] text-amber-800 dark:text-amber-200">
+                            <strong>Immediate option:</strong> Select <strong>Browser</strong> connection above to print to your connected printer using the standard print dialog.
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() => update({ transport: 'browser' })}
+                              className="px-2.5 py-1 rounded bg-teal-600 text-white font-semibold text-[11px] hover:bg-teal-700"
+                            >
+                              Switch to Browser Print
+                            </button>
+                            <a
+                              href="https://168-144-216-104.sslip.io"
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] text-blue-600 dark:text-blue-400 underline font-medium hover:text-blue-800"
+                            >
+                              Open over HTTPS for direct USB
+                            </a>
+                          </div>
                         </div>
                       )}
                     </div>

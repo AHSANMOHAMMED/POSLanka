@@ -34,6 +34,7 @@ import { NEVER_EXPIRES, isFreeTier, planExpiryFor } from '@/lib/billing/subscrip
 import { vendorFilterSchema, queryVendors } from '@/lib/admin/vendor-query'
 import { SLUG_RE, checkSlugAvailability, suggestAvailableSlug } from '@/lib/admin/vendor-slug'
 import { generateReadablePassword, placeholderLogin } from '@/lib/users/generated-login'
+import { staffLoginSchema } from '@/lib/validation/schemas/common'
 
 const listSchema = vendorFilterSchema.extend({
   page: z.coerce.number().int().min(1).default(1),
@@ -150,7 +151,7 @@ const createVendorSchema = z
     vatRegistered: z.boolean().default(false),
     featureFlags: z.record(z.string(), z.boolean()).optional(),
     ownerName: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().min(2).max(255).optional()),
-    ownerEmail: z.preprocess((v) => (v === '' ? undefined : v), z.string().trim().email().max(255).optional()),
+    ownerEmail: z.preprocess((v) => (v === '' ? undefined : v), staffLoginSchema.optional()),
     ownerPassword: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(4).max(128).optional()),
     sendInvite: z.boolean().optional(),
   })
@@ -191,9 +192,13 @@ export async function POST(request: NextRequest) {
     }
     const slug = parsed.data.slug || (await suggestAvailableSlug(name))
 
-    // Owner login: owner email, else business email, else one made from the web address
+    // Owner login: owner email/username, else business email, else one made from the web address
     // (the owner signs in with Business ID + this login + password and can change it later)
-    const ownerLoginEmail = (parsed.data.ownerEmail || email || placeholderLogin('owner', slug)).toLowerCase()
+    const ownerLoginEmail = (
+      parsed.data.ownerEmail
+        ? (parsed.data.ownerEmail.includes('@') ? parsed.data.ownerEmail : placeholderLogin(parsed.data.ownerEmail, slug))
+        : email || placeholderLogin('owner', slug)
+    ).toLowerCase()
 
     // Pricing tier: explicit id, else legacy plan name, else the free tier
     const allTiers = await db.query.pricingTiers.findMany({

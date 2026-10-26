@@ -89,10 +89,28 @@ export const sortOrderSchema = z.enum(['asc', 'desc']).default('desc')
 // Platform admins have their own, stricter rule (src/lib/admin).
 export const PASSWORD_MIN_LENGTH = 4
 
-/** Staff login: an email, or a simple username (cashier1, nimal.perera) stored as the shop's own login */
-export const staffLoginSchema = z.string().trim().toLowerCase().max(255).refine(
-  (v) => (v.includes('@') ? z.string().email().safeParse(v).success : /^[a-z0-9][a-z0-9._-]{1,39}$/.test(v)),
-  'Use an email, or a username of letters, numbers, dots or dashes (e.g. cashier1)',
+/** Normalize login input (convert internal spaces to dots, strip whitespace around email @, etc.) */
+export function normalizeStaffLogin(raw: unknown): unknown {
+  if (typeof raw !== 'string') return raw
+  const v = raw.trim().toLowerCase()
+  if (!v) return v
+  if (v.includes('@')) {
+    return v.replace(/\s*@\s*/, '@').replace(/\s+/g, '')
+  }
+  return v.replace(/\s+/g, '.').replace(/^\.+|\.+$/g, '')
+}
+
+/** Staff login: an email, a phone number (+94771234567), or a simple username (cashier1, 1, nimal.perera) */
+export const staffLoginSchema = z.preprocess(
+  normalizeStaffLogin,
+  z.string().max(255).refine(
+    (v) => {
+      if (typeof v !== 'string') return false
+      if (v.includes('@')) return z.string().email().safeParse(v).success
+      return /^(\+?[0-9]{7,15}|[a-z0-9][a-z0-9._-]{0,49})$/.test(v)
+    },
+    'Use an email, phone number, or a username of letters, numbers, dots or dashes (e.g. cashier1)',
+  ),
 )
 export const passwordSchema = z.string()
   .min(PASSWORD_MIN_LENGTH, `Password must be at least ${PASSWORD_MIN_LENGTH} characters`)

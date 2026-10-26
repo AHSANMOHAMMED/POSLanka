@@ -68,10 +68,17 @@ export default function LineChart({ labels, datasets, height = 300, color = 'blu
 
   const defaultThemePair = GRADIENTS[color] || GRADIENTS.blue
 
-  const { maxValue, yTicks, totalValue, hasData } = useMemo(() => {
+  const { maxValue, yTicks, totalValue, _hasData } = useMemo(() => {
     const allValues = datasets.flatMap(d => d.data.map(v => Number(v) || 0))
-    if (allValues.length === 0 || allValues.every(v => v === 0)) {
-      return { maxValue: 0, yTicks: [0], totalValue: 0, hasData: false }
+    const isAllZero = allValues.length === 0 || allValues.every(v => v === 0)
+    if (isAllZero) {
+      const defaultMax = 1000
+      const tickCount = 5
+      const ticks: number[] = []
+      for (let i = 0; i <= tickCount; i++) {
+        ticks.push(Math.round((defaultMax / tickCount) * i))
+      }
+      return { maxValue: defaultMax, yTicks: ticks, totalValue: 0, hasData: false }
     }
     const rawMax = Math.max(...allValues)
     const sum = allValues.reduce((acc, curr) => acc + curr, 0)
@@ -85,7 +92,7 @@ export default function LineChart({ labels, datasets, height = 300, color = 'blu
     return { maxValue: niceMax, yTicks: ticks, totalValue: sum, hasData: true }
   }, [datasets])
 
-  if (!labels.length || !datasets.length || !hasData) {
+  if (!labels.length || !datasets.length) {
     return (
       <div
         style={{ height }}

@@ -394,7 +394,16 @@ export function OwnerDashboardWidgets() {
             </div>
 
             {profit.topItems.length === 0 ? (
-              <div className="text-center py-8 text-xs text-gray-400">No sales recorded for this timeframe</div>
+              <div className="text-center py-6 px-3 bg-gray-50/50 dark:bg-gray-800/40 rounded-lg border border-dashed border-gray-200 dark:border-gray-700/60">
+                <p className="text-xs font-semibold text-gray-700 dark:text-gray-300">No products sold in this period</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">Top profit contributors will rank here automatically as sales happen</p>
+                <Link
+                  href={`/c/${slug}/pos`}
+                  className="mt-3 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors"
+                >
+                  Start selling at POS
+                </Link>
+              </div>
             ) : (
               <div className="space-y-2.5">
                 {profit.topItems.slice(0, 5).map((item, index) => {

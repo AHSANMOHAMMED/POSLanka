@@ -32,7 +32,7 @@ export function isTrustedOrigin(origin: string, requestHost?: string | null): bo
   if (requestHost && host === bareHost(requestHost)) return true
   const base = baseDomain()
   if (base && base !== 'localhost' && (host === base || host.endsWith(`.${base}`))) return true
-  if (host === 'poslanka.lk' || host.endsWith('.poslanka.lk')) return true
+  if (host === 'poslanka.lk' || host.endsWith('.poslanka.lk') || host === 'skyerpos.com' || host.endsWith('.skyerpos.com') || host.endsWith('.sslip.io') || host.endsWith('.nip.io')) return true
   const allowed = (process.env.ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)
   if (allowed.includes(host)) return true
   if (process.env.NODE_ENV !== 'production' && (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.localhost'))) {

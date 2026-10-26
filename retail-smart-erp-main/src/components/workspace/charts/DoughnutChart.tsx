@@ -92,13 +92,40 @@ export default function DoughnutChart({ labels, datasets, height = 300, color = 
     return { segments: result, total }
   }, [dataset, labels])
 
-  if (!labels.length || !datasets.length || segments.length === 0) {
+  if (!labels.length || !datasets.length || segments.length === 0 || total === 0) {
+    const svgSize = 220
+    const cx = svgSize / 2
+    const cy = svgSize / 2
+    const outerRadius = 88
+    const innerRadius = 56
     return (
-      <div
-        style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        className="text-sm text-gray-400"
-      >
-        No data available
+      <div style={{ height }} className="flex flex-col items-center justify-center p-4">
+        <div style={{ width: svgSize, height: svgSize }} className="relative flex items-center justify-center">
+          <svg viewBox={`0 0 ${svgSize} ${svgSize}`} width="100%" height="100%">
+            <circle
+              cx={cx}
+              cy={cy}
+              r={(outerRadius + innerRadius) / 2}
+              fill="none"
+              className="stroke-gray-100 dark:stroke-gray-800"
+              strokeWidth={outerRadius - innerRadius}
+            />
+            <circle
+              cx={cx}
+              cy={cy}
+              r={(outerRadius + innerRadius) / 2}
+              fill="none"
+              className="stroke-blue-500/20 dark:stroke-blue-400/20"
+              strokeWidth={outerRadius - innerRadius}
+              strokeDasharray="8 6"
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+            <span className="text-xl font-bold text-gray-800 dark:text-gray-200">0</span>
+            <span className="text-[10px] uppercase font-semibold text-gray-400 tracking-wider">Records</span>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 mt-1 font-medium">Awaiting transactions</p>
       </div>
     )
   }

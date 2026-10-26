@@ -43,13 +43,35 @@ export default function BarChart({ labels, datasets, height = 300, color = 'blue
 
   const defaultThemePair = GRADIENTS[color] || GRADIENTS.blue
 
-  const { maxValue, yTicks, totalValue, hasData } = useMemo(() => {
+  const { maxValue, yTicks, totalValue, hasData, peakDay, avgValue } = useMemo(() => {
     const allValues = datasets.flatMap(d => d.data.map(v => Number(v) || 0))
-    if (allValues.length === 0 || allValues.every(v => v === 0)) {
-      return { maxValue: 0, yTicks: [0], totalValue: 0, hasData: false }
+    const isAllZero = allValues.length === 0 || allValues.every(v => v === 0)
+    if (isAllZero) {
+      const defaultMax = 1000
+      const tickCount = 5
+      const ticks: number[] = []
+      for (let i = 0; i <= tickCount; i++) {
+        ticks.push(Math.round((defaultMax / tickCount) * i))
+      }
+      return { maxValue: defaultMax, yTicks: ticks, totalValue: 0, hasData: false, peakDay: '—', avgValue: 0 }
     }
     const rawMax = Math.max(...allValues)
     const sum = allValues.reduce((acc, curr) => acc + curr, 0)
+    const avg = sum / (labels.length || 1)
+    
+    // Find peak day
+    const primaryData = datasets[0]?.data || []
+    let peakIndex = 0
+    let peakVal = 0
+    primaryData.forEach((v, idx) => {
+      const num = Number(v) || 0
+      if (num > peakVal) {
+        peakVal = num
+        peakIndex = idx
+      }
+    })
+    const peak = peakVal > 0 ? labels[peakIndex] || '—' : '—'
+
     // Round up to a pleasant readable number
     const magnitude = Math.pow(10, Math.floor(Math.log10(rawMax || 1)))
     const niceMax = Math.ceil(rawMax / magnitude) * magnitude || 1
@@ -58,10 +80,10 @@ export default function BarChart({ labels, datasets, height = 300, color = 'blue
     for (let i = 0; i <= tickCount; i++) {
       ticks.push(Math.round((niceMax / tickCount) * i))
     }
-    return { maxValue: niceMax, yTicks: ticks, totalValue: sum, hasData: true }
-  }, [datasets])
+    return { maxValue: niceMax, yTicks: ticks, totalValue: sum, hasData: true, peakDay: peak, avgValue: avg }
+  }, [datasets, labels])
 
-  if (!labels.length || !datasets.length || !hasData) {
+  if (!labels.length || !datasets.length) {
     return (
       <div
         style={{ height }}
@@ -113,14 +135,37 @@ export default function BarChart({ labels, datasets, height = 300, color = 'blue
   }
 
   return (
-    <div className="relative w-full select-none" style={{ height }}>
-      <svg
-        viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-        width="100%"
-        height="100%"
-        preserveAspectRatio="xMidYMid meet"
-        className="overflow-visible font-sans"
-      >
+    <div className="relative w-full select-none flex flex-col justify-between" style={{ height }}>
+      {/* Top summary metric row */}
+      <div className="flex items-center justify-between px-1 pb-1.5 text-xs border-b border-gray-100 dark:border-gray-800/80 mb-1">
+        <div className="flex items-center gap-4">
+          <div>
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 block">Total Volume</span>
+            <span className="font-bold text-gray-900 dark:text-gray-100">{formatValue(totalValue)}</span>
+          </div>
+          <div>
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 block">Daily Average</span>
+            <span className="font-bold text-gray-700 dark:text-gray-300">{formatValue(avgValue)}</span>
+          </div>
+          <div>
+            <span className="text-[10px] uppercase tracking-wider font-semibold text-gray-400 block">Peak Day</span>
+            <span className="font-semibold text-blue-600 dark:text-blue-400">{peakDay}</span>
+          </div>
+        </div>
+        <div className="hidden sm:flex items-center gap-1.5 text-[11px] font-medium text-gray-400">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          {hasData ? 'Live analytics' : 'Waiting for POS sales'}
+        </div>
+      </div>
+
+      <div className="relative flex-1 w-full min-h-0">
+        <svg
+          viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+          width="100%"
+          height="100%"
+          preserveAspectRatio="xMidYMid meet"
+          className="overflow-visible font-sans"
+        >
         <defs>
           {/* Subtle drop shadow filter for hovered bar */}
           <filter id={`bar-shadow-${chartId}`} x="-20%" y="-20%" width="140%" height="140%">
@@ -221,37 +266,78 @@ export default function BarChart({ labels, datasets, height = 300, color = 'blue
                 onMouseLeave={() => setHoveredBar(null)}
                 className="cursor-pointer transition-transform duration-200"
               >
-                {/* Main rounded bar */}
-                <rect
-                  x={x}
-                  y={y}
-                  width={barWidth}
-                  height={Math.max(barHeight, 0)}
-                  fill={`url(#bar-grad-${chartId}-${di})`}
-                  rx={pillRadius}
-                  ry={pillRadius}
-                  opacity={opacity}
-                  filter={isHovered ? `url(#bar-shadow-${chartId})` : undefined}
-                  style={{
-                    transition: 'opacity 0.2s ease, filter 0.2s ease',
-                  }}
-                />
-
-                {/* Subtle top gloss cap line */}
-                {barHeight > 6 && (
+                {!hasData ? (
+                  /* Modern dashed guide bar when awaiting first transaction */
                   <rect
-                    x={x + 1}
-                    y={y + 1}
-                    width={Math.max(barWidth - 2, 0)}
-                    height={2}
-                    fill="white"
-                    fillOpacity={0.4}
-                    rx={1}
+                    x={x}
+                    y={paddingTop + chartHeight - 18}
+                    width={barWidth}
+                    height={18}
+                    className="fill-blue-500/10 dark:fill-blue-400/10 stroke-blue-400/20"
+                    strokeWidth={1}
+                    strokeDasharray="2 2"
+                    rx={pillRadius}
+                    ry={pillRadius}
                   />
+                ) : (
+                  <>
+                    {/* Main rounded bar */}
+                    <rect
+                      x={x}
+                      y={y}
+                      width={barWidth}
+                      height={Math.max(barHeight, 0)}
+                      fill={`url(#bar-grad-${chartId}-${di})`}
+                      rx={pillRadius}
+                      ry={pillRadius}
+                      opacity={opacity}
+                      filter={isHovered ? `url(#bar-shadow-${chartId})` : undefined}
+                      style={{
+                        transition: 'opacity 0.2s ease, filter 0.2s ease',
+                      }}
+                    />
+
+                    {/* Subtle top gloss cap line */}
+                    {barHeight > 6 && (
+                      <rect
+                        x={x + 1}
+                        y={y + 1}
+                        width={Math.max(barWidth - 2, 0)}
+                        height={2}
+                        fill="white"
+                        fillOpacity={0.4}
+                        rx={1}
+                      />
+                    )}
+                  </>
                 )}
               </g>
             )
           })
+        )}
+
+        {/* Empty state informative overlay when awaiting first transaction */}
+        {!hasData && (
+          <g className="pointer-events-none">
+            <rect
+              x={paddingLeft + chartWidth / 2 - 130}
+              y={paddingTop + chartHeight / 2 - 16}
+              width={260}
+              height={32}
+              rx={16}
+              className="fill-white/95 dark:fill-gray-900/95 stroke-gray-200/90 dark:stroke-gray-700/80"
+              strokeWidth={1}
+              filter={`url(#bar-shadow-${chartId})`}
+            />
+            <circle cx={paddingLeft + chartWidth / 2 - 110} cy={paddingTop + chartHeight / 2} r={4} className="fill-blue-500 animate-pulse" />
+            <text
+              x={paddingLeft + chartWidth / 2 - 96}
+              y={paddingTop + chartHeight / 2 + 4}
+              className="text-[11px] font-semibold fill-gray-700 dark:fill-gray-200"
+            >
+              Awaiting transactions • Live POS updates
+            </text>
+          </g>
         )}
 
         {/* Active Tooltip Card (Rendered on top of all bars) */}
@@ -385,6 +471,7 @@ export default function BarChart({ labels, datasets, height = 300, color = 'blue
           </g>
         )}
       </svg>
+      </div>
     </div>
   )
 }

@@ -83,12 +83,38 @@ export default function PieChart({ labels, datasets, height = 300, color = 'blue
   }, [dataset, labels])
 
   if (!labels.length || !datasets.length || segments.length === 0) {
+    const svgSize = 200
+    const cx = svgSize / 2
+    const cy = svgSize / 2
+    const radius = 70
     return (
-      <div
-        style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-        className="text-sm text-gray-400"
-      >
-        No data available
+      <div style={{ height }} className="flex flex-col items-center justify-center p-4">
+        <div style={{ width: svgSize, height: svgSize }} className="relative flex items-center justify-center">
+          <svg viewBox={`0 0 ${svgSize} ${svgSize}`} width="100%" height="100%">
+            <circle
+              cx={cx}
+              cy={cy}
+              r={radius}
+              fill="none"
+              className="stroke-gray-100 dark:stroke-gray-800"
+              strokeWidth={18}
+            />
+            <circle
+              cx={cx}
+              cy={cy}
+              r={radius}
+              fill="none"
+              className="stroke-teal-500/20 dark:stroke-teal-400/20"
+              strokeWidth={18}
+              strokeDasharray="6 6"
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+            <span className="text-xl font-bold text-gray-800 dark:text-gray-200">0</span>
+            <span className="text-[10px] uppercase font-semibold text-gray-400 tracking-wider">Breakdown</span>
+          </div>
+        </div>
+        <p className="text-xs text-gray-400 mt-1 font-medium">Awaiting POS transactions</p>
       </div>
     )
   }

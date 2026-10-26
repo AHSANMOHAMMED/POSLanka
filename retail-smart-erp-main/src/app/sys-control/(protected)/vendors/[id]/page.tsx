@@ -808,9 +808,15 @@ function AddStaffDialog({ vendorId, businessType, branches, onClose, onCreated }
     setBusy(true)
     setError(null)
     try {
+      const trimmed = email.trim()
+      const normalizedEmail = trimmed
+        ? trimmed.includes('@')
+          ? trimmed.replace(/\s*@\s*/, '@').replace(/\s+/g, '').toLowerCase()
+          : trimmed.replace(/\s+/g, '.').toLowerCase()
+        : undefined
       const res = await adminFetch<{ user: { email: string; fullName: string }; generatedPassword: string | null }>(`/api/sys-control/vendors/${vendorId}/staff`, {
         method: 'POST',
-        json: { fullName: fullName.trim(), role, email: email.trim() || undefined, password: password || undefined, pin: pin || undefined, warehouseIds: branchIds.length ? branchIds : undefined },
+        json: { fullName: fullName.trim(), role, email: normalizedEmail, password: password || undefined, pin: pin || undefined, warehouseIds: branchIds.length ? branchIds : undefined },
       })
       onCreated(res.user.fullName, res.user.email, res.generatedPassword ?? null)
     } catch (e) {
