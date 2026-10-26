@@ -745,7 +745,8 @@ export default function BarcodePrintPage() {
       return
     }
 
-    const tCols = templateToPrint.columns ?? (activeSetup?.columns ?? 2)
+    const defaultCols = (Number(templateToPrint.widthMm) || 38) <= 40 ? 2 : 1
+    const tCols = templateToPrint.columns ?? (activeSetup?.columns ?? defaultCols)
     const effectiveSetup: StickerSetup = activeSetup || {
       id: `setup-auto-${tCols}`,
       name: `Auto ${tCols} Across`,

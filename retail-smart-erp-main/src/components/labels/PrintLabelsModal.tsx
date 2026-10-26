@@ -139,6 +139,27 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       return
     }
     const template = selectedTemplate
+    const tCols = template.columns ?? (activeSetup?.columns ?? ((Number(template.widthMm) || 38) <= 40 ? 2 : 1))
+    const effectiveSetup: StickerSetup = activeSetup || {
+      id: `setup-auto-${tCols}`,
+      name: `Auto ${tCols} Across`,
+      labelWidthMm: Number(template.widthMm) || 38,
+      labelHeightMm: Number(template.heightMm) || 25,
+      columns: tCols,
+      columnGapMm: tCols > 1 ? 2 : 0,
+      rowGapMm: 2,
+      marginLeftMm: tCols > 1 ? 1 : 0,
+      offsetXMm: 0,
+      offsetYMm: 0,
+      dpi: 203,
+      language: null,
+      darkness: null,
+      speed: null,
+      direction: 1,
+      warehouseId: null,
+      locked: false,
+      isDefault: false,
+    }
 
     setPrinting(true)
     try {
@@ -148,7 +169,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
             currencySymbol,
             tenantName: company?.tenantName,
             codeWord,
-            ...(activeSetup ? { setup: activeSetup } : {}),
+            setup: effectiveSetup,
           })
           if (result.warnings.length) {
             toast.warning(result.warnings.slice(0, 3).join('; '))
@@ -178,8 +199,8 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
     }
 
     async function printViaDialog(): Promise<boolean> {
-      if (config.pageSize === 'Label' && activeSetup) {
-        return printLabelsOnRoll(template, items, activeSetup, currencySymbol, company?.tenantName, codeWord)
+      if (config.pageSize === 'Label') {
+        return printLabelsOnRoll(template, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
       }
       return printLabels(
         template,

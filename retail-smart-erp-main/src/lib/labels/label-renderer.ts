@@ -159,16 +159,29 @@ async function renderElement(
         ? rawData.trim()
         : (item?.barcode?.trim() || item?.sku?.trim() || item?.pluCode?.trim() || '')
 
-      const barcodeData = (resolved && !validateBarcodeData(el.format, resolved))
-        ? resolved
-        : getBarcodeFallbackData(el.format)
+      let effectiveFormat = el.format
+      let barcodeData = resolved
+      if (resolved) {
+        const error = validateBarcodeData(el.format, resolved)
+        if (error) {
+          // If format is numeric-only (EAN, UPC, ITF) but data is alphanumeric (like SKU/text),
+          // fall back to Code 128 so the real product code is encoded and can be scanned!
+          if (['ean13', 'ean8', 'upca', 'itf14'].includes(el.format)) {
+            effectiveFormat = 'code128'
+          } else {
+            barcodeData = getBarcodeFallbackData(el.format)
+          }
+        }
+      } else {
+        barcodeData = getBarcodeFallbackData(el.format)
+      }
 
-      const is2D = ['qrcode', 'datamatrix', 'pdf417'].includes(el.format)
-      const dataUrl = await renderBarcodeDataUrl(el.format, barcodeData, {
+      const is2D = ['qrcode', 'datamatrix', 'pdf417'].includes(effectiveFormat)
+      const dataUrl = await renderBarcodeDataUrl(effectiveFormat, barcodeData, {
         showText: el.showText,
         height: is2D ? 12 : Math.max(8, Math.round(el.height - (el.showText ? 4 : 1))),
       })
-      return `<div style="${baseStyle}z-index:${el.zIndex};background:#ffffff !important;display:flex;align-items:center;justify-content:center;"><img src="${dataUrl}" style="width:100%;height:100%;object-fit:contain;image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges;image-rendering:pixelated;display:block;" alt="barcode"/></div>`
+      return `<div style="${baseStyle}z-index:${el.zIndex};background:#ffffff !important;display:flex;align-items:center;justify-content:center;"><img src="${dataUrl}" style="width:100%;height:100%;object-fit:contain;image-rendering:-webkit-optimize-contrast;image-rendering:crisp-edges;display:block;" alt="barcode"/></div>`
     }
     case 'text': {
       const textEl = el as TextElement

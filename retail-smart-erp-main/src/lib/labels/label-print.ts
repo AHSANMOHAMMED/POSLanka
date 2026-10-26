@@ -29,7 +29,7 @@ function generatePrintStyles(
   return `
     @page {
       size: ${page.width}mm ${page.height}mm;
-      margin: ${isLabelMode ? '0mm !important' : '5mm'};
+      margin: ${isLabelMode ? '0' : '5mm'};
     }
 
     * {
@@ -57,6 +57,33 @@ function generatePrintStyles(
         : `display: flex; flex-wrap: wrap; gap: ${config.gapMm}mm; align-content: flex-start;`}
     }
 
+    .label-page {
+      display: block !important;
+      position: relative !important;
+      width: ${labelWidth}mm !important;
+      height: ${labelHeight}mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: visible !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+
+    .label-page:not(:last-child) {
+      page-break-after: always !important;
+      break-after: page !important;
+    }
+
+    .label-page:not(:first-child) {
+      page-break-before: always !important;
+      break-before: page !important;
+    }
+
+    .label-page:last-child {
+      page-break-after: avoid !important;
+      break-after: avoid !important;
+    }
+
     .label-cell {
       width: ${labelWidth}mm !important;
       height: ${labelHeight}mm !important;
@@ -69,16 +96,29 @@ function generatePrintStyles(
       ${shapeCss || ''}
     }
 
-    .label-cell:not(:last-child) {
-      ${isLabelMode ? 'page-break-after: always !important; break-after: page !important;' : ''}
-    }
-
-    .label-cell:last-child {
-      page-break-after: auto !important;
-      break-after: auto !important;
-    }
-
     @media print {
+      @page {
+        size: ${page.width}mm ${page.height}mm;
+        margin: ${isLabelMode ? '0' : '5mm'};
+      }
+      .label-page {
+        width: ${labelWidth}mm !important;
+        height: ${labelHeight}mm !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      .label-page:not(:last-child) {
+        page-break-after: always !important;
+        break-after: page !important;
+      }
+      .label-page:not(:first-child) {
+        page-break-before: always !important;
+        break-before: page !important;
+      }
+      .label-page:last-child {
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
       * {
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
@@ -89,7 +129,6 @@ function generatePrintStyles(
         display: block !important;
         image-rendering: -webkit-optimize-contrast !important;
         image-rendering: crisp-edges !important;
-        image-rendering: pixelated !important;
       }
     }
   `
@@ -106,13 +145,18 @@ export async function printLabels(
   tenantName?: string,
   codeWord?: string
 ): Promise<boolean> {
+  const isLabelMode = config.pageSize === 'Label'
   // Generate all label HTML
   const labelHtmls: string[] = []
 
   for (const { item, quantity } of items) {
     const html = await renderLabelHtml(template, item, currencySymbol, tenantName, codeWord)
     for (let i = 0; i < quantity; i++) {
-      labelHtmls.push(`<div class="label-cell">${html}</div>`)
+      if (isLabelMode) {
+        labelHtmls.push(`<div class="label-page"><div class="label-cell">${html}</div></div>`)
+      } else {
+        labelHtmls.push(`<div class="label-cell">${html}</div>`)
+      }
     }
   }
 
@@ -165,14 +209,31 @@ export async function buildRollPrintDocument(
         : setup.marginLeftMm + setup.offsetXMm + k * (setup.labelWidthMm + setup.columnGapMm)
       cells.push(`<div class="cell" style="left:${left}mm;top:${setup.offsetYMm}mm">${cache.get(key)}</div>`)
     }
-    const page = `<div class="row">${cells.join('')}</div>`
-    for (let i = 0; i < row.count; i++) pages.push(page)
+    // Each row wrapped in a .page container — Chrome sees each .page as a
+    // separate page even when it ignores the small @page size and falls back
+    // to A4/Letter.  The .row inside is sized to the physical sticker.
+    const rowHtml = `<div class="row">${cells.join('')}</div>`
+    const pageHtml = `<div class="page">${rowHtml}</div>`
+    for (let i = 0; i < row.count; i++) pages.push(pageHtml)
   }
+
+  // ── Robust CSS: works whether Chrome honours the custom @page size or
+  //    falls back to A4/Letter.  The key trick is that each .page is a block
+  //    with `page-break-after: always` + `break-after: page` so Chrome
+  //    treats it as a full page boundary.  When the custom page size IS
+  //    honoured the .page is exactly 1 label high; when Chrome falls back to
+  //    A4 the .page still forces a page boundary, so each physical page
+  //    contains exactly one row of labels (top-aligned) with empty space
+  //    below.  Users can then set the OS printer paper size to the sticker
+  //    dimensions to eliminate the blank area.
+  //
+  //    NOTE: @page descriptor rules MUST NOT include `!important` or `padding`
+  //    as CSS Paged Media 3 treats `!important` in @page as invalid, causing
+  //    Chromium to drop the page size and default to A4!
   const styles = `
     @page {
       size: ${rollW}mm ${h}mm;
-      margin: 0mm !important;
-      padding: 0mm !important;
+      margin: 0;
     }
     * {
       box-sizing: border-box !important;
@@ -180,8 +241,8 @@ export async function buildRollPrintDocument(
       padding: 0 !important;
     }
     html, body {
-      margin: 0mm !important;
-      padding: 0mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
       width: ${rollW}mm !important;
       height: auto !important;
       min-height: 0 !important;
@@ -191,12 +252,36 @@ export async function buildRollPrintDocument(
       print-color-adjust: exact !important;
     }
     .print-content {
-      margin: 0mm !important;
-      padding: 0mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
       width: ${rollW}mm !important;
       height: auto !important;
-      font-size: 0 !important;
-      line-height: 0 !important;
+      display: block !important;
+    }
+    .page {
+      display: block !important;
+      position: relative !important;
+      width: ${rollW}mm !important;
+      height: ${safeH}mm !important;
+      min-height: ${safeH}mm !important;
+      max-height: ${safeH}mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: visible !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    .page:not(:last-child) {
+      page-break-after: always !important;
+      break-after: page !important;
+    }
+    .page:not(:first-child) {
+      page-break-before: always !important;
+      break-before: page !important;
+    }
+    .page:last-child {
+      page-break-after: avoid !important;
+      break-after: avoid !important;
     }
     .row {
       display: block !important;
@@ -204,18 +289,12 @@ export async function buildRollPrintDocument(
       width: ${rollW}mm !important;
       height: ${safeH}mm !important;
       max-height: ${safeH}mm !important;
+      margin: 0 !important;
+      padding: 0 !important;
       overflow: hidden !important;
       box-sizing: border-box !important;
       page-break-inside: avoid !important;
       break-inside: avoid !important;
-    }
-    .row:not(:last-child) {
-      page-break-after: always !important;
-      break-after: page !important;
-    }
-    .row:last-child {
-      page-break-after: avoid !important;
-      break-after: avoid !important;
     }
     .cell {
       position: absolute !important;
@@ -233,21 +312,40 @@ export async function buildRollPrintDocument(
     @media print {
       @page {
         size: ${rollW}mm ${h}mm;
-        margin: 0mm !important;
-        padding: 0mm !important;
+        margin: 0;
       }
       html, body {
         width: ${rollW}mm !important;
         height: auto !important;
-        margin: 0mm !important;
-        padding: 0mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
       }
       .print-content {
         width: ${rollW}mm !important;
-        margin: 0mm !important;
-        padding: 0mm !important;
-        font-size: 0 !important;
-        line-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        display: block !important;
+      }
+      .page {
+        width: ${rollW}mm !important;
+        height: ${safeH}mm !important;
+        min-height: ${safeH}mm !important;
+        max-height: ${safeH}mm !important;
+        overflow: visible !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      .page:not(:last-child) {
+        page-break-after: always !important;
+        break-after: page !important;
+      }
+      .page:not(:first-child) {
+        page-break-before: always !important;
+        break-before: page !important;
+      }
+      .page:last-child {
+        page-break-after: avoid !important;
+        break-after: avoid !important;
       }
       .row {
         width: ${rollW}mm !important;
@@ -256,14 +354,6 @@ export async function buildRollPrintDocument(
         overflow: hidden !important;
         page-break-inside: avoid !important;
         break-inside: avoid !important;
-      }
-      .row:not(:last-child) {
-        page-break-after: always !important;
-        break-after: page !important;
-      }
-      .row:last-child {
-        page-break-after: avoid !important;
-        break-after: avoid !important;
       }
       * {
         -webkit-print-color-adjust: exact !important;
@@ -275,7 +365,6 @@ export async function buildRollPrintDocument(
         display: block !important;
         image-rendering: -webkit-optimize-contrast !important;
         image-rendering: crisp-edges !important;
-        image-rendering: pixelated !important;
       }
     }
   `

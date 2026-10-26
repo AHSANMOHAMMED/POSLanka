@@ -2102,8 +2102,12 @@ export default function POSPage() {
   }
 
   async function handleScanSubmit(code: string): Promise<boolean> {
-    const rawTrimmed = code.trim()
+    let rawTrimmed = code.trim()
     if (!rawTrimmed) return false
+    // Strip common non-GS1 2D barcode scanner AIM prefixes (e.g. ]C0, ]E0, ]A0, ]Q1, ]d1)
+    if (/^\][a-zA-Z][0-9]/.test(rawTrimmed) && !/^\](C1|d2|Q3|e0)/.test(rawTrimmed)) {
+      rawTrimmed = rawTrimmed.slice(3)
+    }
     // Receipt barcode (INV-/RTN-/OFF-) → open the return lookup with that sale
     if (RECEIPT_CODE_RE.test(rawTrimmed)) {
       setSearch('')
@@ -2439,7 +2443,9 @@ export default function POSPage() {
 
     // Barcode wedge scanner: Enter outside other inputs submits what was typed / scanned
     if (e.key === 'Enter' && !isOtherInput) {
-      const searchCode = isSearchInput ? search.trim() : ''
+      const inputEl = document.getElementById(POS_SEARCH_INPUT_ID) as HTMLInputElement | null
+      const domSearchVal = inputEl ? inputEl.value.trim() : ''
+      const searchCode = isSearchInput ? (domSearchVal || search.trim()) : (domSearchVal || '')
       const bufferCode = ks.barcodeBuffer.trim()
       const codeToScan = (searchCode.length >= bufferCode.length && searchCode.length >= 2)
         ? searchCode
@@ -2448,6 +2454,7 @@ export default function POSPage() {
       if (codeToScan.length >= 2) {
         e.preventDefault()
         ks.barcodeBuffer = ''
+        if (inputEl) inputEl.value = ''
         if (isSearchInput) setSearch('')
         handleScanSubmit(codeToScan)
         return

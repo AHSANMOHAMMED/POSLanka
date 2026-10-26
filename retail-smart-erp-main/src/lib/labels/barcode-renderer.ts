@@ -37,7 +37,7 @@ export async function renderBarcodeDataUrl(
       ...(is2D ? { width: 12 } : {}),
       includetext: options?.showText ?? !is2D,
       textxalign: 'center' as const,
-      paddingwidth: is2D ? 4 : 12,
+      paddingwidth: is2D ? 4 : 8,
       paddingheight: is2D ? 4 : 2,
       barcolor: '000000',
       backgroundcolor: 'FFFFFF',
