@@ -567,7 +567,10 @@ export async function runImportJob(params: RunImportJobParams): Promise<ImportJo
     }
     if (done) {
       const imported = done.inserted + done.updated
-      void notify(tenantId, 'import_finished', {
+      // Awaited so the owner's in-app notification is committed before this
+      // function resolves (tests and callers may check the inbox right after).
+      // notify() never throws (it logs internally), so this cannot fail the run.
+      await notify(tenantId, 'import_finished', {
         title: `Import finished: ${ctx.config.label}`,
         body: `${imported} imported (${done.inserted} new, ${done.updated} updated), ${done.skipped} skipped, ${done.failed} failed${done.fileName ? ` — ${done.fileName}` : ''}.`,
         data: { screen: 'alerts', jobId, entity: done.entityName },
