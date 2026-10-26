@@ -1,10 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Award, TrendingUp, Users, DollarSign, Calendar, Star, Trophy, RefreshCw } from 'lucide-react'
-import { formatCurrency } from '@/lib/utils/currency'
+import { ArrowLeft, Award, TrendingUp, DollarSign, Star, Trophy, RefreshCw } from 'lucide-react'
 
 interface StaffLeaderboardRow {
   rank: number
@@ -61,7 +60,7 @@ export default function StaffPerformanceReportPage() {
     }
   }
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -77,11 +76,11 @@ export default function StaffPerformanceReportPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [fromDate, toDate])
 
   useEffect(() => {
     loadData()
-  }, [fromDate, toDate])
+  }, [loadData])
 
   const topPerformer = report?.leaderboard?.[0]
 
