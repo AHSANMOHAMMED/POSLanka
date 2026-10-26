@@ -42,8 +42,13 @@ ENV NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME \
     NODE_OPTIONS=--max-old-space-size=6144
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+ARG SKIP_BUILD=false
 # next build (+ migration-number validation) and the bundled custom server (server.js: Next + WebSockets)
-RUN npm run build
+RUN if [ "$SKIP_BUILD" = "true" ]; then \
+      node scripts/validate-migration-numbers.js; \
+    else \
+      npm run build; \
+    fi
 
 FROM node:20-bookworm-slim AS runtime
 WORKDIR /app
