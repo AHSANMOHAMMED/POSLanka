@@ -23,6 +23,10 @@ https:// {
 	}
 }
 
+http://168.144.216.104 {
+	redir https://168-144-216-104.sslip.io{uri} permanent
+}
+
 http:// {
 	redir https://{host}{uri} permanent
 }

@@ -175,7 +175,8 @@ export async function proxy(request: NextRequest) {
   if (proto === 'http' && (hostOnly === '168.144.216.104' || hostOnly.endsWith('.sslip.io'))) {
     const targetUrl = new URL(request.url)
     targetUrl.protocol = 'https:'
-    targetUrl.host = '168-144-216-104.sslip.io'
+    targetUrl.hostname = '168-144-216-104.sslip.io'
+    targetUrl.port = ''
     return NextResponse.redirect(targetUrl.toString(), 301)
   }
 
@@ -450,6 +451,8 @@ export async function proxy(request: NextRequest) {
     normalizedHostname === 'localhost' ||
     normalizedHostname.startsWith('localhost:') ||
     normalizedHostname === '127.0.0.1' ||
+    normalizedHostname.endsWith('.sslip.io') ||
+    normalizedHostname.endsWith('.nip.io') ||
     /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(normalizedHostname)
 
   if (isRailwayUrl) {
