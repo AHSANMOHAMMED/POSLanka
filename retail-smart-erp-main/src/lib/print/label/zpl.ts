@@ -94,11 +94,10 @@ async function emitElements(
         const fh = ptToDots(el.fontSize, dpi)
         const fw = el.fontWeight === 'bold' ? Math.round(fh * 1.0) : Math.round(fh * 0.85)
         const just = el.textAlign === 'center' ? 'C' : el.textAlign === 'right' ? 'R' : 'L'
-        const isName = el.dataField === 'item.name'
-        const maxLines = isName ? 1 : Math.max(1, el.maxLines || 1)
+        const maxLines = Math.max(1, el.maxLines || 1)
 
         let cleanText = text
-        if (isName || maxLines === 1) {
+        if (maxLines === 1) {
           // Keep initial name that fits on a single line so it never wraps down or overlaps the barcode below
           const maxChars = Math.max(4, Math.floor(w / Math.max(1, Math.round(fw * 0.58))))
           if (cleanText.length > maxChars) {

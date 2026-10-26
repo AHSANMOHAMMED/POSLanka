@@ -119,11 +119,10 @@ async function emitElements(
         const f = pickBitmapFont(ptToDots(el.fontSize, dpi), fonts)
         const charW = f.cw * f.mul
         const lineH = f.ch * f.mul
-        const isName = el.dataField === 'item.name'
-        const maxLines = isName ? 1 : Math.max(1, Math.min(el.maxLines || 1, Math.floor(h / lineH) || 1))
+        const maxLines = Math.max(1, Math.min(el.maxLines || 1, Math.floor(h / lineH) || 1))
         const maxChars = Math.max(1, Math.floor(w / charW))
         let cleanText = text
-        if ((isName || maxLines === 1) && cleanText.length > maxChars) {
+        if (maxLines === 1 && cleanText.length > maxChars) {
           cleanText = cleanText.slice(0, maxChars)
         }
         const lines = r === 0 ? wrapChars(cleanText, maxChars, maxLines) : [cleanText]

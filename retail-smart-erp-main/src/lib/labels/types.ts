@@ -53,6 +53,7 @@ export type DynamicField =
   | 'item.priceCode'
   | 'item.discountCode'
   | 'item.brand'
+  | 'item.supplier'
   | 'item.oemPartNumber'
   | 'item.pluCode'
   | 'item.category'
@@ -71,6 +72,7 @@ export const DYNAMIC_FIELDS: { value: DynamicField; label: string; group: string
   { value: 'item.priceCode', label: 'Price Code (Cost)', group: 'Price Code' },
   { value: 'item.discountCode', label: 'Price Code (Selling)', group: 'Price Code' },
   { value: 'item.brand', label: 'Brand', group: 'Item' },
+  { value: 'item.supplier', label: 'Vendor / Supplier Name', group: 'Item' },
   { value: 'item.oemPartNumber', label: 'OEM Part #', group: 'Item' },
   { value: 'item.pluCode', label: 'PLU Code', group: 'Item' },
   { value: 'item.category', label: 'Category', group: 'Item' },
@@ -206,6 +208,8 @@ export interface LabelItemData {
   sellingPrice: string
   costPrice: string
   brand: string | null
+  supplier?: string | null
+  supplierName?: string | null
   oemPartNumber: string | null
   pluCode: string | null
   category: string | null

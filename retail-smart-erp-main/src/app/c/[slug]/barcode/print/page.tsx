@@ -27,10 +27,14 @@ interface ItemWithQty {
 
 interface VisibleBarcodeFields {
   showName: boolean
+  nameLengthMode: 'initial' | 'autofit' | 'multiline'
+  nameFontSize: 'small' | 'normal' | 'large'
   showBarcode: boolean
+  showBarcodeText: boolean
   showPrice: boolean
   showSku: boolean
   showCompany: boolean
+  showVendor: boolean
   showCategory: boolean
   showUnit: boolean
   showPriceCode: boolean
@@ -38,10 +42,14 @@ interface VisibleBarcodeFields {
 
 const DEFAULT_VISIBLE_FIELDS: VisibleBarcodeFields = {
   showName: true,
+  nameLengthMode: 'initial',
+  nameFontSize: 'normal',
   showBarcode: true,
+  showBarcodeText: true,
   showPrice: true,
   showSku: true,
   showCompany: false,
+  showVendor: false,
   showCategory: false,
   showUnit: false,
   showPriceCode: false,
@@ -66,15 +74,19 @@ export default function BarcodePrintPage() {
   const { symbol: currencySymbol } = useTenantCurrency()
   const company = useCompanyOptional()
 
-  // Label printers configured on this terminal (W9). '' = browser print dialog.
+  // Label printers configured on this terminal. '' = browser / OS system print dialog.
   const { printers } = usePrinters()
   const labelPrinters = printers.filter((p) => p.role === 'label')
   const otherPrinters = printers.filter((p) => p.role !== 'label')
-  const [printerChoice, setPrinterChoice] = useState<string | null>(null)
+  const [printerChoice, setPrinterChoice] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('sky_barcode_printer_id') ?? ''
+    }
+    return ''
+  })
   const [showPrinterSettings, setShowPrinterSettings] = useState(false)
   const [printing, setPrinting] = useState(false)
-  const defaultPrinterId = labelPrinters.find((p) => isRawLabelPrinter(p))?.id || labelPrinters[0]?.id || ''
-  const chosenPrinterId = printerChoice ?? defaultPrinterId
+  const chosenPrinterId = printerChoice
   const chosenPrinter = printers.find((p) => p.id === chosenPrinterId) || null
 
   const [isSecure, setIsSecure] = useState(true)
@@ -233,6 +245,7 @@ export default function BarcodePrintPage() {
         sellingPrice: String(item.sellingPrice ?? '0'),
         costPrice: String(item.costPrice ?? '0'),
         brand: item.brand || null,
+        supplier: item.supplier?.name || item.brand || null,
         oemPartNumber: item.oemPartNumber || null,
         pluCode: item.pluCode || null,
         category: item.category?.name || null,
@@ -264,6 +277,7 @@ export default function BarcodePrintPage() {
           sellingPrice: (d.sellingPrice as string) || '0',
           costPrice: (d.costPrice as string) || '0',
           brand: (d.brand as string) || null,
+          supplier: (d.supplier as string) || null,
           oemPartNumber: (d.oemPartNumber as string) || null,
           pluCode: (d.pluCode as string) || null,
           category: (d.category as string) || null,
@@ -296,63 +310,123 @@ export default function BarcodePrintPage() {
   useEffect(() => {
     if (!selectedTemplate) return
     const elements = selectedTemplate.elements || []
-    setVisibleFields({
+    setVisibleFields(prev => ({
+      ...prev,
       showName: elements.some(el => el.type === 'text' && el.dataField === 'item.name'),
       showBarcode: elements.some(el => el.type === 'barcode'),
+      showBarcodeText: elements.find(el => el.type === 'barcode')?.showText ?? true,
       showPrice: elements.some(el => el.type === 'text' && el.dataField === 'item.sellingPrice'),
       showSku: elements.some(el => el.type === 'text' && el.dataField === 'item.sku'),
       showCompany: elements.some(el => el.type === 'text' && el.dataField === 'tenant.name'),
+      showVendor: elements.some(el => el.type === 'text' && (el.dataField === 'item.supplier' || el.dataField === 'item.brand')),
       showCategory: elements.some(el => el.type === 'text' && el.dataField === 'item.category'),
       showUnit: elements.some(el => el.type === 'text' && el.dataField === 'item.unit'),
       showPriceCode: elements.some(el => el.type === 'text' && el.dataField === 'item.priceCode'),
-    })
+    }))
   }, [selectedTemplate])
 
   // Dynamically compute activeTemplate based on enabled/disabled visibleFields
   const activeTemplate = useMemo<LabelTemplate | null>(() => {
     if (!selectedTemplate) return null
 
-    // Filter elements
-    const elements = (selectedTemplate.elements || []).filter((el) => {
-      if (el.type === 'barcode') return visibleFields.showBarcode
-      if (el.type === 'text') {
-        if (el.dataField === 'item.name') return visibleFields.showName
-        if (el.dataField === 'item.sellingPrice') return visibleFields.showPrice
-        if (el.dataField === 'item.sku') return visibleFields.showSku
-        if (el.dataField === 'tenant.name') return visibleFields.showCompany
-        if (el.dataField === 'item.category') return visibleFields.showCategory
-        if (el.dataField === 'item.unit') return visibleFields.showUnit
-        if (el.dataField === 'item.priceCode') return visibleFields.showPriceCode
-      }
-      return true
-    }).map((el) => {
-      // Enforce single-line for item.name so it never spills over or overlaps the barcode below
-      if (el.type === 'text' && el.dataField === 'item.name') {
-        return { ...el, maxLines: 1 }
-      }
-      return el
-    })
-
     const widthMm = Number(selectedTemplate.widthMm) || 50
     const heightMm = Number(selectedTemplate.heightMm) || 30
-    const resultElements: LabelElement[] = [...elements]
 
     const hasCompany = visibleFields.showCompany
+    const hasVendor = visibleFields.showVendor
     const hasName = visibleFields.showName
+    const hasBarcode = visibleFields.showBarcode
     const hasPrice = visibleFields.showPrice
     const hasSku = visibleFields.showSku
-    const hasBarcode = visibleFields.showBarcode
+    const hasPriceCode = visibleFields.showPriceCode
+    const hasCategory = visibleFields.showCategory
+    const hasUnit = visibleFields.showUnit
 
-    // 1. Company Name (top banner)
-    if (hasCompany && !resultElements.some(el => el.type === 'text' && el.dataField === 'tenant.name')) {
+    const resultElements: LabelElement[] = []
+    let currentY = 1.0
+
+    // ── 1. Top Header: Store Name & Vendor/Supplier Name ──
+    if (hasCompany && hasVendor) {
+      if (widthMm >= 48) {
+        // Wide sticker: side-by-side header
+        const halfW = (widthMm - 3) / 2
+        resultElements.push({
+          id: 'dyn-company',
+          type: 'text',
+          dataField: 'tenant.name',
+          x: 1,
+          y: currentY,
+          width: halfW,
+          height: 3.2,
+          fontSize: 6,
+          fontWeight: 'bold',
+          textAlign: 'left',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 1,
+        })
+        resultElements.push({
+          id: 'dyn-vendor',
+          type: 'text',
+          dataField: 'item.supplier',
+          prefix: 'Vendor: ',
+          x: halfW + 1.5,
+          y: currentY,
+          width: halfW,
+          height: 3.2,
+          fontSize: 5.5,
+          fontWeight: 'normal',
+          textAlign: 'right',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 1,
+        })
+        currentY += 3.8
+      } else {
+        // Compact sticker (38mm): 2 stacked micro-lines
+        resultElements.push({
+          id: 'dyn-company',
+          type: 'text',
+          dataField: 'tenant.name',
+          x: 1,
+          y: currentY,
+          width: widthMm - 2,
+          height: 2.8,
+          fontSize: 5.5,
+          fontWeight: 'bold',
+          textAlign: 'center',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 1,
+        })
+        currentY += 3.0
+        resultElements.push({
+          id: 'dyn-vendor',
+          type: 'text',
+          dataField: 'item.supplier',
+          prefix: 'By: ',
+          x: 1,
+          y: currentY,
+          width: widthMm - 2,
+          height: 2.4,
+          fontSize: 5.0,
+          fontWeight: 'normal',
+          textAlign: 'center',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 1,
+        })
+        currentY += 2.8
+      }
+    } else if (hasCompany) {
       resultElements.push({
         id: 'dyn-company',
         type: 'text',
         dataField: 'tenant.name',
         x: 1,
-        y: 1,
-        width: Math.max(10, widthMm - 2),
-        height: 3,
+        y: currentY,
+        width: widthMm - 2,
+        height: 3.2,
         fontSize: widthMm <= 40 ? 6 : 7,
         fontWeight: 'bold',
         textAlign: 'center',
@@ -360,145 +434,219 @@ export default function BarcodePrintPage() {
         rotation: 0,
         zIndex: 1,
       })
-    }
-
-    // 2. Product Name (initial name, single line)
-    if (hasName && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.name')) {
-      const nameY = hasCompany ? 4.2 : 1
-      const nameH = hasCompany ? 3.5 : 4.5
+      currentY += 3.8
+    } else if (hasVendor) {
       resultElements.push({
-        id: 'dyn-name',
+        id: 'dyn-vendor',
         type: 'text',
-        dataField: 'item.name',
+        dataField: 'item.supplier',
+        prefix: 'Vendor: ',
         x: 1,
-        y: nameY,
-        width: Math.max(10, widthMm - 2),
-        height: nameH,
-        fontSize: widthMm <= 40 ? 6.5 : 8,
-        fontWeight: 'bold',
+        y: currentY,
+        width: widthMm - 2,
+        height: 3.2,
+        fontSize: widthMm <= 40 ? 6 : 7,
+        fontWeight: 'normal',
         textAlign: 'center',
         maxLines: 1,
         rotation: 0,
         zIndex: 1,
       })
+      currentY += 3.8
     }
 
-    // 3. Barcode graphic
-    if (hasBarcode && !resultElements.some(el => el.type === 'barcode')) {
-      const topY = (hasCompany && hasName) ? 8 : (hasCompany || hasName) ? 5.8 : 1.5
-      const botReserved = (hasPrice || hasSku) ? 6 : 1
-      const barH = Math.max(6, Math.min(14, heightMm - topY - botReserved))
+    // ── 2. Product Name with Length / Font Size Optimization ──
+    if (hasName) {
+      const mode = visibleFields.nameLengthMode
+      const sizeOpt = visibleFields.nameFontSize
+      const isMulti = mode === 'multiline'
+      const isAutoFit = mode === 'autofit'
+      const nameH = isMulti ? (widthMm <= 40 ? 5.5 : 6.5) : (widthMm <= 40 ? 3.5 : 4.2)
+
+      const baseFont = sizeOpt === 'small'
+        ? 5.5
+        : sizeOpt === 'large'
+        ? (widthMm <= 40 ? 8.5 : 10)
+        : (widthMm <= 40 ? 6.5 : 8)
+
+      resultElements.push({
+        id: 'dyn-name',
+        type: 'text',
+        dataField: 'item.name',
+        x: 1,
+        y: currentY,
+        width: Math.max(10, widthMm - 2),
+        height: nameH,
+        fontSize: baseFont,
+        fontWeight: 'bold',
+        textAlign: 'center',
+        maxLines: isMulti ? 2 : 1,
+        autoFit: isAutoFit,
+        rotation: 0,
+        zIndex: 1,
+      })
+      currentY += nameH + 0.8
+    }
+
+    // ── 3. Footer Elements (Price, SKU, Price Code, Category, Unit) ──
+    const hasAnyFooter = hasPrice || hasSku || hasCategory || hasPriceCode || hasUnit
+    const footerH = widthMm <= 40 ? 5.0 : 6.0
+    const footerY = Math.max(currentY + 6, heightMm - footerH - 1.0)
+
+    if (hasAnyFooter) {
+      // Cost Code (Top right of sticker or above footer)
+      if (hasPriceCode) {
+        resultElements.push({
+          id: 'dyn-pricecode',
+          type: 'text',
+          dataField: 'item.priceCode',
+          x: Math.max(2, widthMm - 18),
+          y: 0.8,
+          width: 16,
+          height: 2.8,
+          fontSize: 5.5,
+          fontWeight: 'normal',
+          textAlign: 'right',
+          prefix: '*',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 3,
+        })
+      }
+
+      if (hasSku && hasPrice) {
+        const skuW = Math.min(22, Math.floor(widthMm * 0.42))
+        const priceX = skuW + 2
+        const priceW = widthMm - priceX - 1.5
+
+        resultElements.push({
+          id: 'dyn-sku',
+          type: 'text',
+          dataField: 'item.sku',
+          prefix: 'SKU: ',
+          x: 1.5,
+          y: footerY + 1.0,
+          width: skuW,
+          height: 3.5,
+          fontSize: 5.5,
+          fontWeight: 'normal',
+          textAlign: 'left',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 2,
+        })
+
+        resultElements.push({
+          id: 'dyn-price',
+          type: 'text',
+          dataField: 'item.sellingPrice',
+          isCurrency: true,
+          suffix: hasUnit ? ' ' : undefined,
+          x: priceX,
+          y: footerY,
+          width: priceW,
+          height: footerH,
+          fontSize: widthMm <= 40 ? 8.5 : 11,
+          fontWeight: 'bold',
+          textAlign: 'right',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 2,
+        })
+      } else if (hasPrice) {
+        resultElements.push({
+          id: 'dyn-price',
+          type: 'text',
+          dataField: 'item.sellingPrice',
+          isCurrency: true,
+          x: 1,
+          y: footerY,
+          width: widthMm - 2,
+          height: footerH,
+          fontSize: widthMm <= 40 ? 10.5 : 13,
+          fontWeight: 'bold',
+          textAlign: 'center',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 2,
+        })
+      } else if (hasSku) {
+        resultElements.push({
+          id: 'dyn-sku',
+          type: 'text',
+          dataField: 'item.sku',
+          prefix: 'SKU: ',
+          x: 1,
+          y: footerY,
+          width: widthMm - 2,
+          height: 4,
+          fontSize: 6.5,
+          fontWeight: 'normal',
+          textAlign: 'center',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 2,
+        })
+      }
+
+      if (hasCategory && !hasSku) {
+        resultElements.push({
+          id: 'dyn-category',
+          type: 'text',
+          dataField: 'item.category',
+          x: 1.5,
+          y: footerY + 1,
+          width: Math.floor(widthMm * 0.45),
+          height: 3,
+          fontSize: 5.5,
+          fontWeight: 'normal',
+          textAlign: 'left',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 2,
+        })
+      }
+
+      if (hasUnit && !hasPrice) {
+        resultElements.push({
+          id: 'dyn-unit',
+          type: 'text',
+          dataField: 'item.unit',
+          prefix: 'Unit: ',
+          x: Math.max(2, widthMm / 2 - 8),
+          y: footerY,
+          width: 16,
+          height: 3,
+          fontSize: 6,
+          fontWeight: 'normal',
+          textAlign: 'center',
+          maxLines: 1,
+          rotation: 0,
+          zIndex: 2,
+        })
+      }
+    }
+
+    // ── 4. Barcode Graphic (Fills remaining height) ──
+    if (hasBarcode) {
+      const barcodeTopY = currentY
+      const bottomLimit = hasAnyFooter ? footerY - 0.5 : heightMm - 1.0
+      const availableBarcodeH = Math.max(6, bottomLimit - barcodeTopY)
+      const barcodeH = Math.min(22, availableBarcodeH)
+
       resultElements.push({
         id: 'dyn-barcode',
         type: 'barcode',
         dataField: 'item.barcode',
         format: 'code128',
         barWidth: 2,
-        showText: true,
+        showText: visibleFields.showBarcodeText,
         x: 2,
-        y: topY,
+        y: barcodeTopY,
         width: Math.max(10, widthMm - 4),
-        height: barH,
+        height: barcodeH,
         rotation: 0,
         zIndex: 1,
-      })
-    }
-
-    // 4. Footer fields: Price & SKU (strictly non-overlapping)
-    const footerY = Math.max(1, heightMm - 5)
-    if (hasSku && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.sku')) {
-      resultElements.push({
-        id: 'dyn-sku',
-        type: 'text',
-        dataField: 'item.sku',
-        x: 1,
-        y: footerY + 1,
-        width: hasPrice ? Math.min(22, Math.floor(widthMm * 0.45)) : Math.max(10, widthMm - 2),
-        height: 3.5,
-        fontSize: 5.5,
-        fontWeight: 'normal',
-        textAlign: 'left',
-        prefix: 'SKU: ',
-        maxLines: 1,
-        rotation: 0,
-        zIndex: 2,
-      })
-    }
-
-    if (hasPrice && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.sellingPrice')) {
-      const priceX = hasSku ? Math.min(24, Math.floor(widthMm * 0.45)) : 1
-      const priceW = hasSku ? (widthMm - priceX - 1) : (widthMm - 2)
-      resultElements.push({
-        id: 'dyn-price',
-        type: 'text',
-        dataField: 'item.sellingPrice',
-        isCurrency: true,
-        x: priceX,
-        y: footerY,
-        width: Math.max(10, priceW),
-        height: 5,
-        fontSize: widthMm <= 40 ? 8 : 10,
-        fontWeight: 'bold',
-        textAlign: hasSku ? 'right' : 'center',
-        maxLines: 1,
-        rotation: 0,
-        zIndex: 2,
-      })
-    }
-
-    if (visibleFields.showPriceCode && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.priceCode')) {
-      resultElements.push({
-        id: 'dyn-pricecode',
-        type: 'text',
-        dataField: 'item.priceCode',
-        x: Math.max(2, widthMm - 16),
-        y: 1,
-        width: 14,
-        height: 3,
-        fontSize: 6,
-        fontWeight: 'normal',
-        textAlign: 'right',
-        prefix: '*',
-        maxLines: 1,
-        rotation: 0,
-        zIndex: 2,
-      })
-    }
-
-    if (visibleFields.showCategory && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.category')) {
-      resultElements.push({
-        id: 'dyn-category',
-        type: 'text',
-        dataField: 'item.category',
-        x: 2,
-        y: footerY,
-        width: 18,
-        height: 3,
-        fontSize: 6,
-        fontWeight: 'normal',
-        textAlign: 'left',
-        maxLines: 1,
-        rotation: 0,
-        zIndex: 2,
-      })
-    }
-
-    if (visibleFields.showUnit && !resultElements.some(el => el.type === 'text' && el.dataField === 'item.unit')) {
-      resultElements.push({
-        id: 'dyn-unit',
-        type: 'text',
-        dataField: 'item.unit',
-        x: Math.max(2, widthMm / 2 - 8),
-        y: footerY,
-        width: 16,
-        height: 3,
-        fontSize: 6,
-        fontWeight: 'normal',
-        textAlign: 'center',
-        prefix: '/ ',
-        maxLines: 1,
-        rotation: 0,
-        zIndex: 2,
       })
     }
 
@@ -508,7 +656,7 @@ export default function BarcodePrintPage() {
     }
   }, [selectedTemplate, visibleFields])
 
-  async function handlePrint() {
+  async function handlePrint(forceBrowserPrint = false) {
     const templateToPrint = activeTemplate || selectedTemplate
     if (!templateToPrint) {
       toast.error('Please select a template')
@@ -518,7 +666,8 @@ export default function BarcodePrintPage() {
       toast.error('Please add items to print')
       return
     }
-    if (isRawLabelPrinter(chosenPrinter)) {
+
+    if (!forceBrowserPrint && isRawLabelPrinter(chosenPrinter)) {
       setPrinting(true)
       try {
         const res = await printLabelsRaw(chosenPrinter, templateToPrint, items, {
@@ -528,20 +677,25 @@ export default function BarcodePrintPage() {
           setup: activeSetup,
         })
         if (res.warnings.length) toast.warning(res.warnings.slice(0, 3).join('; '))
-        if (res.ok) toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${chosenPrinter.name}`)
-        else {
-          toast.error(`Label printer: ${res.error || 'failed'}`)
-          if (res.error?.includes('paired') || res.error?.includes('USB') || res.error?.includes('device') || res.error?.includes('claim')) {
-            setShowPrinterSettings(true)
-          }
+        if (res.ok) {
+          toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${chosenPrinter.name}`)
+        } else {
+          toast.warning(`USB printer: ${res.error || 'held by OS'}. Opening OS Print Dialog...`)
+          // Automatic seamless fallback to OS / browser print dialog
+          const rollSuccess = activeSetup && config.pageSize === 'Label'
+            ? await printLabelsOnRoll(templateToPrint, items, activeSetup, currencySymbol, company?.tenantName, codeWord)
+            : await printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
+          if (!rollSuccess) toast.error('Failed to open print dialog')
         }
       } catch {
-        toast.error('Failed to generate labels')
+        toast.warning('USB connection issue. Opening OS Print Dialog...')
+        await printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
       } finally {
         setPrinting(false)
       }
       return
     }
+
     try {
       const success = activeSetup && config.pageSize === 'Label'
         ? await printLabelsOnRoll(templateToPrint, items, activeSetup, currencySymbol, company?.tenantName, codeWord)
@@ -610,12 +764,21 @@ export default function BarcodePrintPage() {
             Label Templates
           </Link>
           <button
-            onClick={handlePrint}
+            onClick={() => handlePrint(true)}
+            disabled={!selectedTemplate || items.length === 0 || printing}
+            title="Always print via standard OS / browser print dialog (works with any printer)"
+            className="flex items-center gap-1.5 px-3 py-2 text-sm text-gray-700 bg-white border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 font-medium shadow-sm transition-colors"
+          >
+            <Printer size={15} />
+            System Print
+          </button>
+          <button
+            onClick={() => handlePrint(false)}
             disabled={!selectedTemplate || items.length === 0 || printing}
             className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 font-medium shadow-sm transition-colors"
           >
             <Printer size={16} />
-            {printing ? 'Sending to Printer...' : 'Print Labels'}
+            {printing ? 'Sending to Printer...' : chosenPrinter && isRawLabelPrinter(chosenPrinter) ? `Print to ${chosenPrinter.name}` : 'Print Labels'}
           </button>
         </div>
       </div>
@@ -762,12 +925,17 @@ export default function BarcodePrintPage() {
               </div>
               <select
                 value={chosenPrinterId}
-                onChange={(e) => setPrinterChoice(e.target.value)}
-                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
+                onChange={(e) => {
+                  setPrinterChoice(e.target.value)
+                  if (typeof window !== 'undefined') {
+                    localStorage.setItem('sky_barcode_printer_id', e.target.value)
+                  }
+                }}
+                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm font-medium bg-white"
               >
-                <option value="">Browser print dialog (System driver / Any OS)</option>
+                <option value="">🖨️ Browser print dialog (System driver / Any OS) — Recommended</option>
                 {labelPrinters.length > 0 && (
-                  <optgroup label="Label Printers">
+                  <optgroup label="Direct USB Label Printers">
                     {labelPrinters.map(p => (
                       <option key={p.id} value={p.id}>
                         {p.name} ({LABEL_LANGUAGE_LABELS[p.label.language] || p.label.language.toUpperCase()}, {p.label.dpi} dpi)
@@ -786,21 +954,25 @@ export default function BarcodePrintPage() {
                 )}
               </select>
               <div className="flex items-center justify-between mt-1 text-xs">
-                <span className="text-gray-500">Zebra ZD220/ZD230 or USB printer?</span>
+                <span className="text-gray-500">
+                  {!chosenPrinterId ? 'Uses your OS default printer. Works with any driver.' : 'Direct hardware USB connection active.'}
+                </span>
                 <button
                   type="button"
                   onClick={() => setShowPrinterSettings(true)}
                   className="text-blue-600 font-semibold hover:underline flex items-center gap-1"
                 >
-                  Connect USB Printer
+                  Configure Printers
                 </button>
               </div>
               {chosenPrinter?.label?.language === 'zpl' ? (
                 <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800 flex items-center gap-1.5">
-                  <span className="font-semibold">🦓 Zebra ZPL Active:</span> Direct thermal ZPL II commands enabled for {chosenPrinter.name}.
+                  <span className="font-semibold">🦓 Zebra ZPL Active:</span> Direct thermal ZPL II commands enabled for {chosenPrinter.name} (with auto-fallback to OS Print if busy).
                 </div>
-              ) : chosenPrinter && !isRawLabelPrinter(chosenPrinter) ? (
-                <p className="text-xs text-gray-500 mt-1">This printer uses the browser / system print dialog.</p>
+              ) : !chosenPrinter || !isRawLabelPrinter(chosenPrinter) ? (
+                <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800 flex items-center gap-1.5">
+                  <span className="font-semibold">✓ System Print Dialog Active:</span> Prints directly to your default Windows / Mac / OS printer with zero setup.
+                </div>
               ) : null}
             </div>
             <div>
@@ -906,17 +1078,17 @@ export default function BarcodePrintPage() {
             )}
           </div>
 
-          {/* Information on Label Customizer (Enable/Disable Fields) */}
-          <div className="bg-white rounded-lg border p-4 space-y-3">
+          {/* Information on Label Customizer (Enable/Disable Fields & Length Optimizer) */}
+          <div className="bg-white rounded-lg border p-4 space-y-3 shadow-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Sliders size={16} className="text-blue-600" />
-                <span className="text-sm font-semibold text-gray-900">Information on Label</span>
+                <span className="text-sm font-semibold text-gray-900">Customise Label Information</span>
               </div>
               {selectedTemplateId && (
                 <Link
                   href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/${selectedTemplateId}`}
-                  className="text-xs text-blue-600 hover:underline flex items-center gap-1"
+                  className="text-xs text-blue-600 hover:underline flex items-center gap-1 font-medium"
                   title="Open in full template drag-and-drop designer"
                 >
                   <Edit3 size={12} />
@@ -926,79 +1098,242 @@ export default function BarcodePrintPage() {
             </div>
 
             <p className="text-xs text-gray-500">
-              Enable or disable which product information prints on this barcode label:
+              Click to choose which product details print on this sticker:
             </p>
 
-            {/* Quick Presets */}
-            <div className="flex flex-wrap gap-1.5 pb-1">
-              <button
-                type="button"
-                onClick={() => setVisibleFields({
-                  showName: true,
-                  showBarcode: true,
-                  showPrice: true,
-                  showSku: true,
-                  showCompany: false,
-                  showCategory: false,
-                  showUnit: false,
-                  showPriceCode: false,
-                })}
-                className="px-2 py-0.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md border font-medium transition-colors"
-              >
-                Standard
-              </button>
-              <button
-                type="button"
-                onClick={() => setVisibleFields({
-                  showName: true,
-                  showBarcode: true,
-                  showPrice: true,
-                  showSku: true,
-                  showCompany: true,
-                  showCategory: true,
-                  showUnit: true,
-                  showPriceCode: true,
-                })}
-                className="px-2 py-0.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md border font-medium transition-colors"
-              >
-                All Fields
-              </button>
-              <button
-                type="button"
-                onClick={() => setVisibleFields({
-                  showName: false,
-                  showBarcode: true,
-                  showPrice: true,
-                  showSku: false,
-                  showCompany: false,
-                  showCategory: false,
-                  showUnit: false,
-                  showPriceCode: false,
-                })}
-                className="px-2 py-0.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md border font-medium transition-colors"
-              >
-                Price + Barcode
-              </button>
-              <button
-                type="button"
-                onClick={() => setVisibleFields({
-                  showName: false,
-                  showBarcode: true,
-                  showPrice: false,
-                  showSku: false,
-                  showCompany: false,
-                  showCategory: false,
-                  showUnit: false,
-                  showPriceCode: false,
-                })}
-                className="px-2 py-0.5 text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-md border font-medium transition-colors"
-              >
-                Barcode Only
-              </button>
+            {/* Quick 1-Click Presets */}
+            <div>
+              <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider block mb-1">
+                Quick 1-Click Presets:
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setVisibleFields(prev => ({
+                    ...prev,
+                    showName: true,
+                    nameLengthMode: 'initial',
+                    showBarcode: true,
+                    showBarcodeText: true,
+                    showPrice: true,
+                    showSku: true,
+                    showCompany: false,
+                    showVendor: false,
+                    showCategory: false,
+                    showUnit: false,
+                    showPriceCode: false,
+                  }))}
+                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
+                >
+                  Standard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleFields(prev => ({
+                    ...prev,
+                    showName: true,
+                    nameLengthMode: 'initial',
+                    showBarcode: true,
+                    showBarcodeText: true,
+                    showPrice: true,
+                    showSku: true,
+                    showCompany: false,
+                    showVendor: true,
+                    showCategory: false,
+                    showUnit: false,
+                    showPriceCode: false,
+                  }))}
+                  className="px-2 py-1 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md font-medium transition-colors"
+                >
+                  + Vendor Name
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleFields(prev => ({
+                    ...prev,
+                    showName: true,
+                    nameLengthMode: 'initial',
+                    showBarcode: true,
+                    showBarcodeText: true,
+                    showPrice: true,
+                    showSku: false,
+                    showCompany: true,
+                    showVendor: true,
+                    showCategory: false,
+                    showUnit: false,
+                    showPriceCode: false,
+                  }))}
+                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
+                >
+                  Store + Vendor
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleFields(prev => ({
+                    ...prev,
+                    showName: false,
+                    showBarcode: true,
+                    showBarcodeText: true,
+                    showPrice: true,
+                    showSku: false,
+                    showCompany: false,
+                    showVendor: false,
+                    showCategory: false,
+                    showUnit: false,
+                    showPriceCode: false,
+                  }))}
+                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
+                >
+                  Price + Barcode
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleFields(prev => ({
+                    ...prev,
+                    showName: true,
+                    nameLengthMode: 'initial',
+                    nameFontSize: 'small',
+                    showBarcode: true,
+                    showBarcodeText: false,
+                    showPrice: true,
+                    showSku: false,
+                    showCompany: false,
+                    showVendor: false,
+                    showCategory: false,
+                    showUnit: false,
+                    showPriceCode: true,
+                  }))}
+                  className="px-2 py-1 text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-md font-medium transition-colors"
+                >
+                  Jewelry / Small Tag
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleFields(prev => ({
+                    ...prev,
+                    showName: true,
+                    nameLengthMode: 'autofit',
+                    showBarcode: true,
+                    showBarcodeText: true,
+                    showPrice: true,
+                    showSku: true,
+                    showCompany: true,
+                    showVendor: true,
+                    showCategory: true,
+                    showUnit: true,
+                    showPriceCode: true,
+                  }))}
+                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
+                >
+                  All Details
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setVisibleFields(prev => ({
+                    ...prev,
+                    showName: false,
+                    showBarcode: true,
+                    showBarcodeText: false,
+                    showPrice: false,
+                    showSku: false,
+                    showCompany: false,
+                    showVendor: false,
+                    showCategory: false,
+                    showUnit: false,
+                    showPriceCode: false,
+                  }))}
+                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
+                >
+                  Barcode Only
+                </button>
+              </div>
             </div>
 
+            {/* Product Name Length & Font Size Optimizer */}
+            {visibleFields.showName && (
+              <div className="p-2.5 bg-blue-50/60 rounded-md border border-blue-200 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-blue-900 flex items-center gap-1">
+                    ✏️ Item Name Optimization:
+                  </span>
+                  <div className="flex items-center gap-1 text-[11px]">
+                    <span className="text-gray-500">Size:</span>
+                    {(['small', 'normal', 'large'] as const).map(s => (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => setVisibleFields(prev => ({ ...prev, nameFontSize: s }))}
+                        className={`px-1.5 py-0.5 rounded border capitalize transition-colors ${
+                          visibleFields.nameFontSize === s
+                            ? 'bg-blue-600 text-white border-blue-600 font-semibold'
+                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setVisibleFields(prev => ({ ...prev, nameLengthMode: 'initial' }))}
+                    className={`flex-1 py-1 px-2 rounded text-xs font-medium border text-center transition-colors ${
+                      visibleFields.nameLengthMode === 'initial'
+                        ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                    }`}
+                    title="Keeps initial name cleanly on 1 line - never overlaps barcode below"
+                  >
+                    Initial Name (1 Line)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVisibleFields(prev => ({ ...prev, nameLengthMode: 'autofit' }))}
+                    className={`flex-1 py-1 px-2 rounded text-xs font-medium border text-center transition-colors ${
+                      visibleFields.nameLengthMode === 'autofit'
+                        ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                    }`}
+                    title="Automatically shrinks font so entire long product name fits on 1 line"
+                  >
+                    Auto-Shrink
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setVisibleFields(prev => ({ ...prev, nameLengthMode: 'multiline' }))}
+                    className={`flex-1 py-1 px-2 rounded text-xs font-medium border text-center transition-colors ${
+                      visibleFields.nameLengthMode === 'multiline'
+                        ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
+                    }`}
+                    title="Allows long product names to wrap onto 2 compact lines"
+                  >
+                    2 Lines
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Barcode Options */}
+            {visibleFields.showBarcode && (
+              <div className="flex items-center justify-between p-2 bg-slate-50 rounded-md border text-xs">
+                <span className="font-medium text-gray-700">Barcode Digits:</span>
+                <label className="flex items-center gap-1.5 cursor-pointer text-gray-700 select-none">
+                  <input
+                    type="checkbox"
+                    checked={visibleFields.showBarcodeText}
+                    onChange={(e) => setVisibleFields(prev => ({ ...prev, showBarcodeText: e.target.checked }))}
+                    className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                  />
+                  <span>Print numbers below bars</span>
+                </label>
+              </div>
+            )}
+
             {/* Interactive Grid of Field Toggles */}
-            <div className="grid grid-cols-2 gap-1.5 pt-1 border-t">
+            <div className="grid grid-cols-2 gap-1.5 pt-2 border-t">
               <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
                 <input
                   type="checkbox"
@@ -1006,7 +1341,20 @@ export default function BarcodePrintPage() {
                   onChange={(e) => setVisibleFields((prev) => ({ ...prev, showName: e.target.checked }))}
                   className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
                 />
-                <span className="font-medium">Product Name</span>
+                <span className="font-semibold text-gray-900">Product Name</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                <input
+                  type="checkbox"
+                  checked={visibleFields.showVendor}
+                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showVendor: e.target.checked }))}
+                  className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
+                />
+                <span className="font-semibold text-emerald-800 flex items-center gap-1">
+                  Vendor / Supplier
+                  <span className="px-1 py-0.2 text-[9px] bg-emerald-100 text-emerald-700 rounded font-bold">NEW</span>
+                </span>
               </label>
 
               <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
@@ -1076,7 +1424,7 @@ export default function BarcodePrintPage() {
                   onChange={(e) => setVisibleFields((prev) => ({ ...prev, showPriceCode: e.target.checked }))}
                   className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
                 />
-                <span className="font-medium">Cost Code</span>
+                <span className="font-medium">Cost Code (*)</span>
               </label>
             </div>
           </div>

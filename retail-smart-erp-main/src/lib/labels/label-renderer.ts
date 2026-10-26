@@ -91,6 +91,7 @@ export function resolveField(
       'item.sellingPrice': '9.99',
       'item.costPrice': '5.50',
       'item.brand': 'Brand',
+      'item.supplier': 'Vendor / Supplier',
       'item.oemPartNumber': 'OEM-123',
       'item.pluCode': '4011',
       'item.category': 'Category',
@@ -126,6 +127,7 @@ export function resolveField(
       return codeWord?.length === 10 ? encodePriceCode(selling, codeWord) : selling.toFixed(2)
     }
     case 'item.brand': return item.brand || ''
+    case 'item.supplier': return item.supplier || item.supplierName || item.brand || ''
     case 'item.oemPartNumber': return item.oemPartNumber || ''
     case 'item.pluCode': return item.pluCode || ''
     case 'item.category': return item.category || ''
@@ -165,9 +167,7 @@ async function renderElement(
       if (el.prefix) text = el.prefix + text
       if (el.suffix) text = text + el.suffix
 
-      const isName = el.dataField === 'item.name'
-      // If the name is over length, keep initial name on a single line so it never wraps down or overlaps the barcode/price below
-      const effectiveMaxLines = isName ? 1 : Math.max(1, el.maxLines || 1)
+      const effectiveMaxLines = Math.max(1, el.maxLines || 1)
 
       let fontSize = el.fontSize
       if (textEl.autoFit && text) {
