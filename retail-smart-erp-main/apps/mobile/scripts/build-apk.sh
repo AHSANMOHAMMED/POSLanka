@@ -14,7 +14,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-API_URL="${API_URL:-https://app.poslanka.lk}"
+if [ -z "${JAVA_HOME:-}" ]; then
+  if [ -d "/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home" ]; then
+    export JAVA_HOME="/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home"
+  elif command -v /usr/libexec/java_home >/dev/null 2>&1; then
+    export JAVA_HOME="$(/usr/libexec/java_home 2>/dev/null || true)"
+  fi
+fi
+if [ -z "${ANDROID_HOME:-}" ] && [ -d "$HOME/Library/Android/sdk" ]; then
+  export ANDROID_HOME="$HOME/Library/Android/sdk"
+fi
+export PATH="${JAVA_HOME:+$JAVA_HOME/bin:}${ANDROID_HOME:+$ANDROID_HOME/platform-tools:}$PATH"
+
+API_URL="${API_URL:-https://168-144-216-104.sslip.io}"
 # vendor = skyERPOS (lk.poslanka.app), admin = skyERPOS Admin (lk.poslanka.admin) — see app.config.js
 APP_VARIANT="${APP_VARIANT:-vendor}"
 export APP_VARIANT EXPO_PUBLIC_APP_VARIANT="$APP_VARIANT"
@@ -46,6 +58,7 @@ cd android
 # app build doesn't always wait for it, so generate it first (runs in every module that has it).
 EXPO_PUBLIC_API_URL="$API_URL" NODE_ENV=production ./gradlew generateCodegenArtifactsFromSchema assembleRelease \
   -PreactNativeArchitectures="$ABIS" \
+  -Pandroid.kotlinVersion=1.9.24 \
   -PPOSLANKA_STORE_FILE="$KEYSTORE" \
   -PPOSLANKA_STORE_PASSWORD="$PASS" \
   -PPOSLANKA_KEY_ALIAS="$ALIAS" \
@@ -61,7 +74,11 @@ EXPO_PUBLIC_API_URL="$API_URL" NODE_ENV=production ./gradlew generateCodegenArti
 cd ..
 
 VERSION="$(node -p "require('./app.json').expo.version")"
-mkdir -p dist
+mkdir -p dist releases
 if [ "$APP_VARIANT" = "admin" ]; then OUT="dist/skyERPOS-Admin-${VERSION}.apk"; else OUT="dist/skyERPOS-${VERSION}.apk"; fi
 cp android/app/build/outputs/apk/release/app-release.apk "$OUT"
+REL_OUT="releases/$(basename "$OUT")"
+cp "$OUT" "$REL_OUT"
+(cd releases && shasum -a 256 "$(basename "$OUT")" > "$(basename "$OUT").sha256")
 echo "✔ $OUT ($(du -h "$OUT" | cut -f1))"
+echo "✔ $REL_OUT"

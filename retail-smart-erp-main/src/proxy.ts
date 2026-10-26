@@ -509,6 +509,6 @@ export const config = {
     // API routes: request id + CSRF origin check only (see handleApi)
     '/api/:path*',
     // Match all paths except static files, API routes, SSE endpoint, etc.
-    '/((?!api|ws|_events|_internal|_next/static|_next/image|favicon.ico|uploads|images|public|icons|sw\\.js|manifest\\.webmanifest).*)',
+    '/((?!api|ws|_events|_internal|_next/static|_next/image|favicon.ico|uploads|images|downloads|public|icons|sw\\.js|manifest\\.webmanifest).*)',
   ],
 }

@@ -22,7 +22,7 @@ const BUSINESS_ID_KEY = 'poslanka_business_id'
 // Server the app talks to until the user changes it on the sign-in screen. Set per build with
 // EXPO_PUBLIC_API_URL (eas.json profiles, scripts/build-apk.sh). Expo inlines EXPO_PUBLIC_* only
 // for this exact `process.env.NAME` form — with `?.` the release APK silently fell back to localhost.
-export const DEFAULT_API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://168.144.216.104').replace(/\/$/, '')
+export const DEFAULT_API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://168-144-216-104.sslip.io').replace(/\/$/, '')
 export const REQUEST_TIMEOUT_MS = 15_000
 
 // ---------------------------------------------------------------------------

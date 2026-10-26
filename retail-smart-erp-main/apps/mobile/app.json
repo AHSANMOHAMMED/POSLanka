@@ -2,13 +2,13 @@
   "expo": {
     "name": "skyERPOS",
     "slug": "poslanka",
-    "version": "1.3.2",
+    "version": "1.3.3",
     "orientation": "portrait",
     "scheme": "poslanka",
     "userInterfaceStyle": "light",
     "android": {
       "package": "lk.poslanka.app",
-      "versionCode": 7,
+      "versionCode": 8,
       "permissions": [
         "CAMERA",
         "BLUETOOTH",
