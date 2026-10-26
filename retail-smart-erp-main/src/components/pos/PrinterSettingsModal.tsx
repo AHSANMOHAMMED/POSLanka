@@ -25,6 +25,7 @@ import { PrintAgentTransport, supportsWebBluetooth, supportsWebUsb, type PrintAg
 import { LABEL_LANGUAGES, LABEL_LANGUAGE_LABELS, ROLE_LABELS, type LabelLanguage } from '@/lib/print/printer-profiles'
 import { labelAlignmentTemplate, labelTestTemplate } from '@/lib/print/label'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
+import { defaultStickerSetup } from '@/lib/labels/sticker-stock'
 import { usePermission } from '@/hooks/usePermission'
 import { printLabelsRaw } from '@/lib/labels/label-print'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -77,6 +78,23 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
   const support = useMemo(() => ({ webusb: supportsWebUsb(), webbluetooth: supportsWebBluetooth() }), [])
   const { setups: stickerSetups } = useStickerSetups(isOpen)
   const isAdmin = usePermission('manageSettings')
+
+  // Self-heal: printer profiles are stored per terminal (localStorage), so a
+  // roll setup linked on one terminal is not known on another. When the label
+  // printers here have no (or a stale) roll link, pin the tenant default
+  // setup (e.g. the calibrated single 38 x 25 roll) onto them once — idempotent.
+  useEffect(() => {
+    if (!isOpen || stickerSetups.length === 0) return
+    const def = defaultStickerSetup(stickerSetups)
+    if (!def) return
+    for (const p of printers) {
+      if (p.role !== 'label') continue
+      const linked = p.label?.stickerSetupId
+      if (!linked || !stickerSetups.some((s) => s.id === linked)) {
+        updatePrinter(p.id, { label: { ...p.label, stickerSetupId: def.id } })
+      }
+    }
+  }, [isOpen, stickerSetups, printers, updatePrinter])
 
   const selected: PrinterProfile | null = printers.find((p) => p.id === selectedId) || printers[0] || null
 
