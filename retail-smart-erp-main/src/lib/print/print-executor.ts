@@ -176,16 +176,7 @@ export function buildPrintStyles(settings: PrintSettings, width: number, height:
  */
 export function executePrint(title: string, styles: string, content: string): Promise<boolean> {
   return new Promise((resolve) => {
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <title>${escapeHtml(title)}</title>
-  <style>${styles}</style>
-</head>
-<body>
-  <div class="print-content">${content}</div>
-</body>
-</html>`
+    const html = `<!DOCTYPE html><html><head><title>${escapeHtml(title)}</title><style>${styles}</style></head><body><div class="print-content">${content}</div></body></html>`
 
     let resolved = false
     const resolveOnce = (value: boolean) => {
@@ -196,7 +187,7 @@ export function executePrint(title: string, styles: string, content: string): Pr
 
     try {
       const iframe = document.createElement('iframe')
-      iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;'
+      iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:1000px;height:1000px;border:0;opacity:0;pointer-events:none;z-index:-9999;'
       iframe.setAttribute('title', 'Print Frame')
       document.body.appendChild(iframe)
 
@@ -286,27 +277,7 @@ function fallbackPrint(title: string, styles: string, content: string): boolean 
     return false
   }
 
-  printWindow.document.write(`<!DOCTYPE html>
-<html>
-<head>
-  <title>${escapeHtml(title)}</title>
-  <style>${styles}</style>
-</head>
-<body>
-  <div class="print-content">${content}</div>
-  <script>
-    window.onload = function() {
-      // Set onafterprint BEFORE calling print() so it works in
-      // both blocking (Chrome) and non-blocking (Safari) browsers.
-      window.onafterprint = function() { window.close(); };
-      window.print();
-      // Fallback for browsers where onafterprint never fires:
-      // close window after print() returns (blocking browsers).
-      setTimeout(function() { window.close(); }, 500);
-    };
-  </script>
-</body>
-</html>`)
+  printWindow.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(title)}</title><style>${styles}</style></head><body><div class="print-content">${content}</div><script>window.onload=function(){window.onafterprint=function(){window.close();};window.print();setTimeout(function(){window.close();},500);};</script></body></html>`)
   printWindow.document.close()
   return true
 }

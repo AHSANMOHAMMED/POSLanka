@@ -9,7 +9,7 @@ import { printLabels, printLabelsOnRoll, printLabelsRaw, isRawLabelPrinter } fro
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
 import { usePermission } from '@/hooks/usePermission'
-import { defaultStickerSetup, setupsForBranch, STICKER_PRESETS, setupFromPreset } from '@/lib/labels/sticker-stock'
+import { defaultStickerSetup, setupsForBranch, STICKER_PRESETS, setupFromPreset, type StickerSetup } from '@/lib/labels/sticker-stock'
 import { LABEL_PRESETS } from '@/lib/labels/presets'
 import { usePrinters } from '@/hooks/usePrinter'
 import { LABEL_LANGUAGE_LABELS } from '@/lib/print/printer-profiles'
@@ -130,9 +130,19 @@ export default function BarcodePrintPage() {
   const fallbackSetup = defaultStickerSetup(availableSetups)
   // A locked setup linked to the printer (or a locked default) cannot be switched by cashiers
   const forcedSetup = !isAdmin ? (linkedSetup?.locked ? linkedSetup : !linkedSetup && fallbackSetup?.locked ? fallbackSetup : null) : null
-  const [setupChoice, setSetupChoice] = useState<string | null>(null)
+  const [setupChoice, setSetupChoice] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      const savedSetupId = localStorage.getItem('sky_barcode_setup_id')
+      if (savedSetupId) return savedSetupId
+      const savedCols = localStorage.getItem('sky_barcode_roll_columns')
+      if (savedCols === '1') return '38x25x1'
+      if (savedCols === '3') return '32x25x3'
+      if (savedCols === '2') return '38x25x2'
+    }
+    return '38x25x2'
+  })
   const activeSetup = forcedSetup
-    ?? (setupChoice !== null ? availableSetups.find((s) => s.id === setupChoice) || null : linkedSetup || fallbackSetup)
+    ?? (setupChoice !== null ? availableSetups.find((s) => s.id === setupChoice) || null : linkedSetup || fallbackSetup || availableSetups[0] || null)
 
   const fetchTemplates = useCallback(async () => {
     try {
@@ -145,8 +155,27 @@ export default function BarcodePrintPage() {
         if (reqTplId) {
           setSelectedTemplateId(reqTplId)
         } else {
-          const defaultTpl = data.find((t: LabelTemplate) => t.isDefault) || data[0]
-          if (defaultTpl) setSelectedTemplateId((prev) => prev || defaultTpl.id)
+          // Check saved preference first
+          const savedTplId = typeof window !== 'undefined' ? localStorage.getItem('sky_barcode_template_id') : null
+          const savedCols = typeof window !== 'undefined' ? localStorage.getItem('sky_barcode_roll_columns') : null
+
+          const savedExists = savedTplId ? data.find((t: LabelTemplate) => t.id === savedTplId) : null
+          if (savedExists) {
+            setSelectedTemplateId(savedExists.id)
+          } else if (savedCols === '1') {
+            const singleTpl = data.find((t: LabelTemplate) => (t.columns ?? 1) === 1 && Math.abs(Number(t.widthMm) - 38) <= 0.5) ||
+              data.find((t: LabelTemplate) => (t.columns ?? 1) === 1) || data[0]
+            if (singleTpl) setSelectedTemplateId(singleTpl.id)
+          } else if (savedCols === '3') {
+            const tripleTpl = data.find((t: LabelTemplate) => (t.columns ?? 1) === 3) || data[0]
+            if (tripleTpl) setSelectedTemplateId(tripleTpl.id)
+          } else {
+            // Default to Twin Stickers (2 Across on 80mm roll, 38x25 mm)
+            const twin38x25 = data.find((t: LabelTemplate) => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5 && Math.abs(Number(t.heightMm) - 25) <= 0.5)
+            const twinAny = data.find((t: LabelTemplate) => (t.columns ?? 1) === 2)
+            const defaultTpl = twin38x25 || twinAny || data.find((t: LabelTemplate) => t.isDefault) || data[0]
+            if (defaultTpl) setSelectedTemplateId(defaultTpl.id)
+          }
         }
       }
     } catch {
@@ -168,7 +197,7 @@ export default function BarcodePrintPage() {
     return () => window.removeEventListener('focus', onFocus)
   }, [fetchTemplates])
 
-  // Merge built-in presets if not yet saved in tenant database (e.g. 38x25 twin tag)
+  // Merge built-in presets if not yet saved in tenant database (e.g. 38x25 single / twin tag)
   const availableTemplates = useMemo(() => {
     const list = [...templates]
     for (const preset of LABEL_PRESETS) {
@@ -179,11 +208,11 @@ export default function BarcodePrintPage() {
           description: preset.description,
           widthMm: String(preset.widthMm),
           heightMm: String(preset.heightMm),
-          columns: preset.columns ?? (preset.widthMm === 38 && preset.heightMm === 25 ? 2 : 1),
+          columns: preset.columns ?? 2,
           labelShape: preset.labelShape,
           cornerRadius: preset.cornerRadius ?? null,
           elements: preset.elements,
-          isDefault: false,
+          isDefault: preset.id === 'retail-38x25-barcode-2up',
           isActive: true,
         } as unknown as LabelTemplate)
       }
@@ -191,17 +220,33 @@ export default function BarcodePrintPage() {
     return list
   }, [templates])
 
-  const selectedTemplate = availableTemplates.find(t => t.id === selectedTemplateId) || availableTemplates[0] || null
+  const selectedTemplate = availableTemplates.find(t => t.id === selectedTemplateId) ||
+    availableTemplates.find(t => (t.columns ?? 1) === (activeSetup?.columns ?? 2) && Math.abs(Number(t.widthMm) - (activeSetup?.labelWidthMm ?? 38)) <= 0.5) ||
+    availableTemplates.find(t => (t.columns ?? 1) === (activeSetup?.columns ?? 2)) ||
+    availableTemplates[0] ||
+    null
 
-  // Auto-sync roll when a 38x25 template is selected
+  // Auto-sync roll setup when a template is selected
   useEffect(() => {
     if (!selectedTemplate) return
     const w = Number(selectedTemplate.widthMm)
     const h = Number(selectedTemplate.heightMm)
-    if (w === 38 && h === 25) {
-      if (!activeSetup || activeSetup.labelWidthMm !== 38 || activeSetup.labelHeightMm !== 25) {
-        const match = availableSetups.find(s => s.labelWidthMm === 38 && s.labelHeightMm === 25 && s.columns === 2)
-        if (match) setSetupChoice(match.id)
+    const tCols = selectedTemplate.columns ?? 2
+    if (!activeSetup || activeSetup.labelWidthMm !== w || activeSetup.labelHeightMm !== h || activeSetup.columns !== tCols) {
+      const match = availableSetups.find(s =>
+        Math.abs(s.labelWidthMm - w) <= 0.5 &&
+        Math.abs(s.labelHeightMm - h) <= 0.5 &&
+        s.columns === tCols
+      ) || availableSetups.find(s =>
+        Math.abs(s.labelWidthMm - w) <= 0.5 &&
+        Math.abs(s.labelHeightMm - h) <= 0.5
+      )
+      if (match) {
+        setSetupChoice(match.id)
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('sky_barcode_setup_id', match.id)
+          localStorage.setItem('sky_barcode_roll_columns', String(match.columns))
+        }
       }
     }
   }, [selectedTemplate, availableSetups, activeSetup])
@@ -209,20 +254,36 @@ export default function BarcodePrintPage() {
   // Handle switching roll layout: auto-switch template if dimension mismatches
   const handleSetupChange = (id: string) => {
     setSetupChoice(id)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('sky_barcode_setup_id', id)
+    }
     if (!id) return
     const chosen = availableSetups.find(s => s.id === id)
     if (chosen) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('sky_barcode_roll_columns', String(chosen.columns))
+      }
       const currentMatches = selectedTemplate &&
         Math.abs(Number(selectedTemplate.widthMm) - chosen.labelWidthMm) <= 0.5 &&
-        Math.abs(Number(selectedTemplate.heightMm) - chosen.labelHeightMm) <= 0.5
+        Math.abs(Number(selectedTemplate.heightMm) - chosen.labelHeightMm) <= 0.5 &&
+        (selectedTemplate.columns ?? 1) === chosen.columns
 
       if (!currentMatches) {
         const matchingTpl = availableTemplates.find(t =>
           Math.abs(Number(t.widthMm) - chosen.labelWidthMm) <= 0.5 &&
+          Math.abs(Number(t.heightMm) - chosen.labelHeightMm) <= 0.5 &&
+          (t.columns ?? 1) === chosen.columns
+        ) || availableTemplates.find(t =>
+          Math.abs(Number(t.widthMm) - chosen.labelWidthMm) <= 0.5 &&
           Math.abs(Number(t.heightMm) - chosen.labelHeightMm) <= 0.5
+        ) || availableTemplates.find(t =>
+          (t.columns ?? 1) === chosen.columns
         )
         if (matchingTpl) {
           setSelectedTemplateId(matchingTpl.id)
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('sky_barcode_template_id', matchingTpl.id)
+          }
         }
       }
     }
@@ -667,6 +728,30 @@ export default function BarcodePrintPage() {
       return
     }
 
+    const tCols = templateToPrint.columns ?? (activeSetup?.columns ?? 2)
+    const effectiveSetup: StickerSetup = activeSetup || {
+      id: `setup-auto-${tCols}`,
+      name: `Auto ${tCols} Across`,
+      labelWidthMm: Number(templateToPrint.widthMm) || 38,
+      labelHeightMm: Number(templateToPrint.heightMm) || 25,
+      columns: tCols,
+      columnGapMm: tCols > 1 ? 2 : 0,
+      rowGapMm: 2,
+      marginLeftMm: tCols > 1 ? 1 : 0,
+      offsetXMm: 0,
+      offsetYMm: 0,
+      dpi: 203,
+      language: null,
+      darkness: null,
+      speed: null,
+      direction: 1,
+      warehouseId: null,
+      locked: false,
+      isDefault: false,
+    }
+
+    const printViaRoll = config.pageSize === 'Label'
+
     if (!forceBrowserPrint && isRawLabelPrinter(chosenPrinter)) {
       setPrinting(true)
       try {
@@ -674,31 +759,36 @@ export default function BarcodePrintPage() {
           currencySymbol,
           tenantName: company?.tenantName,
           codeWord,
-          setup: activeSetup,
+          setup: effectiveSetup,
         })
         if (res.warnings.length) toast.warning(res.warnings.slice(0, 3).join('; '))
         if (res.ok) {
           toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${chosenPrinter.name}`)
+          return
         } else {
           toast.warning(`USB printer: ${res.error || 'held by OS'}. Opening OS Print Dialog...`)
           // Automatic seamless fallback to OS / browser print dialog
-          const rollSuccess = activeSetup && config.pageSize === 'Label'
-            ? await printLabelsOnRoll(templateToPrint, items, activeSetup, currencySymbol, company?.tenantName, codeWord)
+          const rollSuccess = printViaRoll
+            ? await printLabelsOnRoll(templateToPrint, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
             : await printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
           if (!rollSuccess) toast.error('Failed to open print dialog')
+          return
         }
       } catch {
         toast.warning('USB connection issue. Opening OS Print Dialog...')
-        await printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
+        const rollSuccess = printViaRoll
+          ? await printLabelsOnRoll(templateToPrint, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
+          : await printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
+        if (!rollSuccess) toast.error('Failed to open print dialog')
+        return
       } finally {
         setPrinting(false)
       }
-      return
     }
 
     try {
-      const success = activeSetup && config.pageSize === 'Label'
-        ? await printLabelsOnRoll(templateToPrint, items, activeSetup, currencySymbol, company?.tenantName, codeWord)
+      const success = printViaRoll
+        ? await printLabelsOnRoll(templateToPrint, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
         : await printLabels(
           templateToPrint,
           items,
@@ -975,6 +1065,96 @@ export default function BarcodePrintPage() {
                 </div>
               ) : null}
             </div>
+            {/* Quick Roll Type Selector: 1 Across, 2 Across (Twin), 3 Across */}
+            <div className="pt-1">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-gray-700 flex items-center gap-1">
+                  Sticker Roll Format:
+                  <span className="text-[10px] font-normal text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                    Auto-calibrated for OS default / idle printer
+                  </span>
+                </label>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-lg border text-xs">
+                {/* 1 Across: Single */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const singleSetup = availableSetups.find(s => s.columns === 1 && Math.abs(s.labelWidthMm - 38) <= 0.5) ||
+                      availableSetups.find(s => s.columns === 1)
+                    if (singleSetup) handleSetupChange(singleSetup.id)
+                    const singleTpl = availableTemplates.find(t => (t.columns ?? 1) === 1 && Math.abs(Number(t.widthMm) - 38) <= 0.5) ||
+                      availableTemplates.find(t => (t.columns ?? 1) === 1)
+                    if (singleTpl) {
+                      setSelectedTemplateId(singleTpl.id)
+                      if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', singleTpl.id)
+                    }
+                    if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '1')
+                  }}
+                  className={`py-2 px-1 rounded-md text-center transition-all ${
+                    (activeSetup?.columns ?? 1) === 1 && (selectedTemplate?.columns ?? 1) === 1
+                      ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
+                  }`}
+                  title="Single sticker roll: 1 sticker per row (38 mm or standard roll)"
+                >
+                  <span className="block font-semibold">1 Across</span>
+                  <span className="text-[10px] block opacity-80">Single · 38mm</span>
+                </button>
+
+                {/* 2 Across: Twin 80mm Roll */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const twinSetup = availableSetups.find(s => s.columns === 2 && Math.abs(s.labelWidthMm - 38) <= 0.5) ||
+                      availableSetups.find(s => s.columns === 2)
+                    if (twinSetup) handleSetupChange(twinSetup.id)
+                    const twinTpl = availableTemplates.find(t => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5) ||
+                      availableTemplates.find(t => (t.columns ?? 1) === 2)
+                    if (twinTpl) {
+                      setSelectedTemplateId(twinTpl.id)
+                      if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', twinTpl.id)
+                    }
+                    if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '2')
+                  }}
+                  className={`py-2 px-1 rounded-md text-center transition-all ${
+                    (activeSetup?.columns ?? 1) === 2 || (selectedTemplate?.columns ?? 1) === 2
+                      ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
+                  }`}
+                  title="Twin stickers roll: 2 stickers side-by-side on 80 mm roll"
+                >
+                  <span className="block font-semibold">2 Across ★</span>
+                  <span className="text-[10px] block opacity-80">Twin · 80mm Roll</span>
+                </button>
+
+                {/* 3 Across: Triple */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const tripleSetup = availableSetups.find(s => s.columns === 3 && Math.abs(s.labelWidthMm - 32) <= 1) ||
+                      availableSetups.find(s => s.columns === 3)
+                    if (tripleSetup) handleSetupChange(tripleSetup.id)
+                    const tripleTpl = availableTemplates.find(t => (t.columns ?? 1) === 3)
+                    if (tripleTpl) {
+                      setSelectedTemplateId(tripleTpl.id)
+                      if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', tripleTpl.id)
+                    }
+                    if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '3')
+                  }}
+                  className={`py-2 px-1 rounded-md text-center transition-all ${
+                    (activeSetup?.columns ?? 1) === 3 || (selectedTemplate?.columns ?? 1) === 3
+                      ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
+                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
+                  }`}
+                  title="Triple stickers roll: 3 stickers side-by-side on 102-110 mm roll"
+                >
+                  <span className="block font-semibold">3 Across</span>
+                  <span className="text-[10px] block opacity-80">Triple · 105mm</span>
+                </button>
+              </div>
+            </div>
+
             <div>
               <div className="flex items-center justify-between mb-1">
                 <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
@@ -992,12 +1172,28 @@ export default function BarcodePrintPage() {
                 disabled={!!forcedSetup}
                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm disabled:bg-gray-50"
               >
-                <option value="">Template size, 1 across</option>
-                {availableSetups.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x {s.columns}){s.locked ? ' [locked]' : ''}
-                  </option>
-                ))}
+                <option value="">Template size, auto columns</option>
+                <optgroup label="Twin Sticker Rolls (2 across · Standard 80mm Roll)">
+                  {availableSetups.filter(s => s.columns === 2).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x 2 across){s.locked ? ' [locked]' : ''}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Single Sticker Rolls (1 across · Single roll)">
+                  {availableSetups.filter(s => s.columns === 1).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm){s.locked ? ' [locked]' : ''}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="Triple / Multi-across Rolls (3+ across · 105mm+)">
+                  {availableSetups.filter(s => s.columns >= 3).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x {s.columns} across){s.locked ? ' [locked]' : ''}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
               {activeSetup?.locked && (
                 <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
@@ -1456,7 +1652,7 @@ export default function BarcodePrintPage() {
                       : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  Twin Sticker Roll ({activeSetup.columns} in 1 line)
+                  Twin Roll View ({activeSetup.columns} across)
                 </button>
                 <button
                   type="button"

@@ -49,6 +49,10 @@ export async function encodeZpl(
   for (const row of packLabelRows(items, columns, copies)) {
     buf.line('^XA')
     buf.line('^CI28')
+    buf.line('^MNY') // Non-continuous media with web / gap sensing (stops at die-cut gap)
+    buf.line('^MMT') // Tear-off mode (feeds precisely to the tear bar)
+    buf.line('^MTD') // Direct thermal media (no ribbon sensor error on ZD220/ZD230)
+    buf.line('^LS0') // Zero horizontal shift
     buf.line(`^PW${wDots}`)
     buf.line(`^LL${hDots}`)
     buf.line('^LH0,0')

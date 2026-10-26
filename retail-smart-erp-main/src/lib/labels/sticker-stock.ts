@@ -78,12 +78,12 @@ export const stickerSetupSchema = z.object({
 export const stickerSetupsSchema = z.array(stickerSetupSchema).max(50)
 
 export const DEFAULT_STICKER_SETUP: Omit<StickerSetup, 'id' | 'name'> = {
-  labelWidthMm: 50,
+  labelWidthMm: 38,
   labelHeightMm: 25,
-  columns: 1,
-  columnGapMm: 0,
+  columns: 2,
+  columnGapMm: 2,
   rowGapMm: 2,
-  marginLeftMm: 0,
+  marginLeftMm: 1,
   offsetXMm: 0,
   offsetYMm: 0,
   dpi: 203,
@@ -113,12 +113,12 @@ export interface StickerPreset {
 /** Common rolls sold in Sri Lanka (Pettah / supplier stock). Liner width = margins + labels + gaps. */
 export const STICKER_PRESETS: StickerPreset[] = [
   { id: '38x25x2', name: '🦓 Zebra 38 x 25 mm (Twin / 80mm Roll - 2 across)', labelWidthMm: 38, labelHeightMm: 25, columns: 2, columnGapMm: 2, rowGapMm: 2, marginLeftMm: 1, note: 'Standard retail barcode twin roll (80 mm liner)' },
-  { id: '38x25x1', name: '🦓 Zebra 38 x 25 mm (Single - 1 across)', labelWidthMm: 38, labelHeightMm: 25, columns: 1, columnGapMm: 0, rowGapMm: 2, marginLeftMm: 1, note: 'Single sticker 38x25 mm' },
-  { id: '80x50x1', name: '🦓 Zebra 80 mm Thermal Label (80 x 50 mm)', labelWidthMm: 80, labelHeightMm: 50, columns: 1, columnGapMm: 0, rowGapMm: 2, marginLeftMm: 1, note: '80 mm wide direct thermal roll' },
-  { id: '80x40x1', name: '🦓 Zebra 80 mm Thermal Label (80 x 40 mm)', labelWidthMm: 80, labelHeightMm: 40, columns: 1, columnGapMm: 0, rowGapMm: 2, marginLeftMm: 1, note: '80 mm wide direct thermal roll' },
-  { id: '50x30x1', name: '🦓 Zebra 50 x 30 mm Direct Thermal (Standard)', labelWidthMm: 50, labelHeightMm: 30, columns: 1, columnGapMm: 0, rowGapMm: 2, marginLeftMm: 1, note: 'Standard single roll (Zebra ZD220 / ZD230)' },
-  { id: '32x25x3', name: '32 x 25 mm, 3 across', labelWidthMm: 32, labelHeightMm: 25, columns: 3, columnGapMm: 2, rowGapMm: 2, marginLeftMm: 1, note: 'Small price tags (102 mm liner)' },
-  { id: '35x25x3', name: '35 x 25 mm, 3 across', labelWidthMm: 35, labelHeightMm: 25, columns: 3, columnGapMm: 2, rowGapMm: 2, marginLeftMm: 1, note: '110 mm liner' },
+  { id: '38x25x1', name: '🦓 Zebra 38 x 25 mm (Single - 1 across)', labelWidthMm: 38, labelHeightMm: 25, columns: 1, columnGapMm: 0, rowGapMm: 2, marginLeftMm: 0, note: 'Standard retail barcode single sticker (38 mm liner)' },
+  { id: '32x25x3', name: '🦓 Zebra 32 x 25 mm (Triple / 102mm Roll - 3 across)', labelWidthMm: 32, labelHeightMm: 25, columns: 3, columnGapMm: 2, rowGapMm: 2, marginLeftMm: 1, note: 'Small price tags (102 mm liner)' },
+  { id: '35x25x3', name: '🦓 Zebra 35 x 25 mm (Triple / 110mm Roll - 3 across)', labelWidthMm: 35, labelHeightMm: 25, columns: 3, columnGapMm: 2, rowGapMm: 2, marginLeftMm: 1, note: 'Standard triple roll (110 mm liner)' },
+  { id: '50x30x1', name: '🦓 Zebra 50 x 30 mm Direct Thermal (Standard)', labelWidthMm: 50, labelHeightMm: 30, columns: 1, columnGapMm: 0, rowGapMm: 2, marginLeftMm: 0, note: 'Standard single roll (Zebra ZD220 / ZD230)' },
+  { id: '80x50x1', name: '🦓 Zebra 80 mm Thermal Label (80 x 50 mm)', labelWidthMm: 80, labelHeightMm: 50, columns: 1, columnGapMm: 0, rowGapMm: 2, marginLeftMm: 0, note: '80 mm wide direct thermal roll' },
+  { id: '80x40x1', name: '🦓 Zebra 80 mm Thermal Label (80 x 40 mm)', labelWidthMm: 80, labelHeightMm: 40, columns: 1, columnGapMm: 0, rowGapMm: 2, marginLeftMm: 0, note: '80 mm wide direct thermal roll' },
   { id: '25x15x4', name: '25 x 15 mm, 4 across', labelWidthMm: 25, labelHeightMm: 15, columns: 4, columnGapMm: 2, rowGapMm: 2, marginLeftMm: 1, note: 'Jewellery / pharmacy mini labels' },
   { id: '40x30x2', name: '40 x 30 mm, 2 across', labelWidthMm: 40, labelHeightMm: 30, columns: 2, columnGapMm: 2, rowGapMm: 2, marginLeftMm: 1, note: '84 mm liner' },
   { id: '50x25x2', name: '50 x 25 mm, 2 across', labelWidthMm: 50, labelHeightMm: 25, columns: 2, columnGapMm: 2, rowGapMm: 2, marginLeftMm: 1, note: '104 mm liner' },

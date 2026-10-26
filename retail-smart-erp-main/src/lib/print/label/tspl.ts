@@ -77,6 +77,9 @@ export async function encodeTspl(
   buf.line(`GAP ${fmt(o.gapMm ?? 2)} mm,0 mm`)
   buf.line(`DIRECTION ${layout ? layout.direction : 1},0`)
   buf.line('REFERENCE 0,0')
+  buf.line('SET TEAR ON')
+  buf.line('SET PEEL OFF')
+  buf.line('OFFSET 0 mm')
   if (o.speed != null) buf.line(`SPEED ${Math.round(o.speed)}`)
   if (o.darkness != null) buf.line(`DENSITY ${Math.min(15, Math.max(0, Math.round(o.darkness)))}`)
 

@@ -29,34 +29,53 @@ function generatePrintStyles(
   return `
     @page {
       size: ${page.width}mm ${page.height}mm;
-      margin: ${isLabelMode ? '0' : '5mm'};
+      margin: ${isLabelMode ? '0mm !important' : '5mm'};
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
 
-    body {
+    html, body {
+      margin: 0 !important;
+      padding: 0 !important;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      ${isLabelMode ? `width: ${page.width}mm !important; background: #ffffff !important;` : ''}
+    }
+
+    .print-content {
+      margin: 0 !important;
+      padding: 0 !important;
+      ${isLabelMode ? `width: ${page.width}mm !important;` : ''}
     }
 
     .labels-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: ${isLabelMode ? '0' : `${config.gapMm}mm`};
-      align-content: flex-start;
+      ${isLabelMode
+        ? 'display: block !important; margin: 0 !important; padding: 0 !important; width: 100% !important;'
+        : `display: flex; flex-wrap: wrap; gap: ${config.gapMm}mm; align-content: flex-start;`}
     }
 
     .label-cell {
-      width: ${labelWidth}mm;
-      height: ${labelHeight}mm;
-      overflow: hidden;
-      page-break-inside: avoid;
-      break-inside: avoid;
+      width: ${labelWidth}mm !important;
+      height: ${labelHeight}mm !important;
+      max-width: ${labelWidth}mm !important;
+      max-height: ${labelHeight}mm !important;
+      overflow: hidden !important;
+      box-sizing: border-box !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
       ${shapeCss || ''}
-      ${isLabelMode ? 'page-break-after: always;' : ''}
+    }
+
+    .label-cell:not(:last-child) {
+      ${isLabelMode ? 'page-break-after: always !important; break-after: page !important;' : ''}
     }
 
     .label-cell:last-child {
-      page-break-after: auto;
+      page-break-after: auto !important;
+      break-after: auto !important;
     }
 
     @media print {
@@ -122,8 +141,12 @@ export async function printLabelsOnRoll(
   codeWord?: string,
   copies = 1
 ): Promise<boolean> {
-  const rollW = stickerRollWidthMm(setup)
+  const isSingleCol = setup.columns === 1
+  const rollW = isSingleCol
+    ? (setup.marginLeftMm > 0 ? setup.labelWidthMm + setup.marginLeftMm * 2 : setup.labelWidthMm)
+    : stickerRollWidthMm(setup)
   const h = setup.labelHeightMm
+  const safeH = Math.max(1, h - 0.25)
   const cache = new Map<string, string>()
   const pages: string[] = []
   for (const row of packLabelRows(items, setup.columns, copies)) {
@@ -131,22 +154,113 @@ export async function printLabelsOnRoll(
     for (let k = 0; k < row.cells.length; k++) {
       const cell = row.cells[k]
       if (!cell) continue
-      const key = cell.item?.id ?? '__'
+      const key = cell.item?.id || cell.item?.barcode || cell.item?.sku || cell.item?.name || String(k)
       if (!cache.has(key)) cache.set(key, await renderLabelHtml(template, cell.item, currencySymbol, tenantName, codeWord))
-      const left = setup.marginLeftMm + setup.offsetXMm + k * (setup.labelWidthMm + setup.columnGapMm)
+      const left = isSingleCol
+        ? Math.max(0, setup.offsetXMm)
+        : setup.marginLeftMm + setup.offsetXMm + k * (setup.labelWidthMm + setup.columnGapMm)
       cells.push(`<div class="cell" style="left:${left}mm;top:${setup.offsetYMm}mm">${cache.get(key)}</div>`)
     }
     const page = `<div class="row">${cells.join('')}</div>`
     for (let i = 0; i < row.count; i++) pages.push(page)
   }
   const styles = `
-    @page { size: ${rollW}mm ${h}mm; margin: 0; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    .row { position: relative; width: ${rollW}mm; height: ${h}mm; overflow: hidden; page-break-after: always; break-after: page; }
-    .row:last-child { page-break-after: auto; break-after: auto; }
-    .cell { position: absolute; width: ${Number(template.widthMm)}mm; height: ${Number(template.heightMm)}mm; overflow: hidden; }
+    @page {
+      size: ${rollW}mm ${h}mm;
+      margin: 0mm !important;
+      padding: 0mm !important;
+    }
+    * {
+      box-sizing: border-box !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+    html, body {
+      margin: 0mm !important;
+      padding: 0mm !important;
+      width: ${rollW}mm !important;
+      height: auto !important;
+      min-height: 0 !important;
+      background: #ffffff !important;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+    .print-content {
+      margin: 0mm !important;
+      padding: 0mm !important;
+      width: ${rollW}mm !important;
+      height: auto !important;
+      font-size: 0 !important;
+      line-height: 0 !important;
+    }
+    .row {
+      display: block !important;
+      position: relative !important;
+      width: ${rollW}mm !important;
+      height: ${safeH}mm !important;
+      max-height: ${safeH}mm !important;
+      overflow: hidden !important;
+      box-sizing: border-box !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+    .row:not(:last-child) {
+      page-break-after: always !important;
+      break-after: page !important;
+    }
+    .row:last-child {
+      page-break-after: avoid !important;
+      break-after: avoid !important;
+    }
+    .cell {
+      position: absolute !important;
+      width: ${Number(template.widthMm)}mm !important;
+      height: ${Number(template.heightMm)}mm !important;
+      max-width: ${Number(template.widthMm)}mm !important;
+      max-height: ${Number(template.heightMm)}mm !important;
+      overflow: hidden !important;
+      box-sizing: border-box !important;
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+      font-size: initial !important;
+      line-height: normal !important;
+    }
     @media print {
+      @page {
+        size: ${rollW}mm ${h}mm;
+        margin: 0mm !important;
+        padding: 0mm !important;
+      }
+      html, body {
+        width: ${rollW}mm !important;
+        height: auto !important;
+        margin: 0mm !important;
+        padding: 0mm !important;
+      }
+      .print-content {
+        width: ${rollW}mm !important;
+        margin: 0mm !important;
+        padding: 0mm !important;
+        font-size: 0 !important;
+        line-height: 0 !important;
+      }
+      .row {
+        width: ${rollW}mm !important;
+        height: ${safeH}mm !important;
+        max-height: ${safeH}mm !important;
+        overflow: hidden !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
+      .row:not(:last-child) {
+        page-break-after: always !important;
+        break-after: page !important;
+      }
+      .row:last-child {
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
       * {
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
