@@ -31,6 +31,8 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const [printing, setPrinting] = useState(false)
   const [codeWord, setCodeWord] = useState<string>('')
   const [setups, setSetups] = useState<StickerSetup[]>([])
+  // Manual sticker-roll override; null = printer's linked setup or tenant default
+  const [setupChoice, setSetupChoice] = useState<string | null>(null)
   const [config, setConfig] = useState<PrintLabelConfig>({
     labelsPerRow: 3,
     gapMm: 3,
@@ -51,6 +53,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       setItems([])
       setCodeWord('')
       setSetups([])
+      setSetupChoice(null)
       return
     }
     fetch('/api/label-templates')
@@ -114,11 +117,13 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const selectedTemplate = templates.find(t => t.id === selectedTemplateId)
   const totalLabels = items.reduce((sum, i) => sum + i.quantity, 0)
 
-  // Sticker-roll setup: the printer's linked setup, else the tenant default.
+  // Sticker-roll setup: manual choice > the printer's linked setup > tenant default.
   // Drives multi-across roll placement for raw (TSPL/ZPL) and browser printing.
   const linkedSetupId = labelPrinter?.label?.stickerSetupId || null
   const activeSetup: StickerSetup | null =
-    (linkedSetupId ? setups.find(s => s.id === linkedSetupId) || null : null) || defaultStickerSetup(setups)
+    (setupChoice ? setups.find(s => s.id === setupChoice) || null : null) ||
+    (linkedSetupId ? setups.find(s => s.id === linkedSetupId) || null : null) ||
+    defaultStickerSetup(setups)
 
   function updateQuantity(index: number, qty: number) {
     setItems(prev => prev.map((item, i) => i === index ? { ...item, quantity: Math.max(1, Math.min(999, qty)) } : item))
@@ -238,6 +243,24 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
                 min={0}
                 max={20}
               />
+            </div>
+          )}
+          {config.pageSize === 'Label' && setups.length > 0 && (
+            <div>
+              <label className="text-sm font-medium text-gray-700 mb-1 block">Sticker Roll</label>
+              <select
+                value={activeSetup?.id || ''}
+                onChange={(e) => setSetupChoice(e.target.value || null)}
+                className="px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-64"
+                title="Calibrated roll: labels across, gaps and shifts applied to raw and dialog printing"
+              >
+                {setups.map(s => (
+                  <option key={s.id} value={s.id}>
+                    {s.columns} across · {s.labelWidthMm}x{s.labelHeightMm} mm — {s.name}
+                    {s.isDefault ? ' (Default)' : ''}{s.locked ? ' 🔒' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
         </div>
