@@ -57,9 +57,13 @@ export async function createAdminSession(superAdminId: string, options: { setCoo
   // Set cookie (skipped for bearer/mobile sessions)
   if (options.setCookie === false) return sessionToken
   const cookieStore = await cookies()
+  const isHttps = (process.env.NEXTAUTH_URL?.startsWith('https://') ?? false) ||
+    headersList.get('x-forwarded-proto') === 'https' ||
+    process.env.COOKIE_SECURE === 'true'
+
   cookieStore.set(SESSION_COOKIE_NAME, sessionToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isHttps,
     sameSite: 'lax',
     maxAge: SESSION_TIMEOUT_MS / 1000,
     path: '/',
@@ -266,9 +270,11 @@ export async function validateAdminSessionWithRefresh(need: AdminNeed): Promise<
 
   // Refresh cookie (web console only; bearer tokens carry no cookie)
   if (!sessionToken.startsWith('sa_')) {
+    const isHttps = (process.env.NEXTAUTH_URL?.startsWith('https://') ?? false) ||
+      process.env.COOKIE_SECURE === 'true'
     cookieStore.set(SESSION_COOKIE_NAME, sessionToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isHttps,
       sameSite: 'lax',
       maxAge: SESSION_TIMEOUT_MS / 1000,
       path: '/',

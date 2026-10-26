@@ -46,10 +46,16 @@ async function clearLoginRateLimit(email: string): Promise<void> {
 const getCookieDomain = () => {
   if (process.env.NODE_ENV === 'production') {
     const base = (process.env.NEXT_PUBLIC_BASE_DOMAIN || 'poslanka.lk').split(':')[0]
-    if (base === 'localhost' || base === '127.0.0.1') return undefined
+    if (base === 'localhost' || base === '127.0.0.1' || /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(base)) return undefined
     return `.${base}` // Share cookies across all subdomains
   }
   return undefined // Local development: no domain restriction
+}
+
+const isSecureAuthCookie = () => {
+  if (process.env.COOKIE_SECURE === 'true') return true
+  if (process.env.COOKIE_SECURE === 'false') return false
+  return (process.env.NEXTAUTH_URL?.startsWith('https://') ?? false)
 }
 
 
@@ -407,7 +413,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production',
+        secure: isSecureAuthCookie(),
         domain: getCookieDomain(),
       }
     },
@@ -417,7 +423,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production',
+        secure: isSecureAuthCookie(),
         domain: getCookieDomain(),
       }
     },
@@ -427,7 +433,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production',
+        secure: isSecureAuthCookie(),
         domain: getCookieDomain(),
       }
     },
@@ -437,7 +443,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         httpOnly: true,
         sameSite: 'lax',
         path: '/',
-        secure: process.env.NODE_ENV === 'production',
+        secure: isSecureAuthCookie(),
         domain: getCookieDomain(),
         maxAge: 60 * 15,
       }
