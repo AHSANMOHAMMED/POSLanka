@@ -94,8 +94,11 @@ export function BrowserLabelPrintGuide({ isOpen, setup, rows, onClose, onContinu
             </div>
           </li>
           <li>
-            <b>In Chrome&apos;s print window</b>: pick the printer, Paper size <b>{paper}</b>, Margins <b>None</b>, Scale <b>Default</b>, untick{' '}
-            <b>Headers and footers</b>.
+            <b>In Chrome&apos;s print window</b>: pick the printer, click <b>More settings</b>, then Paper size <b>{paper}</b>, Margins <b>None</b>, Scale{' '}
+            <b>Default</b>, untick <b>Headers and footers</b>.
+            <div className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
+              If {paper} is not in Chrome&apos;s Paper size list, it is missing in the driver: do step 2 first. Chrome cannot make new paper sizes.
+            </div>
           </li>
         </ol>
         <p className="text-xs text-gray-600 dark:text-gray-400">
