@@ -227,6 +227,7 @@ export function executePrint(title: string, styles: string, content: string): Pr
       }
 
       let triggered = false
+      let printCalled = false
       const triggerPrint = async () => {
         if (triggered) return
         triggered = true
@@ -240,18 +241,30 @@ export function executePrint(title: string, styles: string, content: string): Pr
           if ('onafterprint' in iframeWin) {
             iframeWin.onafterprint = () => setTimeout(cleanup, 500)
           }
+          let dialogOpened = false
+          iframeWin.addEventListener('beforeprint', () => (dialogOpened = true))
 
           iframeWin.focus()
+          printCalled = true
+          const t0 = Date.now()
           iframeWin.print()
 
-          // Resolve immediately — buttons stay enabled
+          // Chrome silently ignores print() calls that come too soon after the last dialog:
+          // no beforeprint and an instant return. Report it so the user is told, instead of nothing happening.
+          if (!dialogOpened && Date.now() - t0 < 100) {
+            cleanup()
+            resolveOnce(false)
+            return
+          }
           resolveOnce(true)
 
-          // Fallback cleanup if onafterprint doesn't fire
-          setTimeout(cleanup, 60000)
+          // Fallback cleanup if onafterprint doesn't fire (long: Firefox / Safari dialogs don't block,
+          // removing the frame while the dialog is open cancels or blanks the print)
+          setTimeout(cleanup, 10 * 60000)
         } catch {
           cleanup()
-          resolveOnce(fallbackPrint(title, styles, content))
+          // Once print() was called the job may already be queued: never print it a second time.
+          resolveOnce(printCalled ? false : fallbackPrint(title, styles, content))
         }
       }
 
