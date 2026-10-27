@@ -199,6 +199,7 @@ function detection() {
   check(d('TSC TTP-244 Pro', 'TSC TTP-244 Pro') === 'tspl' && d('Xprinter XP-365B') === 'tspl' && d('XP-360B', 'XP-360B') === 'tspl', 'TSC / Xprinter -> TSPL')
   check(d('Gprinter GP-1324D') === 'tspl' && d('HPRT HT300') === 'tspl' && d('Rongta RP410') === 'tspl' && d('Deli DL-888T') === 'tspl' && d('SNBC BTP-L42') === 'tspl', 'Gprinter / HPRT / Rongta / Deli / SNBC -> TSPL')
   check(d('Godex G500') === 'zpl', 'GoDEX -> ZPL emulation')
+  check(d('Zebra_Technologies_ZTC_ZD230_203dpi_ZPL_ahsan_s_MacBook_Pro', 'ZPL Label Printer', false) === 'driver' && d('ZTC-ZD230-203dpi-ZPL', 'ZPL Label Printer', true) === 'zpl', 'shared IPP / AirPrint queue (raw: false) -> through the driver; USB queue keeps ZPL')
   check(d('DBL Label Printer', 'Label Printer') === 'driver' && d('4BARCODE 4B-2054L', 'Barcode Printer') === 'driver' && d('POS-58 Label', 'Generic GDI') === 'driver', 'unknown / GDI label drivers -> through the driver')
 }
 

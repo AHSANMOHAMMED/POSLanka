@@ -218,7 +218,11 @@ async function discoverCups() {
     } catch {
       /* ignore */
     }
-    list.push({ name, driver, port: ports.get(name) || null, shared: false, shareName: null, isDefault: name === def })
+    const port = ports.get(name) || null
+    // IPP / AirPrint / cups-browsed queues (e.g. a printer shared from a Mac) convert every job as a
+    // document, so raw ZPL/TSPL fails there; the page prints those through the driver as images.
+    const raw = !port || !/^(implicitclass|ipps?|dnssd|ippusb|driverless):/i.test(port)
+    list.push({ name, driver, port, shared: false, shareName: null, isDefault: name === def, raw })
   }
   return list
 }
@@ -260,6 +264,8 @@ async function listAllPrinters(cfg, force = false) {
     shareName: p.shareName,
     isDefault: p.isDefault,
     systemDefault: p.isDefault,
+    // false = IPP / AirPrint / shared queue (no raw commands); Windows queues always pass RAW through the spooler
+    raw: p.raw !== false,
     source: 'os',
     description: [p.driver, p.port].filter(Boolean).join(' · '),
   }))

@@ -144,7 +144,7 @@ export function DirectLabelPrinterPanel({ setup, printers, selectedId, onSelect,
     const existing = profileFor(t.name)
     const guess = guessLabelPrinter(t.name, t.driver)
     const o = overrides[t.name] || {}
-    const lang: Lang = o.language || (existing && isLang(existing.label.language) ? existing.label.language : savedModes[t.name] || defaultAgentLabelLanguage(t.name, t.driver))
+    const lang: Lang = o.language || (existing && isLang(existing.label.language) ? existing.label.language : savedModes[t.name] || defaultAgentLabelLanguage(t.name, t.driver, t.raw))
     const dpi: 203 | 300 = o.dpi || existing?.label.dpi || guess.dpi
     return { guess, lang, dpi, existing }
   }
@@ -238,6 +238,9 @@ export function DirectLabelPrinterPanel({ setup, printers, selectedId, onSelect,
                       {t.name}
                     </div>
                     <div className="text-[11px] text-gray-500 truncate">{t.driver ? `Driver: ${t.driver}` : t.description || t.port || ''}</div>
+                    {t.raw === false && (
+                      <div className="text-[11px] text-amber-700 dark:text-amber-400">Network / shared printer: use Through the driver.</div>
+                    )}
                   </div>
                   <button
                     type="button"

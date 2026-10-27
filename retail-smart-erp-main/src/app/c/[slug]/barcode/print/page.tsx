@@ -61,6 +61,30 @@ const DEFAULT_VISIBLE_FIELDS: VisibleBarcodeFields = {
   showPriceCode: false,
 }
 
+/**
+ * Order templates for automatic picks: ones that print a barcode first, then the tenant default,
+ * so a size match never lands on a barcode-less template (e.g. "PLU Label" for scale items).
+ */
+function rankTemplates(list: LabelTemplate[]): LabelTemplate[] {
+  const score = (t: LabelTemplate) => (t.elements?.some((e) => e?.type === 'barcode') ? 2 : 0) + (t.isDefault ? 1 : 0)
+  return [...list].sort((a, b) => score(b) - score(a))
+}
+
+/** First template matching the predicates in order, trying templates that print a barcode before any others. */
+function pickTemplate(list: LabelTemplate[], ...preds: Array<(t: LabelTemplate) => boolean>): LabelTemplate | undefined {
+  const ranked = rankTemplates(list)
+  const withBarcode = ranked.filter((t) => t.elements?.some((e) => e?.type === 'barcode'))
+  for (const pool of [withBarcode, ranked]) {
+    for (const pred of preds) {
+      const t = pool.find(pred)
+      if (t) return t
+    }
+  }
+  return undefined
+}
+
+const near = (a: unknown, b: number) => Math.abs(Number(a) - b) <= 0.5
+
 export default function BarcodePrintPage() {
   const [templates, setTemplates] = useState<LabelTemplate[]>([])
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
@@ -197,21 +221,20 @@ export default function BarcodePrintPage() {
           const savedTplId = typeof window !== 'undefined' ? localStorage.getItem('sky_barcode_template_id') : null
           const savedCols = typeof window !== 'undefined' ? localStorage.getItem('sky_barcode_roll_columns') : null
 
-          const savedExists = savedTplId ? data.find((t: LabelTemplate) => t.id === savedTplId) : null
+          const savedExists = savedTplId ? rankTemplates(data).find((t: LabelTemplate) => t.id === savedTplId) : null
           if (savedExists) {
             setSelectedTemplateId(savedExists.id)
           } else if (savedCols === '1') {
-            const singleTpl = data.find((t: LabelTemplate) => (t.columns ?? 1) === 1 && Math.abs(Number(t.widthMm) - 38) <= 0.5) ||
-              data.find((t: LabelTemplate) => (t.columns ?? 1) === 1) || data[0]
+            const singleTpl = pickTemplate(data, (t) => (t.columns ?? 1) === 1 && near(t.widthMm, 38), (t) => near(t.widthMm, 38), (t) => (t.columns ?? 1) === 1) || data[0]
             if (singleTpl) setSelectedTemplateId(singleTpl.id)
           } else if (savedCols === '3') {
-            const tripleTpl = data.find((t: LabelTemplate) => (t.columns ?? 1) === 3) || data[0]
+            const tripleTpl = rankTemplates(data).find((t: LabelTemplate) => (t.columns ?? 1) === 3) || data[0]
             if (tripleTpl) setSelectedTemplateId(tripleTpl.id)
           } else {
             // Default to Twin Stickers (2 Across on 80mm roll, 38x25 mm)
-            const twin38x25 = data.find((t: LabelTemplate) => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5 && Math.abs(Number(t.heightMm) - 25) <= 0.5)
-            const twinAny = data.find((t: LabelTemplate) => (t.columns ?? 1) === 2)
-            const defaultTpl = twin38x25 || twinAny || data.find((t: LabelTemplate) => t.isDefault) || data[0]
+            const twin38x25 = rankTemplates(data).find((t: LabelTemplate) => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5 && Math.abs(Number(t.heightMm) - 25) <= 0.5)
+            const twinAny = rankTemplates(data).find((t: LabelTemplate) => (t.columns ?? 1) === 2)
+            const defaultTpl = twin38x25 || twinAny || rankTemplates(data).find((t: LabelTemplate) => t.isDefault) || data[0]
             if (defaultTpl) setSelectedTemplateId(defaultTpl.id)
           }
         }
@@ -258,9 +281,9 @@ export default function BarcodePrintPage() {
     return list
   }, [templates])
 
-  const selectedTemplate = availableTemplates.find(t => t.id === selectedTemplateId) ||
-    availableTemplates.find(t => (t.columns ?? 1) === (activeSetup?.columns ?? 2) && Math.abs(Number(t.widthMm) - (activeSetup?.labelWidthMm ?? 38)) <= 0.5) ||
-    availableTemplates.find(t => (t.columns ?? 1) === (activeSetup?.columns ?? 2)) ||
+  const selectedTemplate = rankTemplates(availableTemplates).find(t => t.id === selectedTemplateId) ||
+    rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === (activeSetup?.columns ?? 2) && Math.abs(Number(t.widthMm) - (activeSetup?.labelWidthMm ?? 38)) <= 0.5) ||
+    rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === (activeSetup?.columns ?? 2)) ||
     availableTemplates[0] ||
     null
 
@@ -270,7 +293,8 @@ export default function BarcodePrintPage() {
     const w = Number(selectedTemplate.widthMm)
     const h = Number(selectedTemplate.heightMm)
     const tCols = selectedTemplate.columns ?? 2
-    if (!activeSetup || activeSetup.labelWidthMm !== w || activeSetup.labelHeightMm !== h || activeSetup.columns !== tCols) {
+    // The roll (columns across) is the user's choice; only re-pick it when the sticker size differs.
+    if (!activeSetup || !near(activeSetup.labelWidthMm, w) || !near(activeSetup.labelHeightMm, h)) {
       const match = availableSetups.find(s =>
         Math.abs(s.labelWidthMm - w) <= 0.5 &&
         Math.abs(s.labelHeightMm - h) <= 0.5 &&
@@ -301,22 +325,14 @@ export default function BarcodePrintPage() {
       if (typeof window !== 'undefined') {
         localStorage.setItem('sky_barcode_roll_columns', String(chosen.columns))
       }
+      // A template is one sticker: keep it while its size matches the roll (columns are the roll's)
       const currentMatches = selectedTemplate &&
-        Math.abs(Number(selectedTemplate.widthMm) - chosen.labelWidthMm) <= 0.5 &&
-        Math.abs(Number(selectedTemplate.heightMm) - chosen.labelHeightMm) <= 0.5 &&
-        (selectedTemplate.columns ?? 1) === chosen.columns
+        near(selectedTemplate.widthMm, chosen.labelWidthMm) &&
+        near(selectedTemplate.heightMm, chosen.labelHeightMm)
 
       if (!currentMatches) {
-        const matchingTpl = availableTemplates.find(t =>
-          Math.abs(Number(t.widthMm) - chosen.labelWidthMm) <= 0.5 &&
-          Math.abs(Number(t.heightMm) - chosen.labelHeightMm) <= 0.5 &&
-          (t.columns ?? 1) === chosen.columns
-        ) || availableTemplates.find(t =>
-          Math.abs(Number(t.widthMm) - chosen.labelWidthMm) <= 0.5 &&
-          Math.abs(Number(t.heightMm) - chosen.labelHeightMm) <= 0.5
-        ) || availableTemplates.find(t =>
-          (t.columns ?? 1) === chosen.columns
-        )
+        const sameSize = (t: LabelTemplate) => near(t.widthMm, chosen.labelWidthMm) && near(t.heightMm, chosen.labelHeightMm)
+        const matchingTpl = pickTemplate(availableTemplates, (t) => sameSize(t) && (t.columns ?? 1) === chosen.columns, sameSize, (t) => (t.columns ?? 1) === chosen.columns)
         if (matchingTpl) {
           setSelectedTemplateId(matchingTpl.id)
           if (typeof window !== 'undefined') {
@@ -1171,8 +1187,7 @@ export default function BarcodePrintPage() {
                     const singleSetup = availableSetups.find(s => s.columns === 1 && Math.abs(s.labelWidthMm - 38) <= 0.5) ||
                       availableSetups.find(s => s.columns === 1)
                     if (singleSetup) handleSetupChange(singleSetup.id)
-                    const singleTpl = availableTemplates.find(t => (t.columns ?? 1) === 1 && Math.abs(Number(t.widthMm) - 38) <= 0.5) ||
-                      availableTemplates.find(t => (t.columns ?? 1) === 1)
+                    const singleTpl = pickTemplate(availableTemplates, (t) => (t.columns ?? 1) === 1 && near(t.widthMm, 38), (t) => near(t.widthMm, 38), (t) => (t.columns ?? 1) === 1)
                     if (singleTpl) {
                       setSelectedTemplateId(singleTpl.id)
                       if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', singleTpl.id)
@@ -1180,7 +1195,7 @@ export default function BarcodePrintPage() {
                     if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '1')
                   }}
                   className={`py-2 px-1 rounded-md text-center transition-all ${
-                    (activeSetup?.columns ?? 1) === 1 && (selectedTemplate?.columns ?? 1) === 1
+                    (activeSetup?.columns ?? 1) === 1
                       ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
                   }`}
@@ -1197,8 +1212,8 @@ export default function BarcodePrintPage() {
                     const twinSetup = availableSetups.find(s => s.columns === 2 && Math.abs(s.labelWidthMm - 38) <= 0.5) ||
                       availableSetups.find(s => s.columns === 2)
                     if (twinSetup) handleSetupChange(twinSetup.id)
-                    const twinTpl = availableTemplates.find(t => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5) ||
-                      availableTemplates.find(t => (t.columns ?? 1) === 2)
+                    const twinTpl = rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5) ||
+                      rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 2)
                     if (twinTpl) {
                       setSelectedTemplateId(twinTpl.id)
                       if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', twinTpl.id)
@@ -1206,7 +1221,7 @@ export default function BarcodePrintPage() {
                     if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '2')
                   }}
                   className={`py-2 px-1 rounded-md text-center transition-all ${
-                    (activeSetup?.columns ?? 1) === 2 || (selectedTemplate?.columns ?? 1) === 2
+                    (activeSetup?.columns ?? 1) === 2
                       ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
                   }`}
@@ -1223,7 +1238,7 @@ export default function BarcodePrintPage() {
                     const tripleSetup = availableSetups.find(s => s.columns === 3 && Math.abs(s.labelWidthMm - 32) <= 1) ||
                       availableSetups.find(s => s.columns === 3)
                     if (tripleSetup) handleSetupChange(tripleSetup.id)
-                    const tripleTpl = availableTemplates.find(t => (t.columns ?? 1) === 3)
+                    const tripleTpl = rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 3)
                     if (tripleTpl) {
                       setSelectedTemplateId(tripleTpl.id)
                       if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', tripleTpl.id)
@@ -1231,7 +1246,7 @@ export default function BarcodePrintPage() {
                     if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '3')
                   }}
                   className={`py-2 px-1 rounded-md text-center transition-all ${
-                    (activeSetup?.columns ?? 1) === 3 || (selectedTemplate?.columns ?? 1) === 3
+                    (activeSetup?.columns ?? 1) === 3
                       ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
                       : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
                   }`}

@@ -89,7 +89,8 @@ export const RAW_CAPABLE_PATTERN =
  * emulation), else 'driver' (an exact-size image printed through the
  * installed driver, works with any driver). The user can always switch.
  */
-export function defaultAgentLabelLanguage(name: string, driver?: string | null): LabelPrinterGuess['language'] | 'driver' {
-  if (!RAW_CAPABLE_PATTERN.test(`${name} ${driver || ''}`)) return 'driver'
+export function defaultAgentLabelLanguage(name: string, driver?: string | null, raw?: boolean): LabelPrinterGuess['language'] | 'driver' {
+  // the helper reports raw: false for IPP / AirPrint / shared queues, which can't pass printer commands through
+  if (raw === false || !RAW_CAPABLE_PATTERN.test(`${name} ${driver || ''}`)) return 'driver'
   return guessLabelPrinter(name, driver).language
 }

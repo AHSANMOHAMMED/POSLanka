@@ -516,6 +516,8 @@ export interface PrintAgentTarget {
   driver?: string | null
   /** Port / device URI / host:port. */
   port?: string | null
+  /** false = the queue converts every job as a document (IPP / AirPrint / shared from a Mac): raw ZPL/TSPL fails there */
+  raw?: boolean
   /** printers.json default, or the OS default printer for installed printers. */
   isDefault?: boolean
   /** 'config' = printers.json target, 'os' = installed in Windows / macOS / Linux. Missing on agent 1.0. */
