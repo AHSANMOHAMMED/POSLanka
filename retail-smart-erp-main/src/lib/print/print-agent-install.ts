@@ -9,13 +9,22 @@ import path from 'node:path'
 
 export const ORIGIN_PLACEHOLDER = '__SKYERPOS_ORIGIN__'
 
-export type PrintAgentFile = 'install.ps1' | 'uninstall.ps1' | 'install.sh' | 'index.mjs'
+export type PrintAgentFile =
+  | 'install.ps1'
+  | 'uninstall.ps1'
+  | 'install.sh'
+  | 'index.mjs'
+  | 'skyERPOS-Printer-Setup.cmd'
+  | 'skyERPOS-Printer-Uninstall.cmd'
 
-export const PRINT_AGENT_FILES: Record<PrintAgentFile, { source: string; templated: boolean }> = {
+export const PRINT_AGENT_FILES: Record<PrintAgentFile, { source: string; templated: boolean; download?: boolean }> = {
   'install.ps1': { source: 'install.ps1', templated: true },
   'uninstall.ps1': { source: 'install.ps1', templated: true },
   'install.sh': { source: 'install.sh', templated: true },
   'index.mjs': { source: 'index.mjs', templated: false },
+  // Double-click setup for Windows (curl.exe + tar.exe only, no PowerShell): downloaded, not piped
+  'skyERPOS-Printer-Setup.cmd': { source: 'setup-windows.cmd', templated: true, download: true },
+  'skyERPOS-Printer-Uninstall.cmd': { source: 'setup-windows.cmd', templated: true, download: true },
 }
 
 export function printAgentDir(cwd = process.cwd()): string {
@@ -75,7 +84,8 @@ export function renderPrintAgentScript(file: PrintAgentFile, template: string, o
   if (!PRINT_AGENT_FILES[file].templated) return template
   let out = template.split(ORIGIN_PLACEHOLDER).join(o)
   if (file === 'uninstall.ps1') out = out.replace('$SkyerposUninstall = $false', '$SkyerposUninstall = $true')
-  if (file.endsWith('.ps1')) out = out.replace(/\r?\n/g, '\r\n')
+  if (file === 'skyERPOS-Printer-Uninstall.cmd') out = out.replace('if /i "%~1"=="/uninstall" goto :uninstall', 'goto :uninstall')
+  if (file.endsWith('.ps1') || file.endsWith('.cmd')) out = out.replace(/\r?\n/g, '\r\n')
   return out
 }
 

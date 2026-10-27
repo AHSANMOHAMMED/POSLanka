@@ -4,6 +4,8 @@
  *   GET /print-agent/uninstall.ps1  Windows uninstall
  *   GET /print-agent/install.sh     macOS / Linux:  curl -fsSL <origin>/print-agent/install.sh | bash
  *   GET /print-agent/index.mjs      the agent itself (tools/print-agent/index.mjs)
+ *   GET /print-agent/skyERPOS-Printer-Setup.cmd      Windows: download + double-click (no PowerShell)
+ *   GET /print-agent/skyERPOS-Printer-Uninstall.cmd  Windows: remove it again
  * Exempt from tenant routing / auth in src/proxy.ts. Nothing tenant specific.
  */
 import { loadPrintAgentFile, PRINT_AGENT_FILES, resolveInstallOrigin, type PrintAgentFile } from '@/lib/print/print-agent-install'
@@ -25,6 +27,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ file
         // The script embeds the host it was fetched from.
         Vary: 'Host, X-Forwarded-Host, X-Forwarded-Proto',
         'X-Content-Type-Options': 'nosniff',
+        ...(PRINT_AGENT_FILES[file as PrintAgentFile].download ? { 'Content-Disposition': `attachment; filename="${file}"` } : {}),
       },
     })
   } catch {

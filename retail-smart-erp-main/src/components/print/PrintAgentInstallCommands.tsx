@@ -7,7 +7,7 @@
  * settings modal.
  */
 import { useState, useSyncExternalStore } from 'react'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, Download } from 'lucide-react'
 import { detectAgentOs, printAgentInstallCommands, type AgentInstallCommand, type AgentOs } from '@/lib/print/print-agent-commands'
 import { toast } from '@/components/ui/toast'
 
@@ -80,6 +80,35 @@ function CommandRow({ cmd, text, primary }: { cmd: AgentInstallCommand; text: st
   )
 }
 
+/** Windows: download one file and double-click it (curl.exe + tar.exe inside, no PowerShell). */
+function WindowsSetupDownload({ origin }: { origin: string }) {
+  const base = origin.replace(/\/+$/, '')
+  return (
+    <div className="space-y-1.5">
+      <div className="font-medium text-gray-800 dark:text-gray-200">One-time setup on this Windows PC</div>
+      <a
+        href={`${base}/print-agent/skyERPOS-Printer-Setup.cmd`}
+        download="skyERPOS-Printer-Setup.cmd"
+        className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm"
+      >
+        <Download size={16} /> Download printer setup
+      </a>
+      <ol className="list-decimal pl-5 text-[11px] text-gray-700 dark:text-gray-300 space-y-0.5">
+        <li>Open the downloaded <b>skyERPOS-Printer-Setup.cmd</b>. If Chrome says it may be dangerous, choose <b>Keep</b>; if Windows says &quot;Windows protected your PC&quot;, click <b>More info → Run anyway</b>.</li>
+        <li>Wait until the black window says <b>DONE</b> (the first time downloads about 30 MB), then press any key.</li>
+        <li>Press <b>Refresh</b> here - your printer appears. No admin rights or PowerShell needed; it starts with Windows from now on.</li>
+      </ol>
+      <p className="text-[11px] text-gray-500">
+        Remove it later with{' '}
+        <a href={`${base}/print-agent/skyERPOS-Printer-Uninstall.cmd`} download className="text-blue-700 dark:text-blue-400 underline">
+          skyERPOS-Printer-Uninstall.cmd
+        </a>
+        .
+      </p>
+    </div>
+  )
+}
+
 /** Command Prompt fallback for PCs where PowerShell's own download fails (old TLS, proxy). */
 function AltCommand({ alt, cmd }: { alt: NonNullable<AgentInstallCommand['alt']>; cmd: AgentInstallCommand }) {
   return (
@@ -99,13 +128,12 @@ export function PrintAgentInstallCommands({ downloadBase }: { /** /c/<slug> for 
   const others = [cmds.windows, cmds.unix].filter((c) => c !== mine)
   return (
     <div className="space-y-1.5">
-      {mine ? (
+      {mine?.os === 'windows' ? (
+        <WindowsSetupDownload origin={env.origin} />
+      ) : mine ? (
         <>
-          <div className="font-medium text-gray-800 dark:text-gray-200">
-            One-time setup on this {mine.label === 'Windows' ? 'Windows PC' : 'computer'}: run this command
-          </div>
+          <div className="font-medium text-gray-800 dark:text-gray-200">One-time setup on this computer: run this command</div>
           <CommandRow cmd={mine} text={mine.install} primary />
-          {mine.alt && <AltCommand alt={mine.alt} cmd={mine} />}
         </>
       ) : (
         <p className="text-gray-600 dark:text-gray-400">
@@ -114,9 +142,17 @@ export function PrintAgentInstallCommands({ downloadBase }: { /** /c/<slug> for 
       )}
       <details className="text-[11px]">
         <summary className="cursor-pointer text-blue-700 dark:text-blue-400">
-          {mine ? 'Other computers, uninstall, manual setup' : 'Install commands for Windows / macOS / Linux'}
+          {mine ? 'Advanced: install with a command, other computers, uninstall' : 'Install commands for Windows / macOS / Linux'}
         </summary>
         <div className="mt-1.5 space-y-2 pl-1">
+          {mine?.os === 'windows' && (
+            <div className="space-y-1">
+              <div className="font-medium">Windows (PowerShell command)</div>
+              <CommandRow cmd={mine} text={mine.install} />
+              <p className="text-gray-500">{mine.hint}</p>
+              {mine.alt && <AltCommand alt={mine.alt} cmd={mine} />}
+            </div>
+          )}
           {others.map((c) => (
             <div key={c.os} className="space-y-1">
               <div className="font-medium">{c.label}</div>
