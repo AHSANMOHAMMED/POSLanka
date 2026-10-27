@@ -103,9 +103,20 @@ export function BrowserLabelPrintGuide({ isOpen, setup, rows, agentAvailable, on
 
         <ol className="list-decimal ml-5 space-y-2">
           <li>
-            <b>Printer driver</b> (Windows Settings → Printers &amp; scanners → your label printer → <i>Printing preferences</i>): create a paper / stock of{' '}
-            <b>{W} mm wide x {H} mm high</b>, media <b>Labels with gaps</b> (gap / web sensing), gap <b>{gap} mm</b>, and select it.
+            <b>Printer driver</b>: create a paper / stock of <b>{W} mm wide x {H} mm high</b> (the whole row, not one sticker), media{' '}
+            <b>Labels with gaps</b> (gap / web sensing), gap <b>{gap} mm</b>, and make it the default. Once per printer, on any computer:
             <ul className="list-disc ml-5 mt-1 text-xs text-gray-600 dark:text-gray-400 space-y-0.5">
+              <li>
+                <b>Windows:</b> Settings → Printers &amp; scanners → your label printer → <i>Printing preferences</i> (brand steps below).
+              </li>
+              <li>
+                <b>Mac:</b> in Chrome press <b>⌥⌘P</b> (Print using system dialog) → Paper Size → <i>Manage Custom Sizes…</i> → <b>+</b> → Width {W} mm,
+                Height {H} mm, all margins 0 → OK, choose it and <i>Presets → Save Current Settings as Preset</i>.
+              </li>
+              <li>
+                <b>Linux:</b> open <code>http://localhost:631/printers</code> → your printer → <i>Set Default Options</i> → Media Size <b>Custom {W} x {H} mm</b>{' '}
+                (or run <code>lpoptions -p PRINTER -o media=Custom.{W}x{H}mm</code>), media type Labels with gaps.
+              </li>
               <li>
                 <b>Zebra (ZDesigner driver):</b> Printing Preferences → Page Setup → Stocks → <i>New</i> → Width {W} mm, Height {H} mm, Type &quot;Label with gaps&quot;,
                 Gap {gap} mm → OK, then pick it as the stock. Advanced Setup → keep speed 4, darkness ~20.
