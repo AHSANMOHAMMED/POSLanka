@@ -35,7 +35,9 @@ export default function Index() {
         new Promise<null>((r) => setTimeout(() => r(null), 4000)),
       ]) || (await getUser())
       if (cancelled) return
-      if (!hasPermission(user, 'createSales')) {
+      // Owners / managers (and roles that cannot sell) land on the dashboard; counter staff
+      // go straight to the register (or open a shift first).
+      if (!hasPermission(user, 'createSales') || hasPermission(user, 'viewReports')) {
         setTarget('/home')
         return
       }

@@ -12,6 +12,7 @@ import * as Device from 'expo-device'
 import * as Notifications from 'expo-notifications'
 import * as SecureStore from 'expo-secure-store'
 import { router } from 'expo-router'
+import { goToTab } from './nav'
 import { api, getToken, onBeforeLogout } from './api'
 
 const PUSH_TOKEN_KEY = 'poslanka_push_token'
@@ -133,7 +134,9 @@ export function openNotificationTarget(data: unknown): boolean {
 
 function navigateTo(screen: NotificationScreen) {
   try {
-    router.push(SCREEN_ROUTES[screen] as any)
+    // The register is a bottom tab: switch to it instead of stacking a second tab bar
+    if (screen === 'pos') goToTab('/pos')
+    else router.push(SCREEN_ROUTES[screen] as any)
   } catch {
     // Router not mounted yet; the cold-start path handles it.
   }

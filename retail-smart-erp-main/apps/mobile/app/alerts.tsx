@@ -14,6 +14,7 @@ import { THEME } from '../src/lib/theme'
 import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
 import { useHeaderPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 interface InboxItem {
   id: string
@@ -127,20 +128,11 @@ export default function AlertsScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={[styles.header, headerPad]}>
-        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.title}>Alerts</Text>
-          <Text style={styles.sub}>{unread > 0 ? `${unread} unread` : 'All caught up'}</Text>
-        </View>
-        {tab === 'inbox' && unread > 0 ? (
-          <TouchableOpacity onPress={() => markRead({ all: true })} style={styles.headerAction}>
-            <Text style={styles.headerActionText}>Read all</Text>
-          </TouchableOpacity>
-        ) : <View style={{ width: 64 }} />}
-      </View>
+      <ScreenHeader
+        title="Alerts"
+        subtitle={unread > 0 ? `${unread} unread` : 'All caught up'}
+        right={tab === 'inbox' && unread > 0 ? <IconButton name="checkmark-done-outline" label="Mark all read" color={THEME.colors.primary} onPress={() => markRead({ all: true })} /> : undefined}
+      />
 
       <View style={styles.tabs}>
         {(['inbox', 'settings'] as const).map((t) => (

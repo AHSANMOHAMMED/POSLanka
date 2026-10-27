@@ -248,6 +248,17 @@ export function removePrinterProfile(id: string): PrinterProfile[] {
   return savePrinterProfiles(getPrinterProfilesSnapshot().filter((p) => p.id !== id))
 }
 
+/** Make a label profile the default label printer (getPrinterForRole('label') = first label profile). */
+export function makeDefaultLabelPrinter(id: string): PrinterProfile[] {
+  const list = getPrinterProfilesSnapshot()
+  const target = list.find((p) => p.id === id && p.role === 'label')
+  if (!target) return list
+  const firstLabel = list.findIndex((p) => p.role === 'label')
+  const rest = list.filter((p) => p.id !== id)
+  rest.splice(Math.min(firstLabel, rest.length), 0, target)
+  return savePrinterProfiles(rest)
+}
+
 /** First configured printer for a role. */
 export function getPrinterForRole(role: PrinterRole, list = getPrinterProfilesSnapshot()): PrinterProfile | null {
   return list.find((p) => p.role === role) || null

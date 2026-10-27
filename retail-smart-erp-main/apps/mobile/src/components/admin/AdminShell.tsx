@@ -1,19 +1,24 @@
-// Shared chrome for the super-admin companion screens: header with the admin's
-// identity + sign-out, and a bottom tab bar (Pulse / Live / Vendors / Approvals).
+// Shared chrome for the super-admin companion screens: header with the admin's identity and a
+// bottom tab bar with icons (Pulse / Live / Vendors / Approvals / More). Detail screens (`back`)
+// get a back arrow and no tab bar, like pushed screens in the vendor app.
 import React, { useEffect, useState } from 'react'
-import { View, Text, Pressable, StyleSheet, Alert, Image } from 'react-native'
-import { router, usePathname } from 'expo-router'
+import { View, Text, Pressable, StyleSheet, Image, BackHandler } from 'react-native'
+import { router, usePathname, useFocusEffect } from 'expo-router'
+import { Ionicons } from '@expo/vector-icons'
 import { THEME } from '../../lib/theme'
-import { ADMIN_ROLE_LABEL, adminLogout, getAdminUser, type AdminUser } from '../../lib/adminApi'
+import { ADMIN_ROLE_LABEL, getAdminUser, type AdminUser } from '../../lib/adminApi'
 import { useHeaderPad, useBottomPad } from '../../lib/safeArea'
 
-export type AdminTab = 'pulse' | 'live' | 'vendors' | 'approvals'
+export type AdminTab = 'pulse' | 'live' | 'vendors' | 'approvals' | 'more'
 
-const TABS: Array<{ id: AdminTab; label: string; emoji: string; href: string }> = [
-  { id: 'pulse', label: 'Pulse', emoji: '📈', href: '/admin/pulse' },
-  { id: 'live', label: 'Live', emoji: '🟢', href: '/admin/live' },
-  { id: 'vendors', label: 'Vendors', emoji: '🏪', href: '/admin/vendors' },
-  { id: 'approvals', label: 'Approvals', emoji: '✅', href: '/admin/approvals' },
+type IoniconName = React.ComponentProps<typeof Ionicons>['name']
+
+const TABS: Array<{ id: AdminTab; label: string; icon: IoniconName; iconIdle: IoniconName; href: string }> = [
+  { id: 'pulse', label: 'Pulse', icon: 'pulse', iconIdle: 'pulse-outline', href: '/admin/pulse' },
+  { id: 'live', label: 'Live', icon: 'radio', iconIdle: 'radio-outline', href: '/admin/live' },
+  { id: 'vendors', label: 'Vendors', icon: 'storefront', iconIdle: 'storefront-outline', href: '/admin/vendors' },
+  { id: 'approvals', label: 'Approvals', icon: 'checkmark-done-circle', iconIdle: 'checkmark-done-circle-outline', href: '/admin/approvals' },
+  { id: 'more', label: 'More', icon: 'grid', iconIdle: 'grid-outline', href: '/admin/more' },
 ]
 
 interface AdminShellProps {
@@ -36,19 +41,24 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
     getAdminUser().then(setAdmin)
   }, [])
 
-  function confirmSignOut() {
-    Alert.alert('Sign Out', `Sign out of the platform console${admin?.email ? ` (${admin.email})` : ''}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign Out', style: 'destructive', onPress: () => adminLogout() },
-    ])
-  }
+  // Android back on a tab other than Pulse goes to Pulse first (like a tab navigator), then exits.
+  useFocusEffect(
+    React.useCallback(() => {
+      if (back || tab === 'pulse') return
+      const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+        router.replace('/admin/pulse')
+        return true
+      })
+      return () => sub.remove()
+    }, [back, tab])
+  )
 
   return (
     <View style={styles.container}>
       <View style={[styles.header, headerPad]}>
         {back ? (
-          <Pressable style={styles.backBtn} onPress={() => (router.canGoBack() ? router.back() : router.replace('/admin/vendors'))}>
-            <Text style={styles.backBtnText}>←</Text>
+          <Pressable style={styles.backBtn} hitSlop={8} accessibilityLabel="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/admin/vendors'))}>
+            <Ionicons name="arrow-back" size={24} color={THEME.colors.text} />
           </Pressable>
         ) : (
           <Image source={require('../../../assets/icon.png')} style={styles.badge} accessibilityLabel="skyERPOS" />
@@ -62,25 +72,31 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
           </Text>
         </View>
         {right}
-        <Pressable style={styles.signOutBtn} onPress={confirmSignOut} accessibilityLabel="Sign out">
-          <Text style={styles.signOutText}>Sign out</Text>
-        </Pressable>
       </View>
 
       <View style={{ flex: 1 }}>{children}</View>
 
-      <View style={[styles.tabBar, { paddingBottom: bottomPad }]}>
-        {TABS.map((t) => {
-          const active = t.id === tab || pathname === t.href
-          return (
-            <Pressable key={t.id} style={styles.tabBtn} onPress={() => (active ? undefined : router.replace(t.href as any))}>
-              <Text style={[styles.tabEmoji, !active && { opacity: 0.6 }]}>{t.emoji}</Text>
-              <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{t.label}</Text>
-              {active ? <View style={styles.tabIndicator} /> : null}
-            </Pressable>
-          )
-        })}
-      </View>
+      {back ? null : (
+        <View style={[styles.tabBar, { paddingBottom: bottomPad }]} accessibilityRole="tablist">
+          {TABS.map((t) => {
+            const active = t.id === tab || pathname === t.href
+            return (
+              <Pressable
+                key={t.id}
+                style={styles.tabBtn}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={t.label}
+                onPress={() => (active ? undefined : router.replace(t.href as any))}
+              >
+                {active ? <View style={styles.tabIndicator} /> : null}
+                <Ionicons name={active ? t.icon : t.iconIdle} size={23} color={active ? THEME.colors.primary : THEME.colors.textMuted} />
+                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{t.label}</Text>
+              </Pressable>
+            )
+          })}
+        </View>
+      )}
     </View>
   )
 }
@@ -257,7 +273,7 @@ const styles = StyleSheet.create({
     borderBottomColor: THEME.colors.border,
   },
   badge: { width: 38, height: 38, borderRadius: 10, borderWidth: 1, borderColor: THEME.colors.border },
-  backBtn: { width: 38, height: 38, borderRadius: 8, backgroundColor: THEME.colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center' },
+  backBtn: { width: 44, height: 44, marginLeft: -8, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   backBtnText: { fontSize: 20, fontWeight: '700', color: THEME.colors.text },
   headerTitle: { fontSize: 17, fontWeight: '800', color: THEME.colors.text },
   headerSub: { fontSize: 11, color: THEME.colors.textMuted },
@@ -271,9 +287,9 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     paddingTop: 6,
   },
-  tabBtn: { flex: 1, alignItems: 'center', paddingVertical: 6, position: 'relative' },
+  tabBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 54, paddingVertical: 6, position: 'relative' },
   tabEmoji: { fontSize: 18 },
-  tabLabel: { fontSize: 10, fontWeight: '700', color: THEME.colors.textMuted, marginTop: 2 },
+  tabLabel: { fontSize: 11, fontWeight: '700', color: THEME.colors.textMuted, marginTop: 2 },
   tabLabelActive: { color: THEME.colors.primary },
   tabIndicator: { position: 'absolute', top: 0, width: 28, height: 3, borderRadius: 2, backgroundColor: THEME.colors.primary },
   kpi: { width: '48%', flexGrow: 1, backgroundColor: '#FFFFFF', borderRadius: 14, padding: 14, borderWidth: 1, borderColor: THEME.colors.border },

@@ -33,7 +33,8 @@ import { unsyncedSalesForShift } from '../src/lib/shiftGuard'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from '../src/components/SupervisorPinModal'
 import type { ZReportDetails } from '../src/lib/escpos'
 import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
-import { goBack } from '../src/lib/nav'
+import { goBack, goToTab } from '../src/lib/nav'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 /** H1: structured variance reasons (mirror of SHIFT_VARIANCE_REASONS on the server) */
 const VARIANCE_REASONS: Array<{ value: string; label: string }> = [
@@ -223,7 +224,7 @@ export default function ShiftsScreen() {
       }
       setClosingResult(null)
       Alert.alert('Shift Opened', `Register ${res.data.posProfile?.name || selectedProfile.name} is ready for billing.`, [
-        { text: 'Go to POS', onPress: () => router.replace('/pos') },
+        { text: 'Go to POS', onPress: () => goToTab('/pos') },
         { text: 'Stay', style: 'cancel', onPress: () => load(true) },
       ])
       setShift(res.data)
@@ -326,28 +327,23 @@ export default function ShiftsScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, headerPad]}>
-        <Pressable style={styles.backBtn} onPress={() => goBack()}>
-          <Text style={styles.backBtnText}>←</Text>
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Cashier Shift & Float</Text>
-          <Text style={styles.headerSub} numberOfLines={1}>
-            {user ? `${user.name} • ${displayRole(user)} • ${user.tenantName}${user.businessId ? ` (${formatBusinessId(user.businessId)})` : ''}` : 'Drawer status & reconciliation'}
-          </Text>
-        </View>
-        <Pressable
-          style={styles.logoutBtn}
-          onPress={() =>
-            Alert.alert('Sign Out', 'Sign out of this device?', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Sign Out', style: 'destructive', onPress: () => logout() },
-            ])
-          }
-        >
-          <Text style={styles.logoutText}>Sign out</Text>
-        </Pressable>
-      </View>
+      <ScreenHeader
+        title="Shift & float"
+        subtitle={user ? `${user.name} • ${displayRole(user)} • ${user.tenantName}${user.businessId ? ` (${formatBusinessId(user.businessId)})` : ''}` : 'Drawer status & reconciliation'}
+        right={
+          <IconButton
+            name="log-out-outline"
+            label="Sign out"
+            color={THEME.colors.error}
+            onPress={() =>
+              Alert.alert('Sign Out', 'Sign out of this device?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Sign Out', style: 'destructive', onPress: () => logout() },
+              ])
+            }
+          />
+        }
+      />
 
       {user && !hasPermission(user, 'createSales') ? (
         <EmptyView icon="🔒" title="Not available for your role" subtitle="Shifts are for staff who make sales. Your role cannot open a register shift." />
@@ -416,7 +412,7 @@ export default function ShiftsScreen() {
               </View>
             )}
 
-            <Pressable style={styles.posBtn} onPress={() => router.replace('/pos')}>
+            <Pressable style={styles.posBtn} onPress={() => goToTab('/pos')}>
               <Text style={styles.posBtnText}>Go to POS →</Text>
             </Pressable>
 

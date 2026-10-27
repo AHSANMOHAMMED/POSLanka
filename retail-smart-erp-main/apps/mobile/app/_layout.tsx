@@ -26,11 +26,10 @@ export default function RootLayout() {
     <TextScaleProvider>
     <SafeAreaProvider>
       <StatusBar style="dark" />
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
         <Stack.Screen name="index" />
-        <Stack.Screen name="home" />
-        <Stack.Screen name="login" />
-        <Stack.Screen name="pos" />
+        <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
+        <Stack.Screen name="login" options={{ animation: 'fade' }} />
         <Stack.Screen name="shifts" />
         <Stack.Screen name="approvals" />
         <Stack.Screen name="inventory" />
@@ -42,6 +41,8 @@ export default function RootLayout() {
         <Stack.Screen name="alerts" />
         <Stack.Screen name="labels" />
         <Stack.Screen name="money" />
+        <Stack.Screen name="sales" />
+        <Stack.Screen name="module/[key]" />
       </Stack>
     </SafeAreaProvider>
     </TextScaleProvider>

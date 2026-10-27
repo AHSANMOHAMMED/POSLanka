@@ -23,6 +23,7 @@ import { LoadingView, EmptyView, ErrorView, InlineNotice } from '../src/componen
 import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
 import { displayLogin } from '../src/lib/displayLogin'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 interface StaffRow {
   id: string
@@ -333,24 +334,11 @@ export default function StaffScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={[styles.header, headerPad]}>
-        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.storeName} numberOfLines={1}>
-            {user?.tenantName || 'skyERPOS'}
-          </Text>
-          <Text style={styles.branchSub} numberOfLines={1}>Staff accounts</Text>
-        </View>
-        {canManage ? (
-          <TouchableOpacity onPress={openCreate} style={styles.addBtn}>
-            <Text style={styles.addBtnText}>＋ Add</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 36 }} />
-        )}
-      </View>
+      <ScreenHeader
+        title="Staff"
+        subtitle={user?.tenantName || 'Staff accounts'}
+        right={canManage ? <IconButton name="person-add-outline" label="Add staff" color={THEME.colors.primary} onPress={openCreate} /> : undefined}
+      />
 
       {user === undefined ? (
         <LoadingView />

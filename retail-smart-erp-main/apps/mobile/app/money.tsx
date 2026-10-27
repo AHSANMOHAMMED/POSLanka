@@ -9,6 +9,7 @@ import { useFeatureFlags } from '../src/lib/features'
 import { InlineNotice } from '../src/components/StateViews'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from '../src/components/SupervisorPinModal'
 import { CustomerPickerModal, type Customer } from '../src/components/CustomerPickerModal'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 /**
  * K1: money out & cheques at the counter.
@@ -128,16 +129,7 @@ export default function MoneyScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={[styles.header, headerPad]}>
-        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Money out & cheques</Text>
-          <Text style={styles.headerSub} numberOfLines={1}>{shift ? `Shift ${shift.entryNumber}` : 'No open shift'}</Text>
-        </View>
-        <View style={{ width: 36 }} />
-      </View>
+      <ScreenHeader title="Money out & cheques" subtitle={shift ? `Shift ${shift.entryNumber}` : 'No open shift'} />
 
       <View style={styles.tabs}>
         {(['expense', 'cheque'] as Tab[]).filter((t) => t === 'expense' || chequesOn).map((t) => (

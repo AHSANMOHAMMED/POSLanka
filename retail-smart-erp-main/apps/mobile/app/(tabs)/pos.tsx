@@ -10,15 +10,18 @@ import {
   Alert,
   ScrollView,
   RefreshControl,
-  Image,
+  Keyboard,
+  useWindowDimensions,
 } from 'react-native'
 import { router, useFocusEffect } from 'expo-router'
 import * as Crypto from 'expo-crypto'
-import { apiGet, apiPost, asList, getUser, qs, refreshPermissions, type AuthUser } from '../src/lib/api'
-import { hasPermission } from '../src/lib/roles'
-import { loadShiftOfflineAware, shiftCounterName, shiftWarehouseName, type Shift } from '../src/lib/shift'
-import { calculateCartTax, EMPTY_TAX_CONFIG, loadTaxConfig, taxConfigFromBundle, type TaxConfig } from '../src/lib/tax'
-import { isOnline, subscribe as subscribeQueue, syncNow, type QueueState } from '../src/lib/offlineQueue'
+import * as Haptics from 'expo-haptics'
+import { Ionicons } from '@expo/vector-icons'
+import { apiGet, apiPost, asList, getUser, qs, refreshPermissions, type AuthUser } from '../../src/lib/api'
+import { hasPermission } from '../../src/lib/roles'
+import { loadShiftOfflineAware, shiftCounterName, shiftWarehouseName, type Shift } from '../../src/lib/shift'
+import { calculateCartTax, EMPTY_TAX_CONFIG, loadTaxConfig, taxConfigFromBundle, type TaxConfig } from '../../src/lib/tax'
+import { isOnline, subscribe as subscribeQueue, syncNow, type QueueState } from '../../src/lib/offlineQueue'
 import {
   catalogKey,
   findByCode,
@@ -31,25 +34,26 @@ import {
   syncCatalog,
   type CatalogStatus,
   type OfflineBundle,
-} from '../src/lib/localdb'
-import { OfflineSalesModal } from '../src/components/OfflineSalesModal'
-import { THEME, formatLKR } from '../src/lib/theme'
-import { CartDrawerModal, CartLine } from '../src/components/CartDrawerModal'
-import { TenderModal, type SaleResultData } from '../src/components/TenderModal'
-import { SaleReceiptModal } from '../src/components/SaleReceiptModal'
-import { BarcodeScannerModal } from '../src/components/BarcodeScannerModal'
-import { CustomerPickerModal, type Customer } from '../src/components/CustomerPickerModal'
-import { HeldSalesModal, type HeldSale } from '../src/components/HeldSalesModal'
-import { ReturnModal } from '../src/components/ReturnModal'
-import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
-import { invoiceNoFromScan, loadBusinessInfo, type BusinessInfo } from '../src/lib/receipt'
-import { AlertsBell } from '../src/components/AlertsBell'
-import { useKitchenTickets } from '../src/lib/kitchenPrint'
-import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCartItems, lineTotal, scanToLine } from '../src/lib/cartMath'
-import { getLocalItem } from '../src/lib/localdb'
-import { applyCartQuote, offlineCartQuote, quoteKey, quoteRequestLines, taxableLineTotals, type CartQuote } from '../src/lib/cartPricing'
-import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
-import { useFeatureFlags } from '../src/lib/features'
+} from '../../src/lib/localdb'
+import { OfflineSalesModal } from '../../src/components/OfflineSalesModal'
+import { THEME, formatLKR } from '../../src/lib/theme'
+import { CartDrawerModal, CartLine } from '../../src/components/CartDrawerModal'
+import { TenderModal, type SaleResultData } from '../../src/components/TenderModal'
+import { SaleReceiptModal } from '../../src/components/SaleReceiptModal'
+import { BarcodeScannerModal } from '../../src/components/BarcodeScannerModal'
+import { CustomerPickerModal, type Customer } from '../../src/components/CustomerPickerModal'
+import { HeldSalesModal, type HeldSale } from '../../src/components/HeldSalesModal'
+import { ReturnModal } from '../../src/components/ReturnModal'
+import { LoadingView, ErrorView } from '../../src/components/StateViews'
+import { EmptyState, IconButton, ScreenHeader } from '../../src/components/ui'
+import { invoiceNoFromScan, loadBusinessInfo, type BusinessInfo } from '../../src/lib/receipt'
+import { AlertsBell } from '../../src/components/AlertsBell'
+import { useKitchenTickets } from '../../src/lib/kitchenPrint'
+import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCartItems, lineTotal, scanToLine } from '../../src/lib/cartMath'
+import { getLocalItem } from '../../src/lib/localdb'
+import { applyCartQuote, offlineCartQuote, quoteKey, quoteRequestLines, taxableLineTotals, type CartQuote } from '../../src/lib/cartPricing'
+import { useHeaderPad } from '../../src/lib/safeArea'
+import { useFeatureFlags } from '../../src/lib/features'
 
 /** Search wording of the newer business types (same terminology as the web POS, src/lib/terminology.ts) */
 const SEARCH_PLACEHOLDER_BY_TYPE: Record<string, string> = {
@@ -121,8 +125,11 @@ function stockOf(item: Item): number | null {
 }
 
 export default function PosScreen() {
-  const headerPad = useHeaderPad()
-  const bottomPad = useBottomPad()
+  const headerPad = useHeaderPad(4)
+  const { width: screenW, height: screenH } = useWindowDimensions()
+  const gridCols = screenW >= 900 ? 4 : screenW >= 600 ? 3 : 2
+  /** Cart lines area: about three lines on a phone, never more than a third of the screen. */
+  const cartListMax = Math.min(Math.round(screenH * 0.3), 3 * 60 + 20)
   const [user, setUser] = useState<AuthUser | null>(null)
 
   // Shift gate
@@ -176,6 +183,18 @@ export default function PosScreen() {
   const [customerPickerVisible, setCustomerPickerVisible] = useState(false)
   const [heldVisible, setHeldVisible] = useState(false)
   const [saleResult, setSaleResult] = useState<SaleResultData | null>(null)
+  // Sticky cart panel: lines expanded (collapsed automatically while the keyboard is up)
+  const [cartOpen, setCartOpen] = useState(true)
+  const [keyboardUp, setKeyboardUp] = useState(false)
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', () => setKeyboardUp(true))
+    const hide = Keyboard.addListener('keyboardDidHide', () => setKeyboardUp(false))
+    return () => {
+      show.remove()
+      hide.remove()
+    }
+  }, [])
 
   // ------------------------------------------------------------------ init
   // Offline bundle: tax templates, categories, scale-label layout (cached on the device).
@@ -377,10 +396,15 @@ export default function PosScreen() {
   }
 
   // ------------------------------------------------------------------ cart ops
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   function triggerToast(text: string) {
     setToastMessage(text)
-    setTimeout(() => setToastMessage(null), 1500)
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToastMessage(null), 1500)
   }
+  useEffect(() => () => {
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+  }, [])
 
   /**
    * Adds an item. `opts.unitPrice` overrides the catalog price (price-embedded
@@ -439,7 +463,8 @@ export default function PosScreen() {
       ])
     }
     const qtyLabel = opts.weighed ? `${qty} ${item.unit || 'kg'}` : `+${qty}`
-    triggerToast(`${qtyLabel} ${item.name.split(' ')[0]} added`)
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined)
+    triggerToast(`${qtyLabel} ${item.name} added`)
   }
 
   async function lookupBarcode(code: string) {
@@ -548,6 +573,47 @@ export default function PosScreen() {
     setCart((prev) => prev.filter((p) => p.id !== id))
   }
 
+  // ---- touch helpers for the grid + sticky cart (UI only; quantities go through updateQuantity)
+  const qtyByItem = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const l of cart) {
+      const key = l.itemId || l.id
+      m.set(key, (m.get(key) || 0) + l.quantity)
+    }
+    return m
+  }, [cart])
+
+  function changeQty(lineId: string, delta: number) {
+    Haptics.selectionAsync().catch(() => undefined)
+    updateQuantity(lineId, delta)
+  }
+
+  /** "−" on a product card: one less of the most recently added line of that item. */
+  function decrementItem(itemId: string) {
+    const line = [...cart].reverse().find((l) => (l.itemId || l.id) === itemId)
+    if (line) changeQty(line.id, -1)
+  }
+
+  function confirmRemove(line: CartLine) {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined)
+    Alert.alert('Remove item', `Remove ${line.name} from the cart?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: () => removeItem(line.id) },
+    ])
+  }
+
+  function confirmClear() {
+    Alert.alert('Clear cart', 'Remove every item and the linked customer?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Clear', style: 'destructive', onPress: () => clearCart() },
+    ])
+  }
+
+  function openTender() {
+    Keyboard.dismiss()
+    setTenderVisible(true)
+  }
+
   function clearCart() {
     setCart([])
     setCouponCode('')
@@ -642,9 +708,6 @@ export default function PosScreen() {
   const cartTotalPayable = cartPayable(Math.round((cartSubtotal - cartPromotionDiscount) * 100) / 100, cartTax)
   const taxLabel = cartTax.breakdown.length === 1 ? cartTax.breakdown[0].taxName : 'Tax'
 
-  const canApprove = hasPermission(user, 'approveRequisitions') || hasPermission(user, 'approveAdvances')
-  const canInventory = hasPermission(user, 'manageInventory')
-
   function handleSyncPress() {
     setOfflineSalesVisible(true)
     if (queueState.pending === 0) return
@@ -661,123 +724,61 @@ export default function PosScreen() {
   if (user && !hasPermission(user, 'createSales')) {
     return (
       <View style={styles.container}>
-        <View style={[styles.header, headerPad]}>
-          <Text style={styles.appTitle}>Mobile POS</Text>
-        </View>
-        <EmptyView icon="🔒" title="Not available for your role" subtitle="Your role cannot make sales. Use the menu for the tasks you can do." />
-        <Pressable style={[styles.gateBtn, { alignSelf: 'center', marginBottom: 24 + bottomPad }]} onPress={() => router.replace('/home')}>
-          <Text style={styles.gateBtnText}>Open menu →</Text>
-        </Pressable>
+        <ScreenHeader title="Sell" back={false} />
+        <EmptyState icon="lock-closed-outline" title="Not available for your role" subtitle="Your role cannot make sales. Use the tabs below for the tasks you can do." actionLabel="Go to Home" onAction={() => router.navigate('/home')} />
       </View>
     )
   }
 
+  const canReturn = !!shift && hasPermission(user, 'processReturns')
+  const showFullCart = cartOpen && !keyboardUp
+  const lastLine = cart[cart.length - 1]
+
   return (
     <View style={styles.container}>
-      {/* Header: tenant ▸ branch ▸ counter, online state, offline queue */}
+      {/* Header: register title, branch ▸ counter, online state + register actions */}
       <View style={[styles.header, headerPad]}>
         <View style={styles.headerLeft}>
-          <View style={styles.breadcrumbRow}>
-            <Text style={styles.breadcrumbText} numberOfLines={1}>
-              {user?.tenantName || 'skyERPOS'} ▸ {shiftWarehouseName(shift) || '—'} ▸ {shiftCounterName(shift) || 'No shift'}
-            </Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.appTitle}>Sell</Text>
             <View style={[styles.onlinePill, !queueState.online && styles.offlinePill]}>
               <View style={[styles.pulsingDot, !queueState.online && styles.offlineDot]} />
               <Text style={[styles.onlineText, !queueState.online && styles.offlineText]}>{queueState.online ? 'Online' : 'Offline'}</Text>
             </View>
           </View>
-          <View style={styles.titleRow}>
-            <Image source={require('../assets/icon.png')} style={styles.brandIcon} accessibilityLabel="skyERPOS" />
-            <Text style={styles.appTitle}>Mobile POS</Text>
-            {queueState.pending + queueState.rejected > 0 && (
-              <Pressable style={[styles.pendingBadge, queueState.rejected > 0 && styles.pendingBadgeError]} onPress={handleSyncPress}>
-                {queueState.syncing ? (
-                  <ActivityIndicator size="small" color={THEME.colors.onSecondaryContainer} />
-                ) : (
-                  <Text style={styles.pendingBadgeText}>
-                    ⏳ {queueState.pending} pending{queueState.rejected > 0 ? ` · ${queueState.rejected} failed` : ''} · Sync now
-                  </Text>
-                )}
-              </Pressable>
-            )}
-          </View>
+          <Text style={styles.breadcrumbText} numberOfLines={1}>
+            {shiftWarehouseName(shift) || user?.tenantName || 'skyERPOS'} ▸ {shiftCounterName(shift) || 'No shift'}
+          </Text>
         </View>
-
-        <Pressable style={styles.shiftBtn} onPress={() => router.push('/shifts')}>
-          <Text style={styles.shiftBtnEmoji}>🕒</Text>
-          <Text style={styles.shiftBtnText}>Shift</Text>
-        </Pressable>
+        <IconButton name="pause-circle-outline" label="Held tickets" onPress={() => setHeldVisible(true)} />
+        {canReturn ? (
+          <IconButton
+            name="return-down-back-outline"
+            label="Return"
+            onPress={() => {
+              setQuery('')
+              setReturnQuery('INV-')
+            }}
+          />
+        ) : null}
+        <IconButton name="time-outline" label="Shift" onPress={() => router.push('/shifts')} />
+        <AlertsBell compact />
       </View>
 
-      {/* W6: offline mode + catalog freshness + offline sales */}
-      {shift && (shiftOffline || !queueState.online) ? (
-        <View style={styles.offlineModeBanner}>
-          <Text style={styles.offlineModeText}>📴 Offline mode — sales will sync</Text>
-        </View>
-      ) : null}
-      {shift ? (
-        <Pressable style={styles.catalogBar} onPress={() => setOfflineSalesVisible(true)}>
-          <Text style={styles.catalogBarText} numberOfLines={1}>
-            {catalog?.syncing
-              ? 'Updating catalog…'
-              : localReady
-                ? `Catalog updated ${formatAge(catalog?.lastSyncAt, nowTick)} · ${catalog?.itemCount ?? 0} items`
-                : 'Catalog not on this device yet'}
-            {queueState.pending > 0 ? ` · ${queueState.pending} pending` : ''}
-            {queueState.rejected > 0 ? ` · ${queueState.rejected} need attention` : ''}
+      {/* W6: offline mode + pending sync + catalog freshness */}
+      {queueState.pending + queueState.rejected > 0 ? (
+        <Pressable style={[styles.syncBar, queueState.rejected > 0 && styles.syncBarError]} onPress={handleSyncPress} accessibilityRole="button">
+          {queueState.syncing ? <ActivityIndicator size="small" color={THEME.colors.onSecondaryContainer} /> : <Ionicons name="sync-outline" size={16} color={queueState.rejected > 0 ? THEME.colors.error : THEME.colors.onSecondaryContainer} />}
+          <Text style={[styles.syncBarText, queueState.rejected > 0 && { color: THEME.colors.error }]} numberOfLines={1}>
+            {queueState.pending} pending{queueState.rejected > 0 ? ` · ${queueState.rejected} failed` : ''} · Tap to sync
           </Text>
         </Pressable>
+      ) : shift && (shiftOffline || !queueState.online) ? (
+        <View style={styles.offlineModeBanner}>
+          <Ionicons name="cloud-offline-outline" size={14} color={THEME.colors.onSecondaryContainer} />
+          <Text style={styles.offlineModeText}>Offline mode — sales are saved and will sync</Text>
+        </View>
       ) : null}
-
-      {/* Quick navigation (role-filtered) */}
-      <View style={styles.quickNavContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.quickNavContent}>
-          <AlertsBell />
-          <Pressable style={styles.quickNavPill} onPress={() => router.push('/home')}>
-            <Text style={styles.quickNavPillText}>☰ Menu</Text>
-          </Pressable>
-          <Pressable style={styles.quickNavPill} onPress={() => setHeldVisible(true)}>
-            <Text style={styles.quickNavPillText}>⏸ Held</Text>
-          </Pressable>
-          {canApprove && (
-            <Pressable style={styles.quickNavPill} onPress={() => router.push('/approvals')}>
-              <Text style={styles.quickNavPillText}>✓ Approvals</Text>
-            </Pressable>
-          )}
-          {canInventory && (
-            <Pressable style={styles.quickNavPill} onPress={() => router.push('/inventory')}>
-              <Text style={styles.quickNavPillText}>📦 Stock</Text>
-            </Pressable>
-          )}
-          {hasPermission(user, 'submitStockIntake') && (
-            <Pressable style={styles.quickNavPill} onPress={() => router.push('/intake')}>
-              <Text style={styles.quickNavPillText}>📥 Intake</Text>
-            </Pressable>
-          )}
-          {hasPermission(user, 'manageUsers') && (
-            <Pressable style={styles.quickNavPill} onPress={() => router.push('/staff')}>
-              <Text style={styles.quickNavPillText}>👥 Staff</Text>
-            </Pressable>
-          )}
-          <Pressable style={styles.quickNavPill} onPress={() => router.push('/summary')}>
-            <Text style={styles.quickNavPillText}>📊 Summary</Text>
-          </Pressable>
-          <Pressable style={styles.quickNavPill} onPress={() => router.push('/printer')}>
-            <Text style={styles.quickNavPillText}>🖨️ Printer</Text>
-          </Pressable>
-          {shift && hasPermission(user, 'processReturns') ? (
-            <Pressable
-              style={styles.quickNavPill}
-              onPress={() => {
-                setQuery('')
-                setReturnQuery('INV-')
-              }}
-            >
-              <Text style={styles.quickNavPillText}>↩ Return</Text>
-            </Pressable>
-          ) : null}
-        </ScrollView>
-      </View>
 
       {shiftLoading ? (
         <LoadingView text="Checking your shift…" />
@@ -786,14 +787,18 @@ export default function PosScreen() {
       ) : !shift ? (
         <View style={styles.gateWrap}>
           <View style={styles.gateCard}>
-            <Text style={styles.gateEmoji}>🔒</Text>
+            <View style={styles.gateIcon}>
+              <Ionicons name="lock-closed" size={30} color={THEME.colors.onSecondaryContainer} />
+            </View>
             <Text style={styles.gateTitle}>No open shift</Text>
             <Text style={styles.gateSub}>Sales are blocked until you open a shift on a POS counter. Your opening float is recorded for reconciliation.</Text>
             <Pressable style={styles.gateBtn} onPress={() => router.push('/shifts')}>
-              <Text style={styles.gateBtnText}>Open Shift →</Text>
+              <Ionicons name="lock-open-outline" size={18} color="#FFF" />
+              <Text style={styles.gateBtnText}>Open shift</Text>
             </Pressable>
             <Pressable style={styles.gateRetry} onPress={loadShift}>
-              <Text style={styles.gateRetryText}>↻ Re-check</Text>
+              <Ionicons name="refresh" size={14} color={THEME.colors.primary} />
+              <Text style={styles.gateRetryText}>Re-check</Text>
             </Pressable>
           </View>
         </View>
@@ -801,211 +806,273 @@ export default function PosScreen() {
         <>
           {/* Search & scan */}
           <View style={styles.searchSection}>
-            <View style={styles.searchBar}>
-              <Text style={styles.searchIcon}>🔍</Text>
-              <TextInput
-                style={styles.searchInput}
-                placeholder={SEARCH_PLACEHOLDER_BY_TYPE[user?.businessType || ''] || 'Scan barcode / PLU / INV-… or search items'}
-                placeholderTextColor={THEME.colors.textSubtle}
-                value={query}
-                onChangeText={setQuery}
-                onSubmitEditing={handleSubmitSearch}
-                returnKeyType="search"
-                blurOnSubmit={false}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {lookupBusy ? <ActivityIndicator size="small" color={THEME.colors.primary} /> : null}
-              {query ? (
-                <Pressable onPress={() => setQuery('')} style={styles.clearQueryBtn}>
-                  <Text style={styles.clearQueryText}>✕</Text>
-                </Pressable>
-              ) : null}
-              <Pressable style={styles.cameraScanBtn} onPress={() => setScannerVisible(true)} accessibilityLabel="Scan with camera">
-                <Text style={styles.cameraScanText}>📷</Text>
+            <View style={styles.searchRow}>
+              <View style={styles.searchBar}>
+                <Ionicons name="search" size={20} color={THEME.colors.textMuted} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder={SEARCH_PLACEHOLDER_BY_TYPE[user?.businessType || ''] || 'Search items or type a barcode'}
+                  placeholderTextColor={THEME.colors.textSubtle}
+                  value={query}
+                  onChangeText={setQuery}
+                  onSubmitEditing={handleSubmitSearch}
+                  returnKeyType="search"
+                  blurOnSubmit={false}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {lookupBusy ? <ActivityIndicator size="small" color={THEME.colors.primary} /> : null}
+                {query ? (
+                  <Pressable onPress={() => setQuery('')} style={styles.clearQueryBtn} hitSlop={8} accessibilityLabel="Clear search">
+                    <Ionicons name="close-circle" size={20} color={THEME.colors.textSubtle} />
+                  </Pressable>
+                ) : null}
+              </View>
+              <Pressable style={({ pressed }) => [styles.cameraScanBtn, pressed && { opacity: 0.8 }]} onPress={() => setScannerVisible(true)} accessibilityLabel="Scan with camera">
+                <Ionicons name="scan" size={26} color="#FFF" />
               </Pressable>
             </View>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryScroll}>
-              <Pressable style={[styles.catChip, selectedCategoryId === 'all' && styles.catChipActive]} onPress={() => setSelectedCategoryId('all')}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryScroll} keyboardShouldPersistTaps="handled">
+              <Pressable hitSlop={{ top: 4, bottom: 4 }} style={[styles.catChip, selectedCategoryId === 'all' && styles.catChipActive]} onPress={() => setSelectedCategoryId('all')}>
                 <Text style={[styles.catChipText, selectedCategoryId === 'all' && styles.catChipTextActive]}>
-                  All Items{pagination && selectedCategoryId === 'all' ? ` (${pagination.total})` : ''}
+                  All{pagination && selectedCategoryId === 'all' ? ` · ${pagination.total}` : ''}
                 </Text>
               </Pressable>
               {categories.map((cat) => {
                 const isSelected = selectedCategoryId === cat.id
                 return (
-                  <Pressable key={cat.id} style={[styles.catChip, isSelected && styles.catChipActive]} onPress={() => setSelectedCategoryId(cat.id)}>
+                  <Pressable key={cat.id} hitSlop={{ top: 4, bottom: 4 }} style={[styles.catChip, isSelected && styles.catChipActive]} onPress={() => setSelectedCategoryId(cat.id)}>
                     <Text style={[styles.catChipText, isSelected && styles.catChipTextActive]}>
                       {cat.name}
-                      {isSelected && pagination ? ` (${pagination.total})` : ''}
+                      {isSelected && pagination ? ` · ${pagination.total}` : ''}
                     </Text>
                   </Pressable>
                 )
               })}
-              <Pressable style={[styles.catChip, styles.catChipOutline, inStockOnly && styles.catChipActive]} onPress={() => setInStockOnly((v) => !v)}>
-                <Text style={[styles.catChipText, inStockOnly && styles.catChipTextActive]}>In stock only</Text>
+              <Pressable hitSlop={{ top: 4, bottom: 4 }} style={[styles.catChip, styles.catChipOutline, inStockOnly && styles.catChipActive]} onPress={() => setInStockOnly((v) => !v)}>
+                <Ionicons name={inStockOnly ? 'checkbox' : 'square-outline'} size={14} color={inStockOnly ? '#FFF' : THEME.colors.textMuted} />
+                <Text style={[styles.catChipText, inStockOnly && styles.catChipTextActive]}>In stock</Text>
               </Pressable>
             </ScrollView>
           </View>
 
           {/* Customer strip */}
-          <View style={styles.customerStrip}>
-            <View style={styles.customerInfo}>
-              <Text style={styles.customerAvatar}>👤</Text>
-              <View style={{ flexShrink: 1 }}>
-                <View style={styles.customerNameRow}>
-                  <Text style={styles.customerName} numberOfLines={1}>
-                    {customer ? customer.name : 'Walk-in Customer'}
-                  </Text>
-                  <View style={styles.customerBadge}>
-                    <Text style={styles.customerBadgeText}>{customer ? 'Linked' : 'General'}</Text>
-                  </View>
-                </View>
-                <Text style={styles.loyaltySub} numberOfLines={1}>
-                  {customer
-                    ? `${customer.phone || 'No phone'}${customer.loyaltyPoints != null ? ` • ⭐ ${customer.loyaltyPoints} pts` : ''}${
-                        customer.balance != null && Number(customer.balance) !== 0 ? ` • Credit ${formatLKR(customer.balance)}` : ''
-                      }`
-                    : 'Link a customer for credit sales & loyalty'}
-                </Text>
-              </View>
+          <Pressable style={styles.customerStrip} onPress={() => setCustomerPickerVisible(true)} accessibilityRole="button" accessibilityLabel={customer ? `Customer ${customer.name}, change` : 'Add customer'}>
+            <View style={[styles.customerAvatar, customer && { backgroundColor: THEME.colors.primary }]}>
+              <Ionicons name={customer ? 'person' : 'person-outline'} size={16} color={customer ? '#FFF' : THEME.colors.textMuted} />
             </View>
-            <View style={{ flexDirection: 'row', gap: 6 }}>
-              {customer ? (
-                <Pressable style={styles.loyaltyBtn} onPress={() => setCustomer(null)}>
-                  <Text style={[styles.loyaltyBtnText, { color: THEME.colors.error }]}>✕</Text>
-                </Pressable>
-              ) : null}
-              <Pressable style={styles.loyaltyBtn} onPress={() => setCustomerPickerVisible(true)}>
-                <Text style={styles.loyaltyBtnText}>{customer ? 'Change' : '+ Customer'}</Text>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={styles.customerName} numberOfLines={1}>
+                {customer ? customer.name : 'Walk-in customer'}
+              </Text>
+              <Text style={styles.loyaltySub} numberOfLines={1}>
+                {customer
+                  ? `${customer.phone || 'No phone'}${customer.loyaltyPoints != null ? ` · ${customer.loyaltyPoints} pts` : ''}${
+                      customer.balance != null && Number(customer.balance) !== 0 ? ` · Credit ${formatLKR(customer.balance)}` : ''
+                    }`
+                  : 'Tap to link a customer (credit, loyalty)'}
+              </Text>
+            </View>
+            {customer ? (
+              <Pressable style={styles.customerClear} onPress={() => setCustomer(null)} hitSlop={6} accessibilityLabel="Remove customer">
+                <Ionicons name="close" size={18} color={THEME.colors.error} />
               </Pressable>
-            </View>
-          </View>
+            ) : (
+              <Ionicons name="add-circle" size={24} color={THEME.colors.primary} />
+            )}
+          </Pressable>
+
+          {/* Catalog freshness */}
+          <Pressable style={styles.catalogBar} onPress={() => setOfflineSalesVisible(true)}>
+            <Text style={styles.catalogBarText} numberOfLines={1}>
+              {catalog?.syncing
+                ? 'Updating catalog…'
+                : localReady
+                  ? `Catalog updated ${formatAge(catalog?.lastSyncAt, nowTick)} · ${catalog?.itemCount ?? 0} items`
+                  : 'Catalog not on this device yet'}
+            </Text>
+          </Pressable>
 
           {/* Product grid */}
-          {itemsLoading ? (
-            <LoadingView text="Loading items catalog..." />
-          ) : itemsError ? (
-            <ErrorView message={itemsError} onRetry={() => fetchItems(1, false)} />
-          ) : items.length === 0 ? (
-            <ScrollView contentContainerStyle={{ flexGrow: 1 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}>
-              <EmptyView icon="📦" title="No matching items found" subtitle="Try another search term or category, or scan a barcode. Pull down to refresh the catalog." />
-            </ScrollView>
-          ) : (
-            <FlatList
-              data={items}
-              keyExtractor={(item) => item.id}
-              numColumns={2}
-              contentContainerStyle={styles.gridContent}
-              keyboardShouldPersistTaps="handled"
-              onEndReached={loadMore}
-              onEndReachedThreshold={0.5}
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
-              ListFooterComponent={
-                loadingMore ? (
-                  <View style={{ padding: 16 }}>
-                    <ActivityIndicator color={THEME.colors.primary} />
-                  </View>
-                ) : hasMore ? (
-                  <Pressable style={styles.loadMoreBtn} onPress={loadMore}>
-                    <Text style={styles.loadMoreText}>
-                      Load more ({items.length} of {pagination?.total ?? items.length})
-                    </Text>
-                  </Pressable>
-                ) : null
-              }
-              renderItem={({ item }) => {
-                const stockNum = stockOf(item)
-                const tracked = item.trackStock !== false && stockNum !== null
-                const isOut = tracked && stockNum! <= 0
-                const isLowStock = tracked && stockNum! > 0 && stockNum! < 15
-                return (
-                  <View style={styles.productCard}>
-                    <View style={styles.stockBadgeContainer}>
-                      <Text style={[styles.stockBadge, isOut ? styles.stockBadgeOut : isLowStock ? styles.stockBadgeLow : styles.stockBadgeNormal]}>
-                        {!tracked ? 'Untracked' : isOut ? 'Out of stock' : isLowStock ? `⚠️ ${stockNum} Low` : `${stockNum} in stock`}
-                      </Text>
+          <View style={{ flex: 1 }}>
+            {itemsLoading ? (
+              <LoadingView text="Loading items…" />
+            ) : itemsError ? (
+              <ErrorView message={itemsError} onRetry={() => fetchItems(1, false)} />
+            ) : items.length === 0 ? (
+              <ScrollView contentContainerStyle={{ flexGrow: 1 }} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}>
+                <EmptyState icon="cube-outline" title="No matching items" subtitle="Try another search or category, or scan a barcode. Pull down to refresh the catalog." />
+              </ScrollView>
+            ) : (
+              <FlatList
+                key={`grid-${gridCols}`}
+                data={items}
+                keyExtractor={(item) => item.id}
+                numColumns={gridCols}
+                contentContainerStyle={styles.gridContent}
+                columnWrapperStyle={styles.gridRow}
+                keyboardShouldPersistTaps="handled"
+                onEndReached={loadMore}
+                onEndReachedThreshold={0.5}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onPullRefresh} />}
+                ListFooterComponent={
+                  loadingMore ? (
+                    <View style={{ padding: 16 }}>
+                      <ActivityIndicator color={THEME.colors.primary} />
                     </View>
+                  ) : hasMore ? (
+                    <Pressable style={styles.loadMoreBtn} onPress={loadMore}>
+                      <Text style={styles.loadMoreText}>
+                        Load more ({items.length} of {pagination?.total ?? items.length})
+                      </Text>
+                    </Pressable>
+                  ) : null
+                }
+                renderItem={({ item }) => {
+                  const stockNum = stockOf(item)
+                  const tracked = item.trackStock !== false && stockNum !== null
+                  const isOut = tracked && stockNum! <= 0
+                  const isLowStock = tracked && stockNum! > 0 && stockNum! < 15
+                  const inCart = qtyByItem.get(item.id) || 0
+                  return (
+                    <Pressable
+                      style={({ pressed }) => [styles.productCard, inCart > 0 && styles.productCardInCart, isOut && { opacity: 0.55 }, pressed && { transform: [{ scale: 0.98 }] }]}
+                      onPress={() => addToCart(item)}
+                      disabled={isOut}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Add ${item.name}, ${formatLKR(item.sellingPrice)}`}
+                    >
+                      <View style={styles.cardTop}>
+                        <Text style={[styles.stockBadge, isOut ? styles.stockBadgeOut : isLowStock ? styles.stockBadgeLow : styles.stockBadgeNormal]} numberOfLines={1}>
+                          {!tracked ? 'Untracked' : isOut ? 'Out of stock' : isLowStock ? `Low · ${stockNum}` : `${stockNum} in stock`}
+                        </Text>
+                        {inCart > 0 ? (
+                          <View style={styles.inCartBadge}>
+                            <Text style={styles.inCartText}>{Math.round(inCart * 1000) / 1000}</Text>
+                          </View>
+                        ) : null}
+                      </View>
 
-                    <View style={styles.cardInfo}>
                       <Text style={styles.cardTitle} numberOfLines={2}>
                         {item.name}
                       </Text>
                       <Text style={styles.cardBarcode} numberOfLines={1}>
-                        {item.barcode ? `EAN: ${item.barcode}` : item.pluCode ? `PLU: ${item.pluCode}` : item.sku ? `SKU: ${item.sku}` : 'Standard Item'}
+                        {item.barcode || (item.pluCode ? `PLU ${item.pluCode}` : item.sku ? `SKU ${item.sku}` : ' ')}
                       </Text>
-                    </View>
 
-                    <View style={styles.cardFooter}>
-                      <View style={styles.priceCol}>
-                        <Text style={styles.priceLabel}>Price{item.unit ? ` / ${item.unit}` : ''}</Text>
-                        <Text style={styles.cardPrice}>{formatLKR(item.sellingPrice)}</Text>
+                      <View style={styles.cardFooter}>
+                        <View style={styles.priceCol}>
+                          <Text style={styles.cardPrice} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                            {formatLKR(item.sellingPrice)}
+                          </Text>
+                          {item.unit ? <Text style={styles.priceLabel}>per {item.unit}</Text> : null}
+                        </View>
+                        {inCart > 0 ? (
+                          <Pressable style={styles.cardMinus} onPress={() => decrementItem(item.id)} hitSlop={4} accessibilityLabel={`One less ${item.name}`}>
+                            <Ionicons name="remove" size={20} color={THEME.colors.primary} />
+                          </Pressable>
+                        ) : null}
+                        <View style={[styles.addBtn, isOut && { backgroundColor: THEME.colors.borderStrong }]}>
+                          <Ionicons name="add" size={22} color="#FFF" />
+                        </View>
                       </View>
-                      <Pressable style={[styles.addBtn, isOut && { opacity: 0.4 }]} onPress={() => addToCart(item)} disabled={isOut}>
-                        <Text style={styles.addBtnText}>+ Add</Text>
-                      </Pressable>
-                    </View>
-                  </View>
-                )
-              }}
-            />
-          )}
-        </>
-      )}
+                    </Pressable>
+                  )
+                }}
+              />
+            )}
 
-      {toastMessage && (
-        <View style={[styles.toast, { top: (Number(headerPad.paddingTop) || 0) + 70 }]}>
-          <Text style={styles.toastText}>✓ {toastMessage}</Text>
-        </View>
-      )}
-
-      {/* Cart bar */}
-      {cart.length > 0 && shift && (
-        <View style={[styles.cartBar, { paddingBottom: Math.max(24, bottomPad + 12) }]}>
-          <Pressable style={styles.cartPeek} onPress={() => setCartDrawerVisible(true)}>
-            <View style={styles.cartHandle} />
-            <View style={styles.cartPeekRow}>
-              <View style={styles.cartCountGroup}>
-                <View style={styles.cartCountCircle}>
-                  <Text style={styles.cartCountCircleText}>{totalCartCount}</Text>
-                </View>
-                <Text style={styles.cartItemsLabel}>Items in Cart</Text>
+            {toastMessage && (
+              <View style={styles.toast} pointerEvents="none">
+                <Ionicons name="checkmark-circle" size={16} color="#4ADE80" />
+                <Text style={styles.toastText}>{toastMessage}</Text>
               </View>
-              <Text style={styles.cartTaxText}>
-                {taxLabel}
-                {cartTax.hasInclusiveTax ? ' (incl.)' : ''}: {formatLKR(cartTax.tax)}
-              </Text>
-            </View>
+            )}
+          </View>
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.peekBadgesScroll}>
-              {cart.map((c) => (
-                <View key={c.id} style={styles.peekBadge}>
-                  <Text style={styles.peekBadgeText}>
-                    {c.name.split(' ')[0]} × {c.quantity}
+          {/* Sticky cart: lines with quick +/- (long-press removes), total and Pay */}
+          {cart.length > 0 ? (
+            <View style={styles.cartBar}>
+              <Pressable style={styles.cartToggle} onPress={() => setCartOpen((v) => !v)} accessibilityRole="button" accessibilityLabel={cartOpen ? 'Collapse cart' : 'Expand cart'}>
+                <View style={styles.cartCountCircle}>
+                  <Text style={styles.cartCountCircleText}>{Math.round(totalCartCount * 1000) / 1000}</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.cartItemsLabel} numberOfLines={1}>
+                    {cart.length} line{cart.length === 1 ? '' : 's'}
+                    {!showFullCart && lastLine ? ` · ${lastLine.name} × ${lastLine.quantity}` : ''}
+                  </Text>
+                  <Text style={styles.cartTaxText}>
+                    {taxLabel}
+                    {cartTax.hasInclusiveTax ? ' (incl.)' : ''}: {formatLKR(cartTax.tax)}
+                    {cartPromotionDiscount > 0 ? ` · Promo −${formatLKR(cartPromotionDiscount)}` : ''}
                   </Text>
                 </View>
-              ))}
-            </ScrollView>
-          </Pressable>
+                <Pressable style={styles.cartDetailsBtn} onPress={() => setCartDrawerVisible(true)} hitSlop={6}>
+                  <Text style={styles.cartDetailsText}>Details</Text>
+                </Pressable>
+                <Ionicons name={cartOpen ? 'chevron-down' : 'chevron-up'} size={22} color={THEME.colors.textMuted} />
+              </Pressable>
 
-          <View style={styles.cartActionRow}>
-            <Pressable style={styles.iconActionBtn} onPress={holdCart} disabled={holdBusy} accessibilityLabel="Hold cart">
-              {holdBusy ? <ActivityIndicator size="small" color={THEME.colors.primary} /> : <Text style={styles.iconActionEmoji}>⏸</Text>}
-              <Text style={styles.iconActionLabel}>Hold</Text>
-            </Pressable>
+              {showFullCart ? (
+                <ScrollView style={{ maxHeight: cartListMax }} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+                  {cart.map((line) => (
+                    <Pressable
+                      key={line.id}
+                      style={({ pressed }) => [styles.cartLine, pressed && { backgroundColor: THEME.colors.surfaceContainerLow }]}
+                      onLongPress={() => confirmRemove(line)}
+                      delayLongPress={350}
+                      accessibilityHint="Long-press to remove"
+                    >
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.cartLineName} numberOfLines={1}>
+                          {line.name}
+                        </Text>
+                        <Text style={styles.cartLineSub} numberOfLines={1}>
+                          {formatLKR(line.sellingPrice)}
+                          {line.uom ? ` / ${line.uom}` : ''}
+                          {line.promotionDiscount ? ` · −${formatLKR(line.promotionDiscount)}` : ''}
+                          {'  '}= {formatLKR(lineTotal(line))}
+                        </Text>
+                      </View>
+                      <View style={styles.stepper}>
+                        <Pressable style={styles.stepBtn} onPress={() => changeQty(line.id, -1)} accessibilityLabel={`Decrease ${line.name}`}>
+                          <Ionicons name={line.quantity <= 1 ? 'trash-outline' : 'remove'} size={20} color={line.quantity <= 1 ? THEME.colors.error : THEME.colors.primary} />
+                        </Pressable>
+                        <Text style={styles.stepQty}>{Math.round(line.quantity * 1000) / 1000}</Text>
+                        <Pressable style={styles.stepBtn} onPress={() => changeQty(line.id, 1)} accessibilityLabel={`Increase ${line.name}`}>
+                          <Ionicons name="add" size={20} color={THEME.colors.primary} />
+                        </Pressable>
+                      </View>
+                    </Pressable>
+                  ))}
+                  <Text style={styles.cartHint}>Long-press a line to remove it</Text>
+                </ScrollView>
+              ) : null}
 
-            <Pressable style={styles.chargeBtn} onPress={() => setTenderVisible(true)}>
-              <View style={styles.chargeCol}>
-                <Text style={styles.chargeSub}>Total Payable</Text>
-                <Text style={styles.chargeVal}>{formatLKR(cartTotalPayable)}</Text>
+              <View style={styles.cartActionRow}>
+                <Pressable style={styles.iconActionBtn} onPress={holdCart} disabled={holdBusy} accessibilityLabel="Hold cart">
+                  {holdBusy ? <ActivityIndicator size="small" color={THEME.colors.primary} /> : <Ionicons name="pause" size={20} color={THEME.colors.primary} />}
+                  <Text style={styles.iconActionLabel}>Hold</Text>
+                </Pressable>
+                <Pressable style={styles.iconActionBtn} onPress={confirmClear} accessibilityLabel="Clear cart">
+                  <Ionicons name="trash-outline" size={20} color={THEME.colors.error} />
+                  <Text style={[styles.iconActionLabel, { color: THEME.colors.error }]}>Clear</Text>
+                </Pressable>
+                <Pressable style={({ pressed }) => [styles.chargeBtn, pressed && { opacity: 0.9 }]} onPress={openTender} accessibilityRole="button" accessibilityLabel={`Pay ${formatLKR(cartTotalPayable)}`}>
+                  <View style={styles.chargeCol}>
+                    <Text style={styles.chargeSub}>Pay</Text>
+                    <Text style={styles.chargeVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                      {formatLKR(cartTotalPayable)}
+                    </Text>
+                  </View>
+                  <Ionicons name="arrow-forward-circle" size={30} color="#FFF" />
+                </Pressable>
               </View>
-              <View style={styles.chargeArrowBox}>
-                <Text style={styles.chargeArrowText}>Charge →</Text>
-              </View>
-            </Pressable>
-          </View>
-        </View>
+            </View>
+          ) : null}
+        </>
       )}
 
       {/* Modals */}
@@ -1061,6 +1128,7 @@ export default function PosScreen() {
           cashierName={user?.name}
           onSaleComplete={(data) => {
             void kitchen.send(cart, 'sale')
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined)
             setTenderVisible(false)
             setCart([])
             setCouponCode('')
@@ -1101,132 +1169,65 @@ export default function PosScreen() {
 }
 
 const styles = StyleSheet.create({
-  brandIcon: { width: 30, height: 30, borderRadius: 8, marginRight: 8, borderWidth: 1, borderColor: THEME.colors.border },
   container: { flex: 1, backgroundColor: THEME.colors.background },
-  offlineModeBanner: { backgroundColor: THEME.colors.secondaryLight, paddingHorizontal: 16, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: THEME.colors.secondaryAmber },
-  offlineModeText: { color: THEME.colors.onSecondaryContainer, fontSize: 12, fontWeight: '700', textAlign: 'center' },
-  catalogBar: { paddingHorizontal: 16, paddingVertical: 4, backgroundColor: THEME.colors.surfaceContainerLow },
-  catalogBarText: { color: THEME.colors.textMuted, fontSize: 11, textAlign: 'center' },
   header: {
-    paddingTop: 48,
-    paddingHorizontal: 16,
-    paddingBottom: 12,
     backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.colors.border,
+    gap: 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: THEME.colors.borderStrong,
   },
-  headerLeft: { flex: 1, marginRight: 12 },
-  breadcrumbRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
-  breadcrumbText: { fontSize: 10, fontWeight: '700', color: THEME.colors.textMuted, textTransform: 'uppercase', flexShrink: 1 },
-  onlinePill: {
+  headerLeft: { flex: 1, marginRight: 4, minWidth: 0 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  appTitle: { fontSize: 20, fontWeight: '800', color: THEME.colors.text },
+  breadcrumbText: { fontSize: 12, fontWeight: '600', color: THEME.colors.textMuted, marginTop: 1 },
+  onlinePill: { flexDirection: 'row', alignItems: 'center', backgroundColor: THEME.colors.tertiaryLight, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, gap: 4 },
+  offlinePill: { backgroundColor: THEME.colors.errorLight },
+  pulsingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: THEME.colors.tertiary },
+  offlineDot: { backgroundColor: THEME.colors.error },
+  onlineText: { fontSize: 10, fontWeight: '800', color: THEME.colors.tertiaryContainer },
+  offlineText: { color: THEME.colors.error },
+  syncBar: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, minHeight: 40, backgroundColor: THEME.colors.secondaryLight },
+  syncBarError: { backgroundColor: THEME.colors.errorLight },
+  syncBarText: { flex: 1, fontSize: 13, fontWeight: '700', color: THEME.colors.onSecondaryContainer },
+  offlineModeBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: THEME.colors.secondaryLight, paddingHorizontal: 16, paddingVertical: 6 },
+  offlineModeText: { color: THEME.colors.onSecondaryContainer, fontSize: 12, fontWeight: '700' },
+  catalogBar: { paddingHorizontal: 16, paddingVertical: 3, backgroundColor: THEME.colors.surfaceContainerLow },
+  catalogBarText: { color: THEME.colors.textSubtle, fontSize: 10, textAlign: 'center' },
+  gateWrap: { flex: 1, justifyContent: 'center', padding: 24 },
+  gateCard: { backgroundColor: '#FFFFFF', borderRadius: 20, padding: 24, alignItems: 'center', borderWidth: 1, borderColor: THEME.colors.border, ...THEME.shadow },
+  gateIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: THEME.colors.secondaryLight, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  gateTitle: { fontSize: 20, fontWeight: '800', color: THEME.colors.text },
+  gateSub: { fontSize: 13, color: THEME.colors.textMuted, textAlign: 'center', marginTop: 6, marginBottom: 18 },
+  gateBtn: { width: '100%', height: 52, borderRadius: 14, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
+  gateBtnText: { color: '#FFF', fontWeight: '800', fontSize: 16 },
+  gateRetry: { marginTop: 12, minHeight: 44, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  gateRetryText: { color: THEME.colors.primary, fontWeight: '700', fontSize: 13 },
+  searchSection: { backgroundColor: '#FFFFFF', paddingHorizontal: 12, paddingTop: 10 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  searchBar: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: THEME.colors.tertiaryLight,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 8,
-    gap: 3,
-  },
-  offlinePill: { backgroundColor: THEME.colors.errorLight },
-  pulsingDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: THEME.colors.tertiary },
-  offlineDot: { backgroundColor: THEME.colors.error },
-  onlineText: { fontSize: 9, fontWeight: '800', color: THEME.colors.tertiary },
-  offlineText: { color: THEME.colors.error },
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
-  appTitle: { fontSize: 20, fontWeight: '800', color: THEME.colors.primary },
-  pendingBadge: {
-    backgroundColor: THEME.colors.secondaryLight,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-    minHeight: 22,
-    justifyContent: 'center',
-  },
-  pendingBadgeError: { backgroundColor: THEME.colors.errorLight },
-  pendingBadgeText: { fontSize: 10, fontWeight: '800', color: THEME.colors.onSecondaryContainer },
-  shiftBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
     backgroundColor: THEME.colors.surfaceContainerLow,
-    borderRadius: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    paddingHorizontal: 12,
+    height: 52,
+    gap: 8,
+  },
+  searchInput: { flex: 1, fontSize: 15, color: THEME.colors.text },
+  clearQueryBtn: { padding: 4 },
+  cameraScanBtn: { width: 52, height: 52, borderRadius: 14, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center', ...THEME.shadow },
+  categoryScroll: { paddingVertical: 8, gap: 8 },
+  catChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-  },
-  shiftBtnEmoji: { fontSize: 14 },
-  shiftBtnText: { fontSize: 13, fontWeight: '700', color: THEME.colors.primary },
-  quickNavContainer: {
-    backgroundColor: '#FFFFFF',
     paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.colors.border,
-  },
-  quickNavContent: { gap: 8 },
-  quickNavPill: {
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-  },
-  quickNavPillText: { fontSize: 11, fontWeight: '700', color: THEME.colors.text },
-  gateWrap: { flex: 1, justifyContent: 'center', padding: 24 },
-  gateCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 24,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-  },
-  gateEmoji: { fontSize: 42, marginBottom: 10 },
-  gateTitle: { fontSize: 20, fontWeight: '800', color: THEME.colors.text },
-  gateSub: { fontSize: 13, color: THEME.colors.textMuted, textAlign: 'center', marginTop: 6, marginBottom: 18 },
-  gateBtn: { width: '100%', height: 50, borderRadius: 12, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center' },
-  gateBtnText: { color: '#FFF', fontWeight: '800', fontSize: 15 },
-  gateRetry: { marginTop: 12, padding: 8 },
-  gateRetryText: { color: THEME.colors.primary, fontWeight: '700', fontSize: 12 },
-  searchSection: {
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.colors.border,
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    height: 44,
-    gap: 6,
-  },
-  searchIcon: { fontSize: 14 },
-  searchInput: { flex: 1, fontSize: 13, color: THEME.colors.text },
-  clearQueryBtn: { padding: 4 },
-  clearQueryText: { fontSize: 12, color: THEME.colors.textMuted, fontWeight: '700' },
-  cameraScanBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
-    backgroundColor: THEME.colors.surfaceContainerHigh,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cameraScanText: { fontSize: 16 },
-  categoryScroll: { paddingTop: 10, paddingBottom: 4, gap: 8 },
-  catChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
+    minHeight: 40,
     borderRadius: 20,
     backgroundColor: THEME.colors.surfaceContainerLow,
     borderWidth: 1,
@@ -1234,166 +1235,116 @@ const styles = StyleSheet.create({
   },
   catChipOutline: { backgroundColor: '#FFFFFF', borderStyle: 'dashed' },
   catChipActive: { backgroundColor: THEME.colors.primary, borderColor: THEME.colors.primary },
-  catChipText: { fontSize: 12, fontWeight: '600', color: THEME.colors.textMuted },
-  catChipTextActive: { color: '#FFFFFF', fontWeight: '700' },
+  catChipText: { fontSize: 13, fontWeight: '700', color: THEME.colors.text },
+  catChipTextActive: { color: '#FFFFFF' },
   customerStrip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: THEME.colors.surfaceContainerLow,
+    paddingHorizontal: 12,
+    minHeight: 52,
+    backgroundColor: '#FFFFFF',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    borderBottomWidth: 1,
-    borderBottomColor: THEME.colors.border,
-    gap: 8,
+    gap: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: THEME.colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: THEME.colors.borderStrong,
   },
-  customerInfo: { flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 },
-  customerAvatar: { fontSize: 18 },
-  customerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  customerName: { fontSize: 13, fontWeight: '700', color: THEME.colors.text, flexShrink: 1 },
-  customerBadge: { backgroundColor: THEME.colors.secondaryContainer, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 },
-  customerBadgeText: { fontSize: 9, fontWeight: '800', color: THEME.colors.onSecondaryContainer },
-  loyaltySub: { fontSize: 11, color: THEME.colors.tertiary, fontWeight: '600', marginTop: 1 },
-  loyaltyBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-  },
-  loyaltyBtnText: { fontSize: 11, fontWeight: '700', color: THEME.colors.primary },
-  gridContent: { padding: 12, paddingBottom: 160 },
-  loadMoreBtn: {
-    alignSelf: 'center',
-    marginTop: 8,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: THEME.colors.surfaceContainerHigh,
-  },
-  loadMoreText: { fontSize: 12, fontWeight: '800', color: THEME.colors.primary },
+  customerAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: THEME.colors.surfaceContainer, alignItems: 'center', justifyContent: 'center' },
+  customerName: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
+  loyaltySub: { fontSize: 11, color: THEME.colors.textMuted, marginTop: 1 },
+  customerClear: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: THEME.colors.errorLight },
+  gridContent: { padding: 8, paddingBottom: 16 },
+  gridRow: { gap: 8, paddingHorizontal: 0 },
+  loadMoreBtn: { alignSelf: 'center', marginTop: 8, paddingHorizontal: 18, minHeight: 44, justifyContent: 'center', borderRadius: 12, backgroundColor: THEME.colors.surfaceContainerHigh },
+  loadMoreText: { fontSize: 13, fontWeight: '800', color: THEME.colors.primary },
   productCard: {
-    width: '47%',
-    margin: '1.5%',
+    flex: 1,
+    marginBottom: 8,
     backgroundColor: '#FFFFFF',
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 12,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: THEME.colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
-    elevation: 2,
+    minHeight: 150,
     justifyContent: 'space-between',
+    ...THEME.shadow,
   },
-  stockBadgeContainer: { marginBottom: 6 },
-  stockBadge: { alignSelf: 'flex-start', fontSize: 10, fontWeight: '700', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
-  stockBadgeNormal: { backgroundColor: THEME.colors.surfaceContainerLow, color: THEME.colors.tertiary },
+  productCardInCart: { borderColor: THEME.colors.primary, backgroundColor: '#FBFDFF' },
+  cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, gap: 4 },
+  stockBadge: { flexShrink: 1, fontSize: 10, fontWeight: '700', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, overflow: 'hidden' },
+  stockBadgeNormal: { backgroundColor: THEME.colors.tertiaryLight, color: THEME.colors.tertiaryContainer },
   stockBadgeLow: { backgroundColor: THEME.colors.secondaryLight, color: THEME.colors.onSecondaryContainer },
   stockBadgeOut: { backgroundColor: THEME.colors.errorLight, color: THEME.colors.error },
-  cardInfo: { minHeight: 46 },
-  cardTitle: { fontSize: 13, fontWeight: '700', color: THEME.colors.text, lineHeight: 18 },
-  cardBarcode: { fontSize: 10, color: THEME.colors.textMuted, marginTop: 2 },
-  cardFooter: {
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: THEME.colors.border,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-  },
-  priceCol: { flex: 1, marginRight: 6 },
-  priceLabel: { fontSize: 9, fontWeight: '600', color: THEME.colors.textSubtle, textTransform: 'uppercase' },
-  cardPrice: { fontSize: 13, fontWeight: '800', color: THEME.colors.text },
-  addBtn: {
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-  },
-  addBtnText: { fontSize: 12, fontWeight: '800', color: THEME.colors.primary },
+  inCartBadge: { minWidth: 26, height: 26, paddingHorizontal: 6, borderRadius: 13, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  inCartText: { color: '#FFF', fontSize: 12, fontWeight: '800' },
+  cardTitle: { fontSize: 14, fontWeight: '700', color: THEME.colors.text, lineHeight: 19 },
+  cardBarcode: { fontSize: 10, color: THEME.colors.textSubtle, marginTop: 2 },
+  cardFooter: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  priceCol: { flex: 1, minWidth: 0 },
+  priceLabel: { fontSize: 10, color: THEME.colors.textSubtle },
+  cardPrice: { fontSize: 15, fontWeight: '800', color: THEME.colors.primary, fontVariant: ['tabular-nums'] },
+  cardMinus: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, borderColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFF' },
+  addBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center' },
   toast: {
     position: 'absolute',
-    top: 110,
+    bottom: 12,
     alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     backgroundColor: '#1E293B',
     paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingVertical: 10,
+    borderRadius: 22,
     zIndex: 100,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
     elevation: 6,
+    maxWidth: '90%',
   },
-  toastText: { color: '#FFF', fontSize: 13, fontWeight: '700' },
+  toastText: { color: '#FFF', fontSize: 14, fontWeight: '700' },
   cartBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 24,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 12,
+    paddingTop: 4,
+    paddingBottom: 10,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 15,
-    borderWidth: 1,
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
+    elevation: 14,
+    borderTopWidth: 1,
     borderColor: THEME.colors.border,
   },
-  cartPeek: { marginBottom: 10 },
-  cartHandle: { width: 36, height: 4, backgroundColor: THEME.colors.outline, borderRadius: 2, alignSelf: 'center', marginBottom: 6 },
-  cartPeekRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  cartCountGroup: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  cartCountCircle: { width: 22, height: 22, borderRadius: 11, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center' },
-  cartCountCircleText: { color: '#FFF', fontSize: 11, fontWeight: '800' },
-  cartItemsLabel: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
-  cartTaxText: { fontSize: 11, fontWeight: '600', color: THEME.colors.textMuted },
-  peekBadgesScroll: { marginTop: 6 },
-  peekBadge: { backgroundColor: THEME.colors.surfaceContainerLow, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, marginRight: 6 },
-  peekBadgeText: { fontSize: 10, fontWeight: '700', color: THEME.colors.textMuted },
-  cartActionRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  iconActionBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 12,
-    backgroundColor: THEME.colors.surfaceContainerLow,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: THEME.colors.border,
-  },
-  iconActionEmoji: { fontSize: 16 },
-  iconActionLabel: { fontSize: 10, fontWeight: '700', color: THEME.colors.textMuted, marginTop: 1 },
+  cartToggle: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 52 },
+  cartCountCircle: { minWidth: 30, height: 30, paddingHorizontal: 6, borderRadius: 15, backgroundColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center' },
+  cartCountCircleText: { color: '#FFF', fontSize: 13, fontWeight: '800' },
+  cartItemsLabel: { fontSize: 14, fontWeight: '800', color: THEME.colors.text },
+  cartTaxText: { fontSize: 11, fontWeight: '600', color: THEME.colors.textMuted, marginTop: 1 },
+  cartDetailsBtn: { minHeight: 36, paddingHorizontal: 12, borderRadius: 18, backgroundColor: THEME.colors.primaryLight, justifyContent: 'center' },
+  cartDetailsText: { fontSize: 12, fontWeight: '800', color: THEME.colors.primary },
+  cartLine: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 56, paddingVertical: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: THEME.colors.border },
+  cartLineName: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
+  cartLineSub: { fontSize: 11, color: THEME.colors.textMuted, marginTop: 1 },
+  stepper: { flexDirection: 'row', alignItems: 'center', borderRadius: 24, backgroundColor: THEME.colors.surfaceContainerLow, borderWidth: 1, borderColor: THEME.colors.border },
+  stepBtn: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
+  stepQty: { minWidth: 30, textAlign: 'center', fontSize: 15, fontWeight: '800', color: THEME.colors.text, fontVariant: ['tabular-nums'] },
+  cartHint: { fontSize: 10, color: THEME.colors.textSubtle, textAlign: 'center', paddingVertical: 4 },
+  cartActionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 },
+  iconActionBtn: { width: 56, height: 56, borderRadius: 14, backgroundColor: THEME.colors.surfaceContainerLow, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: THEME.colors.border },
+  iconActionLabel: { fontSize: 10, fontWeight: '700', color: THEME.colors.primary, marginTop: 1 },
   chargeBtn: {
     flex: 1,
-    height: 52,
-    backgroundColor: THEME.colors.primary,
-    borderRadius: 12,
+    height: 56,
+    backgroundColor: THEME.colors.tertiaryContainer,
+    borderRadius: 14,
     paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    shadowColor: THEME.colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
     elevation: 4,
   },
-  chargeCol: { justifyContent: 'center' },
-  chargeSub: { fontSize: 9, fontWeight: '700', color: 'rgba(255,255,255,0.8)', textTransform: 'uppercase' },
-  chargeVal: { fontSize: 18, fontWeight: '900', color: '#FFFFFF', marginTop: 1 },
-  chargeArrowBox: { backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
-  chargeArrowText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
+  chargeCol: { flex: 1, justifyContent: 'center', minWidth: 0 },
+  chargeSub: { fontSize: 11, fontWeight: '800', color: 'rgba(255,255,255,0.85)', textTransform: 'uppercase', letterSpacing: 0.6 },
+  chargeVal: { fontSize: 20, fontWeight: '900', color: '#FFFFFF' },
 })

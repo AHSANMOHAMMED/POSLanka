@@ -13,6 +13,7 @@ import { labelCurrencySymbol, type LabelItemData, type LabelTemplate } from '../
 import { loadBusinessInfo } from '../src/lib/receipt'
 import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 /** Shape accepted in the `items` route param (JSON array). */
 interface PreselectedItem {
@@ -256,14 +257,7 @@ export default function LabelsScreen() {
   if (user === undefined || !canUseLabels) {
     return (
       <View style={styles.screen}>
-        <View style={[styles.header, headerPad]}>
-          <Pressable style={styles.backBtn} onPress={() => goBack()}>
-            <Text style={styles.backBtnText}>←</Text>
-          </Pressable>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>Print Labels</Text>
-          </View>
-        </View>
+        <ScreenHeader title="Print labels" />
         {user === undefined ? (
           <LoadingView />
         ) : (
@@ -275,22 +269,13 @@ export default function LabelsScreen() {
 
   return (
     <View style={styles.screen}>
-      <View style={[styles.header, headerPad]}>
-        <Pressable style={styles.backBtn} onPress={() => goBack()}>
-          <Text style={styles.backBtnText}>←</Text>
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Print Labels</Text>
-          <Text style={styles.headerSub} numberOfLines={1}>
-            {printer === undefined ? 'Loading printer…' : printer ? `${printer.name} · ${(printer.label?.language || 'tspl').toUpperCase()} · ${printer.label?.dpi || 203} dpi` : 'No label printer configured'}
-          </Text>
-        </View>
-        <Pressable style={styles.iconBtn} onPress={() => router.push('/printer')}>
-          <Text style={{ fontSize: 18 }}>⚙️</Text>
-        </Pressable>
-      </View>
+      <ScreenHeader
+        title="Print labels"
+        subtitle={printer === undefined ? 'Loading printer…' : printer ? `${printer.name} · ${(printer.label?.language || 'tspl').toUpperCase()} · ${printer.label?.dpi || 203} dpi` : 'No label printer configured'}
+        right={<IconButton name="settings-outline" label="Label printer settings" onPress={() => router.push('/printer')} />}
+      />
 
-      {printer === null && <InlineNotice text="No label printer yet. Tap ⚙️ to add one (role: Label printer)." />}
+      {printer === null && <InlineNotice text="No label printer yet. Tap the gear icon to add one (role: Label printer)." />}
       {printer?.label?.language === 'escpos-raster' && <InlineNotice tone="error" text="ESC/POS raster labels are not supported on mobile. Switch the printer language to TSPL, ZPL or EPL." />}
       {templatesError ? <InlineNotice tone="error" text={`Templates: ${templatesError}`} /> : null}
       {setup ? <InlineNotice text={`Roll: ${setup.name} (${setup.columns} across, ${setup.labelWidthMm} x ${setup.labelHeightMm} mm)${setup.locked ? ' · locked' : ''}`} /> : null}

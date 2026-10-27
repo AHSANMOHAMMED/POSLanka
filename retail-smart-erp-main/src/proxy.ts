@@ -188,6 +188,12 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(targetUrl.toString(), 301)
   }
 
+  // Print agent one-command installers (src/app/print-agent/*): public plain-text scripts,
+  // fetched by curl / PowerShell with no session, served on every host without tenant rewrites.
+  if (pathname.startsWith('/print-agent/')) {
+    return NextResponse.next()
+  }
+
   // API routes: only request id + CSRF; no host routing / tenant rewrites (unchanged behaviour)
   if (pathname === '/api' || pathname.startsWith('/api/')) {
     return handleApi(request)

@@ -28,10 +28,11 @@ export default function AdminLayout() {
       <Stack.Screen name="pulse" />
       <Stack.Screen name="live" />
       <Stack.Screen name="vendors" />
-      <Stack.Screen name="vendors/[id]" />
-      <Stack.Screen name="vendor-data" />
-      <Stack.Screen name="recycle-bin" />
+      <Stack.Screen name="vendors/[id]" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="vendor-data" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="recycle-bin" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="approvals" />
+      <Stack.Screen name="more" />
     </Stack>
   )
 }

@@ -163,6 +163,12 @@ function storeUsb(d: UsbDeviceLike | null, deviceKey?: string) {
   }
 }
 
+/** Remembered USB printer (vendor / product id + name) for a profile's deviceKey. */
+export function getStoredUsbDeviceInfo(deviceKey?: string): { vendorId: number; productId: number; name: string | null } | null {
+  const s = readStoredUsb(deviceKey)
+  return s ? { vendorId: s.vendorId, productId: s.productId, name: s.name || null } : null
+}
+
 export function getStoredUsbDeviceName(deviceKey?: string): string | null {
   const s = readStoredUsb(deviceKey)
   if (!s) return null

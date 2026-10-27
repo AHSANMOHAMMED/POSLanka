@@ -8,10 +8,12 @@ import * as Notifications from 'expo-notifications'
 import { router, useFocusEffect } from 'expo-router'
 import { apiGet } from '../lib/api'
 import { THEME } from '../lib/theme'
+import { IconButton } from './ui'
 
 const FALLBACK_POLL_MS = 5 * 60_000
 
-export function AlertsBell() {
+/** `compact`: round bell icon with a red count badge (headers); default: the labelled pill. */
+export function AlertsBell({ compact = false }: { compact?: boolean } = {}) {
   const [unread, setUnread] = useState(0)
 
   const refresh = useCallback(async () => {
@@ -41,6 +43,17 @@ export function AlertsBell() {
       clearInterval(t)
     }
   }, [refresh])
+
+  if (compact) {
+    return (
+      <IconButton
+        name={unread > 0 ? 'notifications' : 'notifications-outline'}
+        label={unread > 0 ? `Alerts, ${unread} unread` : 'Alerts'}
+        badge={unread > 0 ? unread : null}
+        onPress={() => router.push('/alerts' as any)}
+      />
+    )
+  }
 
   return (
     <Pressable

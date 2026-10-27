@@ -58,6 +58,35 @@ export const THEME = {
     xl: 16,
     full: 9999,
   },
+  /** Typography scale (sizes in dp; textScale multiplies them at render time). */
+  type: {
+    display: { fontSize: 26, fontWeight: '800' as const },
+    title: { fontSize: 18, fontWeight: '800' as const },
+    heading: { fontSize: 15, fontWeight: '800' as const },
+    body: { fontSize: 14, fontWeight: '500' as const },
+    label: { fontSize: 12, fontWeight: '700' as const },
+    caption: { fontSize: 11, fontWeight: '500' as const },
+  },
+  /** Minimum touch target (Material guideline). */
+  touch: 48,
+  /** Soft card elevation used across screens. */
+  shadow: {
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+}
+
+/** Compact money for KPI tiles: LKR 1.2M / LKR 45.3K / LKR 950 */
+export function compactLKR(amount: number | string | undefined | null): string {
+  const n = typeof amount === 'number' ? amount : parseFloat(String(amount || '0'))
+  if (!Number.isFinite(n)) return 'LKR 0'
+  const abs = Math.abs(n)
+  if (abs >= 1_000_000) return `LKR ${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 1 : 2)}M`
+  if (abs >= 10_000) return `LKR ${(n / 1_000).toFixed(1)}K`
+  return `LKR ${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 }
 
 /** Formats a numeric amount to Sri Lankan Rupee display standard (e.g. LKR 3,495.25) */

@@ -11,6 +11,7 @@ import { AlertTriangle, CheckCircle2, Loader2, Printer, RefreshCw, Server, Star 
 import { FormField, FormInput } from '@/components/ui/form-elements'
 import { DEFAULT_AGENT_URL, PrintAgentTransport, type PrintAgentTarget } from '@/lib/print/escpos/transports'
 import { guessLabelPrinter, isLikelyLabelPrinter, sortPrintersForLabels } from '@/lib/print/label/printer-detect'
+import { PrintAgentInstallCommands } from '@/components/print/PrintAgentInstallCommands'
 
 export interface AgentPrinterPickerProps {
   agentUrl: string
@@ -109,23 +110,10 @@ export function AgentPrinterPicker({ agentUrl, agentTarget, onChange, onTest, te
         <div className="rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3 text-xs text-amber-900 dark:text-amber-100 space-y-1.5">
           <p className="font-semibold">The POSLanka print agent is not running on this computer.</p>
           <p>It is a small helper that lets this page print straight to any printer installed in Windows, macOS or Linux (with its own driver), without the print dialog.</p>
-          <ol className="list-decimal ml-4 space-y-0.5">
-            <li>
-              Install <strong>Node.js 20+</strong> from nodejs.org.
-            </li>
-            <li>
-              Copy the <code className="font-mono">tools/print-agent</code> folder to this PC (ask your administrator / support).
-            </li>
-            <li>
-              Open a terminal in that folder and run{' '}
-              <code className="font-mono bg-white/70 dark:bg-black/30 px-1 rounded select-all">node index.mjs</code>
-            </li>
-            <li>Leave it running (see its README for autostart), then press Refresh.</li>
-          </ol>
+          <PrintAgentInstallCommands />
+          <p>Then press Refresh.</p>
           <p className="text-amber-800 dark:text-amber-200">
-            Running but still not reachable? Check the Agent URL below, and if you open POSLanka from your own domain start the agent with{' '}
-            <code className="font-mono">PRINT_AGENT_APP_ORIGIN={typeof window !== 'undefined' ? window.location.origin : 'https://your-domain'}</code> or
-            add it to <code className="font-mono">allowedOrigins</code> in printers.json.
+            Running but still not reachable? Check the Agent URL below, or run the command above again (it allows this site in printers.json).
           </p>
         </div>
       )}

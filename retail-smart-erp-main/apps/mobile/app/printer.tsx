@@ -27,6 +27,7 @@ import {
 } from '../src/lib/printer'
 import { useHeaderPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 const ROLES: Array<{ id: PrinterRole; emoji: string; sub: string }> = [
   { id: 'receipt', emoji: '🧾', sub: 'Sale receipts, Z-reports, cash drawer' },
@@ -104,15 +105,7 @@ export default function PrintersScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, headerPad]}>
-        <Pressable style={styles.backBtn} onPress={() => goBack()}>
-          <Text style={styles.backBtnText}>←</Text>
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle}>Printers</Text>
-          <Text style={styles.headerSub}>Receipt, label and kitchen printers</Text>
-        </View>
-      </View>
+      <ScreenHeader title="Printers" subtitle="Receipt, label and kitchen printers" />
       {printers === null ? (
         <View style={styles.centerBox}>
           <ActivityIndicator size="large" color={THEME.colors.primary} />
@@ -364,15 +357,11 @@ function PrinterEditor({ initial, isNew, onDone }: { initial: PrinterConfig; isN
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, headerPad]}>
-        <Pressable style={styles.backBtn} onPress={close}>
-          <Text style={styles.backBtnText}>←</Text>
-        </Pressable>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.headerTitle} numberOfLines={1}>{isNew ? `New ${ROLE_LABELS[settings.role].toLowerCase()}` : settings.name}</Text>
-          <Text style={styles.headerSub}>{isLabel ? 'Thermal label printer (TSPL / ZPL / EPL)' : settings.role === 'kitchen' ? 'ESC/POS kitchen ticket printer' : 'ESC/POS thermal printer & cash drawer'}</Text>
-        </View>
-      </View>
+      <ScreenHeader
+        title={isNew ? `New ${ROLE_LABELS[settings.role].toLowerCase()}` : settings.name}
+        subtitle={isLabel ? 'Thermal label printer (TSPL / ZPL / EPL)' : settings.role === 'kitchen' ? 'ESC/POS kitchen ticket printer' : 'ESC/POS thermal printer & cash drawer'}
+        onBack={close}
+      />
 
       {!loaded ? (
         <View style={styles.centerBox}>

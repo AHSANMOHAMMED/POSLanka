@@ -10,11 +10,34 @@
  * click into a label printer profile (transport 'agent', RAW bytes to that
  * printer). Raw printing never goes through the Chrome dialog, so the
  * driver's paper size cannot shrink, skip or reorder stickers.
+ *
+ * Agent missing: shows the one-line installer for this OS (L7). No-install
+ * options: pair a USB (WebUSB) or Bluetooth label printer straight from the
+ * browser; the new profile becomes the default label printer.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, Download, Loader2, Printer, RefreshCw, Zap } from 'lucide-react'
-import { DEFAULT_AGENT_URL, PrintAgentTransport, type PrintAgentTarget } from '@/lib/print/escpos/transports'
-import { newPrinterProfile, upsertPrinterProfile, type LabelLanguage, type PrinterProfile } from '@/lib/print/printer-profiles'
+import { AlertTriangle, Bluetooth, CheckCircle2, Loader2, Printer, RefreshCw, Usb, Zap } from 'lucide-react'
+import {
+  DEFAULT_AGENT_URL,
+  getBleTransport,
+  getStoredUsbDeviceInfo,
+  getUsbTransport,
+  PrintAgentTransport,
+  supportsWebBluetooth,
+  supportsWebUsb,
+  TransportError,
+  type PrintAgentTarget,
+} from '@/lib/print/escpos/transports'
+import {
+  makeDefaultLabelPrinter,
+  newPrinterProfile,
+  touchPrinterProfiles,
+  updatePrinterProfile,
+  upsertPrinterProfile,
+  type LabelLanguage,
+  type PrinterProfile,
+} from '@/lib/print/printer-profiles'
+import { PrintAgentInstallCommands, useClientPrintEnv } from '@/components/print/PrintAgentInstallCommands'
 import { guessLabelPrinter, isLikelyLabelPrinter, sortPrintersForLabels } from '@/lib/print/label/printer-detect'
 import { stickerRollWidthMm, type StickerSetup } from '@/lib/labels/sticker-stock'
 import { printAlignmentTestRaw } from '@/lib/labels/label-print'
@@ -152,30 +175,13 @@ export function DirectLabelPrinterPanel({ setup, printers, selectedId, onSelect,
         <div className="space-y-1.5 text-gray-700 dark:text-gray-300">
           <p>
             Sends the labels straight to the label printer in its own language (ZPL / TSPL): exact sticker size, every sticker in order, sharp
-            barcodes. No print dialog, no paper-size settings. One-time setup on this PC:
+            barcodes. No print dialog, no paper-size settings. The small skyERPOS print agent on this computer makes that possible for any
+            installed printer.
           </p>
-          <ol className="list-decimal ml-4 space-y-0.5">
-            <li>
-              Install <b>Node.js LTS</b> from{' '}
-              <a href="https://nodejs.org" target="_blank" rel="noreferrer" className="text-blue-700 underline">
-                nodejs.org
-              </a>
-              .
-            </li>
-            <li>
-              Download{' '}
-              <a href={`${basePath}/barcode/print-agent?file=index.mjs`} className="text-blue-700 underline inline-flex items-center gap-0.5">
-                <Download size={11} /> index.mjs
-              </a>{' '}
-              and{' '}
-              <a href={`${basePath}/barcode/print-agent?file=start-windows.cmd`} className="text-blue-700 underline inline-flex items-center gap-0.5">
-                <Download size={11} /> start-windows.cmd
-              </a>{' '}
-              into one folder (e.g. <code>C:\poslanka-agent</code>).
-            </li>
-            <li>Double-click <b>start-windows.cmd</b> (macOS / Linux: <code>node index.mjs</code>) and leave the window open.</li>
-            <li>Press <b>Retry</b>. Your installed label printer appears here.</li>
-          </ol>
+          <PrintAgentInstallCommands downloadBase={basePath} />
+          <p>
+            Then press <b>Retry</b>. Your installed label printer appears here.
+          </p>
         </div>
       )}
 
@@ -258,6 +264,205 @@ export function DirectLabelPrinterPanel({ setup, printers, selectedId, onSelect,
       )}
       {agentOk && labelTargets.length === 0 && targets.length > 0 && (
         <p className="text-gray-600">No printer looks like a label printer by name; pick yours from the list above.</p>
+      )}
+
+      <DirectConnectSection setup={setup} printers={printers} selectedId={selectedId} onSelect={onSelect} agentOk={agentOk} />
+    </div>
+  )
+}
+
+// ─── No install: WebUSB / Web Bluetooth ───────────────────────────────────
+
+const ZEBRA_USB_VENDOR = 0x0a5f
+
+function directLanguage(name: string, vendorId?: number | null): Lang {
+  if (vendorId === ZEBRA_USB_VENDOR) return 'zpl'
+  const g = guessLabelPrinter(name, null)
+  return g.confident && (g.language === 'zpl' || g.language === 'epl' || g.language === 'tspl') ? g.language : 'tspl'
+}
+
+function rawLang(p: PrinterProfile): Lang {
+  const l = p.label.language
+  return l === 'zpl' || l === 'epl' || l === 'tspl' ? l : 'tspl'
+}
+
+function DirectConnectSection({
+  setup,
+  printers,
+  selectedId,
+  onSelect,
+  agentOk,
+}: Pick<DirectLabelPrinterPanelProps, 'setup' | 'printers' | 'selectedId' | 'onSelect'> & { agentOk: boolean | null }) {
+  const env = useClientPrintEnv()
+  const [busy, setBusy] = useState<string | null>(null)
+  const usb = env ? supportsWebUsb() : false
+  const bt = env ? supportsWebBluetooth() : false
+  const direct = printers.filter((p) => p.role === 'label' && (p.transport === 'webusb' || p.transport === 'webbluetooth'))
+
+  const labelConfig = (lang: Lang, base?: PrinterProfile['label']) => ({
+    ...(base || {}),
+    language: lang,
+    dpi: base?.dpi || setup?.dpi || 203,
+    widthMm: setup ? stickerRollWidthMm(setup) : base?.widthMm || 50,
+    heightMm: setup?.labelHeightMm ?? base?.heightMm ?? 25,
+    gapMm: setup?.rowGapMm ?? base?.gapMm ?? 2,
+    ...(setup ? { stickerSetupId: setup.id } : {}),
+  })
+
+  const makeDefault = (p: PrinterProfile) => {
+    makeDefaultLabelPrinter(p.id)
+    onSelect(p.id)
+  }
+
+  const connect = async (transport: 'webusb' | 'webbluetooth') => {
+    // requestDevice() must run inside the click (user gesture): no await before it.
+    const draft = newPrinterProfile('label', { transport, autoPrint: false })
+    setBusy(transport)
+    try {
+      const name =
+        transport === 'webusb'
+          ? await getUsbTransport(draft.deviceKey).requestDevice()
+          : await getBleTransport(draft.deviceKey).requestDevice()
+      const vendorId = transport === 'webusb' ? getStoredUsbDeviceInfo(draft.deviceKey)?.vendorId : null
+      const lang = directLanguage(name, vendorId)
+      const profile: PrinterProfile = { ...draft, name: (name || 'Label printer').slice(0, 60), label: { ...draft.label, ...labelConfig(lang) } }
+      upsertPrinterProfile(profile)
+      touchPrinterProfiles()
+      makeDefault(profile)
+      toast.success(`${profile.name} connected (${lang.toUpperCase()}). Print an alignment test to check the size.`)
+    } catch (e) {
+      if (e instanceof TransportError && e.code === 'cancelled') return
+      toast.error(e instanceof Error ? e.message : 'Could not connect the printer')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const alignment = async (p: PrinterProfile) => {
+    if (!setup) return toast.error('Pick a label roll first')
+    setBusy(p.id)
+    try {
+      const profile = { ...p, label: { ...p.label, ...labelConfig(rawLang(p), p.label) } }
+      upsertPrinterProfile(profile)
+      makeDefault(profile)
+      const res = await printAlignmentTestRaw(profile, setup)
+      if (res.ok) toast.success(`Alignment test sent: ${setup.columns * 2} labels numbered in print order`)
+      else toast.error(res.error || 'Print failed')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (!env) return null
+  const isWindows = env.os === 'windows'
+  return (
+    <div className="pt-2 mt-1 border-t border-emerald-200 dark:border-emerald-900 space-y-1.5">
+      <div className="font-semibold text-gray-800 dark:text-gray-200">No install: connect the label printer to this browser</div>
+      {usb || bt ? (
+        <div className="flex flex-wrap gap-1.5">
+          {usb && (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => connect('webusb')}
+              className="px-2.5 py-1 rounded border border-emerald-400 bg-white dark:bg-gray-900 font-semibold flex items-center gap-1 disabled:opacity-50"
+            >
+              {busy === 'webusb' ? <Loader2 size={12} className="animate-spin" /> : <Usb size={12} />} Connect USB label printer
+            </button>
+          )}
+          {bt && (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => connect('webbluetooth')}
+              className="px-2.5 py-1 rounded border border-emerald-400 bg-white dark:bg-gray-900 font-semibold flex items-center gap-1 disabled:opacity-50"
+            >
+              {busy === 'webbluetooth' ? <Loader2 size={12} className="animate-spin" /> : <Bluetooth size={12} />} Connect Bluetooth label printer
+            </button>
+          )}
+        </div>
+      ) : (
+        <p className="text-gray-600 dark:text-gray-400">
+          This browser cannot talk to USB / Bluetooth printers{env && !window.isSecureContext ? ' over plain http' : ''}. Open this page in{' '}
+          <b>Google Chrome</b> or <b>Microsoft Edge</b> (https) to connect a label printer without installing anything.
+        </p>
+      )}
+      {(usb || bt) && (
+        <p className="text-[11px] text-gray-600 dark:text-gray-400">
+          {isWindows ? (
+            <>
+              <AlertTriangle size={11} className="inline text-amber-600 mr-0.5" />
+              On Windows, direct USB only works after replacing the printer driver with WinUSB (Zadig), which stops other programs from using it.
+              {agentOk ? ' The print agent is running, so use the printers listed above.' : ' Recommended on Windows: the one-command print agent above.'}
+            </>
+          ) : (
+            <>On macOS, Linux, ChromeOS and Android, USB direct printing works with no install. Bluetooth needs a BLE label printer.</>
+          )}
+        </p>
+      )}
+      {direct.length > 0 && (
+        <div className="divide-y divide-emerald-200 dark:divide-emerald-900 rounded border border-emerald-200 dark:border-emerald-900 bg-white dark:bg-gray-900">
+          {direct.map((p) => {
+            const active = p.id === selectedId
+            const lang = rawLang(p)
+            return (
+              <div key={p.id} className={`p-2 space-y-1.5 ${active ? 'bg-emerald-50 dark:bg-emerald-900/20' : ''}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-gray-900 dark:text-gray-100 truncate flex items-center gap-1">
+                      {active && <CheckCircle2 size={12} className="text-emerald-600 shrink-0" />}
+                      {p.transport === 'webusb' ? <Usb size={12} className="shrink-0" /> : <Bluetooth size={12} className="shrink-0" />}
+                      {p.name}
+                    </div>
+                    <div className="text-[11px] text-gray-500">{p.transport === 'webusb' ? 'USB, direct from the browser' : 'Bluetooth, direct from the browser'}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      makeDefault(p)
+                      toast.success(`Labels will print directly to ${p.name} (${lang.toUpperCase()})`)
+                    }}
+                    className="shrink-0 px-2.5 py-1 rounded font-semibold flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    <Printer size={12} /> {active ? 'In use' : 'Use for labels'}
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <select
+                    value={lang}
+                    onChange={(e) => updatePrinterProfile(p.id, { label: { ...p.label, language: e.target.value as Lang } })}
+                    className="px-1.5 py-0.5 border rounded bg-white dark:bg-gray-800 text-[11px]"
+                    title="Printer language (change it if the test label prints as text)"
+                  >
+                    {LANGS.map((l) => (
+                      <option key={l.value} value={l.value}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    value={p.label.dpi}
+                    onChange={(e) => updatePrinterProfile(p.id, { label: { ...p.label, dpi: Number(e.target.value) === 300 ? 300 : 203 } })}
+                    className="px-1.5 py-0.5 border rounded bg-white dark:bg-gray-800 text-[11px]"
+                    title="Print head resolution (203 dpi = 8 dots/mm, 300 dpi = 12 dots/mm)"
+                  >
+                    <option value={203}>203 dpi</option>
+                    <option value={300}>300 dpi</option>
+                  </select>
+                  <button
+                    type="button"
+                    disabled={busy !== null || !setup}
+                    onClick={() => alignment(p)}
+                    className="px-1.5 py-0.5 border rounded bg-white dark:bg-gray-800 text-[11px] font-medium disabled:opacity-50 flex items-center gap-1"
+                    title="Prints 2 rows of numbered labels (1, 2 / 3, 4) with a border, to check size and order"
+                  >
+                    {busy === p.id ? <Loader2 size={10} className="animate-spin" /> : null} Alignment test
+                  </button>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       )}
     </div>
   )

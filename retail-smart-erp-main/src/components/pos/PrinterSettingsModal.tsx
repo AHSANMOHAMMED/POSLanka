@@ -21,6 +21,7 @@ import { toast } from '@/components/ui/toast'
 import { usePrinters, buildReceiptTestBytes, type PrinterTransportKind, type PrinterProfile, type PrinterRole } from '@/hooks/usePrinter'
 import { supportsWebBluetooth, supportsWebUsb } from '@/lib/print/escpos/transports'
 import { AgentPrinterPicker } from '@/components/pos/AgentPrinterPicker'
+import { useClientPrintEnv } from '@/components/print/PrintAgentInstallCommands'
 import { guessLabelPrinter } from '@/lib/print/label/printer-detect'
 import { openReceiptPreview } from '@/components/print/ReceiptPreviewDialog'
 import { LABEL_LANGUAGES, LABEL_LANGUAGE_LABELS, ROLE_LABELS, type LabelLanguage } from '@/lib/print/printer-profiles'
@@ -75,6 +76,7 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
   }, [isOpen, initialRole, printers, addPrinter])
   const [busy, setBusy] = useState<'test' | 'drawer' | 'pair' | null>(null)
   const support = useMemo(() => ({ webusb: supportsWebUsb(), webbluetooth: supportsWebBluetooth() }), [])
+  const clientEnv = useClientPrintEnv()
   const { setups: stickerSetups } = useStickerSetups(isOpen)
   const isAdmin = usePermission('manageSettings')
 
@@ -352,6 +354,22 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
                         </button>
                       )}
                     </div>
+                  </div>
+                )}
+
+                {selected.transport === 'webusb' && clientEnv?.os === 'windows' && (
+                  <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-2.5 text-xs text-amber-900 dark:text-amber-100 flex items-start justify-between gap-2">
+                    <span>
+                      On Windows, direct USB needs the WinUSB driver (Zadig), which replaces the printer&apos;s own driver. Recommended on Windows: the{' '}
+                      <strong>Print agent</strong> (one command, keeps the normal driver).
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => update({ transport: 'agent' })}
+                      className="shrink-0 px-2 py-1 rounded bg-teal-600 hover:bg-teal-700 text-white font-semibold text-[11px]"
+                    >
+                      Use Print agent
+                    </button>
                   </div>
                 )}
 

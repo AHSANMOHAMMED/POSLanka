@@ -8,6 +8,7 @@ import { THEME, formatLKR } from '../src/lib/theme'
 import { LoadingView, ErrorView, InlineNotice, EmptyView } from '../src/components/StateViews'
 import { useHeaderPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 interface DashboardStats {
   today: { totalSales: number; totalReturns: number; netSales: number; transactionCount: number; returnCount: number; pendingCount: number }
@@ -193,20 +194,11 @@ export default function ManagerDailySummaryScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={[styles.header, headerPad]}>
-        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>{stats ? 'Manager Daily Summary' : 'My Shift Summary'}</Text>
-          <Text style={styles.headerSub} numberOfLines={1}>
-            {user?.tenantName || ''} • {todayISO()}
-          </Text>
-        </View>
-        <View style={styles.syncBadge}>
-          <Text style={styles.syncBadgeText} numberOfLines={1}>{displayRole(user)}</Text>
-        </View>
-      </View>
+      <ScreenHeader
+        title={stats ? 'Daily summary' : 'My shift summary'}
+        subtitle={`${user?.tenantName || ''} • ${todayISO()}`}
+        right={user ? <Badge text={displayRole(user)} tone="primary" /> : undefined}
+      />
 
       {user && !hasAnyPermission(user, ['viewReports', 'managePOS', 'createSales']) ? (
         <EmptyView icon="🔒" title="Not available for your role" subtitle="Sales figures are only for selling, POS or report roles." />

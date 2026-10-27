@@ -8,6 +8,7 @@ import {
   Pressable,
   FlatList,
 } from 'react-native'
+import { Ionicons } from '@expo/vector-icons'
 import { THEME, formatLKR } from '../lib/theme'
 import { cartSubtotal, lineTotal } from '../lib/cartMath'
 
@@ -101,7 +102,7 @@ export function CartDrawerModal({
               <Text style={styles.title}>Active Cart Details</Text>
             </View>
             <Pressable onPress={onClose} style={styles.closeBtn}>
-              <Text style={styles.closeBtnText}>✕</Text>
+              <Ionicons name="close" size={22} color={THEME.colors.textMuted} />
             </Pressable>
           </View>
 
@@ -120,7 +121,7 @@ export function CartDrawerModal({
               renderItem={({ item }) => {
                 const itemTotal = lineTotal(item)
                 return (
-                  <View style={styles.cartRow}>
+                  <Pressable style={styles.cartRow} onLongPress={() => onRemoveItem(item.id)} delayLongPress={400} accessibilityHint="Long-press to remove">
                     <View style={styles.itemInfo}>
                       <Text style={styles.itemName} numberOfLines={2}>
                         {item.name}
@@ -146,7 +147,7 @@ export function CartDrawerModal({
                           style={styles.stepBtn}
                           onPress={() => onUpdateQuantity(item.id, -1)}
                         >
-                          <Text style={styles.stepText}>−</Text>
+                          <Ionicons name="remove" size={20} color={THEME.colors.primary} />
                         </Pressable>
                         <View style={styles.countBox}>
                           <Text style={styles.countText}>{item.quantity}</Text>
@@ -155,7 +156,7 @@ export function CartDrawerModal({
                           style={styles.stepBtn}
                           onPress={() => onUpdateQuantity(item.id, 1)}
                         >
-                          <Text style={styles.stepText}>+</Text>
+                          <Ionicons name="add" size={20} color={THEME.colors.primary} />
                         </Pressable>
                       </View>
 
@@ -165,11 +166,11 @@ export function CartDrawerModal({
                           style={styles.trashBtn}
                           onPress={() => onRemoveItem(item.id)}
                         >
-                          <Text style={styles.trashText}>🗑</Text>
+                          <Ionicons name="trash-outline" size={20} color={THEME.colors.error} />
                         </Pressable>
                       </View>
                     </View>
-                  </View>
+                  </Pressable>
                 )
               }}
             />
@@ -290,9 +291,9 @@ const styles = StyleSheet.create({
   badgeText: { color: '#FFF', fontWeight: '700', fontSize: 13 },
   title: { fontSize: 18, fontWeight: '700', color: THEME.colors.text },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: THEME.colors.surfaceContainerLow,
     alignItems: 'center',
     justifyContent: 'center',
@@ -323,13 +324,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: THEME.colors.surfaceContainerLow,
-    borderRadius: 8,
+    borderRadius: 24,
     borderWidth: 1,
     borderColor: THEME.colors.border,
   },
   stepBtn: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    width: 46,
+    height: 46,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -338,7 +339,7 @@ const styles = StyleSheet.create({
   countText: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   lineTotal: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
-  trashBtn: { padding: 4 },
+  trashBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   trashText: { fontSize: 14 },
   summaryBox: {
     paddingHorizontal: 20,
@@ -369,6 +370,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   secondaryBtn: {
+    minHeight: 48,
     paddingVertical: 12,
     paddingHorizontal: 14,
     borderRadius: 10,
@@ -379,6 +381,7 @@ const styles = StyleSheet.create({
   secondaryBtnText: { fontSize: 12, fontWeight: '700', color: THEME.colors.text },
   primaryChargeBtn: {
     flex: 1,
+    minHeight: 52,
     paddingVertical: 14,
     borderRadius: 10,
     backgroundColor: THEME.colors.primary,

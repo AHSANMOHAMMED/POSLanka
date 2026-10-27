@@ -21,6 +21,13 @@
  *       "counter1": { "type": "tcp",    "host": "192.168.1.50", "port": 9100 },
  *       "shared":   { "type": "system", "name": "EPSON_TM_T82" },
  *       "serial":   { "type": "serial", "path": "/dev/ttyUSB0" } } }
+ *
+ * `extraAllowedOrigins` (array) adds origins on top of the built-in hosted-app
+ * list without turning off the *.skyerpos.com / *.poslanka.lk subdomain match.
+ *
+ *   node index.mjs --allow-origin https://shop.example.com
+ *     adds the origin to extraAllowedOrigins in printers.json and exits
+ *     (used by the one-command installers served at /print-agent/install.*).
  */
 
 import http from 'node:http'
@@ -31,7 +38,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 
-const VERSION = '1.2.0'
+const VERSION = '1.3.0'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const HOST = process.env.PRINT_AGENT_HOST || '127.0.0.1'
 const PORT = Number(process.env.PRINT_AGENT_PORT || 9123)
@@ -441,7 +448,12 @@ function allowedOrigins(cfg) {
   if (process.env.PRINT_AGENT_ALLOWED_ORIGINS) {
     return process.env.PRINT_AGENT_ALLOWED_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)
   }
-  const extra = (process.env.PRINT_AGENT_APP_ORIGIN || '').split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean)
+  const extra = [
+    ...(process.env.PRINT_AGENT_APP_ORIGIN || '').split(','),
+    ...(Array.isArray(cfg.extraAllowedOrigins) ? cfg.extraAllowedOrigins.map(String) : []),
+  ]
+    .map((s) => s.trim().replace(/\/+$/, ''))
+    .filter(Boolean)
   if (Array.isArray(cfg.allowedOrigins) && cfg.allowedOrigins.length > 0) {
     return [...cfg.allowedOrigins.map((s) => String(s).trim().replace(/\/+$/, '')).filter(Boolean), ...extra]
   }
@@ -502,6 +514,39 @@ function readBody(req) {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
     req.on('error', reject)
   })
+}
+
+// `node index.mjs --allow-origin <origin>`: remember an extra app origin and exit (installers).
+const allowIdx = process.argv.indexOf('--allow-origin')
+if (allowIdx !== -1) {
+  let origin = ''
+  try {
+    origin = new URL(process.argv[allowIdx + 1] || '').origin
+  } catch {
+    /* invalid */
+  }
+  if (!origin || origin === 'null') {
+    console.error('Usage: node index.mjs --allow-origin https://your-app.example.com')
+    process.exit(2)
+  }
+  let cfg = {}
+  try {
+    cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+  } catch (e) {
+    if (e.code !== 'ENOENT') {
+      console.error(`Could not read ${CONFIG_PATH}: ${e.message}`)
+      process.exit(1)
+    }
+  }
+  if (!cfg.printers || typeof cfg.printers !== 'object') cfg.printers = {}
+  const list = Array.isArray(cfg.extraAllowedOrigins) ? cfg.extraAllowedOrigins.map(String) : []
+  if (!list.includes(origin)) list.push(origin)
+  cfg.extraAllowedOrigins = list
+  // An explicit allowedOrigins list replaces the defaults: make sure the origin is in it too.
+  if (Array.isArray(cfg.allowedOrigins) && cfg.allowedOrigins.length > 0 && !cfg.allowedOrigins.includes(origin)) cfg.allowedOrigins.push(origin)
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n')
+  console.log(`Allowed origin ${origin} (${CONFIG_PATH})`)
+  process.exit(0)
 }
 
 const server = http.createServer(async (req, res) => {

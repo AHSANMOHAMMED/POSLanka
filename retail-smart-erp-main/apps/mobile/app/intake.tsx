@@ -36,6 +36,7 @@ import {
   type LocalIntakeBatch,
 } from '../src/lib/intakeStore'
 import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 interface Warehouse { id: string; name: string }
 
@@ -635,16 +636,7 @@ function BatchView({ user, batch, online, onBack }: { user: AuthUser; batch: Loc
 }
 
 function Header({ title, subtitle, onBack }: { title: string; subtitle?: string; onBack: () => void }) {
-  const headerPad = useHeaderPad()
-  return (
-    <View style={[styles.header, headerPad]}>
-      <Pressable onPress={onBack} style={styles.backBtn}><Text style={styles.backText}>‹</Text></Pressable>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.headerTitle}>{title}</Text>
-        {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
-      </View>
-    </View>
-  )
+  return <ScreenHeader title={title} subtitle={subtitle} onBack={onBack} />
 }
 
 const styles = StyleSheet.create({

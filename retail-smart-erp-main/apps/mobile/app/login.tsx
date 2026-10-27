@@ -184,7 +184,8 @@ export default function LoginScreen() {
       uploadAllPending().catch(() => undefined)
 
       // Roles that cannot sell (stock, purchasing, reports, HR...) land on the hub.
-      if (!hasPermission(res.data.user, 'createSales')) {
+      // Owners / managers land on the dashboard too (shift status + quick actions are there).
+      if (!hasPermission(res.data.user, 'createSales') || hasPermission(res.data.user, 'viewReports')) {
         router.replace('/home')
         return
       }

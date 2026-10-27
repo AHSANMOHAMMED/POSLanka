@@ -52,13 +52,18 @@ PASS="$(cat "$PASSFILE")"
 echo "› Generating the native Android project for the $APP_VARIANT app (default server $API_URL)"
 CI=1 EXPO_PUBLIC_API_URL="$API_URL" npx expo prebuild --platform android --clean --no-install
 
-echo "› Building release APK for $ABIS"
+# Tell expo-modules-core the Kotlin version React Native really compiles with (its Gradle version
+# catalog), so it picks the matching Compose compiler (1.9.24 → 1.5.14, 1.9.25 → 1.5.15).
+KOTLIN_VERSION="$(sed -n 's/^kotlin = "\(.*\)"/\1/p' node_modules/react-native/gradle/libs.versions.toml | head -1)"
+KOTLIN_VERSION="${KOTLIN_VERSION:-1.9.25}"
+
+echo "› Building release APK for $ABIS (Kotlin $KOTLIN_VERSION)"
 cd android
 # New architecture: every library's codegen must exist before the app's C++ (CMake) build; the
 # app build doesn't always wait for it, so generate it first (runs in every module that has it).
 EXPO_PUBLIC_API_URL="$API_URL" NODE_ENV=production ./gradlew generateCodegenArtifactsFromSchema assembleRelease \
   -PreactNativeArchitectures="$ABIS" \
-  -Pandroid.kotlinVersion=1.9.24 \
+  -Pandroid.kotlinVersion="$KOTLIN_VERSION" \
   -PPOSLANKA_STORE_FILE="$KEYSTORE" \
   -PPOSLANKA_STORE_PASSWORD="$PASS" \
   -PPOSLANKA_KEY_ALIAS="$ALIAS" \

@@ -6,7 +6,26 @@ ESC/POS receipt to this agent on `http://127.0.0.1:9123` and the agent forwards 
 
 No npm dependencies. Only listens on loopback (127.0.0.1) by default.
 
-## Quick start (Windows, label printers)
+## One-command install (recommended)
+
+The app serves installers (public, no login) that download this agent from the same host,
+allow that host (`extraAllowedOrigins` in printers.json), start it now and at every login:
+
+| OS | Command |
+| --- | --- |
+| Windows (PowerShell, no admin) | `irm https://<your-app>/print-agent/install.ps1 \| iex` |
+| macOS / Linux (no sudo) | `curl -fsSL https://<your-app>/print-agent/install.sh \| bash` |
+| Uninstall | `irm https://<your-app>/print-agent/uninstall.ps1 \| iex` / `... install.sh \| bash -s -- --uninstall` |
+
+Windows: Node.js LTS via winget (else MSI as admin, else portable zip), agent in
+`%LOCALAPPDATA%\skyERPOS\print-agent`, hidden start via a Startup-folder shortcut (`start-hidden.vbs`).
+macOS / Linux: Node.js 20+ or the official tarball in `~/.skyerpos/node`, agent in
+`~/.skyerpos/print-agent`, LaunchAgent `com.skyerpos.print-agent` / systemd user unit
+`skyerpos-print-agent.service` / `~/.config/autostart` fallback. Re-run to update.
+Sources: `install.ps1`, `install.sh` here (`__SKYERPOS_ORIGIN__` is filled in by
+`src/app/print-agent/[file]/route.ts`). `node index.mjs --allow-origin <url>` adds an origin.
+
+## Quick start (Windows, manual)
 
 1. Install Node.js LTS from nodejs.org.
 2. On the POS open **Barcode → Print Labels**, box *Print directly*: download `index.mjs` and

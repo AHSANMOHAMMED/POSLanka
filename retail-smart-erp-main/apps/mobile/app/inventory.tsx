@@ -18,6 +18,7 @@ import { BarcodeScannerModal } from '../src/components/BarcodeScannerModal'
 import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
 import { useHeaderPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 type MovementType = 'in' | 'out' | 'adjustment'
 
@@ -207,20 +208,11 @@ export default function InventoryScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={[styles.header, headerPad]}>
-        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle}>Stock Ledger & Movements</Text>
-          <Text style={styles.headerSub} numberOfLines={1}>
-            {shift ? shiftWarehouseName(shift) || 'All warehouses' : 'All warehouses'}
-          </Text>
-        </View>
-        <TouchableOpacity onPress={() => setIsScannerOpen(true)} style={styles.scanBtn}>
-          <Text style={styles.scanBtnText}>[|||]</Text>
-        </TouchableOpacity>
-      </View>
+      <ScreenHeader
+        title="Stock ledger"
+        subtitle={shift ? shiftWarehouseName(shift) || 'All warehouses' : 'All warehouses'}
+        right={<IconButton name="barcode-outline" label="Scan item" color={THEME.colors.primary} onPress={() => setIsScannerOpen(true)} />}
+      />
 
       {user === undefined ? (
         <LoadingView />

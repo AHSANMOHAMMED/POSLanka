@@ -19,6 +19,7 @@ import { THEME, formatLKR } from '../src/lib/theme'
 import { LoadingView, EmptyView, ErrorView, InlineNotice } from '../src/components/StateViews'
 import { useHeaderPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
+import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
 
 type ApprovalKind = 'PR' | 'ADVANCE'
 
@@ -218,18 +219,7 @@ export default function ApprovalsScreen() {
 
   return (
     <View style={styles.safe}>
-      <View style={[styles.header, headerPad]}>
-        <TouchableOpacity onPress={() => goBack()} style={styles.backButton}>
-          <Text style={styles.backButtonText}>←</Text>
-        </TouchableOpacity>
-        <View style={styles.headerCenter}>
-          <Text style={styles.storeName} numberOfLines={1}>
-            {user?.tenantName || 'skyERPOS'}
-          </Text>
-          <Text style={styles.branchSub}>Pending approvals</Text>
-        </View>
-        <View style={{ width: 36 }} />
-      </View>
+      <ScreenHeader title="Approvals" subtitle={user?.tenantName || 'Pending approvals'} />
 
       {user === undefined ? (
         <LoadingView />
