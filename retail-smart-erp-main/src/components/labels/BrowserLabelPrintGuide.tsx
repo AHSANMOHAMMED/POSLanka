@@ -40,12 +40,14 @@ export interface BrowserLabelPrintGuideProps {
   setup: StickerSetup
   /** Physical rows (= pages) of this job. */
   rows: number
+  /** Continuous roll (printer can't find the gaps): the page already includes the gap, media type Continuous. */
+  continuous?: boolean
   onClose: () => void
   onContinue: () => void
   onAlignmentTest: () => void
 }
 
-export function BrowserLabelPrintGuide({ isOpen, setup, rows, onClose, onContinue, onAlignmentTest }: BrowserLabelPrintGuideProps) {
+export function BrowserLabelPrintGuide({ isOpen, setup, rows, continuous, onClose, onContinue, onAlignmentTest }: BrowserLabelPrintGuideProps) {
   const [dontShow, setDontShow] = useState(false)
   const W = stickerRollWidthMm(setup)
   const H = setup.labelHeightMm
@@ -87,7 +89,14 @@ export function BrowserLabelPrintGuide({ isOpen, setup, rows, onClose, onContinu
             <b>Install the driver</b> for your printer model from the maker&apos;s website (Xprinter, TSC, Zebra, Godex ...).
           </li>
           <li>
-            <b>Set the paper size</b> in the driver to <b>{W} mm wide x {H} mm high</b>, labels with gaps (gap {gap} mm), and make it the default.
+            <b>Set the paper size</b> in the driver to <b>{W} mm wide x {H} mm high</b>,{' '}
+            {continuous ? (
+              <>
+                media type <b>Continuous</b> (not labels with gaps), and make it the default.
+              </>
+            ) : (
+              <>labels with gaps (gap {gap} mm), and make it the default.</>
+            )}
             <div className="text-xs text-gray-600 dark:text-gray-400 mt-0.5">
               Windows: Settings → Printers → your printer → Printing preferences → Page Setup / Stock → New. Mac: in Chrome press ⌥⌘P → Paper Size →
               Manage Custom Sizes.

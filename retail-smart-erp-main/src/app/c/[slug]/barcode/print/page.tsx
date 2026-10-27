@@ -130,7 +130,25 @@ export default function BarcodePrintPage() {
     }
   }
   // Browser print dialog checklist (paper size), shown before the dialog opens
-  const [guideJob, setGuideJob] = useState<null | { done: (go: boolean) => void; rows: number; setup: StickerSetup }>(null)
+  const [guideJob, setGuideJob] = useState<null | { done: (go: boolean) => void; rows: number; setup: StickerSetup; continuous: boolean }>(null)
+  // Printer can't find the gaps (FEED runs through many stickers, e.g. a fixed centre sensor under the gap of a
+  // multi-across roll): print as a continuous roll, one page = label height + row gap, so no gap sensing is needed.
+  const [noGapSensing, setNoGapSensing] = useState(() => {
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem('sky_label_no_gap_sensing') === '1'
+    } catch {
+      return false
+    }
+  })
+  const toggleNoGapSensing = (on: boolean) => {
+    setNoGapSensing(on)
+    try {
+      if (on) localStorage.setItem('sky_label_no_gap_sensing', '1')
+      else localStorage.removeItem('sky_label_no_gap_sensing')
+    } catch {
+      /* private mode */
+    }
+  }
   // Test print from the checklist: one at a time (each click would otherwise queue another job)
   const testLock = useRef(false)
 
@@ -841,16 +859,20 @@ export default function BarcodePrintPage() {
       if (!window.confirm(`${pf.errors} barcode problem${pf.errors === 1 ? '' : 's'} - these labels would not scan at the POS:\n\n${lines}\n\nPrint anyway?`)) return
     }
 
+    // Continuous roll: each page is one row plus its gap, the printer feeds exactly that (no gap sensing).
+    const dialogSetup: StickerSetup = noGapSensing
+      ? { ...effectiveSetup, labelHeightMm: effectiveSetup.labelHeightMm + effectiveSetup.rowGapMm, rowGapMm: 0 }
+      : effectiveSetup
     const dialogPrint = () =>
       printViaRoll
-        ? printLabelsOnRoll(templateToPrint, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
+        ? printLabelsOnRoll(templateToPrint, items, dialogSetup, currencySymbol, company?.tenantName, codeWord)
         : printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
     // Browser dialog: show the paper-size checklist first (unless dismissed for this size).
     // The checklist is awaited inside the print lock, so the job runs once and the button stays busy meanwhile.
     const viaDialog = async () => {
-      if (printViaRoll && !browserGuideHidden(effectiveSetup)) {
+      if (printViaRoll && !browserGuideHidden(dialogSetup)) {
         const go = await new Promise<boolean>((done) =>
-          setGuideJob({ done, rows: Math.ceil(totalLabels / Math.max(1, effectiveSetup.columns)), setup: effectiveSetup })
+          setGuideJob({ done, rows: Math.ceil(totalLabels / Math.max(1, dialogSetup.columns)), setup: dialogSetup, continuous: noGapSensing })
         )
         setGuideJob(null)
         if (!go) return
@@ -1140,7 +1162,8 @@ export default function BarcodePrintPage() {
             {!chosenPrinterId ? (
               <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
                 Prints through Chrome. One time only: install the driver for your printer model (from the maker&apos;s website) and set its paper size to{' '}
-                <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm} mm` : 'the label size'}</b>.
+                <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
+                {noGapSensing ? <>, media type <b>Continuous</b></> : null}.
               </div>
             ) : (
               <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
@@ -1242,6 +1265,15 @@ export default function BarcodePrintPage() {
                     The right sticker column would be clipped. Pick a 1-across setup, or use a printer that matches this roll.
                   </span>
                 </div>
+              )}
+              {!chosenPrinterId && (
+                <label className="mt-2 flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                  <input type="checkbox" className="mt-0.5" checked={noGapSensing} onChange={(e) => toggleNoGapSensing(e.target.checked)} />
+                  <span>
+                    My printer can&apos;t find the gaps (pressing FEED runs through many stickers). Print as a continuous roll:{' '}
+                    {activeSetup ? `${activeSetup.labelHeightMm + activeSetup.rowGapMm} mm` : 'label + gap'} per row.
+                  </span>
+                </label>
               )}
             </div>
 
@@ -1959,6 +1991,7 @@ export default function BarcodePrintPage() {
           isOpen
           setup={guideJob.setup}
           rows={guideJob.rows}
+          continuous={guideJob.continuous}
           onClose={() => guideJob.done(false)}
           onAlignmentTest={async () => {
             if (testLock.current) return
