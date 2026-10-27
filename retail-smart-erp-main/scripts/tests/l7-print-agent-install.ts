@@ -50,6 +50,7 @@ async function main() {
   check('install.ps1 has the request host', ps.body.includes("$Origin = 'https://shop.skyerpos.com'"))
   check('install.ps1 CRLF line endings', ps.body.includes('\r\n') && !/[^\r]\n/.test(ps.body))
   check('install.ps1 installs (not uninstall)', ps.body.includes('$SkyerposUninstall = $false'))
+  check('install.ps1 downloads through Get-File (IWR, curl.exe, BITS fallbacks)', ps.body.includes('function Get-File') && ps.body.includes('curl.exe') && ps.body.includes('Start-BitsTransfer') && !/^\s*Invoke-WebRequest .*-OutFile/m.test(ps.body))
   check('install.ps1 autostart + health', ps.body.includes("GetFolderPath('Startup')") && ps.body.includes('127.0.0.1:9123/health'))
   const un = await fetchFile('uninstall.ps1', shop)
   check('uninstall.ps1 sets uninstall', un.status === 200 && un.body.includes('$SkyerposUninstall = $true'))
@@ -88,7 +89,8 @@ async function main() {
 
   // UI commands
   const cmds = printAgentInstallCommands('https://shop.skyerpos.com/')
-  check('windows one-liner', cmds.windows.install === 'irm https://shop.skyerpos.com/print-agent/install.ps1 | iex')
+  check('windows one-liner (TLS 1.2 first)', cmds.windows.install === "[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; irm https://shop.skyerpos.com/print-agent/install.ps1 | iex")
+  check('windows cmd fallback uses curl.exe', cmds.windows.alt?.install === 'curl.exe -fsSL -o "%TEMP%\\skyerpos-print-agent.ps1" https://shop.skyerpos.com/print-agent/install.ps1 && powershell -NoProfile -ExecutionPolicy Bypass -File "%TEMP%\\skyerpos-print-agent.ps1"', cmds.windows.alt?.install)
   check('unix one-liner', cmds.unix.install === 'curl -fsSL https://shop.skyerpos.com/print-agent/install.sh | bash')
   const nav = (platform: string, userAgent: string) => ({ platform, userAgent }) as Navigator
   check('detect windows', detectAgentOs(nav('Win32', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)')) === 'windows')

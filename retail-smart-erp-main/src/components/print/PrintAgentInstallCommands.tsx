@@ -80,6 +80,17 @@ function CommandRow({ cmd, text, primary }: { cmd: AgentInstallCommand; text: st
   )
 }
 
+/** Command Prompt fallback for PCs where PowerShell's own download fails (old TLS, proxy). */
+function AltCommand({ alt, cmd }: { alt: NonNullable<AgentInstallCommand['alt']>; cmd: AgentInstallCommand }) {
+  return (
+    <div className="space-y-1 pt-1">
+      <div className="text-[11px] font-medium text-amber-700 dark:text-amber-400">{alt.label}:</div>
+      <CommandRow cmd={cmd} text={alt.install} />
+      <p className="text-[11px] text-gray-500">{alt.hint}</p>
+    </div>
+  )
+}
+
 export function PrintAgentInstallCommands({ downloadBase }: { /** /c/<slug> for the manual file download links. */ downloadBase?: string }) {
   const env = useClientPrintEnv()
   if (!env) return null
@@ -94,6 +105,7 @@ export function PrintAgentInstallCommands({ downloadBase }: { /** /c/<slug> for 
             One-time setup on this {mine.label === 'Windows' ? 'Windows PC' : 'computer'}: run this command
           </div>
           <CommandRow cmd={mine} text={mine.install} primary />
+          {mine.alt && <AltCommand alt={mine.alt} cmd={mine} />}
         </>
       ) : (
         <p className="text-gray-600 dark:text-gray-400">
@@ -110,6 +122,7 @@ export function PrintAgentInstallCommands({ downloadBase }: { /** /c/<slug> for 
               <div className="font-medium">{c.label}</div>
               <CommandRow cmd={c} text={c.install} />
               <p className="text-gray-500">{c.hint}</p>
+              {c.alt && <AltCommand alt={c.alt} cmd={c} />}
             </div>
           ))}
           <div className="space-y-1">

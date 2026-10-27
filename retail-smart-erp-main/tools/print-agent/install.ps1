@@ -31,6 +31,24 @@ if ($args -contains '-Uninstall') { $SkyerposUninstall = $true }
   function Say([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
   function Fail([string]$m) { Write-Host "Error: $m" -ForegroundColor Red; throw $m }
 
+  # Download with fallbacks: Invoke-WebRequest can fail on old TLS defaults, proxies or a missing
+  # IE engine, so try the curl.exe built into Windows 10/11, then BITS, before giving up.
+  function Get-File([string]$url, [string]$out) {
+    $errs = @()
+    try { Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $out; if ((Test-Path $out) -and (Get-Item $out).Length -gt 0) { return } } catch { $errs += "Invoke-WebRequest: $($_.Exception.Message)" }
+    $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+    if (Test-Path $curl) {
+      # Windows PowerShell 5.1 turns a native program's stderr into a terminating error under 'Stop'
+      $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+      try { & $curl -fsSL --retry 3 -o $out $url 2>&1 | Out-Null } catch { }
+      $ErrorActionPreference = $prev
+      if ($LASTEXITCODE -eq 0 -and (Test-Path $out) -and (Get-Item $out).Length -gt 0) { return }
+      $errs += "curl.exe exit $LASTEXITCODE"
+    }
+    try { Start-BitsTransfer -Source $url -Destination $out -ErrorAction Stop; if ((Test-Path $out) -and (Get-Item $out).Length -gt 0) { return } } catch { $errs += "BITS: $($_.Exception.Message)" }
+    Fail ("Could not download $url (" + ($errs -join '; ') + '). Check the internet connection, proxy or antivirus and run the command again.')
+  }
+
   function Stop-Agent {
     $procs = @(Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -and $_.CommandLine -like '*skyERPOS\print-agent\index.mjs*' })
@@ -93,7 +111,7 @@ if ($args -contains '-Uninstall') { $SkyerposUninstall = $true }
     if (-not $Node -and $isAdmin) {
       Say "Installing Node.js $ver (official MSI from nodejs.org)"
       $msi = Join-Path $env:TEMP "node-$ver-$arch.msi"
-      Invoke-WebRequest -UseBasicParsing "https://nodejs.org/dist/$ver/node-$ver-$arch.msi" -OutFile $msi
+      Get-File "https://nodejs.org/dist/$ver/node-$ver-$arch.msi" $msi
       Start-Process msiexec.exe -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart') -Wait
       Remove-Item $msi -Force -ErrorAction SilentlyContinue
       Update-PathEnv
@@ -105,7 +123,7 @@ if ($args -contains '-Uninstall') { $SkyerposUninstall = $true }
       Say "Downloading Node.js $ver into $NodeDir"
       $zip = Join-Path $env:TEMP "node-$ver-win-$arch.zip"
       $unz = Join-Path $env:TEMP "node-$ver-win-$arch"
-      Invoke-WebRequest -UseBasicParsing "https://nodejs.org/dist/$ver/node-$ver-win-$arch.zip" -OutFile $zip
+      Get-File "https://nodejs.org/dist/$ver/node-$ver-win-$arch.zip" $zip
       if (Test-Path $unz) { Remove-Item $unz -Recurse -Force }
       Expand-Archive -Path $zip -DestinationPath $unz -Force
       if (Test-Path $NodeDir) { Remove-Item $NodeDir -Recurse -Force }
@@ -123,7 +141,7 @@ if ($args -contains '-Uninstall') { $SkyerposUninstall = $true }
   Stop-Agent
   Say "Downloading the print agent from $Origin"
   $tmp = Join-Path $Dir 'index.new.mjs'
-  Invoke-WebRequest -UseBasicParsing "$Origin/print-agent/index.mjs" -OutFile $tmp
+  Get-File "$Origin/print-agent/index.mjs" $tmp
   & $Node --check $tmp
   if ($LASTEXITCODE -ne 0) { Fail 'The downloaded agent is damaged; run the command again.' }
   Move-Item $tmp (Join-Path $Dir 'index.mjs') -Force
