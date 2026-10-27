@@ -7,6 +7,7 @@ import { and, eq, inArray, ne, sql } from 'drizzle-orm'
 import { glEntries, posCashMovements, saleItems, users } from '@/lib/db/schema'
 import { resolvePosTenderAccount } from '@/lib/accounting/auto-post'
 import { roundCurrency, parseCurrency } from '@/lib/utils/currency'
+import type { ShiftOutsideCollections } from '@/lib/pos/shift-collections'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any
@@ -108,6 +109,8 @@ export interface ShiftReportData {
     voidedCount: number
     items: Array<{ movementNo: string; type: string; category: string; amount: number; note: string | null; status: string; approvedBy: string | null }>
   }
+  /** 0187: money taken outside the POS sale screen (included in the expected amounts), by source */
+  outsideCollections: ShiftOutsideCollections
   approvals: { count: number }
   ledger: {
     posted: boolean
@@ -130,6 +133,7 @@ export async function buildShiftReport(db: Db, tenantId: string, input: {
   sales: ShiftSaleLike[]
   openingCash: number
   expectedCash: number
+  outsideCollections?: ShiftOutsideCollections
 }): Promise<ShiftReportData> {
   const live = input.sales.filter((s) => s.status !== 'void')
 
@@ -216,7 +220,11 @@ export async function buildShiftReport(db: Db, tenantId: string, input: {
     .filter((m: { category: string; type: string }) => m.category === 'void_refund' && m.type === 'paid_out')
     .reduce((sum: number, m: { amount: string }) => sum + parseCurrency(m.amount), 0)
   if (glLessOut > 0) ledgerCash = roundCurrency(ledgerCash - glLessOut)
-  const expectedCashMovement = roundCurrency(input.expectedCash - input.openingCash)
+  // The tie-out covers the shift's POS vouchers (sales, returns, movements); cash taken outside
+  // the POS (0187) is posted under its own vouchers (advance / layaway / invoice), so it is left
+  // out of both sides.
+  const outside: ShiftOutsideCollections = input.outsideCollections || { total: 0, byMethod: {}, bySource: {}, count: 0, items: [] }
+  const expectedCashMovement = roundCurrency(input.expectedCash - input.openingCash - (outside.byMethod.cash || 0))
   const difference = roundCurrency(ledgerCash - expectedCashMovement)
 
   return {
@@ -260,6 +268,7 @@ export async function buildShiftReport(db: Db, tenantId: string, input: {
         note: m.note, status: m.status, approvedBy: m.approvedBy,
       })),
     },
+    outsideCollections: outside,
     approvals: { count: live.filter((s) => !!s.approvedBy).length },
     ledger: {
       posted: ledgerPosted,

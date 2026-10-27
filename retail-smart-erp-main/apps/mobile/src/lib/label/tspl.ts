@@ -5,8 +5,7 @@
 import type { BarcodeFormat, LabelItemData } from './types'
 import {
   CommandBuffer,
-  fitModule,
-  hriHeight,
+  placeLinearBarcode,
   invertBits,
   isDarkColor,
   mmToDots,
@@ -144,24 +143,23 @@ async function emitElements(
           break
         }
         const data = res.data
-        if (el.format === 'qrcode') {
+        if (res.format === 'qrcode') {
           const cell = Math.max(1, Math.min(10, Math.floor(Math.min(w, h) / qrModules(data))))
           buf.line(`QRCODE ${x},${y},M,${cell},A,${r},${q(data)}`)
-        } else if (el.format === 'datamatrix') {
+        } else if (res.format === 'datamatrix') {
           buf.line(`DMATRIX ${x},${y},${w},${h},${q(data)}`)
-        } else if (el.format === 'pdf417') {
+        } else if (res.format === 'pdf417') {
           buf.line(`PDF417 ${x},${y},${w},${h},${r},${q(data)}`)
         } else {
-          const sym = TSPL_SYMBOLOGY[el.format]
+          const sym = TSPL_SYMBOLOGY[res.format]
           if (!sym) {
-            warnings.push(`Barcode ${el.id}: ${el.format} not supported in TSPL`)
+            warnings.push(`Barcode ${el.id}: ${res.format} not supported in TSPL`)
             break
           }
-          const ratio = ['code39', 'codabar', 'itf14'].includes(el.format) ? 2 : 1
-          const { module, used } = fitModule(el.format, data, w)
-          const bh = Math.max(8, h - (el.showText ? hriHeight(dpi) : 0))
-          const bx = r === 0 ? x + Math.max(0, Math.floor((w - used) / 2)) : x
-          buf.line(`BARCODE ${bx},${y},"${sym}",${bh},${el.showText ? 1 : 0},${r},${module},${module * ratio},${q(data)}`)
+          // Native printer barcode: integer-dot module, quiet zones inside the label.
+          const ratio = ['code39', 'codabar', 'itf14'].includes(res.format) ? 2 : 1
+          const p = placeLinearBarcode(template, el, res, o, ox, warnings)
+          buf.line(`BARCODE ${p.x},${y},"${sym}",${p.barHeight},${el.showText ? 1 : 0},${r},${p.module},${p.module * ratio},${q(data)}`)
         }
         break
       }

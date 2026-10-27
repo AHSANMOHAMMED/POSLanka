@@ -9,9 +9,7 @@ import {
   Globe,
   Server,
   Loader2,
-  CheckCircle2,
   AlertTriangle,
-  RefreshCw,
   Plus,
   Trash2,
   Tag,
@@ -21,7 +19,10 @@ import {
 import { FormInput, FormSelect, FormCheckbox, FormField } from '@/components/ui/form-elements'
 import { toast } from '@/components/ui/toast'
 import { usePrinters, buildReceiptTestBytes, type PrinterTransportKind, type PrinterProfile, type PrinterRole } from '@/hooks/usePrinter'
-import { PrintAgentTransport, supportsWebBluetooth, supportsWebUsb, type PrintAgentTarget } from '@/lib/print/escpos/transports'
+import { supportsWebBluetooth, supportsWebUsb } from '@/lib/print/escpos/transports'
+import { AgentPrinterPicker } from '@/components/pos/AgentPrinterPicker'
+import { guessLabelPrinter } from '@/lib/print/label/printer-detect'
+import { openReceiptPreview } from '@/components/print/ReceiptPreviewDialog'
 import { LABEL_LANGUAGES, LABEL_LANGUAGE_LABELS, ROLE_LABELS, type LabelLanguage } from '@/lib/print/printer-profiles'
 import { labelAlignmentTemplate, labelTestTemplate } from '@/lib/print/label'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
@@ -45,7 +46,7 @@ const TRANSPORTS: Array<{
   { kind: 'browser', label: 'Browser', description: 'Standard print dialog (any printer, slower)', icon: Globe },
   { kind: 'webusb', label: 'USB', description: 'Direct raw printing over WebUSB (Chrome/Edge)', icon: Usb },
   { kind: 'webbluetooth', label: 'Bluetooth', description: 'BLE printers (Chrome/Edge, Android)', icon: Bluetooth },
-  { kind: 'agent', label: 'Print agent', description: 'Local helper on this PC: network, shared or serial printer', icon: Server },
+  { kind: 'agent', label: 'Print agent', description: 'Helper app on this PC: pick any installed printer (with its driver), network or serial', icon: Server },
 ]
 
 const ROLE_ICONS: Record<PrinterRole, typeof Receipt> = { receipt: Receipt, label: Tag, kitchen: ChefHat }
@@ -73,8 +74,6 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
     }
   }, [isOpen, initialRole, printers, addPrinter])
   const [busy, setBusy] = useState<'test' | 'drawer' | 'pair' | null>(null)
-  const [agentOk, setAgentOk] = useState<boolean | null>(null)
-  const [agentTargets, setAgentTargets] = useState<PrintAgentTarget[]>([])
   const support = useMemo(() => ({ webusb: supportsWebUsb(), webbluetooth: supportsWebBluetooth() }), [])
   const { setups: stickerSetups } = useStickerSetups(isOpen)
   const isAdmin = usePermission('manageSettings')
@@ -97,30 +96,6 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
   }, [isOpen, stickerSetups, printers, updatePrinter])
 
   const selected: PrinterProfile | null = printers.find((p) => p.id === selectedId) || printers[0] || null
-
-  const selTransport = selected?.transport
-  const selAgentUrl = selected?.agentUrl || ''
-
-  useEffect(() => {
-    if (!isOpen || selTransport !== 'agent') return
-    let cancelled = false
-    ;(async () => {
-      const ok = await PrintAgentTransport.health(selAgentUrl)
-      if (cancelled) return
-      setAgentOk(ok)
-      if (ok) {
-        try {
-          const targets = await PrintAgentTransport.listTargets(selAgentUrl)
-          if (!cancelled) setAgentTargets(targets)
-        } catch {
-          if (!cancelled) setAgentTargets([])
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [isOpen, selTransport, selAgentUrl])
 
   useEscapeKey(isOpen, onClose)
 
@@ -160,7 +135,14 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
       if (!res.ok) toast.error(res.error || 'Label test failed')
       return res.ok
     }
-    const ok = await printTo(p, await buildReceiptTestBytes(p), { title: 'Printer test' })
+    const bytes = await buildReceiptTestBytes(p)
+    if (p.transport === 'browser') {
+      // Browser printing: show what will print, then the OS dialog picks the printer.
+      const choice = await openReceiptPreview({ bytes, title: 'Printer test', profile: p, rebuild: buildReceiptTestBytes })
+      if (!choice) return false
+      return printTo(choice.profile, choice.bytes, { title: 'Printer test' })
+    }
+    const ok = await printTo(p, bytes, { title: 'Printer test' })
     return ok
   }
 
@@ -374,68 +356,45 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
                 )}
 
                 {selected.transport === 'agent' && (
-                  <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="font-medium">Print agent</div>
-                      <div className="text-xs flex items-center gap-1.5">
-                        {agentOk === null ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
-                        ) : agentOk ? (
-                          <>
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> connected
-                          </>
-                        ) : (
-                          <>
-                            <AlertTriangle className="w-3.5 h-3.5 text-amber-500" /> not reachable
-                          </>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAgentOk(null)
-                            PrintAgentTransport.health(selected.agentUrl).then(setAgentOk)
-                            PrintAgentTransport.listTargets(selected.agentUrl).then(setAgentTargets).catch(() => setAgentTargets([]))
-                          }}
-                          className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"
-                          title="Re-check"
-                        >
-                          <RefreshCw className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <FormField label="Agent URL">
-                        <FormInput
-                          value={selected.agentUrl}
-                          onChange={(e) => update({ agentUrl: e.target.value })}
-                          placeholder="http://127.0.0.1:9123"
-                          inputSize="sm"
-                        />
-                      </FormField>
-                      <FormField label="Target printer">
-                        {agentTargets.length > 0 ? (
-                          <FormSelect value={selected.agentTarget} onChange={(e) => update({ agentTarget: e.target.value })} selectSize="sm">
-                            <option value="">Default target</option>
-                            {agentTargets.map((t) => (
-                              <option key={t.name} value={t.name}>
-                                {t.name} ({t.type})
-                              </option>
-                            ))}
-                          </FormSelect>
-                        ) : (
-                          <FormInput
-                            value={selected.agentTarget}
-                            onChange={(e) => update({ agentTarget: e.target.value })}
-                            placeholder="e.g. counter1 (from printers.json)"
-                            inputSize="sm"
-                          />
-                        )}
-                      </FormField>
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      Run <code className="font-mono">tools/print-agent</code> on this PC and add this site to{' '}
-                      <code className="font-mono">allowedOrigins</code> in its printers.json.
+                  <AgentPrinterPicker
+                    key={selected.id}
+                    agentUrl={selected.agentUrl}
+                    agentTarget={selected.agentTarget}
+                    onChange={(patch) => update(patch)}
+                    preferLabelPrinters={isLabel}
+                    onPickTarget={(t) => {
+                      if (!isLabel) return
+                      // Language + DPI from the driver name (ZDesigner -> ZPL, TSC / Xprinter / DBL -> TSPL, "300dpi" -> 300)
+                      const g = guessLabelPrinter(t.name, t.driver)
+                      update({ label: { ...selected.label, language: g.language, dpi: g.dpi } })
+                      toast.success(`${t.name}: ${g.language.toUpperCase()}, ${g.dpi} dpi${g.confident ? '' : ' (check with a test label)'}`)
+                    }}
+                    testing={busy !== null}
+                    onTest={async (target) => {
+                      if (target !== selected.agentTarget) update({ agentTarget: target })
+                      await run('test', () => testPrint({ ...selected, agentTarget: target }), isLabel ? 'Test label sent' : `Test page sent to ${target || 'default printer'}`)
+                    }}
+                  />
+                )}
+
+                {selected.transport === 'browser' && (
+                  <div className="rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20 p-3 text-xs text-blue-900 dark:text-blue-100 space-y-1.5">
+                    <p className="font-semibold">Browser printing: the printer is chosen in the system print dialog.</p>
+                    <p>
+                      Each print opens the browser&apos;s print preview, where you pick any printer installed on this computer (with its driver),
+                      paper size and margins. The browser remembers the last printer you used. To print straight to a chosen printer without the
+                      dialog, use <strong>Print agent</strong> above.
                     </p>
+                    {!isLabel && (
+                      <button
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => run('test', () => testPrint(selected), 'Test page sent')}
+                        className="px-2.5 py-1 rounded bg-blue-600 text-white font-semibold text-[11px] hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
+                      >
+                        <Printer className="w-3 h-3" /> Print test page
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -647,6 +606,16 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
                       {selected.role === 'receipt' && (
                         <>
                           <FormCheckbox label="Auto-print receipt after each sale" checked={selected.autoPrint} onChange={(e) => update({ autoPrint: e.target.checked })} />
+                          <FormCheckbox
+                            label={
+                              selected.transport === 'browser'
+                                ? 'Show print preview before printing (browser printing always shows the system preview)'
+                                : 'Show print preview before printing (Print / Cancel / change printer)'
+                            }
+                            checked={selected.previewBeforePrint}
+                            disabled={selected.transport === 'browser'}
+                            onChange={(e) => update({ previewBeforePrint: e.target.checked })}
+                          />
                           <FormCheckbox
                             label="Kick cash drawer on cash sales (printer DK port)"
                             checked={selected.drawerKick}

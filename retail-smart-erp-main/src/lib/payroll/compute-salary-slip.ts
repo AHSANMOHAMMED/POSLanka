@@ -49,6 +49,11 @@ interface ComputeOptions {
   paymentDays: number
   commissionAmount?: number
   includeAdvanceRecovery?: boolean
+  /**
+   * Extra formula variables, e.g. attendance figures (src/lib/attendance/payroll.ts:
+   * payment_days, working_days, absent_days, late_minutes, ot_hours, ot_amount, hourly_rate, daily_rate …)
+   */
+  extraVariables?: Record<string, number>
 }
 
 function roundMoney(n: number): number {
@@ -65,6 +70,7 @@ export async function computeSalarySlip(
     paymentDays,
     commissionAmount = 0,
     includeAdvanceRecovery = true,
+    extraVariables,
   } = options
 
   // 1. Load employee profile
@@ -168,6 +174,16 @@ export async function computeSalarySlip(
 
   // 4. Initialize context and totals
   const context: FormulaContext = {
+    // Attendance variables default to the entered days so formulas using them always evaluate
+    payment_days: paymentDays,
+    working_days: totalWorkingDays,
+    absent_days: Math.max(0, totalWorkingDays - paymentDays),
+    late_minutes: 0,
+    ot_hours: 0,
+    ot_amount: 0,
+    hourly_rate: 0,
+    daily_rate: totalWorkingDays > 0 ? baseSalary / totalWorkingDays : 0,
+    ...(extraVariables || {}),
     base: baseSalary,
     gross: 0,
     net: 0,

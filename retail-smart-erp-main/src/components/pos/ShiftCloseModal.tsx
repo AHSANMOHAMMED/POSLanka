@@ -38,8 +38,21 @@ interface Shift {
     totalTransactions: number
     cashPaidIn?: number
     cashPaidOut?: number
+    outsideCollections?: number
   }
+  /** 0187: advances / invoice / layaway payments taken outside the POS sale screen */
+  outsideCollections?: { total: number; count: number; bySource: Record<string, number>; byMethod: Record<string, number> }
   paymentMethodBreakdown?: PaymentMethodBreakdown
+}
+
+/** Labels of the 0187 outside-POS collection sources (mirror of src/lib/pos/shift-collections.ts) */
+const OUTSIDE_SOURCE_LABELS: Record<string, string> = {
+  print_job_advance: 'Print job advances',
+  print_job_refund: 'Print job advance refunds',
+  print_job_invoice: 'Print job invoices',
+  work_order_invoice: 'Work order invoices',
+  layaway_payment: 'Layaway payments',
+  invoice_payment: 'Invoice payments',
 }
 
 /** H1: structured variance reasons (mirror of SHIFT_VARIANCE_REASONS in validation/schemas/pos) */
@@ -340,6 +353,18 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
             </div>
           ) : null}
 
+          {shiftDetails.outsideCollections && shiftDetails.outsideCollections.count > 0 ? (
+            <div className="text-sm bg-gray-50 dark:bg-gray-800 rounded p-3 space-y-1">
+              <div className="text-gray-500 dark:text-gray-400">Collected outside the POS (included in expected amounts)</div>
+              {Object.entries(shiftDetails.outsideCollections.bySource).map(([source, amount]) => (
+                <div key={source} className="flex justify-between">
+                  <span className="dark:text-gray-300">{OUTSIDE_SOURCE_LABELS[source] || source}</span>
+                  <span className="dark:text-white">{formatCurrency(amount)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           {hasVariance && (
             <div className="p-3 rounded border border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-700 space-y-2">
               <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
@@ -430,6 +455,7 @@ function ShiftCloseResult({ result, onPrint, printing, onDone }: { result: any; 
       ['Voids', `${z.voids?.count || 0} · ${formatCurrency(z.voids?.total || 0)}`],
       ['Returns', `${z.returns?.count || 0} · ${formatCurrency(z.returns?.total || 0)}`],
       ['Cash paid in / out', `+${formatCurrency(z.cashMovements?.paidIn || 0)} / −${formatCurrency(z.cashMovements?.paidOut || 0)}`],
+      ...Object.entries(z.outsideCollections?.bySource || {}).map(([source, amount]): [string, string] => [OUTSIDE_SOURCE_LABELS[source] || source, formatCurrency(amount)]),
       ['Ledger tie-out', !z.ledger?.posted ? 'Not posted' : z.ledger.tiesOut ? 'OK' : `Difference ${formatCurrency(z.ledger.difference)}`],
     )
   }

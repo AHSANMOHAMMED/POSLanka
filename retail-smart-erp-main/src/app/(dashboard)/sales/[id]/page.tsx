@@ -17,7 +17,12 @@ import { formatDate } from '@/lib/utils/date-format'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel, buildItemSearchOption, type SearchableItem } from '@/lib/utils/item-display'
 import { LinkField, LinkFieldOption } from '@/components/ui/link-field'
+import { LineUnitSelect } from '@/components/items/LineUnitSelect'
+import { type LineUnitFields } from '@/hooks/useItemUnitOptions'
+import { unitAllowsFraction } from '@/lib/units/conversions'
 import { DocumentCommentsAndActivity } from '@/components/ui/document-comments'
+import { PrintA4Button } from '@/components/print/PrintA4Button'
+import { loadSaleDocument, TEMPLATE_DOC_TYPES } from '@/lib/print/invoice-document'
 
 const paymentMethodLabels: Record<string, string> = {
   cash: 'Cash', card: 'Card', bank_transfer: 'Bank Transfer', credit: 'Credit', gift_card: 'Gift Card',
@@ -86,7 +91,7 @@ interface RefundData {
   processedByName: string | null
 }
 
-interface EditableItem {
+interface EditableItem extends LineUnitFields {
   id: string
   itemId: string
   itemName: string
@@ -312,11 +317,15 @@ export default function SalesInvoiceDetailPage() {
           customerName: createFormData.customerName || null,
           warehouseId: createFormData.warehouseId,
           costCenterId: createFormData.costCenterId || null,
+          // The line keeps the unit it was entered in (sale_items.uom): item conversions (box,
+          // pack ...) and standard units of the same measure (g of a kg item) — the server
+          // resolves the factor (src/lib/pricing/load-context.ts) and moves qty × factor.
           cartItems: editingItems.map(item => ({
             itemId: item.itemId,
             name: item.itemName,
             quantity: item.quantity,
             unitPrice: item.unitPrice,
+            ...(item.uom && (item.uomFactor || 1) !== 1 ? { uom: item.uom } : {}),
             discount: item.discount,
           })),
           subtotal: subtotal.toFixed(2),
@@ -430,7 +439,7 @@ export default function SalesInvoiceDetailPage() {
       const sellingPrice = parseFloat(option.data?.sellingPrice as string || '0')
       // Same item different price pattern
       const existingIdx = newItems.findIndex((i, idx) =>
-        idx !== index && i.itemId === String(value) && i.unitPrice === sellingPrice
+        idx !== index && i.itemId === String(value) && i.unitPrice === sellingPrice && (i.uomFactor || 1) === 1
       )
       if (existingIdx >= 0) {
         newItems[existingIdx] = {
@@ -448,6 +457,11 @@ export default function SalesInvoiceDetailPage() {
           itemBarcode: option.data?.barcode as string || null,
           itemPartNumber: option.data?.oemPartNumber as string || option.data?.sku as string || null,
           unitPrice: sellingPrice,
+          baseUnit: (option.data?.unit as string) || null,
+          basePrice: sellingPrice,
+          uom: '',
+          uomFactor: 1,
+          uomIsItemUom: false,
           total: newItems[index].quantity * sellingPrice - newItems[index].discount + newItems[index].taxAmount,
         }
       }
@@ -480,6 +494,11 @@ export default function SalesInvoiceDetailPage() {
         itemBarcode: item.barcode || null,
         itemPartNumber: item.oemPartNumber || item.sku || null,
         unitPrice: sellingPrice,
+        baseUnit: null,
+        basePrice: sellingPrice,
+        uom: '',
+        uomFactor: 1,
+        uomIsItemUom: false,
         total: newItems[pendingItemRowIndex].quantity * sellingPrice,
       }
       setEditingItems(newItems)
@@ -607,6 +626,7 @@ export default function SalesInvoiceDetailPage() {
                     <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-8">#</th>
                     <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Item</th>
                     <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-24">Qty</th>
+                    <th className="text-left px-2 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-28">Unit</th>
                     <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-28">Rate</th>
                     <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-24">Disc</th>
                     <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-28">Amount</th>
@@ -635,7 +655,18 @@ export default function SalesInvoiceDetailPage() {
                           onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
                           className="w-20 px-2 py-1 text-right border border-gray-300 dark:border-gray-600 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                           min="0"
-                          step="any"
+                          step={unitAllowsFraction(item.uom || item.baseUnit) ? 'any' : '1'}
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <LineUnitSelect
+                          itemId={item.itemId}
+                          baseUnit={item.baseUnit}
+                          value={item.uom}
+                          basePrice={item.basePrice ?? item.unitPrice}
+                          onChange={(patch) => {
+                            setEditingItems((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch, total: row.quantity * patch.unitPrice - row.discount + row.taxAmount } : row)))
+                          }}
                         />
                       </td>
                       <td className="px-4 py-2 text-right">
@@ -875,6 +906,12 @@ export default function SalesInvoiceDetailPage() {
               Void
             </button>
           )}
+          {/* 0179: A4 invoice with the tenant's invoice template (serial numbers + warranty per line) */}
+          <PrintA4Button
+            documentTypes={TEMPLATE_DOC_TYPES.sale}
+            loadDocument={() => loadSaleDocument(sale.id)}
+            label={sale.isReturn ? 'Print credit note' : 'Print A4 invoice'}
+          />
           {isVoid && (
             <span className="text-sm text-gray-500">This invoice is voided and read-only.</span>
           )}

@@ -8,6 +8,7 @@ import {
   vehicles, warehouses, payments, saleItems, stockMovements,
   posOpeningEntries, posClosingEntries, posClosingReconciliation, users,
   restaurantOrders, restaurantTables,
+  installmentPlans, installmentSchedule, deliveries, warrantyClaims,
 } from '@/lib/db/schema'
 import { eq, and, or, sql, desc } from 'drizzle-orm'
 import { hasPermission, type Permission } from '@/lib/auth/roles'
@@ -67,6 +68,16 @@ const localToday = sql`(now() AT TIME ZONE ${LOCAL_TZ})::date`
 // ==================== NUMBER CARD METRICS ====================
 
 type MetricFn = (db: TenantDb) => Promise<number>
+
+/** Count from a table added by a later migration (print_jobs 0182, attendance 0183): 0 until it exists. */
+async function countIfTable(db: TenantDb, table: string, query: ReturnType<typeof sql>): Promise<number> {
+  const exists = await db.execute(sql`SELECT to_regclass(${`public.${table}`}) IS NOT NULL AS ok`)
+  const ok = ((exists as unknown as { rows?: Array<{ ok: boolean }> }).rows ?? (exists as unknown as Array<{ ok: boolean }>))[0]?.ok
+  if (!ok) return 0
+  const res = await db.execute(query)
+  const row = ((res as unknown as { rows?: Array<{ n: number | string }> }).rows ?? (res as unknown as Array<{ n: number | string }>))[0]
+  return Number(row?.n || 0)
+}
 
 const METRICS: Record<string, MetricFn> = {
   today_appointments: async (db) => {
@@ -249,6 +260,62 @@ const METRICS: Record<string, MetricFn> = {
       ))
     return Number(result?.total || 0)
   },
+
+  // 0181 hire purchase / deliveries / warranty (electronics, hardware, retail)
+  installments_due_today: async (db) => {
+    const [r] = await db.select({ count: sql<number>`COUNT(*)` })
+      .from(installmentSchedule)
+      .innerJoin(installmentPlans, eq(installmentPlans.id, installmentSchedule.planId))
+      .where(and(
+        eq(installmentPlans.status, 'active'),
+        sql`${installmentSchedule.status} IN ('pending', 'partial')`,
+        sql`${installmentSchedule.dueDate} = ${localToday}`,
+      ))
+    return Number(r?.count || 0)
+  },
+
+  installments_overdue: async (db) => {
+    const [r] = await db.select({ count: sql<number>`COUNT(DISTINCT ${installmentSchedule.planId})` })
+      .from(installmentSchedule)
+      .innerJoin(installmentPlans, eq(installmentPlans.id, installmentSchedule.planId))
+      .where(and(
+        sql`${installmentPlans.status} IN ('active', 'defaulted')`,
+        sql`${installmentSchedule.status} IN ('pending', 'partial')`,
+        sql`${installmentSchedule.dueDate} < ${localToday}`,
+      ))
+    return Number(r?.count || 0)
+  },
+
+  deliveries_today: async (db) => {
+    const [r] = await db.select({ count: sql<number>`COUNT(*)` })
+      .from(deliveries)
+      .where(and(
+        sql`${deliveries.scheduledDate} = ${localToday}`,
+        sql`${deliveries.status} IN ('scheduled', 'out_for_delivery')`,
+      ))
+    return Number(r?.count || 0)
+  },
+
+  open_warranty_claims: async (db) => {
+    const [r] = await db.select({ count: sql<number>`COUNT(*)` })
+      .from(warrantyClaims)
+      .where(sql`${warrantyClaims.status} NOT IN ('delivered', 'rejected')`)
+    return Number(r?.count || 0)
+  },
+
+  // 0182 print studio jobs / 0183 attendance (tables owned by those features)
+  print_jobs_due_today: async (db) => countIfTable(db, 'print_jobs', sql`
+    SELECT COUNT(*)::int AS n FROM print_jobs
+    WHERE status NOT IN ('ready', 'delivered', 'cancelled') AND due_at IS NOT NULL
+      AND (due_at AT TIME ZONE 'UTC' AT TIME ZONE ${LOCAL_TZ})::date <= ${localToday}`),
+
+  print_jobs_ready: async (db) => countIfTable(db, 'print_jobs', sql`
+    SELECT COUNT(*)::int AS n FROM print_jobs WHERE status = 'ready'`),
+
+  today_attendance: async (db) => countIfTable(db, 'attendance_punches', sql`
+    SELECT COUNT(DISTINCT employee_profile_id)::int AS n FROM attendance_punches
+    WHERE is_deleted = false AND employee_profile_id IS NOT NULL
+      AND (punch_time AT TIME ZONE ${LOCAL_TZ})::date = ${localToday}`),
 
   total_warehouses: async (db) => {
     const [result] = await db

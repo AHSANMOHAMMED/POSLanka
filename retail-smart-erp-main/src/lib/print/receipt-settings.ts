@@ -51,6 +51,8 @@ export const receiptSettingsSchema = z.object({
   showCustomer: z.boolean(),
   showItemSku: z.boolean(),
   showItemBarcode: z.boolean(),
+  /** 0179: "Warranty: N months (until DD/MM/YYYY)" under lines sold with a warranty. */
+  showWarranty: z.boolean(),
   fontSize: z.enum(RECEIPT_FONT_SIZES),
   itemLayout: z.enum(RECEIPT_ITEM_LAYOUTS),
   itemSeparator: z.enum(RECEIPT_ITEM_SEPARATORS),
@@ -84,6 +86,7 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   showCustomer: true,
   showItemSku: false,
   showItemBarcode: false,
+  showWarranty: true,
   fontSize: 'normal',
   itemLayout: 'two_line',
   itemSeparator: 'none',

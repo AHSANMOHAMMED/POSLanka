@@ -8,6 +8,7 @@ import { roundCurrency, parseCurrency } from '@/lib/utils/currency'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseOrderItemSchema } from '@/lib/validation/schemas/purchases'
 import { z } from 'zod'
+import { resolveLineUnits, lineUnitErrorResponse } from '@/lib/units/resolve-line-units'
 
 // Recalculate and update purchase order totals
 async function recalculateTotals(db: TenantDb, purchaseOrderId: string) {
@@ -53,7 +54,7 @@ export async function PUT(
 
   const parsed = await validateBody(request, updatePurchaseOrderItemSchema)
   if (!parsed.success) return parsed.response
-  const { quantity, unitPrice, tax } = parsed.data
+  const { quantity, unitPrice, tax, uom } = parsed.data
 
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'managePurchases')
@@ -102,6 +103,19 @@ export async function PUT(
 
     if (tax !== undefined) {
       updateData.tax = tax.toString()
+    }
+
+    // 0184: unit change (factor resolved server-side, never from the client)
+    if (uom !== undefined) {
+      try {
+        const [u] = await resolveLineUnits(db, [{ itemId: existingItem.itemId, uom, itemName: existingItem.itemName }])
+        ;(updateData as Record<string, string | null>).uom = u.uom
+        updateData.uomFactor = String(u.factor)
+      } catch (e) {
+        const r = lineUnitErrorResponse(e)
+        if (r) return { error: r }
+        throw e
+      }
     }
 
     // Calculate new total

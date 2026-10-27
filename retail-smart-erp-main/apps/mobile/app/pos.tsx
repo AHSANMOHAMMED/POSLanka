@@ -51,6 +51,14 @@ import { applyCartQuote, offlineCartQuote, quoteKey, quoteRequestLines, taxableL
 import { useHeaderPad, useBottomPad } from '../src/lib/safeArea'
 import { useFeatureFlags } from '../src/lib/features'
 
+/** Search wording of the newer business types (same terminology as the web POS, src/lib/terminology.ts) */
+const SEARCH_PLACEHOLDER_BY_TYPE: Record<string, string> = {
+  electronics: 'Scan barcode / IMEI or search models',
+  hardware: 'Scan barcode or search items, sizes',
+  print_studio: 'Search prints, sizes, services',
+  office: 'Search services & products',
+}
+
 interface Item {
   id: string
   name: string
@@ -797,7 +805,7 @@ export default function PosScreen() {
               <Text style={styles.searchIcon}>🔍</Text>
               <TextInput
                 style={styles.searchInput}
-                placeholder="Scan barcode / PLU / INV-… or search items"
+                placeholder={SEARCH_PLACEHOLDER_BY_TYPE[user?.businessType || ''] || 'Scan barcode / PLU / INV-… or search items'}
                 placeholderTextColor={THEME.colors.textSubtle}
                 value={query}
                 onChangeText={setQuery}

@@ -37,9 +37,11 @@ interface ShiftStatusProps {
   /** H1: cash paid in / paid out of the drawer */
   onCashMovement?: () => void
   compact?: boolean
+  /** Compact badge without the Cash in/out and Close buttons (they live in the POS Actions panel) */
+  labelOnly?: boolean
 }
 
-export function ShiftStatus({ shift, hasOpenShift, onOpenShift, onCloseShift, onCashMovement, compact = false }: ShiftStatusProps) {
+export function ShiftStatus({ shift, hasOpenShift, onOpenShift, onCloseShift, onCashMovement, compact = false, labelOnly = false }: ShiftStatusProps) {
   const [expanded, setExpanded] = useState(false)
 
   // No shift required view
@@ -63,7 +65,7 @@ export function ShiftStatus({ shift, hasOpenShift, onOpenShift, onCloseShift, on
           <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
           <span className="text-sm font-medium">{shift?.entryNumber}</span>
         </div>
-        {onCashMovement && (
+        {!labelOnly && onCashMovement && (
           <button
             onClick={onCashMovement}
             className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors"
@@ -72,13 +74,15 @@ export function ShiftStatus({ shift, hasOpenShift, onOpenShift, onCloseShift, on
             <ArrowDownUp size={16} />
           </button>
         )}
-        <button
-          onClick={onCloseShift}
-          className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
-          title="Close Shift"
-        >
-          <X size={16} />
-        </button>
+        {!labelOnly && (
+          <button
+            onClick={onCloseShift}
+            className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
+            title="Close Shift"
+          >
+            <X size={16} />
+          </button>
+        )}
       </div>
     )
   }

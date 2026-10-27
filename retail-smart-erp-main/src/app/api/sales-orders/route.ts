@@ -1,3 +1,4 @@
+import { resolveLineUnits, lineUnitErrorResponse, type ResolvedLineUnit } from '@/lib/units/resolve-line-units'
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
@@ -217,6 +218,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 0184: each line keeps its unit; the factor comes from item_uoms / standard units
+    let units: ResolvedLineUnit[]
+    try {
+      units = await resolveLineUnits(tx, items || [])
+    } catch (e) {
+      const r = lineUnitErrorResponse(e)
+      if (r) return { error: r }
+      throw e
+    }
+
     // Generate order number with lock
     const orderNo = await nextDocNo(tx, session.user.tenantId, 'sales_order')
 
@@ -243,7 +254,7 @@ export async function POST(request: NextRequest) {
       let totalDiscount = 0
       let totalTax = 0
 
-      const orderItems = items.map((item) => {
+      const orderItems = items.map((item, idx) => {
         const itemSubtotal = item.quantity * item.unitPrice
         const itemDiscount = Math.max(0, item.discount || 0)
         const itemTaxAmount = Math.max(0, item.taxAmount || item.tax || 0)
@@ -265,6 +276,8 @@ export async function POST(request: NextRequest) {
           taxAmount: itemTaxAmount.toString(),
           taxRate: (item.taxRate || 0).toString(),
           total: (Math.round(itemTotal * 100) / 100).toString(),
+          uom: units[idx].uom,
+          uomFactor: String(units[idx].factor),
         }
       })
 

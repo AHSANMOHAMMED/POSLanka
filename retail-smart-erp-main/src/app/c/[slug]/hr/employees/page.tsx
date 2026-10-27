@@ -6,8 +6,9 @@ import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { toast } from '@/components/ui/toast'
 import { Pagination } from '@/components/ui/pagination'
 import { Modal, ModalFooter } from '@/components/ui/modal'
-import { FormField, FormInput, FormSelect, FormTextarea, FormSection } from '@/components/ui/form-elements'
+import { FormField, FormInput, FormSelect, FormTextarea, FormSection, FormCheckbox } from '@/components/ui/form-elements'
 import { PermissionGuard } from '@/components/auth/PermissionGuard'
+import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { Breadcrumb } from '@/components/ui/page-header'
 import { Users, Plus, Edit2, Loader2, Search, Filter } from 'lucide-react'
 
@@ -27,6 +28,12 @@ interface EmployeeProfile {
   hireDate: string | null
   baseSalary: string
   salaryFrequency: string
+  biometricUserId?: string | null
+  defaultShiftId?: string | null
+  warehouseId?: string | null
+  otEligible?: boolean
+  otRateMultiplier?: string | null
+  hourlyRate?: string | null
   fullName: string | null
   email: string | null
   role: string | null
@@ -67,7 +74,16 @@ interface EmployeeFormData {
   emergencyContactPhone: string
   address: string
   notes: string
+  // Attendance (fingerprint / shifts / overtime)
+  biometricUserId: string
+  defaultShiftId: string
+  warehouseId: string
+  otEligible: boolean
+  otRateMultiplier: string
+  hourlyRate: string
 }
+
+interface Option { id: string; name: string }
 
 // ============================================
 // CONSTANTS
@@ -115,6 +131,12 @@ const emptyFormData: EmployeeFormData = {
   emergencyContactPhone: '',
   address: '',
   notes: '',
+  biometricUserId: '',
+  defaultShiftId: '',
+  warehouseId: '',
+  otEligible: false,
+  otRateMultiplier: '1.5',
+  hourlyRate: '',
 }
 
 function formatCurrency(value: string | number): string {
@@ -126,6 +148,7 @@ function formatCurrency(value: string | number): string {
 // ============================================
 
 export default function EmployeesPage() {
+  const { tenantSlug } = useCompany()
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [showModal, setShowModal] = useState(false)
   const [editingEmployee, setEditingEmployee] = useState<EmployeeProfile | null>(null)
@@ -133,6 +156,8 @@ export default function EmployeesPage() {
   const [submitting, setSubmitting] = useState(false)
   const [userOptions, setUserOptions] = useState<UserOption[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
+  const [shiftOptions, setShiftOptions] = useState<Option[]>([])
+  const [branchOptions, setBranchOptions] = useState<Option[]>([])
 
   // ============================================
   // DATA FETCHING
@@ -170,6 +195,20 @@ export default function EmployeesPage() {
     }
   }, [])
 
+  // Shifts + branches for the attendance section (failures leave the selects empty)
+  const fetchAttendanceOptions = useCallback(async () => {
+    try {
+      const [s, w] = await Promise.all([
+        fetch('/api/hr/shifts').then((r) => (r.ok ? r.json() : [])),
+        fetch('/api/warehouses?all=true').then((r) => (r.ok ? r.json() : [])),
+      ])
+      setShiftOptions((Array.isArray(s) ? s : []).map((x: Option) => ({ id: x.id, name: x.name })))
+      setBranchOptions((Array.isArray(w) ? w : w.data || []).map((x: Option) => ({ id: x.id, name: x.name })))
+    } catch {
+      // optional data
+    }
+  }, [])
+
   // Fetch full employee profile when editing (to get bank/statutory details)
   const fetchEmployeeDetail = useCallback(async (id: string) => {
     try {
@@ -199,11 +238,13 @@ export default function EmployeesPage() {
     setFormData(emptyFormData)
     setShowModal(true)
     fetchUsers()
+    fetchAttendanceOptions()
   }
 
   async function openEditModal(employee: EmployeeProfile) {
     setEditingEmployee(employee)
     fetchUsers()
+    fetchAttendanceOptions()
 
     // Fetch full detail (includes bank/statutory fields)
     const detail = await fetchEmployeeDetail(employee.id)
@@ -234,6 +275,12 @@ export default function EmployeesPage() {
       emergencyContactPhone: detail?.emergencyContactPhone || '',
       address: detail?.address || '',
       notes: detail?.notes || '',
+      biometricUserId: detail?.biometricUserId || '',
+      defaultShiftId: detail?.defaultShiftId || '',
+      warehouseId: detail?.warehouseId || '',
+      otEligible: !!detail?.otEligible,
+      otRateMultiplier: detail?.otRateMultiplier != null ? String(Number(detail.otRateMultiplier)) : '1.5',
+      hourlyRate: detail?.hourlyRate != null ? String(detail.hourlyRate) : '',
     })
 
     setShowModal(true)
@@ -286,6 +333,13 @@ export default function EmployeesPage() {
         emergencyContactPhone: formData.emergencyContactPhone || null,
         address: formData.address || null,
         notes: formData.notes || null,
+        // '' clears these (the API keeps empty strings for them)
+        biometricUserId: formData.biometricUserId.trim(),
+        defaultShiftId: formData.defaultShiftId,
+        warehouseId: formData.warehouseId,
+        otEligible: formData.otEligible,
+        otRateMultiplier: formData.otRateMultiplier || '1.5',
+        hourlyRate: formData.hourlyRate,
       }
 
       if (editingEmployee) {
@@ -336,7 +390,7 @@ export default function EmployeesPage() {
   // HELPERS
   // ============================================
 
-  function updateForm(field: keyof EmployeeFormData, value: string) {
+  function updateForm(field: keyof EmployeeFormData, value: string | boolean) {
     setFormData((prev) => ({ ...prev, [field]: value }))
   }
 
@@ -350,7 +404,7 @@ export default function EmployeesPage() {
         {/* Breadcrumb */}
         <Breadcrumb
           items={[
-            { label: 'HR', href: '/hr' },
+            { label: 'HR', href: `/c/${tenantSlug}/hr` },
             { label: 'Employees' },
           ]}
         />
@@ -647,6 +701,73 @@ export default function EmployeesPage() {
                 <option value="weekly">Weekly</option>
                 <option value="daily">Daily</option>
               </FormSelect>
+            </FormField>
+          </FormSection>
+
+          {/* Attendance */}
+          <FormSection title="Attendance & Overtime" columns={3}>
+            <FormField label="Fingerprint User ID" hint="Enrolment no. / PIN on the fingerprint machine">
+              <FormInput
+                value={formData.biometricUserId}
+                onChange={(e) => updateForm('biometricUserId', e.target.value)}
+                placeholder="e.g. 12"
+                maxLength={50}
+              />
+            </FormField>
+
+            <FormField label="Default Shift" hint="Used unless a shift is assigned for a date range">
+              <FormSelect
+                value={formData.defaultShiftId}
+                onChange={(e) => updateForm('defaultShiftId', e.target.value)}
+              >
+                <option value="">Company default shift</option>
+                {shiftOptions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </FormSelect>
+            </FormField>
+
+            <FormField label="Branch">
+              <FormSelect
+                value={formData.warehouseId}
+                onChange={(e) => updateForm('warehouseId', e.target.value)}
+              >
+                <option value="">Not set</option>
+                {branchOptions.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </FormSelect>
+            </FormField>
+
+            <FormField label="Overtime">
+              <FormCheckbox
+                checked={formData.otEligible}
+                onChange={(e) => updateForm('otEligible', e.target.checked)}
+                label="Eligible for overtime"
+                description="Time after shift end (and work on off days / holidays) counts as OT"
+              />
+            </FormField>
+
+            <FormField label="OT Rate Multiplier" hint="1.5 = time and a half">
+              <FormInput
+                type="number"
+                step="0.05"
+                min="0"
+                max="10"
+                value={formData.otRateMultiplier}
+                onChange={(e) => updateForm('otRateMultiplier', e.target.value)}
+              />
+            </FormField>
+
+            <FormField label="Hourly Rate (optional)" hint="Blank = base salary ÷ (working days × shift hours)">
+              <FormInput
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.hourlyRate}
+                onChange={(e) => updateForm('hourlyRate', e.target.value)}
+                placeholder="Auto"
+              />
             </FormField>
           </FormSection>
 

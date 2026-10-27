@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { currentOpenShiftId } from '@/lib/pos/shift-collections'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { layaways, layawayPayments, users } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -146,6 +147,8 @@ export async function POST(
       paymentMethod: effectiveMethod,
       reference: reference || null,
       receivedBy: session.user.id,
+      // 0187: counted in the expected amounts of this user's open shift (none → no shift)
+      posOpeningEntryId: await currentOpenShiftId(tx, session.user.id),
     }).returning()
 
     // Post payment to GL: Dr Cash/Bank, Cr Advance Received

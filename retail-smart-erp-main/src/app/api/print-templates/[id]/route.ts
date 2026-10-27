@@ -66,7 +66,7 @@ export async function PUT(
       const fields = [
         'name', 'documentType', 'letterHeadId', 'paperSize', 'orientation',
         'margins', 'showLogo', 'showHeader', 'showFooter', 'customCss',
-        'headerFields', 'bodyFields', 'footerFields', 'isDefault', 'isActive'
+        'headerFields', 'bodyFields', 'footerFields', 'config', 'isDefault', 'isActive'
       ] as const
       for (const field of fields) {
         if (body[field] !== undefined) updateData[field] = body[field]

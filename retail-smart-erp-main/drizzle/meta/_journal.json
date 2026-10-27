@@ -1191,6 +1191,69 @@
       "when": 1771446423033,
       "tag": "0178_label_templates_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 179,
+      "version": "7",
+      "when": 1771446424033,
+      "tag": "0179_invoice_templates_warranty",
+      "breakpoints": true
+    },
+    {
+      "idx": 180,
+      "version": "7",
+      "when": 1771446425033,
+      "tag": "0180_business_types_ext",
+      "breakpoints": true
+    },
+    {
+      "idx": 181,
+      "version": "7",
+      "when": 1771446426033,
+      "tag": "0181_installments_deliveries",
+      "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "7",
+      "when": 1771446427033,
+      "tag": "0182_print_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1771446428033,
+      "tag": "0183_hr_attendance",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1771446429033,
+      "tag": "0184_document_line_units",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "7",
+      "when": 1771446430033,
+      "tag": "0185_recurring_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "7",
+      "when": 1771446431033,
+      "tag": "0186_installment_accounting",
+      "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1771446432033,
+      "tag": "0187_advances_shift_link",
+      "breakpoints": true
     }
   ]
 }

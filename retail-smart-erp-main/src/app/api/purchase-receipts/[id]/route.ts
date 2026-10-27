@@ -69,6 +69,9 @@ export async function GET(
         rejectionReason: purchaseReceiptItems.rejectionReason,
         notes: purchaseReceiptItems.notes,
         unitCost: purchaseReceiptItems.unitCost,
+        // 0184: unit of the line (quantities / unit cost are in it)
+        uom: purchaseReceiptItems.uom,
+        uomFactor: purchaseReceiptItems.uomFactor,
       })
       .from(purchaseReceiptItems)
       .where(eq(purchaseReceiptItems.receiptId, id))
@@ -194,10 +197,12 @@ export async function DELETE(
         const remaining = new Map(receiptQtyByItem)
         for (const ri of receiptItems) {
           if (!ri.itemId || !remaining.has(ri.itemId)) continue
-          const q = Math.min(parseFloat(ri.quantityReceived), remaining.get(ri.itemId)!)
+          // 0184: base units (the line is in its own unit; movements are in base units)
+          const factor = Number(ri.uomFactor) || 1
+          const q = Math.min(Math.round(parseFloat(ri.quantityReceived) * factor * 1000) / 1000, remaining.get(ri.itemId)!)
           if (!(q > 0)) continue
           remaining.set(ri.itemId, remaining.get(ri.itemId)! - q)
-          lines.push({ itemId: ri.itemId, qty: q, unitPrice: ri.purchaseOrderItemId ? (priceOf.get(ri.purchaseOrderItemId) || 0) : 0 })
+          lines.push({ itemId: ri.itemId, qty: q, unitPrice: ri.purchaseOrderItemId ? (priceOf.get(ri.purchaseOrderItemId) || 0) / factor : 0 })
         }
         await reversePurchaseCost(tx, {
           tenantId: session.user.tenantId,
@@ -244,6 +249,7 @@ export async function DELETE(
           .select({
             quantity: purchaseOrderItems.quantity,
             receivedQuantity: purchaseOrderItems.receivedQuantity,
+            uomFactor: purchaseOrderItems.uomFactor,
           })
           .from(purchaseOrderItems)
           .where(eq(purchaseOrderItems.purchaseOrderId, receipt.purchaseOrderId))
@@ -251,8 +257,10 @@ export async function DELETE(
         let totalOrdered = 0
         let totalReceived = 0
         for (const pi of poItems) {
-          totalOrdered += parseFloat(pi.quantity)
-          totalReceived += parseFloat(pi.receivedQuantity || '0')
+          // 0184: base units (lines may be in different units)
+          const f = parseFloat(pi.uomFactor || '1') || 1
+          totalOrdered = Math.round((totalOrdered + parseFloat(pi.quantity) * f) * 1e6) / 1e6
+          totalReceived = Math.round((totalReceived + parseFloat(pi.receivedQuantity || '0') * f) * 1e6) / 1e6
         }
 
         type POStatus = 'draft' | 'confirmed' | 'submitted' | 'partially_received' | 'fully_received' | 'invoice_created' | 'cancelled'

@@ -13,7 +13,10 @@ export function landingPathForRole(role: string | null | undefined, businessType
     case 'chef':
       return businessType === 'restaurant' ? '/restaurant/kitchen' : '/dashboard'
     case 'technician':
-      return businessType === 'auto_service' || businessType === 'dealership' ? '/work-orders' : '/dashboard'
+      if (businessType === 'auto_service' || businessType === 'dealership') return '/work-orders'
+      if (businessType === 'electronics') return '/warranty-claims'
+      if (businessType === 'print_studio') return '/print-jobs'
+      return '/dashboard'
     case 'dealer_sales':
       return businessType === 'dealership' ? '/dealership/sales' : '/pos'
     case 'stock_manager':

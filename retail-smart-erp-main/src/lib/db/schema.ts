@@ -5,7 +5,7 @@ import { relations, sql } from 'drizzle-orm'
 
 export const planEnum = pgEnum('plan', ['trial', 'basic', 'standard', 'premium'])
 export const tenantStatusEnum = pgEnum('tenant_status', ['active', 'suspended', 'cancelled', 'locked'])
-export const businessTypeEnum = pgEnum('business_type', ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy'])
+export const businessTypeEnum = pgEnum('business_type', ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office'])
 export const userRoleEnum = pgEnum('user_role', [
   'owner', 'manager', 'cashier', 'technician', 'chef', 'waiter',
   'system_manager', 'accounts_manager', 'sales_manager', 'purchase_manager',
@@ -1808,6 +1808,13 @@ export const items = pgTable('items', {
   dosageForm: varchar('dosage_form', { length: 50 }), // tablet, capsule, syrup …
   drugSchedule: varchar('drug_schedule', { length: 20 }).$type<'otc' | 'pharmacy_only' | 'prescription' | 'controlled'>(),
 
+  // Print studio pricing (drizzle/0182): 'unit' = per piece; 'area' = selling_price is the rate
+  // per sq ft / sq m (area_unit); 'length' = per running foot / metre. min_charge_area = minimum
+  // billable area (or length) per piece.
+  pricingMode: varchar('pricing_mode', { length: 10 }).notNull().default('unit').$type<'unit' | 'area' | 'length'>(),
+  areaUnit: varchar('area_unit', { length: 4 }).notNull().default('sqft').$type<'sqft' | 'sqm'>(),
+  minChargeArea: decimal('min_charge_area', { precision: 10, scale: 2 }),
+
   // Tax
   taxInclusive: boolean('tax_inclusive').notNull().default(false), // DEPRECATED: use taxTemplateId instead
   taxTemplateId: uuid('tax_template_id').references(() => taxTemplates.id, { onDelete: 'set null' }),
@@ -1851,6 +1858,222 @@ export const prescriptions = pgTable('prescriptions', {
   notes: text('notes'),
   createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ==================== HIRE PURCHASE / DELIVERIES / WARRANTY (drizzle/0181) ====================
+// Statuses are varchar + CHECK constraints (see the migration). src/lib/installments, deliveries, warranty.
+
+export type InstallmentPlanStatus = 'active' | 'completed' | 'defaulted' | 'cancelled' | 'repossessed'
+/** Goods on a plan / delivery: snapshot lines with serial / IMEI numbers */
+export interface AgreementItemLine {
+  itemId?: string | null
+  saleItemId?: string | null
+  itemName: string
+  quantity: number
+  unitPrice: number
+  serialNumbers?: string[]
+}
+
+export const installmentPlans = pgTable('installment_plans', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  planNo: varchar('plan_no', { length: 50 }).notNull(),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  customerName: varchar('customer_name', { length: 255 }).notNull(),
+  customerNic: varchar('customer_nic', { length: 20 }),
+  customerPhone: varchar('customer_phone', { length: 50 }),
+  customerAddress: text('customer_address'),
+  guarantorName: varchar('guarantor_name', { length: 255 }),
+  guarantorNic: varchar('guarantor_nic', { length: 20 }),
+  guarantorPhone: varchar('guarantor_phone', { length: 50 }),
+  guarantorAddress: text('guarantor_address'),
+  items: jsonb('items').$type<AgreementItemLine[]>().notNull().default([]),
+  cashPrice: decimal('cash_price', { precision: 12, scale: 2 }).notNull(),
+  downPayment: decimal('down_payment', { precision: 12, scale: 2 }).notNull().default('0'),
+  financedAmount: decimal('financed_amount', { precision: 12, scale: 2 }).notNull(),
+  interestType: varchar('interest_type', { length: 10 }).$type<'flat' | 'fixed'>().notNull().default('flat'),
+  interestRate: decimal('interest_rate', { precision: 7, scale: 3 }).notNull().default('0'),
+  interestAmount: decimal('interest_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  totalPayable: decimal('total_payable', { precision: 12, scale: 2 }).notNull(),
+  installmentAmount: decimal('installment_amount', { precision: 12, scale: 2 }).notNull(),
+  installmentCount: integer('installment_count').notNull(),
+  termMonths: integer('term_months').notNull(),
+  frequency: varchar('frequency', { length: 10 }).$type<'monthly' | 'weekly'>().notNull().default('monthly'),
+  startDate: date('start_date').notNull(),
+  lateFeeType: varchar('late_fee_type', { length: 10 }).$type<'none' | 'fixed' | 'percent'>().notNull().default('none'),
+  lateFeeValue: decimal('late_fee_value', { precision: 12, scale: 2 }).notNull().default('0'),
+  graceDays: integer('grace_days').notNull().default(0),
+  paidAmount: decimal('paid_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  lateFeesPaid: decimal('late_fees_paid', { precision: 12, scale: 2 }).notNull().default('0'),
+  rebateAmount: decimal('rebate_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  balance: decimal('balance', { precision: 12, scale: 2 }).notNull(),
+  status: varchar('status', { length: 20 }).$type<InstallmentPlanStatus>().notNull().default('active'),
+  terms: text('terms'),
+  notes: text('notes'),
+  statusReason: text('status_reason'),
+  closedAt: timestamp('closed_at'),
+  // 0186: ledger (src/lib/installments/posting.ts)
+  receivableAccountId: uuid('receivable_account_id').references(() => chartOfAccounts.id, { onDelete: 'set null' }),
+  openingAgreement: boolean('opening_agreement').notNull().default(false),
+  writtenOffAmount: decimal('written_off_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  recoveredValue: decimal('recovered_value', { precision: 12, scale: 2 }).notNull().default('0'),
+  repossession: jsonb('repossession').$type<InstallmentRepossession | null>(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+/** 0186: goods taken back on a repossessed plan */
+export interface InstallmentRepossession {
+  date: string
+  returnedToStock: boolean
+  warehouseId: string | null
+  condition: 'good' | 'used' | 'damaged' | null
+  principalOutstanding: number
+  recoveredValue: number
+  writtenOff: number
+  lines: Array<{ itemId: string; itemName: string; quantity: number; serialNumberIds: string[]; movementId: string | null }>
+}
+
+export const installmentSchedule = pgTable('installment_schedule', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  planId: uuid('plan_id').notNull().references(() => installmentPlans.id, { onDelete: 'cascade' }),
+  installmentNo: integer('installment_no').notNull(),
+  dueDate: date('due_date').notNull(),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+  principal: decimal('principal', { precision: 12, scale: 2 }).notNull(),
+  interest: decimal('interest', { precision: 12, scale: 2 }).notNull().default('0'),
+  paidAmount: decimal('paid_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  lateFee: decimal('late_fee', { precision: 12, scale: 2 }).notNull().default('0'),
+  lateFeePaid: decimal('late_fee_paid', { precision: 12, scale: 2 }).notNull().default('0'),
+  // 0186: what the paid amount covered (stored so receipts can be reversed in any order)
+  interestPaid: decimal('interest_paid', { precision: 12, scale: 2 }).notNull().default('0'),
+  principalPaid: decimal('principal_paid', { precision: 12, scale: 2 }).notNull().default('0'),
+  status: varchar('status', { length: 10 }).$type<'pending' | 'partial' | 'paid' | 'waived'>().notNull().default('pending'),
+  paidAt: timestamp('paid_at'),
+})
+
+export const installmentPayments = pgTable('installment_payments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  planId: uuid('plan_id').notNull().references(() => installmentPlans.id, { onDelete: 'cascade' }),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  receiptNo: varchar('receipt_no', { length: 50 }).notNull(),
+  kind: varchar('kind', { length: 20 }).$type<'down_payment' | 'installment' | 'settlement'>().notNull().default('installment'),
+  paymentDate: date('payment_date').notNull().default(sql`CURRENT_DATE`),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+  principalAmount: decimal('principal_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  interestAmount: decimal('interest_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  lateFeeAmount: decimal('late_fee_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  rebateAmount: decimal('rebate_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  paymentMethod: varchar('payment_method', { length: 20 }).$type<'cash' | 'card' | 'bank_transfer' | 'cheque'>().notNull().default('cash'),
+  reference: varchar('reference', { length: 255 }),
+  allocations: jsonb('allocations').$type<InstallmentAllocation[]>().notNull().default([]),
+  salePaymentId: uuid('sale_payment_id').references(() => payments.id, { onDelete: 'set null' }),
+  notes: text('notes'),
+  receivedBy: uuid('received_by').references(() => users.id, { onDelete: 'set null' }),
+  // 0186: void / bounce, cheque, how it was posted
+  voidedAt: timestamp('voided_at'),
+  voidedBy: uuid('voided_by').references(() => users.id, { onDelete: 'set null' }),
+  voidReason: text('void_reason'),
+  chequeId: uuid('cheque_id').references(() => cheques.id, { onDelete: 'set null' }),
+  glMode: varchar('gl_mode', { length: 10 }).$type<'voucher' | 'legacy' | null>(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+/** One installment row a receipt paid (principal / interest / waived since 0186) */
+export interface InstallmentAllocation {
+  installmentNo: number
+  amount: number
+  lateFee: number
+  principal?: number
+  interest?: number
+  /** settlement: interest rebated on this row */
+  waived?: number
+  /** late fee waived on this row */
+  feeWaived?: number
+}
+
+export type DeliveryRunStatus = 'scheduled' | 'out_for_delivery' | 'delivered' | 'installed' | 'failed' | 'cancelled'
+
+export const deliveries = pgTable('deliveries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  deliveryNo: varchar('delivery_no', { length: 50 }).notNull(),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  installmentPlanId: uuid('installment_plan_id').references(() => installmentPlans.id, { onDelete: 'set null' }),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+  customerName: varchar('customer_name', { length: 255 }).notNull(),
+  customerPhone: varchar('customer_phone', { length: 50 }),
+  address: text('address').notNull(),
+  city: varchar('city', { length: 100 }),
+  scheduledDate: date('scheduled_date').notNull(),
+  timeSlot: varchar('time_slot', { length: 30 }),
+  vehicleNo: varchar('vehicle_no', { length: 30 }),
+  driverId: uuid('driver_id').references(() => users.id, { onDelete: 'set null' }),
+  driverName: varchar('driver_name', { length: 255 }),
+  installationRequired: boolean('installation_required').notNull().default(false),
+  technicianId: uuid('technician_id').references(() => users.id, { onDelete: 'set null' }),
+  technicianName: varchar('technician_name', { length: 255 }),
+  items: jsonb('items').$type<AgreementItemLine[]>().notNull().default([]),
+  deliveryCharge: decimal('delivery_charge', { precision: 12, scale: 2 }).notNull().default('0'),
+  status: varchar('status', { length: 20 }).$type<DeliveryRunStatus>().notNull().default('scheduled'),
+  dispatchedAt: timestamp('dispatched_at'),
+  deliveredAt: timestamp('delivered_at'),
+  installedAt: timestamp('installed_at'),
+  recipientName: varchar('recipient_name', { length: 255 }),
+  recipientPhone: varchar('recipient_phone', { length: 50 }),
+  proofNotes: text('proof_notes'),
+  proofPhotoUrl: text('proof_photo_url'),
+  failureReason: text('failure_reason'),
+  notes: text('notes'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export type WarrantyClaimStatus = 'received' | 'diagnosing' | 'sent_to_supplier' | 'repairing' | 'ready' | 'delivered' | 'rejected'
+
+export const warrantyClaims = pgTable('warranty_claims', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  claimNo: varchar('claim_no', { length: 50 }).notNull(),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  saleItemId: uuid('sale_item_id').references(() => saleItems.id, { onDelete: 'set null' }),
+  itemId: uuid('item_id').references(() => items.id, { onDelete: 'set null' }),
+  serialNumberId: uuid('serial_number_id').references(() => itemSerialNumbers.id, { onDelete: 'set null' }),
+  serialNumber: varchar('serial_number', { length: 255 }),
+  itemName: varchar('item_name', { length: 255 }).notNull(),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+  customerName: varchar('customer_name', { length: 255 }).notNull(),
+  customerPhone: varchar('customer_phone', { length: 50 }),
+  purchaseDate: date('purchase_date'),
+  warrantyUntil: date('warranty_until'),
+  inWarranty: boolean('in_warranty').notNull().default(false),
+  complaint: text('complaint').notNull(),
+  accessories: text('accessories'),
+  conditionNotes: text('condition_notes'),
+  technicianId: uuid('technician_id').references(() => users.id, { onDelete: 'set null' }),
+  supplierId: uuid('supplier_id').references(() => suppliers.id, { onDelete: 'set null' }),
+  supplierRef: varchar('supplier_ref', { length: 100 }),
+  status: varchar('status', { length: 20 }).$type<WarrantyClaimStatus>().notNull().default('received'),
+  diagnosis: text('diagnosis'),
+  resolution: varchar('resolution', { length: 20 }).$type<'repaired' | 'replaced' | 'refunded' | 'no_fault' | 'rejected'>(),
+  replacementSerial: varchar('replacement_serial', { length: 255 }),
+  estimatedCharge: decimal('estimated_charge', { precision: 12, scale: 2 }).notNull().default('0'),
+  finalCharge: decimal('final_charge', { precision: 12, scale: 2 }).notNull().default('0'),
+  expectedDate: date('expected_date'),
+  deliveredAt: timestamp('delivered_at'),
+  history: jsonb('history').$type<Array<{ status: string; at: string; by?: string | null; note?: string | null }>>().notNull().default([]),
+  notes: text('notes'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
 
 // Recycle bin (drizzle/0172): what vendors "deleted". Master data is archived (hidden, row kept);
@@ -2414,6 +2637,9 @@ export const saleItems = pgTable('sale_items', {
   // K1 (0171): cost of one unit sold (items.cost_price x uom_factor at sale time; trigger
   // trg_sale_items_unit_cost fills it for every writer, returns copy the original line)
   unitCost: decimal('unit_cost', { precision: 15, scale: 4 }),
+  // 0179: warranty captured at sale time (items.warranty_months; until = sale date + months)
+  warrantyMonths: integer('warranty_months'),
+  warrantyUntil: date('warranty_until'),
 })
 
 export const payments = pgTable('payments', {
@@ -2425,6 +2651,8 @@ export const payments = pgTable('payments', {
   reference: varchar('reference', { length: 255 }),
   receivedBy: uuid('received_by').references(() => users.id),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+  // 0187: shift that took the money for invoices raised outside the POS (print job / work order)
+  posOpeningEntryId: uuid('pos_opening_entry_id').references(() => posOpeningEntries.id, { onDelete: 'set null' }),
   // Void tracking for audit trail (RC-12)
   voidedAt: timestamp('voided_at'),
   voidedBy: uuid('voided_by').references(() => users.id),
@@ -2743,6 +2971,94 @@ export const layawayPayments = pgTable('layaway_payments', {
   paymentMethod: paymentMethodEnum('payment_method').notNull(),
   reference: varchar('reference', { length: 255 }),
   receivedBy: uuid('received_by').references(() => users.id),
+  // 0187: shift that took the deposit / instalment (NULL = no open shift)
+  posOpeningEntryId: uuid('pos_opening_entry_id').references(() => posOpeningEntries.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ==================== PRINT JOBS (drizzle/0182) ====================
+// Printing & photo studio job orders: sized lines (w × h → billable area × rate), proofs,
+// production status pipeline, advance payments; "deliver & invoice" turns the job into a sale.
+
+export type PrintJobStatus = 'received' | 'designing' | 'proof_sent' | 'approved' | 'printing' | 'finishing' | 'ready' | 'delivered' | 'cancelled'
+export type PrintProofStatus = 'not_needed' | 'pending' | 'sent' | 'approved' | 'changes_requested'
+export interface PrintProofFile { url: string; name?: string | null; fileId?: string | null; addedAt?: string | null }
+export interface PrintJobFinishing { code: string; label: string; qty: number; rate: number; amount: number }
+
+export const printJobs = pgTable('print_jobs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  jobNo: varchar('job_no', { length: 50 }).notNull(),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+  customerName: varchar('customer_name', { length: 255 }).notNull(),
+  customerPhone: varchar('customer_phone', { length: 50 }),
+  title: varchar('title', { length: 255 }).notNull(),
+  receivedAt: timestamp('received_at').defaultNow().notNull(),
+  dueAt: timestamp('due_at'),
+  isUrgent: boolean('is_urgent').notNull().default(false),
+  assignedTo: uuid('assigned_to').references(() => users.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 20 }).notNull().default('received').$type<PrintJobStatus>(),
+  proofStatus: varchar('proof_status', { length: 20 }).notNull().default('not_needed').$type<PrintProofStatus>(),
+  proofFiles: jsonb('proof_files').$type<PrintProofFile[]>().notNull().default([]),
+  proofNote: text('proof_note'),
+  proofSentAt: timestamp('proof_sent_at'),
+  proofRespondedAt: timestamp('proof_responded_at'),
+  subtotal: decimal('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
+  discountAmount: decimal('discount_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxAmount: decimal('tax_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxBreakdown: jsonb('tax_breakdown'),
+  total: decimal('total', { precision: 12, scale: 2 }).notNull().default('0'),
+  paidAmount: decimal('paid_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  balanceDue: decimal('balance_due', { precision: 12, scale: 2 }).notNull().default('0'),
+  notes: text('notes'),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  deliveredAt: timestamp('delivered_at'),
+  cancelledAt: timestamp('cancelled_at'),
+  cancellationReason: text('cancellation_reason'),
+  notifiedAt: timestamp('notified_at'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const printJobItems = pgTable('print_job_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  printJobId: uuid('print_job_id').notNull().references(() => printJobs.id, { onDelete: 'cascade' }),
+  sortOrder: integer('sort_order').notNull().default(0),
+  itemId: uuid('item_id').references(() => items.id, { onDelete: 'set null' }),
+  description: varchar('description', { length: 255 }).notNull(),
+  pricingMode: varchar('pricing_mode', { length: 10 }).notNull().default('unit').$type<'unit' | 'area' | 'length'>(),
+  width: decimal('width', { precision: 10, scale: 2 }),
+  height: decimal('height', { precision: 10, scale: 2 }),
+  sizeUnit: varchar('size_unit', { length: 4 }).$type<'inch' | 'ft' | 'cm' | 'mm' | 'm'>(),
+  quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull().default('1'),
+  material: varchar('material', { length: 255 }),
+  sides: integer('sides').notNull().default(1),
+  areaUnit: varchar('area_unit', { length: 4 }).$type<'sqft' | 'sqm'>(),
+  areaPerPiece: decimal('area_per_piece', { precision: 12, scale: 2 }),
+  billableArea: decimal('billable_area', { precision: 12, scale: 2 }),
+  rate: decimal('rate', { precision: 12, scale: 2 }).notNull().default('0'),
+  baseAmount: decimal('base_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  finishing: jsonb('finishing').$type<PrintJobFinishing[]>().notNull().default([]),
+  finishingAmount: decimal('finishing_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  notes: text('notes'),
+})
+
+export const printJobPayments = pgTable('print_job_payments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  printJobId: uuid('print_job_id').notNull().references(() => printJobs.id),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+  paymentMethod: paymentMethodEnum('payment_method').notNull(),
+  reference: varchar('reference', { length: 255 }),
+  receivedBy: uuid('received_by').references(() => users.id, { onDelete: 'set null' }),
+  refundedAt: timestamp('refunded_at'),
+  // 0187: shift the advance was taken in / refunded from (NULL = no open shift)
+  posOpeningEntryId: uuid('pos_opening_entry_id').references(() => posOpeningEntries.id, { onDelete: 'set null' }),
+  refundPosOpeningEntryId: uuid('refund_pos_opening_entry_id').references(() => posOpeningEntries.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
@@ -2893,6 +3209,13 @@ export const employeeProfiles = pgTable('employee_profiles', {
   address: text('address'),
   // Salary structure assignment (Phase 2)
   salaryStructureId: uuid('salary_structure_id'),
+  // Attendance (drizzle/0183): fingerprint enrolment no., shift, branch, overtime
+  biometricUserId: varchar('biometric_user_id', { length: 50 }),
+  defaultShiftId: uuid('default_shift_id'),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  otEligible: boolean('ot_eligible').notNull().default(false),
+  otRateMultiplier: decimal('ot_rate_multiplier', { precision: 4, scale: 2 }).notNull().default('1.5'),
+  hourlyRate: decimal('hourly_rate', { precision: 12, scale: 2 }),
   // Metadata
   notes: text('notes'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -2994,6 +3317,8 @@ export const salarySlips = pgTable('salary_slips', {
   // Accounting
   journalEntryId: uuid('journal_entry_id'),
   payrollRunId: uuid('payroll_run_id'),
+  // Attendance snapshot (drizzle/0183, src/lib/attendance/payroll.ts AttendancePayrollSummary)
+  attendanceSummary: jsonb('attendance_summary'),
   // Metadata
   createdBy: uuid('created_by'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -3060,6 +3385,161 @@ export const salarySlipAdvanceRecoveries = pgTable('salary_slip_advance_recoveri
   employeeAdvanceId: uuid('employee_advance_id').notNull(),
   amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// ==================== HR ATTENDANCE (drizzle/0183) ====================
+
+// Work shifts (weeklyOffDays: 0 = Sunday .. 6 = Saturday)
+export const workShifts = pgTable('work_shifts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  name: varchar('name', { length: 100 }).notNull(),
+  startTime: time('start_time').notNull(),
+  endTime: time('end_time').notNull(),
+  crossesMidnight: boolean('crosses_midnight').notNull().default(false),
+  breakMinutes: integer('break_minutes').notNull().default(60),
+  graceLateMinutes: integer('grace_late_minutes').notNull().default(10),
+  graceEarlyMinutes: integer('grace_early_minutes').notNull().default(10),
+  halfDayHours: decimal('half_day_hours', { precision: 4, scale: 2 }).notNull().default('4'),
+  fullDayHours: decimal('full_day_hours', { precision: 4, scale: 2 }).notNull().default('8'),
+  otStartsAfterMinutes: integer('ot_starts_after_minutes').notNull().default(30),
+  weeklyOffDays: integer('weekly_off_days').array().notNull().default(sql`'{0}'`),
+  isDefault: boolean('is_default').notNull().default(false),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+// Shift assignment of an employee for a date range (wins over employeeProfiles.defaultShiftId)
+export const employeeShiftAssignments = pgTable('employee_shift_assignments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  employeeProfileId: uuid('employee_profile_id').notNull().references(() => employeeProfiles.id, { onDelete: 'cascade' }),
+  shiftId: uuid('shift_id').notNull().references(() => workShifts.id, { onDelete: 'cascade' }),
+  fromDate: date('from_date').notNull(),
+  toDate: date('to_date'),
+  notes: text('notes'),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// Fingerprint / face devices pushing over ADMS ("iclock"); the serial number maps a device to its tenant
+export const attendanceDevices = pgTable('attendance_devices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  name: varchar('name', { length: 100 }).notNull(),
+  serialNumber: varchar('serial_number', { length: 64 }).notNull(),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  model: varchar('model', { length: 100 }),
+  commKey: varchar('comm_key', { length: 100 }),
+  timezone: varchar('timezone', { length: 50 }).notNull().default('Asia/Colombo'),
+  attlogStamp: varchar('attlog_stamp', { length: 50 }),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  lastIp: varchar('last_ip', { length: 64 }),
+  deviceInfo: jsonb('device_info'),
+  isActive: boolean('is_active').notNull().default(true),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+// Platform table (no tenant / RLS): serials that contacted /iclock before being registered
+export const attendancePendingDevices = pgTable('attendance_pending_devices', {
+  serialNumber: varchar('serial_number', { length: 64 }).primaryKey(),
+  firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).defaultNow().notNull(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow().notNull(),
+  lastIp: varchar('last_ip', { length: 64 }),
+  hits: integer('hits').notNull().default(1),
+  info: jsonb('info'),
+})
+
+// Raw check-in / check-out punches
+export const attendancePunches = pgTable('attendance_punches', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  employeeProfileId: uuid('employee_profile_id').references(() => employeeProfiles.id, { onDelete: 'cascade' }),
+  biometricUserId: varchar('biometric_user_id', { length: 50 }),
+  deviceId: uuid('device_id').references(() => attendanceDevices.id),
+  punchTime: timestamp('punch_time', { withTimezone: true }).notNull(),
+  punchType: varchar('punch_type', { length: 10 }).notNull().default('unknown'), // in | out | unknown
+  verifyMode: varchar('verify_mode', { length: 20 }),
+  source: varchar('source', { length: 10 }).notNull().default('device'), // device | manual | import | mobile
+  raw: jsonb('raw'),
+  note: text('note'),
+  isDeleted: boolean('is_deleted').notNull().default(false),
+  deletedBy: uuid('deleted_by'),
+  deletedAt: timestamp('deleted_at', { withTimezone: true }),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+// Computed (or manually set) attendance of one employee on one date
+export const attendanceDays = pgTable('attendance_days', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  employeeProfileId: uuid('employee_profile_id').notNull().references(() => employeeProfiles.id, { onDelete: 'cascade' }),
+  attendanceDate: date('attendance_date').notNull(),
+  shiftId: uuid('shift_id').references(() => workShifts.id),
+  dayType: varchar('day_type', { length: 12 }).notNull().default('working'), // working | weekly_off | holiday
+  firstIn: timestamp('first_in', { withTimezone: true }),
+  lastOut: timestamp('last_out', { withTimezone: true }),
+  punchCount: integer('punch_count').notNull().default(0),
+  workedMinutes: integer('worked_minutes').notNull().default(0),
+  lateMinutes: integer('late_minutes').notNull().default(0),
+  earlyLeaveMinutes: integer('early_leave_minutes').notNull().default(0),
+  otMinutes: integer('ot_minutes').notNull().default(0),
+  missedPunch: boolean('missed_punch').notNull().default(false),
+  status: varchar('status', { length: 12 }).notNull().default('absent'), // present | absent | half_day | leave | holiday | weekly_off
+  leaveTypeId: uuid('leave_type_id'),
+  leaveFraction: decimal('leave_fraction', { precision: 3, scale: 1 }).notNull().default('0'),
+  leavePaid: boolean('leave_paid').notNull().default(false),
+  isManual: boolean('is_manual').notNull().default(false),
+  notes: text('notes'),
+  approvedBy: uuid('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  computedAt: timestamp('computed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const holidays = pgTable('holidays', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  holidayDate: date('holiday_date').notNull(),
+  name: varchar('name', { length: 150 }).notNull(),
+  isPaid: boolean('is_paid').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const leaveTypes = pgTable('leave_types', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  name: varchar('name', { length: 100 }).notNull(),
+  code: varchar('code', { length: 20 }),
+  daysPerYear: decimal('days_per_year', { precision: 5, scale: 1 }).notNull().default('0'),
+  isPaid: boolean('is_paid').notNull().default(true),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const leaveRequests = pgTable('leave_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  employeeProfileId: uuid('employee_profile_id').notNull().references(() => employeeProfiles.id, { onDelete: 'cascade' }),
+  leaveTypeId: uuid('leave_type_id').notNull().references(() => leaveTypes.id),
+  fromDate: date('from_date').notNull(),
+  toDate: date('to_date').notNull(),
+  halfDay: boolean('half_day').notNull().default(false),
+  days: decimal('days', { precision: 5, scale: 1 }).notNull().default('1'),
+  reason: text('reason'),
+  status: varchar('status', { length: 12 }).notNull().default('pending'), // pending | approved | rejected | cancelled
+  approvedBy: uuid('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  rejectionReason: text('rejection_reason'),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
 })
 
 // Employee advances
@@ -3257,6 +3737,9 @@ export const purchaseItems = pgTable('purchase_items', {
   // Stock Received But Not Billed (the invoice debits SRBNB for it instead of Stock)
   srbnbQty: decimal('srbnb_qty', { precision: 12, scale: 3 }).notNull().default('0'),
   srbnbAmount: decimal('srbnb_amount', { precision: 15, scale: 2 }).notNull().default('0'),
+  // 0184: unit the line was entered in (quantity is in `uom`; stock / costing use quantity × uomFactor base units)
+  uom: varchar('uom', { length: 20 }),
+  uomFactor: decimal('uom_factor', { precision: 14, scale: 6 }).notNull().default('1'),
 })
 
 // ==================== PURCHASE ORDERS ====================
@@ -3302,6 +3785,9 @@ export const purchaseOrderItems = pgTable('purchase_order_items', {
   taxTemplateId: uuid('tax_template_id'),
   taxBreakdown: jsonb('tax_breakdown'),
   total: decimal('total', { precision: 12, scale: 2 }).notNull(),
+  // 0184: unit the line was entered in (quantity is in `uom`; stock / costing use quantity × uomFactor base units)
+  uom: varchar('uom', { length: 20 }),
+  uomFactor: decimal('uom_factor', { precision: 14, scale: 6 }).notNull().default('1'),
 })
 
 // Purchase payments for tracking payment history
@@ -3496,6 +3982,9 @@ export const purchaseReceiptItems = pgTable('purchase_receipt_items', {
   notes: text('notes'),
   // H3 (0159): unit cost the GRN valued the line at (PO price) for the SRBNB posting
   unitCost: decimal('unit_cost', { precision: 12, scale: 2 }),
+  // 0184: unit the line was entered in (quantity is in `uom`; stock / costing use quantity × uomFactor base units)
+  uom: varchar('uom', { length: 20 }),
+  uomFactor: decimal('uom_factor', { precision: 14, scale: 6 }).notNull().default('1'),
 })
 
 // ==================== LANDED COST VOUCHERS (H3, 0159) ====================
@@ -5062,6 +5551,9 @@ export const salesOrderItems = pgTable('sales_order_items', {
   taxTemplateId: uuid('tax_template_id'),
   taxBreakdown: jsonb('tax_breakdown'),
   total: decimal('total', { precision: 12, scale: 2 }).notNull(),
+  // 0184: unit the line was entered in (quantity is in `uom`; stock / costing use quantity × uomFactor base units)
+  uom: varchar('uom', { length: 20 }),
+  uomFactor: decimal('uom_factor', { precision: 14, scale: 6 }).notNull().default('1'),
 })
 
 // Sales Orders relations
@@ -6002,6 +6494,8 @@ export const printTemplates = pgTable('print_templates', {
   headerFields: jsonb('header_fields').$type<string[]>(),
   bodyFields: jsonb('body_fields').$type<string[]>(),
   footerFields: jsonb('footer_fields').$type<string[]>(),
+  // 0179: full template-designer settings (partial InvoiceTemplateConfig; merged with defaults on read)
+  config: jsonb('config').$type<Record<string, unknown>>().notNull().default({}),
   isDefault: boolean('is_default').notNull().default(false),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -6348,6 +6842,11 @@ export const quotationItems = pgTable('quotation_items', {
   discount: decimal('discount', { precision: 12, scale: 2 }).notNull().default('0'),
   tax: decimal('tax', { precision: 12, scale: 2 }).notNull().default('0'),
   total: decimal('total', { precision: 12, scale: 2 }).notNull().default('0'),
+  // 0179: unit quoted (quantity is in `uom`), per-line tax rate (%) and warranty
+  uom: varchar('uom', { length: 20 }),
+  uomFactor: decimal('uom_factor', { precision: 14, scale: 6 }).notNull().default('1'),
+  taxRate: decimal('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),
+  warrantyMonths: integer('warranty_months'),
 })
 
 export const creditNoteStatusEnum = pgEnum('credit_note_status', [
@@ -6864,3 +7363,182 @@ export const priceListItemsRelations = relations(priceListItems, ({ one }) => ({
   priceList: one(priceLists, { fields: [priceListItems.priceListId], references: [priceLists.id] }),
   item: one(items, { fields: [priceListItems.itemId], references: [items.id] }),
 }))
+
+// ==================== RECURRING INVOICES, PAYMENT RECEIPTS, PROJECTS (drizzle/0185) ====================
+
+export const recurringInvoices = pgTable('recurring_invoices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  profileName: varchar('profile_name', { length: 150 }).notNull(),
+  customerId: uuid('customer_id').notNull().references(() => customers.id),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id, { onDelete: 'set null' }),
+  frequency: varchar('frequency', { length: 10 }).$type<'weekly' | 'monthly' | 'yearly'>().notNull().default('monthly'),
+  intervalCount: integer('interval_count').notNull().default(1),
+  startDate: date('start_date').notNull(),
+  endType: varchar('end_type', { length: 10 }).$type<'never' | 'after' | 'on_date'>().notNull().default('never'),
+  endAfterCount: integer('end_after_count'),
+  endDate: date('end_date'),
+  nextRunDate: date('next_run_date'),
+  occurrencesGenerated: integer('occurrences_generated').notNull().default(0),
+  invoiceAction: varchar('invoice_action', { length: 10 }).$type<'draft' | 'final'>().notNull().default('final'),
+  paymentTermsDays: integer('payment_terms_days').notNull().default(0),
+  notes: text('notes'),
+  terms: text('terms'),
+  notifyChannel: varchar('notify_channel', { length: 10 }).$type<'none' | 'sms' | 'whatsapp'>().notNull().default('none'),
+  status: varchar('status', { length: 12 }).$type<'active' | 'paused' | 'stopped' | 'completed'>().notNull().default('active'),
+  isActive: boolean('is_active').notNull().default(true),
+  lastRunAt: timestamp('last_run_at'),
+  lastError: text('last_error'),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const recurringInvoiceItems = pgTable('recurring_invoice_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  recurringInvoiceId: uuid('recurring_invoice_id').notNull().references(() => recurringInvoices.id, { onDelete: 'cascade' }),
+  itemId: uuid('item_id').notNull().references(() => items.id),
+  itemName: varchar('item_name', { length: 255 }).notNull(),
+  quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull(),
+  unitPrice: decimal('unit_price', { precision: 12, scale: 2 }).notNull(),
+  discount: decimal('discount', { precision: 12, scale: 2 }).notNull().default('0'),
+  uom: varchar('uom', { length: 20 }),
+  uomFactor: decimal('uom_factor', { precision: 12, scale: 4 }).notNull().default('1'),
+  sortOrder: integer('sort_order').notNull().default(0),
+})
+
+export const recurringInvoiceRuns = pgTable('recurring_invoice_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  recurringInvoiceId: uuid('recurring_invoice_id').notNull().references(() => recurringInvoices.id, { onDelete: 'cascade' }),
+  runDate: date('run_date').notNull(),
+  occurrence: integer('occurrence').notNull(),
+  status: varchar('status', { length: 12 }).$type<'processing' | 'generated' | 'draft' | 'failed' | 'skipped'>().notNull().default('processing'),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  invoiceNo: varchar('invoice_no', { length: 50 }),
+  total: decimal('total', { precision: 12, scale: 2 }),
+  dueDate: date('due_date'),
+  attempts: integer('attempts').notNull().default(0),
+  error: text('error'),
+  triggeredBy: varchar('triggered_by', { length: 10 }).notNull().default('cron'),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+}, (t) => [uniqueIndex('uq_recurring_invoice_runs_period').on(t.recurringInvoiceId, t.runDate)])
+
+export const paymentReceipts = pgTable('payment_receipts', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  receiptNo: varchar('receipt_no', { length: 30 }).notNull(),
+  customerId: uuid('customer_id').notNull().references(() => customers.id),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id, { onDelete: 'set null' }),
+  receiptDate: date('receipt_date').notNull(),
+  method: varchar('method', { length: 20 }).notNull(),
+  reference: varchar('reference', { length: 255 }),
+  amountReceived: decimal('amount_received', { precision: 12, scale: 2 }).notNull().default('0'),
+  amountAllocated: decimal('amount_allocated', { precision: 12, scale: 2 }).notNull().default('0'),
+  creditApplied: decimal('credit_applied', { precision: 12, scale: 2 }).notNull().default('0'),
+  excessToCredit: decimal('excess_to_credit', { precision: 12, scale: 2 }).notNull().default('0'),
+  status: varchar('status', { length: 12 }).$type<'completed' | 'partial'>().notNull().default('completed'),
+  notes: text('notes'),
+  error: text('error'),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const paymentReceiptAllocations = pgTable('payment_receipt_allocations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  receiptId: uuid('receipt_id').notNull().references(() => paymentReceipts.id, { onDelete: 'cascade' }),
+  saleId: uuid('sale_id').notNull().references(() => sales.id),
+  invoiceNo: varchar('invoice_no', { length: 50 }),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  creditAmount: decimal('credit_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  paymentId: uuid('payment_id').references(() => payments.id, { onDelete: 'set null' }),
+  /** the store-credit payment row (method 'credit') when credit was applied */
+  creditPaymentId: uuid('credit_payment_id').references(() => payments.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const projects = pgTable('projects', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectNo: varchar('project_no', { length: 30 }).notNull(),
+  name: varchar('name', { length: 200 }).notNull(),
+  customerId: uuid('customer_id').notNull().references(() => customers.id),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id, { onDelete: 'set null' }),
+  description: text('description'),
+  billingMethod: varchar('billing_method', { length: 20 }).$type<'fixed' | 'project_hourly' | 'staff_hourly' | 'task_hourly'>().notNull().default('project_hourly'),
+  fixedAmount: decimal('fixed_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  projectRate: decimal('project_rate', { precision: 12, scale: 2 }).notNull().default('0'),
+  budgetType: varchar('budget_type', { length: 10 }).$type<'none' | 'hours' | 'amount'>().notNull().default('none'),
+  budgetHours: decimal('budget_hours', { precision: 10, scale: 2 }),
+  budgetAmount: decimal('budget_amount', { precision: 12, scale: 2 }),
+  serviceItemId: uuid('service_item_id').references(() => items.id, { onDelete: 'set null' }),
+  startDate: date('start_date'),
+  endDate: date('end_date'),
+  status: varchar('status', { length: 12 }).$type<'active' | 'on_hold' | 'completed' | 'cancelled'>().notNull().default('active'),
+  isActive: boolean('is_active').notNull().default(true),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const projectTasks = pgTable('project_tasks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  name: varchar('name', { length: 200 }).notNull(),
+  description: text('description'),
+  rate: decimal('rate', { precision: 12, scale: 2 }).notNull().default('0'),
+  billable: boolean('billable').notNull().default(true),
+  isActive: boolean('is_active').notNull().default(true),
+  sortOrder: integer('sort_order').notNull().default(0),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const projectMembers = pgTable('project_members', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+  rate: decimal('rate', { precision: 12, scale: 2 }).notNull().default('0'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+}, (t) => [uniqueIndex('uq_project_members_user').on(t.projectId, t.userId)])
+
+export const projectInvoices = pgTable('project_invoices', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  invoiceNo: varchar('invoice_no', { length: 50 }),
+  kind: varchar('kind', { length: 10 }).$type<'time' | 'fixed'>().notNull().default('time'),
+  hours: decimal('hours', { precision: 10, scale: 2 }).notNull().default('0'),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const projectTimeEntries = pgTable('project_time_entries', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
+  projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  taskId: uuid('task_id').references(() => projectTasks.id, { onDelete: 'set null' }),
+  userId: uuid('user_id').notNull().references(() => users.id),
+  entryDate: date('entry_date').notNull(),
+  startTime: timestamp('start_time', { withTimezone: true }),
+  endTime: timestamp('end_time', { withTimezone: true }),
+  durationMinutes: integer('duration_minutes').notNull().default(0),
+  notes: text('notes'),
+  billable: boolean('billable').notNull().default(true),
+  isRunning: boolean('is_running').notNull().default(false),
+  invoiced: boolean('invoiced').notNull().default(false),
+  projectInvoiceId: uuid('project_invoice_id').references(() => projectInvoices.id, { onDelete: 'set null' }),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  invoicedRate: decimal('invoiced_rate', { precision: 12, scale: 2 }),
+  invoicedAmount: decimal('invoiced_amount', { precision: 12, scale: 2 }),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})

@@ -13,6 +13,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { listShiftCashMovements, shiftCashMovementTotals } from '@/lib/pos/shift-report'
 import { assertBranchAccess } from '@/lib/auth/branch-access'
+import { shiftOutsideCollections } from '@/lib/pos/shift-collections'
 
 // GET a single opening entry
 export async function GET(
@@ -146,6 +147,12 @@ export async function GET(
       // H1: drawer cash paid in / out during the shift
       const movementTotals = await shiftCashMovementTotals(db, id)
       const cashMovements = await listShiftCashMovements(db, id)
+      // 0187: print-job advances, print-job / work-order invoice payments, layaway payments
+      // taken by this shift's user outside the POS sale screen
+      const outsideCollections = await shiftOutsideCollections(db, id)
+      for (const method of Object.keys(outsideCollections.byMethod)) {
+        if (!paymentMethodBreakdown[method]) paymentMethodBreakdown[method] = { sales: 0, returns: 0, netSales: 0, transactionCount: 0 }
+      }
 
       // Calculate expected amounts and variances
       const expectedAmounts: Record<string, number> = {}
@@ -153,7 +160,8 @@ export async function GET(
       
       Object.entries(paymentMethodBreakdown).forEach(([method, breakdown]) => {
         const opening = openingBalances[method] || 0
-        const expected = Math.round((opening + breakdown.netSales + (method === 'cash' ? movementTotals.net : 0)) * 100) / 100
+        const expected = Math.round((opening + breakdown.netSales + (method === 'cash' ? movementTotals.net : 0)
+          + (outsideCollections.byMethod[method] || 0)) * 100) / 100
         expectedAmounts[method] = expected
         
         // For now, variance is 0 since we don't have actual amounts yet
@@ -170,8 +178,10 @@ export async function GET(
           totalTransactions: entry.sales.length,
           cashPaidIn: movementTotals.paidIn,
           cashPaidOut: movementTotals.paidOut,
+          outsideCollections: outsideCollections.total,
         },
         cashMovements,
+        outsideCollections,
         paymentMethodBreakdown: {
           openingBalances,
           salesByMethod: paymentMethodBreakdown,
@@ -265,6 +275,13 @@ export async function PUT(
         if ((await shiftCashMovementTotals(db, id)).count > 0) {
           return NextResponse.json({
             error: 'Cannot cancel a shift with cash paid in / out. Void the cash movements first or close the shift normally.',
+          }, { status: 400 })
+        }
+
+        // 0187: nor with money taken outside the POS into this drawer (advances, invoice payments)
+        if ((await shiftOutsideCollections(db, id)).count > 0) {
+          return NextResponse.json({
+            error: 'Cannot cancel a shift that received advances / invoice payments. Close the shift normally.',
           }, { status: 400 })
         }
 

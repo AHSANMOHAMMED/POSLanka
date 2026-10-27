@@ -72,6 +72,10 @@ const BUSINESS_TYPES: Array<{ value: string; label: string }> = [
   { value: 'restaurant', label: 'Restaurant' },
   { value: 'auto_service', label: 'Auto service' },
   { value: 'dealership', label: 'Dealership' },
+  { value: 'electronics', label: 'Electronics & appliances' },
+  { value: 'hardware', label: 'Hardware' },
+  { value: 'print_studio', label: 'Print & photo studio' },
+  { value: 'office', label: 'Office & services' },
 ]
 
 const PAYMENT_LABEL: Record<string, string> = {

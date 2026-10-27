@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useMemo } from 'react'
-import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle, RotateCcw, FileText } from 'lucide-react'
+import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle, RotateCcw, FileText, CalendarClock } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
 import { getCurrencyNotes } from '@/lib/utils/countries'
@@ -18,6 +18,9 @@ const PAYMENT_METHOD_META: Record<string, { icon: typeof Banknote; label: string
   mobile_payment: { icon: Smartphone, label: 'Mobile' },
   original: { icon: RotateCcw, label: 'Original methods' },
 }
+
+/** Methods that cannot take a hire-purchase down payment (the balance itself goes on account) */
+const HP_BLOCKED_METHODS = ['credit', 'gift_card', 'cheque']
 
 interface POSPaymentModalProps {
   isOpen: boolean
@@ -71,6 +74,14 @@ interface POSPaymentModalProps {
   /** K1: cheque details (shown when the tender or the second split is a cheque) */
   chequeDetails?: ChequeFormValue
   setChequeDetails?: (value: ChequeFormValue) => void
+
+  /**
+   * Hire purchase / installment (installments module): the amount received is the down payment,
+   * the rest is left on the customer's account and financed by an installment plan.
+   * Leave setHirePurchase undefined to hide the option.
+   */
+  hirePurchase?: boolean
+  setHirePurchase?: (value: boolean) => void
 }
 
 export function POSPaymentModal({
@@ -115,7 +126,10 @@ export function POSPaymentModal({
   setSplitSecondAmount,
   chequeDetails,
   setChequeDetails,
+  hirePurchase: hirePurchaseProp = false,
+  setHirePurchase,
 }: POSPaymentModalProps) {
+  const hirePurchase = !isReturnMode && !!setHirePurchase && hirePurchaseProp
   const { currency: currencyCode } = useCurrency()
 
   const needsCheque = !isReturnMode && (paymentMethod === 'cheque' || (splitEnabled && splitSecondMethod === 'cheque'))
@@ -221,12 +235,29 @@ export function POSPaymentModal({
         setRefundMethod(id)
         return
       }
+      if (hirePurchase && HP_BLOCKED_METHODS.includes(id)) return
       setPaymentMethod(id)
       if (id !== 'cash' && cashCardPaid > remainingAfterCredit) setAmountPaid(remainingAfterCredit.toFixed(2))
     }
     window.addEventListener('keydown', onMethodKey)
     return () => window.removeEventListener('keydown', onMethodKey)
-  }, [isOpen, processing, isReturnMode, enabledRefundMethods, enabledPaymentMethods, selectedCustomer, setRefundMethod, setPaymentMethod, setAmountPaid, cashCardPaid, remainingAfterCredit])
+  }, [isOpen, processing, isReturnMode, enabledRefundMethods, enabledPaymentMethods, selectedCustomer, setRefundMethod, setPaymentMethod, setAmountPaid, cashCardPaid, remainingAfterCredit, hirePurchase])
+
+  function toggleHirePurchase() {
+    if (!setHirePurchase) return
+    const next = !hirePurchase
+    setHirePurchase(next)
+    if (next) {
+      setSplitEnabled?.(false)
+      setSplitSecondAmount?.('')
+      if (HP_BLOCKED_METHODS.includes(paymentMethod)) {
+        setPaymentMethod(enabledPaymentMethods.find((m) => !HP_BLOCKED_METHODS.includes(m.paymentMethod))?.paymentMethod || 'cash')
+      }
+      setAmountPaid('0')
+    } else {
+      setAmountPaid(remainingAfterCredit.toFixed(2))
+    }
+  }
 
   if (!isOpen) return null
 
@@ -421,7 +452,7 @@ export function POSPaymentModal({
             <div>
               <div className="flex items-center justify-between mb-3">
                 <label className="block text-sm font-semibold text-gray-700">Payment Method</label>
-                {setSplitEnabled && enabledPaymentMethods.length > 1 && (
+                {setSplitEnabled && !hirePurchase && enabledPaymentMethods.length > 1 && (
                   <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
                     <input
                       type="checkbox"
@@ -453,13 +484,15 @@ export function POSPaymentModal({
                   return (
                     <button
                       key={pm.paymentMethod}
+                      disabled={hirePurchase && HP_BLOCKED_METHODS.includes(pm.paymentMethod)}
+                      title={hirePurchase && HP_BLOCKED_METHODS.includes(pm.paymentMethod) ? 'Not for a hire purchase down payment' : undefined}
                       onClick={() => {
                         setPaymentMethod(pm.paymentMethod)
                         if (pm.paymentMethod !== 'cash' && cashCardPaid > remainingAfterCredit) {
                           setAmountPaid(remainingAfterCredit.toFixed(2))
                         }
                       }}
-                      className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all ${
+                      className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
                         paymentMethod === pm.paymentMethod
                           ? 'border-blue-500 bg-blue-50'
                           : 'border-gray-200 hover:border-gray-300'
@@ -504,6 +537,27 @@ export function POSPaymentModal({
                     }}
                     placeholder="Second amount"
                   />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Hire purchase / installment */}
+          {!isReturnMode && setHirePurchase && (
+            <div className={`rounded-2xl border-2 p-4 space-y-2 ${hirePurchase ? 'border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30' : 'border-gray-200 dark:border-gray-700'}`}>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="checkbox" checked={hirePurchase} onChange={toggleHirePurchase} className="w-4 h-4" />
+                <CalendarClock size={20} className="text-amber-600 dark:text-amber-400" />
+                <span className="font-semibold text-gray-800 dark:text-gray-100">Hire purchase / Installment</span>
+              </label>
+              {hirePurchase && (
+                <div className="text-xs text-amber-900 dark:text-amber-200 space-y-1 pl-7">
+                  <p>Enter the <b>down payment</b> below. The rest stays on the customer&apos;s account and the installment plan form opens next.</p>
+                  {selectedCustomer ? (
+                    <p>Customer: <b>{selectedCustomer.name}</b>{selectedCustomer.phone ? ` (${selectedCustomer.phone})` : ''}</p>
+                  ) : (
+                    <p className="text-red-600 dark:text-red-400 font-semibold">A customer is required — Complete opens the customer picker.</p>
+                  )}
                 </div>
               )}
             </div>
@@ -626,10 +680,10 @@ export function POSPaymentModal({
           )}
 
           {/* Amount Input — for cash & other manual tenders */}
-          {!isReturnMode && paymentMethod !== 'credit' && paymentMethod !== 'card' && (
+          {!isReturnMode && paymentMethod !== 'credit' && (paymentMethod !== 'card' || hirePurchase) && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Amount Received
+                {hirePurchase ? 'Down payment' : 'Amount Received'}
               </label>
               <FormInput
                 type="number"
@@ -702,7 +756,7 @@ export function POSPaymentModal({
           )}
 
           {/* Card payment quick action */}
-          {!isReturnMode && paymentMethod === 'card' && (
+          {!isReturnMode && paymentMethod === 'card' && !hirePurchase && (
             <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 text-center space-y-3">
               <div className="flex items-center justify-center gap-2 text-blue-700">
                 <CreditCard size={28} />
@@ -757,7 +811,7 @@ export function POSPaymentModal({
           {/* Balance Due */}
           {!isReturnMode && balanceDue > 0 && (
             <div className="bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 text-center">
-              <p className="text-sm text-amber-700 font-medium">Balance Due</p>
+              <p className="text-sm text-amber-700 font-medium">{hirePurchase ? 'Financed on installments' : 'Balance Due'}</p>
               <p className="text-2xl font-bold text-amber-800">{currencyCode} {balanceDue.toFixed(2)}</p>
             </div>
           )}
@@ -790,6 +844,8 @@ export function POSPaymentModal({
               </span>
             ) : isReturnMode ? (
               'Process Refund'
+            ) : hirePurchase ? (
+              'Complete & set up plan'
             ) : (
               'Complete Sale'
             )}

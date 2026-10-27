@@ -91,6 +91,10 @@ export async function GET(
         unitPrice: purchaseOrderItems.unitPrice,
         tax: purchaseOrderItems.tax,
         total: purchaseOrderItems.total,
+        // 0184: unit of the line (quantity / receivedQuantity / unitPrice are in it)
+        uom: purchaseOrderItems.uom,
+        uomFactor: purchaseOrderItems.uomFactor,
+        baseUnit: itemsTable.unit,
       })
       .from(purchaseOrderItems)
       .leftJoin(itemsTable, eq(purchaseOrderItems.itemId, itemsTable.id))

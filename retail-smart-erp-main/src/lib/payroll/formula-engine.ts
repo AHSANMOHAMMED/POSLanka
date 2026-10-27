@@ -32,7 +32,10 @@ class FormulaError extends Error {
 }
 
 // Reserved variable names that cannot be used as component abbreviations
-const RESERVED_VARIABLES = new Set(['base', 'gross', 'net', 'amount', 'true', 'false', 'null', 'undefined', 'NaN', 'Infinity'])
+const RESERVED_VARIABLES = new Set(['base', 'gross', 'net', 'amount', 'true', 'false', 'null', 'undefined', 'NaN', 'Infinity',
+  // Attendance variables (src/lib/attendance/payroll.ts ATTENDANCE_FORMULA_VARIABLES)
+  'payment_days', 'working_days', 'absent_days', 'present_days', 'half_days', 'leave_days', 'unpaid_leave_days',
+  'late_minutes', 'early_minutes', 'ot_hours', 'holiday_ot_hours', 'ot_amount', 'hourly_rate', 'daily_rate'])
 
 // Epsilon for near-zero division protection in financial calculations
 // 0.01 = 1 cent - we shouldn't divide by amounts less than this

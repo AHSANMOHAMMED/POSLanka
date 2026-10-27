@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { items, warehouseStock, tenants } from '@/lib/db/schema'
-import { eq, and, inArray, or } from 'drizzle-orm'
+import { eq, and, inArray, or, sql } from 'drizzle-orm'
 import { findExtraBarcodes, type ExtraBarcodeMatch } from '@/lib/pricing/catalog'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { barcodeLookupSchema } from '@/lib/validation/schemas/items'
-import { analyseScan, normalizeScaleConfig, type ScaleBarcodeConfig } from '@/lib/inventory/barcode-parse'
+import { analyseScan, codesMatch, normalizeScaleConfig, type ScaleBarcodeConfig } from '@/lib/inventory/barcode-parse'
 import { logError } from '@/lib/ai/error-logger'
 import { requireModule } from '@/lib/auth/roles'
 import { assertBranchAccess } from '@/lib/auth/branch-access'
@@ -45,23 +45,45 @@ export async function GET(request: NextRequest) {
       const pluValues = scan.candidates.filter((c) => c.field === 'plu').map((c) => c.lookup)
       const skuValues = scan.candidates.filter((c) => c.field === 'sku').map((c) => c.lookup)
 
+      // Codes are matched case-insensitively: the exact values and their upper / lower case forms
+      // go through the indexed IN lookups first
+      const withCase = (vals: string[]) => [...new Set(vals.flatMap((v) => [v, v.toUpperCase(), v.toLowerCase()]))]
+
       // H5: additional barcodes (item_barcodes) and unit barcodes (item_uoms)
-      const extras = await findExtraBarcodes(db, session.user.tenantId, barcodeValues)
+      const extras = await findExtraBarcodes(db, session.user.tenantId, withCase(barcodeValues))
 
       const conditions = []
-      if (barcodeValues.length) conditions.push(inArray(items.barcode, barcodeValues))
+      if (barcodeValues.length) conditions.push(inArray(items.barcode, withCase(barcodeValues)))
       if (extras.length) conditions.push(inArray(items.id, extras.map((e) => e.itemId)))
       if (pluValues.length) conditions.push(inArray(items.pluCode, pluValues))
-      if (skuValues.length) conditions.push(inArray(items.sku, skuValues))
+      if (skuValues.length) conditions.push(inArray(items.sku, withCase(skuValues)))
       if (conditions.length === 0) {
         return NextResponse.json({ error: 'Item not found' }, { status: 404 })
       }
 
-      const matches = await db.query.items.findMany({
+      let matches = await db.query.items.findMany({
         where: and(eq(items.isActive, true), or(...conditions)),
         with: { category: { columns: { name: true } } },
         limit: 10,
       })
+      if (matches.length === 0) {
+        // Slower second pass, still exact: stored codes with stray spaces / mixed case, and numeric
+        // barcodes stored with more or fewer leading zeros than the label prints
+        const lowerList = (vals: string[]) => sql.join([...new Set(vals.map((v) => v.toLowerCase()))].map((v) => sql`${v}`), sql`, `)
+        const numeric = [...new Set(barcodeValues.filter((v) => /^\d+$/.test(v)).map((v) => v.replace(/^0+/, '')).filter(Boolean))]
+        const loose = []
+        if (barcodeValues.length) loose.push(sql`lower(btrim(${items.barcode})) IN (${lowerList(barcodeValues)})`)
+        if (numeric.length) loose.push(sql`(btrim(${items.barcode}) ~ '^[0-9]+$' AND ltrim(btrim(${items.barcode}), '0') IN (${sql.join(numeric.map((v) => sql`${v}`), sql`, `)}))`)
+        if (pluValues.length) loose.push(sql`lower(btrim(${items.pluCode})) IN (${lowerList(pluValues)})`)
+        if (skuValues.length) loose.push(sql`lower(btrim(${items.sku})) IN (${lowerList(skuValues)})`)
+        if (loose.length) {
+          matches = await db.query.items.findMany({
+            where: and(eq(items.isActive, true), or(...loose)),
+            with: { category: { columns: { name: true } } },
+            limit: 10,
+          })
+        }
+      }
       if (matches.length === 0) {
         return NextResponse.json({ error: 'Item not found', scan: { symbology: scan.symbology, normalized: scan.normalized } }, { status: 404 })
       }
@@ -73,8 +95,8 @@ export async function GET(request: NextRequest) {
       outer: for (const cand of scan.candidates) {
         for (const m of matches) {
           const val = cand.field === 'barcode' ? m.barcode : cand.field === 'plu' ? m.pluCode : m.sku
-          if (val && val === cand.lookup) { result = m; matchedBy = cand.field; break outer }
-          const x = cand.field === 'barcode' ? extras.find((e) => e.itemId === m.id && e.barcode === cand.lookup) : undefined
+          if (val && codesMatch(val, cand.lookup, cand.field)) { result = m; matchedBy = cand.field; break outer }
+          const x = cand.field === 'barcode' ? extras.find((e) => e.itemId === m.id && codesMatch(e.barcode, cand.lookup, 'barcode')) : undefined
           if (x) { result = m; matchedBy = x.source; extra = x; break outer }
         }
       }
@@ -193,6 +215,10 @@ export async function GET(request: NextRequest) {
         coreCharge: result.coreCharge,
         taxTemplateId: result.taxTemplateId,
         imageUrl: result.imageUrl,
+        // Print studio: area / length priced items open the POS size-entry dialog
+        pricingMode: result.pricingMode,
+        areaUnit: result.areaUnit,
+        minChargeArea: result.minChargeArea,
         scan: scanInfo,
       })
     })

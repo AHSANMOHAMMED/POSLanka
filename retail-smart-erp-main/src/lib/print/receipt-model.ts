@@ -54,6 +54,9 @@ export interface ReceiptSaleItemSource {
   /** H5: unit sold (sale_items.uom) and promotions applied (sale_items.promotions; cart = share of a bill promotion) */
   uom?: string | null
   promotions?: Array<{ label: string; amount: Num; cart?: boolean }> | null
+  /** 0179: warranty captured at sale time (sale_items.warranty_months / warranty_until). */
+  warrantyMonths?: number | null
+  warrantyUntil?: string | null
 }
 
 export interface ReceiptCustomerSource {
@@ -272,6 +275,15 @@ export function buildBusinessBlock(
  * VAT rate of a sale line: the stored rate, else the rates of its tax breakdown, else derived from
  * the line VAT and value (server-computed lines store tax_rate 0).
  */
+/** "Warranty: 12 months (until 27/10/2027)" for a line sold with a warranty (0179). */
+export function warrantyNote(it: Pick<ReceiptSaleItemSource, 'warrantyMonths' | 'warrantyUntil'>): string[] {
+  const months = Number(it.warrantyMonths) || 0
+  if (months <= 0) return []
+  const label = months === 1 ? '1 month' : `${months} months`
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(it.warrantyUntil || '')
+  return [`Warranty: ${label}${m ? ` (until ${m[3]}/${m[2]}/${m[1]})` : ''}`]
+}
+
 function lineVatRate(it: ReceiptSaleItemSource & { taxBreakdown?: unknown }, taxInclusive: boolean): number {
   const stored = num(it.taxRate)
   if (stored > 0) return stored
@@ -357,6 +369,7 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
       // H5: line promotions print under the line (the bill promotion share prints in the totals)
       notes: [
         ...(args.lineNotes?.[idx] || []),
+        ...(s.showWarranty !== false ? warrantyNote(it) : []),
         ...((it.promotions || []).filter((p) => !p.cart && num(p.amount) > 0).map((p) => `${p.label} -${num(p.amount).toFixed(2)}`)),
       ],
       vatRate: isTaxInvoice ? lineVatRate(it, !!tenant.taxInclusive) : null,

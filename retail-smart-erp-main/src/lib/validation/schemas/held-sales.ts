@@ -21,6 +21,18 @@ export const createHeldSaleSchema = z.object({
     // H5: unit of the held line (reservations count quantity × uomFactor base units)
     uom: z.string().trim().max(20).optional(),
     uomFactor: z.coerce.number().positive().optional(),
+    // Print studio: width × height of an area/length-priced line, so a recalled line reopens its size dialog
+    sizeSpec: z.object({
+      pricingMode: z.enum(['area', 'length']),
+      areaUnit: z.enum(['sqft', 'sqm']),
+      width: z.coerce.number().positive(),
+      height: z.coerce.number().positive().nullable(),
+      sizeUnit: z.enum(['inch', 'ft', 'cm', 'mm', 'm']),
+      pieces: z.coerce.number().positive(),
+      sides: z.coerce.number().int().min(1).max(2),
+      minChargeArea: z.coerce.number().nonnegative().nullable(),
+      baseName: z.string().max(255),
+    }).optional(),
   })).min(1, 'Cart items are required').max(500),
   subtotal: z.coerce.number().default(0),
   notes: z.string().max(5000).nullish(),

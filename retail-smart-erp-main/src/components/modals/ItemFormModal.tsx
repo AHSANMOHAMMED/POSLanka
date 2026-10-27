@@ -109,6 +109,10 @@ interface Item {
   strength?: string | null
   dosageForm?: string | null
   drugSchedule?: string | null
+  // Print studio size pricing (drizzle/0182)
+  pricingMode?: 'unit' | 'area' | 'length' | null
+  areaUnit?: 'sqft' | 'sqm' | null
+  minChargeArea?: string | null
   // Gift card
   isGiftCard: boolean
   // Tax template
@@ -133,6 +137,9 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
   const isAutoService = businessType === 'auto_service' || businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
   const isPharmacy = businessType === 'pharmacy'
+  // Printing & photo studio: size pricing (per sq ft / running ft) is shown open by default
+  const isPrintStudio = businessType === 'print_studio'
+  const [showSizePricing, setShowSizePricing] = useState(isPrintStudio)
   const variantsOn = useFeatureFlag('variants')
   // Freshness tab (PLU, shelf life, storage temperature, expiry): supermarket and pharmacy
   const isSupermarket = businessType === 'supermarket' || isPharmacy
@@ -224,6 +231,10 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     strength: '',
     dosageForm: '',
     drugSchedule: '',
+    // Print studio size pricing
+    pricingMode: 'unit' as 'unit' | 'area' | 'length',
+    areaUnit: 'sqft' as 'sqft' | 'sqm',
+    minChargeArea: '',
     // Gift card
     isGiftCard: false,
     // Tax template
@@ -380,6 +391,9 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           strength: editItem.strength || '',
           dosageForm: editItem.dosageForm || '',
           drugSchedule: editItem.drugSchedule || '',
+          pricingMode: (editItem.pricingMode || 'unit') as 'unit' | 'area' | 'length',
+          areaUnit: (editItem.areaUnit || 'sqft') as 'sqft' | 'sqm',
+          minChargeArea: editItem.minChargeArea ? String(parseFloat(editItem.minChargeArea)) : '',
           // Gift card
           isGiftCard: editItem.isGiftCard || false,
           // Tax template
@@ -456,6 +470,9 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       strength: '',
       dosageForm: '',
       drugSchedule: '',
+      pricingMode: 'unit',
+      areaUnit: 'sqft',
+      minChargeArea: '',
       isGiftCard: false,
       taxTemplateId: '',
     })
@@ -660,6 +677,10 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
             dosageForm: formData.dosageForm,
             drugSchedule: formData.drugSchedule,
           } : {}),
+          // Print studio size pricing (always sent: any shop may sell by size)
+          pricingMode: formData.pricingMode,
+          areaUnit: formData.areaUnit,
+          minChargeArea: parseFloat(formData.minChargeArea) || 0, // 0 clears (empty strings are stripped)
           // Gift card
           isGiftCard: formData.isGiftCard,
           // Tax template
@@ -827,6 +848,63 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                     />
                   </div>
                 </div>
+
+                {/* Size pricing (print studio: flex / vinyl per sq ft, stickers with a minimum, vinyl per running ft) */}
+                {showSizePricing || formData.pricingMode !== 'unit' ? (
+                  <div className="rounded border border-dashed border-gray-300 dark:border-gray-600 p-3 space-y-2">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <FormLabel>Price by</FormLabel>
+                        <FormSelect
+                          value={formData.pricingMode}
+                          onChange={(e) => setFormData({ ...formData, pricingMode: e.target.value as 'unit' | 'area' | 'length' })}
+                        >
+                          <option value="unit">Per piece / unit</option>
+                          <option value="area">Area (width × height)</option>
+                          <option value="length">Running length</option>
+                        </FormSelect>
+                      </div>
+                      {formData.pricingMode !== 'unit' && (
+                        <>
+                          <div>
+                            <FormLabel>{formData.pricingMode === 'area' ? 'Area unit' : 'Length unit'}</FormLabel>
+                            <FormSelect
+                              value={formData.areaUnit}
+                              onChange={(e) => setFormData({ ...formData, areaUnit: e.target.value as 'sqft' | 'sqm' })}
+                            >
+                              <option value="sqft">{formData.pricingMode === 'area' ? 'Square feet (sq ft)' : 'Feet (ft)'}</option>
+                              <option value="sqm">{formData.pricingMode === 'area' ? 'Square metres (sq m)' : 'Metres (m)'}</option>
+                            </FormSelect>
+                          </div>
+                          <div>
+                            <FormLabel>Minimum charge per piece</FormLabel>
+                            <FormInput
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={formData.minChargeArea}
+                              onChange={(e) => setFormData({ ...formData, minChargeArea: e.target.value })}
+                              placeholder={formData.pricingMode === 'area' ? (formData.areaUnit === 'sqm' ? 'e.g. 0.1 sq m' : 'e.g. 1 sq ft') : (formData.areaUnit === 'sqm' ? 'e.g. 1 m' : 'e.g. 3 ft')}
+                            />
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {formData.pricingMode !== 'unit' && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Selling price is the rate per {formData.pricingMode === 'area'
+                          ? (formData.areaUnit === 'sqm' ? 'square metre' : 'square foot')
+                          : (formData.areaUnit === 'sqm' ? 'running metre' : 'running foot')}. Print jobs and the POS ask for the size and
+                        charge billable {formData.pricingMode === 'area' ? 'area' : 'length'} × rate (at least the minimum per piece).
+                        Stock of a tracked item moves in the same unit.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => setShowSizePricing(true)} className="text-xs text-blue-600 dark:text-blue-400 hover:underline">
+                    Price by size (per sq ft / running length)…
+                  </button>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div>

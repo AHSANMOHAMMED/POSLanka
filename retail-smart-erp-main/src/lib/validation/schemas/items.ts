@@ -90,6 +90,12 @@ export const createItemSchema = z.object({
   dosageForm: z.string().trim().max(50).optional(),
   drugSchedule: z.union([z.enum(['otc', 'pharmacy_only', 'prescription', 'controlled']), z.literal('')]).nullish(),
 
+  // Print studio (drizzle/0182): price per piece (unit), per sq ft / sq m (area) or per running
+  // foot / metre (length); min_charge_area = minimum billable area (or length) per piece
+  pricingMode: z.enum(['unit', 'area', 'length']).optional(),
+  areaUnit: z.enum(['sqft', 'sqm']).optional(),
+  minChargeArea: z.union([z.coerce.number().min(0).max(100000), z.literal('')]).nullish(),
+
   // Gift card flag
   isGiftCard: z.boolean().optional(),
 

@@ -43,20 +43,33 @@ export function useSidebar() {
 // SIDEBAR PROVIDER
 // ============================================
 
+/** Desktop module sidebar collapsed to an icon rail (per browser). */
+const COLLAPSED_KEY = 'poslanka:sidebar-collapsed'
+
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsedState] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
   const isMobile = useIsMobile()
-  const isDesktop = useBreakpoint('lg', 'up') // matches lg:hidden CSS on hamburger/sidebar
+  const isDesktop = useBreakpoint('md', 'up') // matches md:hidden CSS on hamburger/sidebar
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (localStorage.getItem(COLLAPSED_KEY) === '1') setCollapsedState(true)
+    } catch {
+      /* storage unavailable */
+    }
     setMounted(true)
   }, [])
 
   const setCollapsed = (value: boolean) => {
     setCollapsedState(value)
+    try {
+      localStorage.setItem(COLLAPSED_KEY, value ? '1' : '0')
+    } catch {
+      /* storage unavailable */
+    }
   }
 
   // Close mobile sidebar on route change
@@ -66,7 +79,7 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     setMobileOpen(false)
   }, [pathname])
 
-  // Auto-close sidebar when viewport crosses lg breakpoint (matches lg:hidden CSS)
+  // Auto-close sidebar when viewport crosses md breakpoint (matches md:hidden CSS)
   useEffect(() => {
     if (isDesktop && mobileOpen) {
       // eslint-disable-next-line react-hooks/set-state-in-effect

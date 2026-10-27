@@ -46,6 +46,10 @@ export type EntityType =
   | 'workspace'
   | 'gift-card'
   | 'layaway'
+  | 'print-job' // drizzle/0182 print studio job orders
+  | 'installment-plan' // drizzle/0181 hire purchase
+  | 'delivery' // drizzle/0181 deliveries & installation
+  | 'warranty-claim' // drizzle/0181 warranty / service tickets
   | 'restaurant-order'
   | 'kitchen-order'
   | 'commission'
@@ -83,6 +87,12 @@ export type EntityType =
   | 'salary-slip'
   | 'payroll-run'
   | 'employee-advance'
+  // HR attendance (drizzle/0183)
+  | 'attendance'
+  | 'work-shift'
+  | 'attendance-device'
+  | 'leave-request'
+  | 'holiday'
   | 'cheque'
   | 'expense'
   | 'module-access'
@@ -90,6 +100,11 @@ export type EntityType =
   | 'print-template'
   | 'staff-chat'
   | 'recurring-entry'
+  // drizzle/0185 recurring invoices, payments received, projects & timesheets
+  | 'recurring-invoice'
+  | 'payment-receipt'
+  | 'project'
+  | 'time-entry'
   | 'modifier-group'
   | 'table-group'
   | 'serial-number'
@@ -236,6 +251,14 @@ export const tableToEntityMap: Record<string, EntityType> = {
   workspace_configs: 'workspace',
   gift_cards: 'gift-card',
   layaways: 'layaway',
+  print_jobs: 'print-job',
+  installment_plans: 'installment-plan',
+  installment_schedule: 'installment-plan',
+  installment_payments: 'installment-plan',
+  deliveries: 'delivery',
+  warranty_claims: 'warranty-claim',
+  print_job_items: 'print-job',
+  print_job_payments: 'print-job',
   restaurant_orders: 'restaurant-order',
   kitchen_orders: 'kitchen-order',
   commissions: 'commission',
@@ -276,6 +299,10 @@ export const tableToEntityMap: Record<string, EntityType> = {
   module_access: 'module-access',
   staff_chat_messages: 'staff-chat',
   recurring_journal_templates: 'recurring-entry',
+  recurring_invoices: 'recurring-invoice',
+  payment_receipts: 'payment-receipt',
+  projects: 'project',
+  project_time_entries: 'time-entry',
   purchase_requisitions: 'purchase-requisition',
   supplier_quotations: 'supplier-quotation',
   modifier_groups: 'modifier-group',

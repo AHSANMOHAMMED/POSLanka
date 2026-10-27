@@ -52,6 +52,13 @@ export const createEmployeeProfileSchema = z.object({
   emergencyContactPhone: z.string().trim().max(30).nullish(),
   address: z.string().trim().max(1000).nullish(),
   notes: z.string().trim().max(5000).nullish(),
+  // Attendance (drizzle/0183)
+  biometricUserId: z.string().trim().max(50).regex(/^[A-Za-z0-9_-]*$/, 'Fingerprint user id: letters and digits only').nullish(),
+  defaultShiftId: z.union([z.string().uuid(), z.literal('')]).nullish(),
+  warehouseId: z.union([z.string().uuid(), z.literal('')]).nullish(),
+  otEligible: z.boolean().optional(),
+  otRateMultiplier: z.coerce.number().min(0).max(10).optional(),
+  hourlyRate: z.union([z.literal(''), z.coerce.number().min(0)]).nullish(),
 })
 
 // PUT /api/employee-profiles/[id]
@@ -83,6 +90,13 @@ export const updateEmployeeProfileSchema = z.object({
   emergencyContactPhone: z.string().trim().max(30).nullish(),
   address: z.string().trim().max(1000).nullish(),
   notes: z.string().trim().max(5000).nullish(),
+  // Attendance (drizzle/0183)
+  biometricUserId: z.string().trim().max(50).regex(/^[A-Za-z0-9_-]*$/, 'Fingerprint user id: letters and digits only').nullish(),
+  defaultShiftId: z.union([z.string().uuid(), z.literal('')]).nullish(),
+  warehouseId: z.union([z.string().uuid(), z.literal('')]).nullish(),
+  otEligible: z.boolean().optional(),
+  otRateMultiplier: z.coerce.number().min(0).max(10).optional(),
+  hourlyRate: z.union([z.literal(''), z.coerce.number().min(0)]).nullish(),
   expectedUpdatedAt: z.string().optional(),
 })
 
@@ -201,14 +215,14 @@ export const createSalarySlipSchema = z.object({
   payrollMonth: z.coerce.number().int().min(1, 'Month must be 1-12').max(12, 'Month must be 1-12'),
   payrollYear: z.coerce.number().int().min(2000).max(2100),
   totalWorkingDays: z.coerce.number().int().min(1).max(31).default(30),
-  paymentDays: z.coerce.number().int().min(0).max(31).default(30),
+  paymentDays: z.coerce.number().min(0).max(31).multipleOf(0.5).default(30), // half days (attendance)
   commissionAmount: z.coerce.number().min(0).default(0),
 })
 
 // PUT /api/salary-slips/[id]
 export const updateSalarySlipSchema = z.object({
   totalWorkingDays: z.coerce.number().int().min(1).max(31).optional(),
-  paymentDays: z.coerce.number().int().min(0).max(31).optional(),
+  paymentDays: z.coerce.number().min(0).max(31).multipleOf(0.5).optional(), // half days (attendance)
   paymentMethod: z.string().trim().max(50).optional(),
   paymentReference: z.string().trim().max(255).optional(),
 })

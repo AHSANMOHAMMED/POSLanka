@@ -7,9 +7,33 @@ import type { WorkspaceConfig, WorkspaceBlock } from './types'
 function getDashboardBlocks(businessType?: string): WorkspaceBlock[] {
   const isAutoService = businessType === 'auto_service'
   const isDealership = businessType === 'dealership'
+  const isBigTicket = businessType === 'electronics' || businessType === 'hardware'
 
   const numberCards: WorkspaceBlock[] = []
-  if (isAutoService) {
+  if (isBigTicket) {
+    numberCards.push(
+      { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: "Today's Sales", metricKey: 'today_sales_count', color: 'blue', href: '/sales', icon: 'ShoppingCart' } },
+      { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: 'Installments Due Today', metricKey: 'installments_due_today', color: 'amber', href: '/installments?view=due', icon: 'Wallet' } },
+      { id: 'nc3', type: 'number_card', colSpan: 3, data: businessType === 'electronics'
+        ? { label: 'Open Warranty Claims', metricKey: 'open_warranty_claims', color: 'purple', href: '/warranty-claims', icon: 'ShieldCheck' }
+        : { label: 'Deliveries Today', metricKey: 'deliveries_today', color: 'purple', href: '/deliveries', icon: 'Truck' } },
+      { id: 'nc4', type: 'number_card', colSpan: 3, data: { label: 'Low Stock Items', metricKey: 'low_stock_items', color: 'red', href: '/items?filter=low-stock', icon: 'AlertTriangle' } },
+    )
+  } else if (businessType === 'print_studio') {
+    numberCards.push(
+      { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: "Today's Sales", metricKey: 'today_sales_count', color: 'blue', href: '/sales', icon: 'ShoppingCart' } },
+      { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: 'Jobs Due', metricKey: 'print_jobs_due_today', color: 'amber', href: '/print-jobs', icon: 'Clock' } },
+      { id: 'nc3', type: 'number_card', colSpan: 3, data: { label: 'Ready for Pickup', metricKey: 'print_jobs_ready', color: 'emerald', href: '/print-jobs?status=ready', icon: 'PackageCheck' } },
+      { id: 'nc4', type: 'number_card', colSpan: 3, data: { label: 'Low Stock Items', metricKey: 'low_stock_items', color: 'red', href: '/items?filter=low-stock', icon: 'AlertTriangle' } },
+    )
+  } else if (businessType === 'office') {
+    numberCards.push(
+      { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: 'Staff In Today', metricKey: 'today_attendance', color: 'emerald', href: '/hr/attendance', icon: 'UserCheck' } },
+      { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: "Today's Invoices", metricKey: 'today_sales_count', color: 'blue', href: '/sales', icon: 'Receipt' } },
+      { id: 'nc3', type: 'number_card', colSpan: 3, data: { label: 'Total Clients', metricKey: 'total_customers', color: 'green', href: '/customers', icon: 'Users' } },
+      { id: 'nc4', type: 'number_card', colSpan: 3, data: { label: 'Month Revenue', metricKey: 'month_sales_total', color: 'purple', href: '/sales', icon: 'TrendingUp', prefix: 'Rs' } },
+    )
+  } else if (isAutoService) {
     numberCards.push(
       { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: "Today's Appointments", metricKey: 'today_appointments', color: 'blue', href: '/appointments', icon: 'Calendar' } },
       { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: 'Draft Work Orders', metricKey: 'draft_work_orders', color: 'amber', href: '/work-orders?status=draft', icon: 'Clock' } },
@@ -53,6 +77,16 @@ function getDashboardBlocks(businessType?: string): WorkspaceBlock[] {
           { label: 'Vehicle Sales', href: '/dealership/sales', icon: 'Car' },
           { label: 'Work Orders', href: '/work-orders', icon: 'Wrench' },
           { label: 'Appointments', href: '/appointments', icon: 'Calendar' },
+        ] : isBigTicket ? [
+          { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
+          { label: 'Hire Purchase', href: '/installments', icon: 'Wallet' },
+          { label: 'Deliveries', href: '/deliveries', icon: 'Truck' },
+        ] : businessType === 'print_studio' ? [
+          { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
+          { label: 'Print Jobs', href: '/print-jobs', icon: 'Printer' },
+        ] : businessType === 'office' ? [
+          { label: 'Attendance', href: '/hr/attendance', icon: 'UserCheck' },
+          { label: 'Invoices', href: '/sales', icon: 'Receipt' },
         ] : [
           { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
         ]),
@@ -97,10 +131,40 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
   const isAutoService = businessType === 'auto_service'
   const isDealership = businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
+  // 0181/0182/0183 business types
+  const isBigTicket = businessType === 'electronics' || businessType === 'hardware'
+  const isPrintStudio = businessType === 'print_studio'
+  const isOffice = businessType === 'office'
 
   // Number cards
   const numberCards: WorkspaceBlock[] = []
-  if (isAutoService) {
+  if (isBigTicket) {
+    numberCards.push(
+      { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: "Today's Revenue", metricKey: 'today_sales_total', color: 'blue', href: '/sales', icon: 'DollarSign', prefix: 'Rs' } },
+      { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: 'Installments Due Today', metricKey: 'installments_due_today', color: 'amber', href: '/installments?view=due', icon: 'Wallet' } },
+      { id: 'nc3', type: 'number_card', colSpan: 3, data: { label: 'Overdue Plans', metricKey: 'installments_overdue', color: 'red', href: '/installments?view=overdue', icon: 'AlertTriangle' } },
+      { id: 'nc4', type: 'number_card', colSpan: 3, data: { label: 'Deliveries Today', metricKey: 'deliveries_today', color: 'emerald', href: '/deliveries', icon: 'Truck' } },
+    )
+    if (businessType === 'electronics') {
+      numberCards.push(
+        { id: 'nc5', type: 'number_card', colSpan: 3, data: { label: 'Open Warranty Claims', metricKey: 'open_warranty_claims', color: 'purple', href: '/warranty-claims', icon: 'ShieldCheck' } },
+      )
+    }
+  } else if (isPrintStudio) {
+    numberCards.push(
+      { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: "Today's Revenue", metricKey: 'today_sales_total', color: 'blue', href: '/sales', icon: 'DollarSign', prefix: 'Rs' } },
+      { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: 'Jobs Due', metricKey: 'print_jobs_due_today', color: 'amber', href: '/print-jobs', icon: 'Clock' } },
+      { id: 'nc3', type: 'number_card', colSpan: 3, data: { label: 'Ready for Pickup', metricKey: 'print_jobs_ready', color: 'emerald', href: '/print-jobs?status=ready', icon: 'PackageCheck' } },
+      { id: 'nc4', type: 'number_card', colSpan: 3, data: { label: "Today's Sales", metricKey: 'today_sales_count', color: 'green', href: '/sales', icon: 'Receipt' } },
+    )
+  } else if (isOffice) {
+    numberCards.push(
+      { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: 'Staff In Today', metricKey: 'today_attendance', color: 'emerald', href: '/hr/attendance', icon: 'UserCheck' } },
+      { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: 'Month Revenue', metricKey: 'month_sales_total', color: 'purple', href: '/sales', icon: 'TrendingUp', prefix: 'Rs' } },
+      { id: 'nc3', type: 'number_card', colSpan: 3, data: { label: 'Total Clients', metricKey: 'total_customers', color: 'amber', href: '/customers', icon: 'Users' } },
+      { id: 'nc4', type: 'number_card', colSpan: 3, data: { label: "Today's Invoices", metricKey: 'today_sales_count', color: 'green', href: '/sales', icon: 'Receipt' } },
+    )
+  } else if (isAutoService) {
     numberCards.push(
       { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: "Today's Sales", metricKey: 'today_sales_count', color: 'green', href: '/sales', icon: 'Receipt' } },
       { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: "Today's Revenue", metricKey: 'today_sales_total', color: 'blue', href: '/sales', icon: 'DollarSign', prefix: 'Rs' } },
@@ -134,7 +198,27 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
   // Shortcuts
   const shortcuts: WorkspaceBlock[] = [{
     id: 's1', type: 'shortcut', colSpan: 12, data: {
-      shortcuts: isAutoService ? [
+      shortcuts: isBigTicket ? [
+        { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
+        { label: 'Hire Purchase', href: '/installments', icon: 'Wallet', countMetricKey: 'installments_overdue' },
+        { label: 'Deliveries', href: '/deliveries', icon: 'Truck', countMetricKey: 'deliveries_today' },
+        ...(businessType === 'electronics' ? [{ label: 'Warranty Claims', href: '/warranty-claims', icon: 'ShieldCheck', countMetricKey: 'open_warranty_claims' }] : []),
+        { label: 'Quotations', href: '/quotations', icon: 'FileText' },
+        { label: 'Sales History', href: '/sales', icon: 'Receipt' },
+        { label: 'Customers', href: '/customers', icon: 'Users' },
+      ] : isPrintStudio ? [
+        { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
+        { label: 'Print Jobs', href: '/print-jobs', icon: 'Printer', countMetricKey: 'print_jobs_due_today' },
+        { label: 'Quotations', href: '/quotations', icon: 'FileText' },
+        { label: 'Sales History', href: '/sales', icon: 'Receipt' },
+        { label: 'Customers', href: '/customers', icon: 'Users' },
+      ] : isOffice ? [
+        { label: 'Invoices', href: '/sales', icon: 'Receipt' },
+        { label: 'Quotations', href: '/quotations', icon: 'FileText' },
+        { label: 'Clients', href: '/customers', icon: 'Users' },
+        { label: 'Attendance', href: '/hr/attendance', icon: 'UserCheck' },
+        { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
+      ] : isAutoService ? [
         { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
         { label: 'Work Orders', href: '/work-orders', icon: 'Wrench' },
         { label: 'Appointments', href: '/appointments', icon: 'Calendar' },
@@ -189,7 +273,44 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
   ]
 
   // Card links
-  const cardLinks: WorkspaceBlock[] = isAutoService ? [
+  const cardLinks: WorkspaceBlock[] = isBigTicket ? [
+    { id: 'c1', type: 'card', colSpan: 6, data: { title: 'Masters', links: [
+      { label: 'Customer', href: '/customers' },
+      { label: 'Serial / IMEI Numbers', href: '/serial-numbers' },
+      { label: 'Price Lists', href: '/price-lists' },
+    ] } },
+    { id: 'c2', type: 'card', colSpan: 6, data: { title: 'Transactions', links: [
+      { label: 'Point of Sale', href: '/pos' },
+      { label: 'Hire Purchase Plans', href: '/installments' },
+      { label: 'Deliveries & Installation', href: '/deliveries' },
+      { label: 'Warranty Claims', href: '/warranty-claims' },
+      { label: 'Sales History', href: '/sales' },
+    ] } },
+  ] : isPrintStudio ? [
+    { id: 'c1', type: 'card', colSpan: 6, data: { title: 'Masters', links: [
+      { label: 'Customer', href: '/customers' },
+      { label: 'Price Lists', href: '/price-lists' },
+    ] } },
+    { id: 'c2', type: 'card', colSpan: 6, data: { title: 'Transactions', links: [
+      { label: 'Point of Sale', href: '/pos' },
+      { label: 'Print Jobs', href: '/print-jobs' },
+      { label: 'Quotations', href: '/quotations' },
+      { label: 'Sales History', href: '/sales' },
+    ] } },
+  ] : isOffice ? [
+    { id: 'c1', type: 'card', colSpan: 6, data: { title: 'Masters', links: [
+      { label: 'Client', href: '/customers' },
+      { label: 'Services', href: '/items' },
+    ] } },
+    { id: 'c2', type: 'card', colSpan: 6, data: { title: 'Transactions', links: [
+      { label: 'Invoices', href: '/sales' },
+      { label: 'Recurring Invoices', href: '/recurring-invoices' },
+      { label: 'Payments Received', href: '/payments-received' },
+      { label: 'Quotations', href: '/quotations' },
+      { label: 'Sales Orders', href: '/sales-orders' },
+      { label: 'Projects & Timesheets', href: '/projects' },
+    ] } },
+  ] : isAutoService ? [
     { id: 'c1', type: 'card', colSpan: 6, data: { title: 'Masters', links: [
       { label: 'Customer', href: '/customers' },
       { label: 'Sale', href: '/sales' },
@@ -246,6 +367,7 @@ function getReportsBlocks(businessType?: string): WorkspaceBlock[] {
   const isDealership = businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
   const isSupermarket = businessType === 'supermarket' || businessType === 'retail' || businessType === 'pharmacy'
+    || businessType === 'electronics' || businessType === 'hardware' || businessType === 'print_studio'
 
   // Top shortcuts - most used reports
   const shortcuts: WorkspaceBlock[] = [

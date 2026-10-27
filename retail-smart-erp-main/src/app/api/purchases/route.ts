@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { resolveLineUnits, lineUnitErrorResponse, type ResolvedLineUnit } from '@/lib/units/resolve-line-units'
 import { authWithCompany } from '@/lib/auth'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { purchases, purchaseItems, suppliers, warehouses, users, purchaseOrders } from '@/lib/db/schema'
@@ -266,6 +267,16 @@ export async function POST(request: NextRequest) {
       })
       if (duplicate) return { error: duplicateSupplierInvoiceResponse(supplierInvoiceNo!, duplicate) }
 
+      // 0184: each line keeps its unit; the factor comes from item_uoms / standard units
+      let units: ResolvedLineUnit[]
+      try {
+        units = await resolveLineUnits(tx, items || [])
+      } catch (e) {
+        const r = lineUnitErrorResponse(e)
+        if (r) return { error: r }
+        throw e
+      }
+
       // Generate purchase number with lock
       const purchaseNo = await nextDocNo(tx, session.user.tenantId, 'purchase_invoice')
 
@@ -294,7 +305,7 @@ export async function POST(request: NextRequest) {
 
       // Add items if provided
       if (items && items.length > 0) {
-        const purchaseItemsData = items.map((item) => {
+        const purchaseItemsData = items.map((item, idx) => {
           const itemTotal = item.quantity * item.unitPrice
           const itemTax = Math.max(0, item.tax || 0)
 
@@ -307,6 +318,8 @@ export async function POST(request: NextRequest) {
             unitPrice: item.unitPrice.toString(),
             tax: itemTax.toString(),
             total: (Math.round((itemTotal + itemTax) * 100) / 100).toString(),
+            uom: units[idx].uom,
+            uomFactor: String(units[idx].factor),
             // Linked to a PO: the receipt (GRN) already recorded the received quantities, so this
             // invoice adds nothing to purchase_order_items.received_quantity (and its cancel
             // takes nothing back — see reversePurchaseOrderReceipt).

@@ -53,6 +53,8 @@ export interface PrinterProfile {
   copies: number
   codePage: CodePage
   unicodeAsBitmap: boolean
+  /** Show a print preview (with Print / Cancel / change printer) before sending a receipt. */
+  previewBeforePrint: boolean
   /** Key for remembered USB / Bluetooth device ('' = legacy single-printer slot). */
   deviceKey: string
 }
@@ -92,6 +94,7 @@ export function newPrinterProfile(role: PrinterRole, patch: Partial<PrinterProfi
     copies: 1,
     codePage: 'cp437',
     unicodeAsBitmap: false,
+    previewBeforePrint: false,
     deviceKey: id,
     ...patch,
   })
@@ -138,6 +141,7 @@ export function sanitizePrinterProfile(raw: Partial<PrinterProfile>): PrinterPro
     copies: Math.round(clampNum(raw.copies, 1, 5, 1)),
     codePage: raw.codePage === 'cp1252' ? 'cp1252' : 'cp437',
     unicodeAsBitmap: !!raw.unicodeAsBitmap,
+    previewBeforePrint: !!raw.previewBeforePrint,
     deviceKey: typeof raw.deviceKey === 'string' ? raw.deviceKey : id,
   }
 }

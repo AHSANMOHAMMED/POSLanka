@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useSession } from 'next-auth/react'
@@ -12,7 +13,7 @@ import type { Permission } from '@/lib/auth/roles'
 import { useFeatureFlags } from '@/hooks/useFeatureFlag'
 import { isHrefAllowedByFeatures, isModuleAllowedByFeatures } from '@/lib/features/nav-gate'
 import { ICON_MAP } from '@/components/workspace/icon-map'
-import { X } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, X } from 'lucide-react'
 
 interface ModuleSidebarProps {
   companySlug: string
@@ -22,7 +23,9 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
   const pathname = usePathname()
   const { data: session } = useSession()
   const company = useCompanyOptional()
-  const { mobileOpen, setMobileOpen } = useSidebar()
+  const { mobileOpen, setMobileOpen, collapsed, setCollapsed } = useSidebar()
+  // Accordion: user toggles per `${module}:${section}`; untouched sections follow the route
+  const [sectionOverrides, setSectionOverrides] = useState<Record<string, boolean>>({})
   const { isModuleEnabled } = useModuleAccess()
   // Server-effective permissions (custom roles, overrides, module toggles); role defaults until loaded
   const { permissions: effective } = useEffectivePermissions()
@@ -57,73 +60,125 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
     return null
   }
 
+  const isItemActive = (href: string) => {
+    const fullHref = `${basePath}${href}`
+    // Query-string links (e.g. /items?filter=low-stock) match on their path
+    const itemPath = href.split('?')[0]
+    const full = `${basePath}${itemPath}`
+    return pathname === fullHref || pathname === full || pathname.startsWith(full + '/')
+  }
+
+  // Section containing the current route (falls back to the first, e.g. "Masters" on the workspace page)
+  const activeSectionTitle = sections.find((sec) => sec.items.some((it) => isItemActive(it.href)))?.title ?? sections[0].title
+  const sectionKey = (title: string) => `${currentModule}:${title}`
+  const isSectionOpen = (title: string) => sectionOverrides[sectionKey(title)] ?? title === activeSectionTitle
+  const toggleSection = (title: string) =>
+    setSectionOverrides((prev) => ({ ...prev, [sectionKey(title)]: !isSectionOpen(title) }))
+
+  const renderLink = (item: (typeof sections)[number]['items'][number], rail: boolean) => {
+    const fullHref = `${basePath}${item.href}`
+    const isActiveWithQuery = isItemActive(item.href)
+    const Icon = ICON_MAP[item.icon]
+    return (
+      <li key={item.href} className="mb-0.5">
+        <Link
+          href={fullHref}
+          title={rail ? item.label : undefined}
+          aria-label={rail ? item.label : undefined}
+          className={`flex items-center rounded transition-colors duration-100 ${rail ? 'justify-center' : 'gap-2.5'}`}
+          style={{
+            padding: rail ? '8px 0' : '8px 12px',
+            fontSize: '14px',
+            fontWeight: isActiveWithQuery ? 500 : 400,
+            borderRadius: '4px',
+            backgroundColor: isActiveWithQuery ? 'var(--sidebar-active-bg)' : 'transparent',
+            color: isActiveWithQuery ? 'var(--sidebar-text-active)' : 'var(--sidebar-text)',
+          }}
+          onMouseEnter={(e) => {
+            if (!isActiveWithQuery) {
+              e.currentTarget.style.backgroundColor = 'var(--sidebar-hover-bg)'
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!isActiveWithQuery) {
+              e.currentTarget.style.backgroundColor = 'transparent'
+            }
+          }}
+          onClick={() => setMobileOpen(false)}
+        >
+          {Icon ? (
+            <Icon
+              size={rail ? 18 : 16}
+              style={{
+                color: isActiveWithQuery ? 'var(--sidebar-text-active)' : 'var(--sidebar-text-muted)',
+              }}
+            />
+          ) : rail ? (
+            <span className="text-[11px] font-semibold">{item.label.slice(0, 2)}</span>
+          ) : null}
+          {!rail && <span>{item.label}</span>}
+        </Link>
+      </li>
+    )
+  }
+
   const sidebarContent = (
     <nav className="sidebar-nav flex-1 overflow-y-auto py-3 px-3">
-      {sections.map((section, sectionIdx) => (
-        <div key={section.title} style={{ marginTop: sectionIdx > 0 ? '20px' : 0 }}>
-          {/* Section header */}
-          <div
-            className="px-3 mb-1.5 text-[11px] font-semibold uppercase tracking-wider"
-            style={{ color: 'var(--sidebar-section-text)' }}
-          >
-            {section.title}
+      {sections.map((section, sectionIdx) => {
+        const open = isSectionOpen(section.title)
+        const Chevron = open ? ChevronDown : ChevronRight
+        const hasActive = section.items.some((it) => isItemActive(it.href))
+        return (
+          <div key={section.title} style={{ marginTop: sectionIdx > 0 ? '6px' : 0 }}>
+            {/* Section header (accordion toggle) */}
+            <button
+              type="button"
+              onClick={() => toggleSection(section.title)}
+              aria-expanded={open}
+              className="w-full flex items-center justify-between px-3 py-1.5 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors duration-100"
+              style={{ color: hasActive ? 'var(--sidebar-text-active)' : 'var(--sidebar-section-text)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--sidebar-hover-bg)')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+            >
+              <span>{section.title}</span>
+              <span className="flex items-center gap-1 normal-case tracking-normal font-normal" style={{ color: 'var(--sidebar-text-muted)' }}>
+                {!open && <span className="text-[11px]">{section.items.length}</span>}
+                <Chevron size={14} />
+              </span>
+            </button>
+
+            {/* Section items */}
+            {open && <ul className="mt-0.5 mb-2">{section.items.map((item) => renderLink(item, false))}</ul>}
           </div>
+        )
+      })}
+    </nav>
+  )
 
-          {/* Section items */}
-          <ul>
-            {section.items.map((item) => {
-              const fullHref = `${basePath}${item.href}`
-              const isActive = pathname === fullHref || pathname.startsWith(fullHref + '/')
-              // Handle query string matching (e.g., /items?filter=low-stock)
-              const [itemPath, itemQuery] = item.href.split('?')
-              const isActiveWithQuery = itemQuery
-                ? pathname === `${basePath}${itemPath}` || pathname.startsWith(`${basePath}${itemPath}/`)
-                : isActive
-
-              const Icon = ICON_MAP[item.icon]
-
-              return (
-                <li key={item.href} className="mb-0.5">
-                  <Link
-                    href={fullHref}
-                    className="flex items-center gap-2.5 rounded transition-colors duration-100"
-                    style={{
-                      padding: '8px 12px',
-                      fontSize: '14px',
-                      fontWeight: isActiveWithQuery ? 500 : 400,
-                      borderRadius: '4px',
-                      backgroundColor: isActiveWithQuery ? 'var(--sidebar-active-bg)' : 'transparent',
-                      color: isActiveWithQuery ? 'var(--sidebar-text-active)' : 'var(--sidebar-text)',
-                    }}
-                    onMouseEnter={(e) => {
-                      if (!isActiveWithQuery) {
-                        e.currentTarget.style.backgroundColor = 'var(--sidebar-hover-bg)'
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (!isActiveWithQuery) {
-                        e.currentTarget.style.backgroundColor = 'transparent'
-                      }
-                    }}
-                    onClick={() => setMobileOpen(false)}
-                  >
-                    {Icon && (
-                      <Icon
-                        size={16}
-                        style={{
-                          color: isActiveWithQuery ? 'var(--sidebar-text-active)' : 'var(--sidebar-text-muted)',
-                        }}
-                      />
-                    )}
-                    <span>{item.label}</span>
-                  </Link>
-                </li>
-              )
-            })}
-          </ul>
+  // Desktop icon-only rail (all links, sections separated by a rule)
+  const railContent = (
+    <nav className="sidebar-nav flex-1 overflow-y-auto py-3 px-1.5">
+      {sections.map((section, sectionIdx) => (
+        <div key={section.title}>
+          {sectionIdx > 0 && <div className="my-2 mx-2" style={{ borderTop: '1px solid var(--sidebar-border)' }} />}
+          <ul>{section.items.map((item) => renderLink(item, true))}</ul>
         </div>
       ))}
     </nav>
+  )
+
+  const collapseToggle = (
+    <button
+      type="button"
+      onClick={() => setCollapsed(!collapsed)}
+      className={`flex items-center gap-2 text-xs py-2 transition-colors ${collapsed ? 'justify-center px-0' : 'px-4'}`}
+      style={{ color: 'var(--sidebar-text-muted)', borderTop: '1px solid var(--sidebar-border)' }}
+      title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+      aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+    >
+      {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
+      {!collapsed && <span>Collapse</span>}
+    </button>
   )
 
   return (
@@ -131,7 +186,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
       {/* Mobile overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
           style={{ top: '48px' }}
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
@@ -140,7 +195,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
 
       {/* Mobile sidebar (slides in below navbar) */}
       <aside
-        className={`fixed left-0 bottom-0 z-50 w-[220px] flex flex-col text-sm transform transition-transform duration-200 ease-in-out lg:hidden ${
+        className={`fixed left-0 bottom-0 z-50 w-[220px] flex flex-col text-sm transform transition-transform duration-200 ease-in-out md:hidden ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={{
@@ -164,7 +219,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
 
       {/* Desktop sidebar (below navbar, sticky) */}
       <aside
-        className="hidden lg:flex flex-col text-sm shrink-0 w-[220px]"
+        className={`hidden md:flex flex-col text-sm shrink-0 transition-[width] duration-150 ${collapsed ? 'w-[56px]' : 'w-[220px]'}`}
         style={{
           position: 'sticky',
           top: '48px',
@@ -173,7 +228,8 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
           borderRight: '1px solid var(--sidebar-border)',
         }}
       >
-        {sidebarContent}
+        {collapsed ? railContent : sidebarContent}
+        {collapseToggle}
       </aside>
     </>
   )

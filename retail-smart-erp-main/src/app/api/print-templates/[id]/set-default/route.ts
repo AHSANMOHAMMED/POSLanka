@@ -49,6 +49,7 @@ export async function POST(
   if (!result) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
+  if ('error' in result && result.error instanceof NextResponse) return result.error
 
   return NextResponse.json(result)
 }

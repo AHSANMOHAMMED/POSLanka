@@ -9,6 +9,7 @@ export function usePOSBusinessConfig(): POSBusinessConfig {
   const bt = company.businessType
   const scaleOn = useFeatureFlag('weighing_scale')
   const retailLike = bt === 'supermarket' || bt === 'retail' || bt === 'pharmacy'
+    || bt === 'electronics' || bt === 'hardware' || bt === 'print_studio' || bt === 'office'
 
   const isServiceCapable = bt === 'auto_service' || bt === 'dealership'
 

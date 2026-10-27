@@ -21,6 +21,7 @@ import { stockErrorResponse } from '@/lib/purchasing/stock-cost'
 import { allocateSaleLineBatches } from '@/lib/inventory/batches'
 import { getTenantSalesSettings } from '@/lib/sales/return-settings'
 import { getBranchScope, canAccessBranch, branchDeniedResponse } from '@/lib/auth/branch-access'
+import { localDateString, saleLineWarranty } from '@/lib/sales/warranty'
 
 // POST complete a layaway (convert to sale)
 export async function POST(
@@ -282,6 +283,12 @@ export async function POST(
       const itemLineTotal = parseCurrency(item.quantity) * parseCurrency(item.unitPrice)
       const itemTaxRate = itemLineTotal > 0 ? roundCurrency((itemTaxAmount / itemLineTotal) * 100) : 0
 
+      // 0179: warranty of the item runs from the completion (sale) date
+      const [warrantyItem] = item.itemId
+        ? await tx.select({ warrantyMonths: itemsTable.warrantyMonths }).from(itemsTable).where(eq(itemsTable.id, item.itemId))
+        : []
+      const lineWarranty = quantity > 0 ? saleLineWarranty(warrantyItem, localDateString(newSale.createdAt ?? new Date())) : { warrantyMonths: null, warrantyUntil: null }
+
       // Create sale item with per-item tax
       const [saleLine] = await tx.insert(saleItems).values({
         tenantId: session.user.tenantId,
@@ -294,6 +301,8 @@ export async function POST(
         taxAmount: itemTaxAmount.toString(),
         taxBreakdown: perItem?.taxBreakdown || null,
         total: item.total,
+        warrantyMonths: lineWarranty.warrantyMonths,
+        warrantyUntil: lineWarranty.warrantyUntil,
       }).returning({ id: saleItems.id })
 
       // Update stock if item exists and tracks stock

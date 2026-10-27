@@ -26,14 +26,17 @@ interface ProductGridProps {
   onOpenShift: () => void
   onCloseShift: () => void
   onCashMovement?: () => void
-  onOpenReturnLookup: () => void
+  /** Return button in the header (omit when Return lives in the POS Actions panel) */
+  onOpenReturnLookup?: () => void
   cartHasItems: boolean
-  onReturnModeConfirm: () => void
+  onReturnModeConfirm?: () => void
+  /** Shift badge only (Cash in/out and Close shift live in the POS Actions panel) */
+  shiftLabelOnly?: boolean
   config: POSBusinessConfig
   businessType?: string
   /** Enter in the search box: immediate exact barcode/PLU lookup (bypasses debounce). Return true when handled. */
   onScanSubmit?: (code: string) => Promise<boolean> | boolean
-  /** Quick-Add item directly from POS (F4) */
+  /** Quick-Add item directly from POS (F4); omit to hide the header button */
   onOpenQuickAdd?: () => void
 }
 
@@ -133,6 +136,7 @@ export function ProductGrid({
   onOpenReturnLookup,
   cartHasItems,
   onReturnModeConfirm,
+  shiftLabelOnly = false,
   config,
   businessType,
   onScanSubmit,
@@ -143,8 +147,9 @@ export function ProductGrid({
   const [sortBy, setSortBy] = useState<POSSortOption>('default')
 
   async function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== 'Enter' || !onScanSubmit) return
-    const code = search.trim()
+    if (e.key !== 'Enter' || !onScanSubmit || e.nativeEvent.isComposing) return
+    // The input's own value: React state can lag one render behind a fast scanner
+    const code = e.currentTarget.value.trim()
     if (!code) return
     e.preventDefault()
     setScanBusy(true)
@@ -202,6 +207,7 @@ export function ProductGrid({
               onCloseShift={onCloseShift}
               onCashMovement={onCashMovement}
               compact
+              labelOnly={shiftLabelOnly}
             />
           )}
 
@@ -246,7 +252,7 @@ export function ProductGrid({
           )}
 
           {/* Return Button */}
-          {!isReturnMode && (
+          {!isReturnMode && onOpenReturnLookup && onReturnModeConfirm && (
             <button
               onClick={() => cartHasItems ? onReturnModeConfirm() : onOpenReturnLookup()}
               title="Return / refund (F6)"

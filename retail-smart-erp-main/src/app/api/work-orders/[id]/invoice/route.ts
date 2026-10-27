@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { currentOpenShiftId } from '@/lib/pos/shift-collections'
+import { localDateString, saleLineWarranty, applySerialWarranty } from '@/lib/sales/warranty'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { workOrders, workOrderParts, sales, saleItems, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, payments, customers, customerCreditTransactions, appointments, itemSerialNumbers } from '@/lib/db/schema'
@@ -340,6 +342,8 @@ export async function POST(
         // Create sale items from parts and update stock
         // Use row-level locking to prevent race conditions in multi-user scenarios
         let batchSettings: Awaited<ReturnType<typeof getTenantSalesSettings>>['batches'] | null = null
+        // 0179: warranty of parts runs from the invoice's local date (same as the POS)
+        const saleDateLocal = localDateString(newSale.createdAt ?? new Date())
         for (const part of wo.parts) {
           const item = part.item
           if (!item) continue
@@ -370,6 +374,9 @@ export async function POST(
             }
           }
 
+          const lineWarranty = parseFloat(part.quantity) > 0 ? saleLineWarranty(item, saleDateLocal) : { warrantyMonths: null, warrantyUntil: null }
+          await applySerialWarranty(tx, pickedSerialIds, saleDateLocal, lineWarranty.warrantyUntil)
+
           // Create sale item
           const [partLine] = await tx.insert(saleItems).values({
             tenantId: session.user.tenantId,
@@ -382,6 +389,8 @@ export async function POST(
             tax: '0',
             total: part.total,
             serialNumberIds: pickedSerialIds,
+            warrantyMonths: lineWarranty.warrantyMonths,
+            warrantyUntil: lineWarranty.warrantyUntil,
           }).returning({ id: saleItems.id })
 
           // Update warehouse stock (safe now because row is locked)
@@ -436,6 +445,8 @@ export async function POST(
             method: (paymentMethod || 'cash') as typeof payments.$inferInsert['method'],
             reference: reference || null,
             receivedBy: userId,
+            // 0187: counted in the expected cash of this user's open shift (none → no shift)
+            posOpeningEntryId: await currentOpenShiftId(tx, userId),
           })
         }
 

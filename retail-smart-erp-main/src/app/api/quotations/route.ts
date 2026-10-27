@@ -1,36 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { eq, desc, and } from 'drizzle-orm'
 import { withAuthTenant } from '@/lib/db/with-auth-tenant'
-import { quotations, quotationItems, quotationStatusEnum } from '@/lib/db/schema'
+import { quotations, quotationItems, quotationStatusEnum, tenants } from '@/lib/db/schema'
 import { requireTenantFeature } from '@/lib/features/check'
-import { z } from 'zod'
 import { validateBody } from '@/lib/validation/helpers'
+import { createQuotationSchema, computeQuotation } from '@/lib/quotations/lines'
 import { nextDocNo } from '@/lib/documents/numbering'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
-
-const itemSchema = z.object({
-  itemId: z.string().uuid().optional().nullable(),
-  itemName: z.string().min(1).max(255),
-  quantity: z.coerce.number().positive(),
-  unitPrice: z.coerce.number().min(0),
-  discount: z.coerce.number().min(0).default(0),
-  tax: z.coerce.number().min(0).default(0),
-  total: z.coerce.number().min(0),
-})
-
-const createSchema = z.object({
-  customerId: z.string().uuid().optional().nullable(),
-  customerName: z.string().max(255).optional(),
-  customerPhone: z.string().max(50).optional(),
-  customerEmail: z.string().email().optional().or(z.literal('')),
-  notes: z.string().optional(),
-  validUntil: z.string().optional(),
-  subtotal: z.coerce.number().min(0),
-  discount: z.coerce.number().min(0).default(0),
-  tax: z.coerce.number().min(0).default(0),
-  total: z.coerce.number().min(0),
-  items: z.array(itemSchema).min(1).max(200),
-})
 
 export async function GET(request: NextRequest) {
   const result = await withAuthTenant(async (session, db) => {
@@ -78,11 +54,15 @@ export async function POST(request: NextRequest) {
       return { error: 'Quotation module disabled', status: 403 as const }
     }
 
-    const parsed = await validateBody(request, createSchema)
+    const parsed = await validateBody(request, createQuotationSchema)
     if (!parsed.success) {
       const details = await parsed.response.json().catch(() => ({ error: 'Invalid request body' }))
       return { error: details, status: 400 as const }
     }
+
+    // 0179: per-line units, tax rates and warranty; totals recomputed server-side
+    const [tenantRow] = await db.select({ taxInclusive: tenants.taxInclusive }).from(tenants).where(eq(tenants.id, session.user.tenantId))
+    const computed = computeQuotation(parsed.data.items, { taxInclusive: !!tenantRow?.taxInclusive, headerDiscount: parsed.data.discount })
 
     const nextNo = await nextDocNo(db, session.user.tenantId, 'quotation')
 
@@ -96,27 +76,21 @@ export async function POST(request: NextRequest) {
         customerPhone: parsed.data.customerPhone || null,
         customerEmail: parsed.data.customerEmail || null,
         notes: parsed.data.notes || null,
-        validUntil: parsed.data.validUntil || null,
-        subtotal: String(parsed.data.subtotal),
-        discount: String(parsed.data.discount),
-        tax: String(parsed.data.tax),
-        total: String(parsed.data.total),
+        validUntil: parsed.data.validUntil ? parsed.data.validUntil.slice(0, 10) : null,
+        subtotal: String(computed.subtotal),
+        discount: String(computed.discount),
+        tax: String(computed.tax),
+        total: String(computed.total),
         status: 'draft',
         createdBy: session.user.id,
       })
       .returning()
 
     await db.insert(quotationItems).values(
-      parsed.data.items.map((item) => ({
+      computed.lines.map((line) => ({
         tenantId: session.user.tenantId,
         quotationId: quote.id,
-        itemId: item.itemId || null,
-        itemName: item.itemName,
-        quantity: String(item.quantity),
-        unitPrice: String(item.unitPrice),
-        discount: String(item.discount),
-        tax: String(item.tax),
-        total: String(item.total),
+        ...line,
       }))
     )
 

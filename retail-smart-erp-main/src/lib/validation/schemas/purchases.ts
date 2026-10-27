@@ -25,6 +25,8 @@ const purchaseItemSchema = z.object({
   quantity: z.coerce.number().positive('Quantity must be greater than zero'),
   unitPrice: z.coerce.number().min(0, 'Unit price cannot be negative'),
   tax: z.coerce.number().min(0).optional(),
+  /** 0184: unit the line is entered in (blank = base unit); the factor is resolved server-side */
+  uom: z.string().trim().max(20).nullish(),
 })
 
 // ==================== PURCHASES (Purchase Invoices) ====================
@@ -228,6 +230,7 @@ export const updatePurchaseSchema = z.object({
   costCenterId: optionalUuid,
   status: z.enum(['pending', 'cancelled']).optional(),
   cancellationReason: z.string().max(1000).optional(),
+  /** Serial numbers per purchase line id (legacy: per item id, split over that item's lines). */
   itemSerials: z.record(z.string(), z.string()).optional(),
   /** Batch per purchase line id (submit), for trackBatches items. */
   itemBatches: z.record(z.string(), batchInfoSchema).optional(),
@@ -241,6 +244,8 @@ export const addPurchaseItemSchema = z.object({
   quantity: z.coerce.number().positive('Quantity must be greater than zero'),
   unitPrice: z.coerce.number().min(0, 'Unit price cannot be negative'),
   tax: z.coerce.number().min(0).optional(),
+  /** 0184: unit the line is entered in (blank = base unit); the factor is resolved server-side */
+  uom: z.string().trim().max(20).nullish(),
 })
 
 // PUT /api/purchases/[id]/items/[itemId]
@@ -248,6 +253,8 @@ export const updatePurchaseItemSchema = z.object({
   quantity: z.coerce.number().positive('Quantity must be greater than zero').optional(),
   unitPrice: z.coerce.number().min(0, 'Unit price cannot be negative').optional(),
   tax: z.coerce.number().min(0).optional(),
+  /** 0184: unit the line is entered in (blank = base unit); the factor is resolved server-side */
+  uom: z.string().trim().max(20).nullish(),
 })
 
 // POST /api/purchases/[id]/payments
@@ -297,6 +304,8 @@ export const updatePurchaseOrderItemSchema = z.object({
   quantity: z.coerce.number().positive().optional(),
   unitPrice: z.coerce.number().min(0).optional(),
   tax: z.coerce.number().min(0).optional(),
+  /** 0184: unit the line is entered in (blank = base unit); the factor is resolved server-side */
+  uom: z.string().trim().max(20).nullish(),
 })
 
 // POST /api/purchase-orders/[id]/receive

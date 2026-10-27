@@ -5,6 +5,10 @@ import { withTenant } from '@/lib/db'
 import { employeeProfiles } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
+import { toApiError } from '@/lib/db/errors'
+import { canAccessBranch, getBranchScope } from '@/lib/auth/branch-access'
+import { mapUnmappedPunches, normalizeBiometricId } from '@/lib/attendance/ingest'
+import { loadHrSettings } from '@/lib/attendance/settings'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateEmployeeProfileSchema } from '@/lib/validation/schemas/hr'
@@ -65,7 +69,7 @@ export async function PUT(
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
-    const parsed = await validateBody(request, updateEmployeeProfileSchema)
+    const parsed = await validateBody(request, updateEmployeeProfileSchema, { keepEmptyStrings: true }) // '' clears the attendance fields
     if (!parsed.success) return parsed.response
     const {
       employeeCode, employmentType, employmentStatus,
@@ -76,6 +80,7 @@ export async function PUT(
       employerContributionId, employerContributionIdType,
       dateOfBirth, gender, emergencyContactName, emergencyContactPhone,
       address, notes, expectedUpdatedAt,
+      biometricUserId, defaultShiftId, warehouseId, otEligible, otRateMultiplier, hourlyRate,
     } = parsed.data
 
     // Execute with RLS tenant context
@@ -134,6 +139,16 @@ export async function PUT(
         if (emergencyContactPhone !== undefined) updateData.emergencyContactPhone = emergencyContactPhone || null
         if (address !== undefined) updateData.address = address || null
         if (notes !== undefined) updateData.notes = notes || null
+        // Attendance (drizzle/0183)
+        if (biometricUserId !== undefined) updateData.biometricUserId = normalizeBiometricId(biometricUserId)
+        if (defaultShiftId !== undefined) updateData.defaultShiftId = defaultShiftId || null
+        if (warehouseId !== undefined) {
+          if (warehouseId && !canAccessBranch(await getBranchScope(session, tx), warehouseId)) throw new Error('BRANCH_DENIED')
+          updateData.warehouseId = warehouseId || null
+        }
+        if (otEligible !== undefined) updateData.otEligible = otEligible
+        if (otRateMultiplier !== undefined) updateData.otRateMultiplier = String(otRateMultiplier)
+        if (hourlyRate !== undefined) updateData.hourlyRate = hourlyRate === '' || hourlyRate === null ? null : String(hourlyRate)
 
         const [updated] = await tx.update(employeeProfiles)
           .set(updateData)
@@ -142,6 +157,12 @@ export async function PUT(
 
         return updated
       })
+
+      // A new fingerprint user id picks up the punches the device already sent for it
+      if (biometricUserId && result.biometricUserId) {
+        const { timezone } = await loadHrSettings(db, session.user.tenantId)
+        await mapUnmappedPunches(db, session.user.tenantId, result.biometricUserId, result.id, timezone)
+      }
 
       // Broadcast the change to connected clients
       logAndBroadcast(session.user.tenantId, 'employee-profile', 'updated', id)
@@ -155,6 +176,11 @@ export async function PUT(
     if (message === 'NOT_FOUND') {
       return NextResponse.json({ error: 'Employee profile not found' }, { status: 404 })
     }
+    if (message === 'BRANCH_DENIED') {
+      return NextResponse.json({ error: 'You can only assign employees to your own branches.', code: 'BRANCH_ACCESS_DENIED' }, { status: 403 })
+    }
+    const mapped = toApiError(error) // e.g. a fingerprint user id already used by another employee
+    if (mapped) return mapped
     if (message === 'CONFLICT') {
       return NextResponse.json({
         error: 'This employee profile was modified by another user. Please refresh and try again.',

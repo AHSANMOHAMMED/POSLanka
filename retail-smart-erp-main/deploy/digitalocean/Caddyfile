@@ -23,10 +23,27 @@ https:// {
 	}
 }
 
+# Fingerprint / attendance devices (ZKTeco ADMS "iclock" push, src/app/iclock): most terminals
+# speak plain HTTP only and do not follow redirects, so /iclock/* is proxied on port 80 as well.
+# The device is identified by its registered serial number; nothing else is served over HTTP.
+(iclock_http) {
+	handle /iclock/* {
+		reverse_proxy app:3000 {
+			header_up X-Forwarded-Proto http
+		}
+	}
+}
+
 http://168.144.216.104 {
-	redir https://168-144-216-104.sslip.io{uri} permanent
+	import iclock_http
+	handle {
+		redir https://168-144-216-104.sslip.io{uri} permanent
+	}
 }
 
 http:// {
-	redir https://{host}{uri} permanent
+	import iclock_http
+	handle {
+		redir https://{host}{uri} permanent
+	}
 }

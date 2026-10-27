@@ -18,6 +18,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { getSaleLineBatches, restoreSaleLineBatches } from '@/lib/inventory/batches'
 import { assertBranchAccess } from '@/lib/auth/branch-access'
+import { planBlockMessage, planOnSale } from '@/lib/installments/sale-guard'
 
 // GET single sale
 export async function GET(
@@ -149,6 +150,10 @@ export async function PUT(
         if (sale.isReturn) {
           throw new Error('CANNOT_VOID_RETURN')
         }
+
+        // A sale financed by a hire purchase plan: cancel / settle the plan first
+        const hpPlan = await planOnSale(tx, sale.id)
+        if (hpPlan) throw new Error(`HP_PLAN_EXISTS:${planBlockMessage(hpPlan)}`)
 
         // H1: sale of a shift that is already closed (see the rule above)
         let refundShift: typeof posOpeningEntries.$inferSelect | null = null
@@ -511,7 +516,8 @@ export async function PUT(
                 if (stock) {
                   await tx.update(warehouseStock)
                     .set({
-                      reservedStock: sql`LEAST(${warehouseStock.reservedStock} + ${restoreQty}, ${warehouseStock.currentStock})`,
+                      // 0184: quantities are in the line's unit; the reservation is in base units
+                      reservedStock: sql`LEAST(${warehouseStock.reservedStock} + ${Math.round(restoreQty * (Number(saleItem.uomFactor) || 1) * 1000) / 1000}, ${warehouseStock.currentStock})`,
                       updatedAt: new Date(),
                     })
                     .where(eq(warehouseStock.id, stock.id))
@@ -644,6 +650,9 @@ export async function PUT(
     const message = error instanceof Error ? error.message : ''
     if (message === 'USER_NOT_FOUND') {
       return NextResponse.json({ error: 'User not found for this tenant. Please log out and log in again.' }, { status: 400 })
+    }
+    if (message.startsWith('HP_PLAN_EXISTS:')) {
+      return NextResponse.json({ error: message.slice('HP_PLAN_EXISTS:'.length), code: 'HP_PLAN_EXISTS' }, { status: 409 })
     }
     logError('api/sales/[id]', error)
 

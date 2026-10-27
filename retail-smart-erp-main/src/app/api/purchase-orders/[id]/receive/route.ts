@@ -18,6 +18,7 @@ import { postGoodsReceiptToGL } from '@/lib/accounting/auto-post'
 import { grnPostedValue } from '@/lib/purchasing/srbnb'
 import { tenantToday } from '@/lib/accounting/gl'
 import { assertRecordBranch } from '@/lib/auth/branch-access'
+import { toBaseQty, perBaseUnit } from '@/lib/units/resolve-line-units'
 
 // POST receive items for a purchase order (partial receiving)
 export async function POST(
@@ -75,6 +76,9 @@ export async function POST(
           quantity: purchaseOrderItems.quantity,
           unitPrice: purchaseOrderItems.unitPrice,
           receivedQuantity: purchaseOrderItems.receivedQuantity,
+          // 0184: quantities / price are in the line's unit; stock moves quantity × uomFactor
+          uom: purchaseOrderItems.uom,
+          uomFactor: purchaseOrderItems.uomFactor,
         })
         .from(purchaseOrderItems)
         .where(eq(purchaseOrderItems.purchaseOrderId, id))
@@ -169,12 +173,15 @@ export async function POST(
           .sort((a, b) => (a.poItem.itemId! < b.poItem.itemId! ? -1 : a.poItem.itemId! > b.poItem.itemId! ? 1 : 0))
         for (const u of stockLines) {
           const itemId = u.poItem.itemId!
+          // 0184: base units in, cost per base unit (price of a box of 12 / 12)
+          const factor = u.poItem.uomFactor
+          const baseQty = toBaseQty(u.receivedQty, factor)
           await applyPurchaseCost(tx, {
             tenantId: session.user.tenantId,
             itemId,
             supplierId: order.supplierId,
-            unitPrice: parseFloat(u.poItem.unitPrice || '0'),
-            qty: u.receivedQty,
+            unitPrice: perBaseUnit(u.poItem.unitPrice || '0', factor),
+            qty: baseQty,
             referenceId: receipt.id,
             referenceNo: receipt.receiptNo,
             userId: session.user.id,
@@ -185,7 +192,7 @@ export async function POST(
             warehouseId: order.warehouseId,
             itemId,
             mode: 'delta',
-            qty: u.receivedQty,
+            qty: baseQty,
             type: 'in',
             referenceType: 'purchase_order_receive',
             referenceId: id,
@@ -197,7 +204,7 @@ export async function POST(
           // batch-tracked items: into the given batch(es), else a batch named after the GRN
           for (const part of u.parts) {
             await receiveIntoBatch(tx, {
-              tenantId: session.user.tenantId, itemId, warehouseId: order.warehouseId, qty: part.qty,
+              tenantId: session.user.tenantId, itemId, warehouseId: order.warehouseId, qty: toBaseQty(part.qty, factor),
               batchNumber: part.batchNumber, expiryDate: part.expiryDate, manufacturingDate: part.manufacturingDate,
               defaultBatchNumber: receipt.receiptNo, supplierId: order.supplierId, purchaseReceiptId: receipt.id,
               docType: 'grn', docId: receipt.id, lineId: u.poItem.id,
@@ -219,6 +226,9 @@ export async function POST(
           quantityRejected: '0',
           notes: updated.notes || null,
           unitCost: updated.poItem.unitPrice || '0',
+          // 0184: the GRN line keeps the PO line's unit (quantities and unit cost are in it)
+          uom: updated.poItem.uom,
+          uomFactor: updated.poItem.uomFactor || '1',
         })
       }
 
@@ -246,6 +256,7 @@ export async function POST(
         .select({
           quantity: purchaseOrderItems.quantity,
           receivedQuantity: purchaseOrderItems.receivedQuantity,
+          uomFactor: purchaseOrderItems.uomFactor,
         })
         .from(purchaseOrderItems)
         .where(eq(purchaseOrderItems.purchaseOrderId, id))
@@ -254,8 +265,10 @@ export async function POST(
       let totalReceived = 0
 
       for (const item of refreshedItems) {
-        totalOrdered += parseFloat(item.quantity)
-        totalReceived += parseFloat(item.receivedQuantity || '0')
+        // 0184: base units (lines may be in different units)
+        const f = parseFloat(item.uomFactor || '1') || 1
+        totalOrdered = Math.round((totalOrdered + parseFloat(item.quantity) * f) * 1e6) / 1e6
+        totalReceived = Math.round((totalReceived + parseFloat(item.receivedQuantity || '0') * f) * 1e6) / 1e6
       }
 
       // Determine new status based on receiving progress

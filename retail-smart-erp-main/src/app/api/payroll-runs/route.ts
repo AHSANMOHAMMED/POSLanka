@@ -12,6 +12,10 @@ import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { payrollRunsListSchema, createPayrollRunSchema } from '@/lib/validation/schemas/hr'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getAttendancePayroll } from '@/lib/attendance/payroll'
+import { recomputeAttendance } from '@/lib/attendance/compute'
+import { loadHrSettings } from '@/lib/attendance/settings'
+import { monthRange } from '@/lib/attendance/time'
 
 export async function GET(request: NextRequest) {
   try {
@@ -122,6 +126,15 @@ export async function POST(request: NextRequest) {
         )
       }
 
+      // Attendance: bring the month's attendance_days up to date once for every tracked employee
+      // (manual days are kept), then each slip takes its working / payment days from attendance
+      // (src/lib/attendance/payroll.ts; tenants.settings.hr.attendancePayroll decides who).
+      const hr = await loadHrSettings(db, session.user.tenantId)
+      if (hr.settings.attendancePayroll !== false && eligibleProfiles.length > 0) {
+        const { from, to } = monthRange(payrollYear, payrollMonth)
+        await recomputeAttendance(db, session.user.tenantId, { from, to })
+      }
+
       // Generate salary slips for each eligible employee
       let totalGross = 0
       let totalDed = 0
@@ -144,13 +157,18 @@ export async function POST(request: NextRequest) {
         if (existingSlip) continue
 
         try {
+          // Was: paymentDays = totalWorkingDays for everyone. Now from attendance when it applies,
+          // else the entered working days (old behaviour).
+          const att = await getAttendancePayroll(db, session.user.tenantId, profile.id, payrollYear, payrollMonth,
+            totalWorkingDays, totalWorkingDays, { recompute: false, loaded: hr })
           const computed = await computeSalarySlip(db, {
             employeeProfileId: profile.id,
             payrollMonth,
             payrollYear,
-            totalWorkingDays,
-            paymentDays: totalWorkingDays,
+            totalWorkingDays: att.totalWorkingDays,
+            paymentDays: att.paymentDays,
             includeAdvanceRecovery: true,
+            extraVariables: att.variables,
           })
 
           slipCount++
@@ -171,8 +189,9 @@ export async function POST(request: NextRequest) {
               payrollYear,
               startDate,
               endDate,
-              totalWorkingDays: String(totalWorkingDays),
-              paymentDays: String(totalWorkingDays),
+              totalWorkingDays: String(att.totalWorkingDays),
+              paymentDays: String(att.paymentDays),
+              attendanceSummary: att.summary,
               baseSalary: String(computed.baseSalary),
               grossPay: String(computed.grossPay),
               totalDeductions: String(computed.totalDeductions),

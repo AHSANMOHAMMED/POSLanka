@@ -8,6 +8,11 @@ import {
   FileText,
   Play,
   Banknote,
+  Fingerprint,
+  Clock,
+  CalendarCheck,
+  CalendarDays,
+  CalendarX,
 } from 'lucide-react'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 
@@ -64,6 +69,41 @@ export default function HRPage() {
       href: `/c/${tenantSlug}/hr/employee-advances`,
       icon: <Banknote size={24} />,
       color: 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400',
+    },
+    {
+      title: 'Attendance',
+      description: 'Daily board and monthly register from fingerprint check-in / check-out',
+      href: `/c/${tenantSlug}/hr/attendance`,
+      icon: <CalendarCheck size={24} />,
+      color: 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400',
+    },
+    {
+      title: 'Work Shifts',
+      description: 'Shift times, grace periods, overtime rules and weekly off days',
+      href: `/c/${tenantSlug}/hr/shifts`,
+      icon: <Clock size={24} />,
+      color: 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400',
+    },
+    {
+      title: 'Fingerprint Devices',
+      description: 'Connect ZKTeco / eSSL fingerprint machines and map device users',
+      href: `/c/${tenantSlug}/hr/attendance-devices`,
+      icon: <Fingerprint size={24} />,
+      color: 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400',
+    },
+    {
+      title: 'Leave',
+      description: 'Leave types, requests, approvals and balances',
+      href: `/c/${tenantSlug}/hr/leave`,
+      icon: <CalendarX size={24} />,
+      color: 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-600 dark:text-yellow-400',
+    },
+    {
+      title: 'Holidays',
+      description: 'Public and company holidays (Sri Lanka holiday import)',
+      href: `/c/${tenantSlug}/hr/holidays`,
+      icon: <CalendarDays size={24} />,
+      color: 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400',
     },
   ]
 

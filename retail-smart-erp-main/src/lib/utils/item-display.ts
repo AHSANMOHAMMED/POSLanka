@@ -61,6 +61,8 @@ export interface SearchableItem extends ItemDisplayFields {
   costPrice?: string
   availableStock?: string
   trackStock?: boolean
+  /** Base (stock) unit, items.unit */
+  unit?: string | null
 }
 
 /**
@@ -90,6 +92,7 @@ export function buildItemSearchOption(
       pluCode: item.pluCode,
       availableStock: item.availableStock,
       trackStock: item.trackStock,
+      unit: item.unit ?? null,
     },
   }
 }

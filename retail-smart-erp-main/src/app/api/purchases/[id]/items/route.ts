@@ -11,6 +11,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addPurchaseItemSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { assertRecordBranch } from '@/lib/auth/branch-access'
+import { resolveLineUnits, lineUnitErrorResponse } from '@/lib/units/resolve-line-units'
 
 // Recalculate and update purchase totals (dual mode: template or manual flat tax)
 async function recalculateTotals(db: TenantDb, tenantId: string, purchaseId: string) {
@@ -105,6 +106,10 @@ export async function GET(
         unitPrice: purchaseItems.unitPrice,
         tax: purchaseItems.tax,
         total: purchaseItems.total,
+        // 0184: unit of the line
+        uom: purchaseItems.uom,
+        uomFactor: purchaseItems.uomFactor,
+        baseUnit: itemsTable.unit,
       })
       .from(purchaseItems)
       .leftJoin(itemsTable, eq(purchaseItems.itemId, itemsTable.id))
@@ -133,7 +138,7 @@ export async function POST(
 
   const parsed = await validateBody(request, addPurchaseItemSchema)
   if (!parsed.success) return parsed.response
-  const { itemId, itemName, quantity, unitPrice, tax } = parsed.data
+  const { itemId, itemName, quantity, unitPrice, tax, uom } = parsed.data
 
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'managePurchases')
@@ -159,10 +164,20 @@ export async function POST(
       return { error: NextResponse.json({ error: 'Items can only be added to draft purchases' }, { status: 400 }) }
     }
 
+    // 0184: the line keeps its unit; factor from item_uoms / standard units (never the client)
+    let unit: { uom: string | null; factor: number }
+    try {
+      [unit] = await resolveLineUnits(db, [{ itemId, uom, itemName }])
+    } catch (e) {
+      const r = lineUnitErrorResponse(e)
+      if (r) return { error: r }
+      throw e
+    }
+
     const itemTax = Math.max(0, tax || 0)
     const itemTotal = Math.round((quantity * unitPrice + itemTax) * 100) / 100
 
-    // Check for existing item with same itemId/name and price
+    // Check for existing item with same itemId/name, price and unit
     let existingItem: (typeof purchaseItems.$inferSelect)[] = []
     if (itemId) {
       existingItem = await db
@@ -173,7 +188,7 @@ export async function POST(
           eq(purchaseItems.itemId, itemId),
           eq(purchaseItems.unitPrice, unitPrice.toString())
         ))
-        .limit(1)
+      existingItem = existingItem.filter((r) => (r.uom || null) === unit.uom).slice(0, 1)
     } else {
       existingItem = await db
         .select()
@@ -210,6 +225,8 @@ export async function POST(
         unitPrice: unitPrice.toString(),
         tax: itemTax.toString(),
         total: itemTotal.toString(),
+        uom: unit.uom,
+        uomFactor: String(unit.factor),
         // PO-linked invoice: received quantities live on the PO's receipts, not on this line
         ...(purchase.purchaseOrderId ? { poReceivedQty: '0' } : {}),
       })

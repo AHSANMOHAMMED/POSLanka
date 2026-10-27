@@ -1,6 +1,7 @@
 'use client'
 
-import { FORMAT_TO_BWIP, type BarcodeFormat } from './types'
+import { FORMAT_TO_BWIP, type BarcodeElement, type BarcodeFormat } from './types'
+import { chooseSymbology, planLinear, TWO_D_FORMATS, type SymbolChoice } from '@/lib/print/label/barcode-fit'
 
 /**
  * Render a barcode as a data URL (SVG base64) using bwip-js.
@@ -130,4 +131,80 @@ export function validateBarcodeData(format: BarcodeFormat, data: string): string
       break
   }
   return null
+}
+
+const escXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+/** Bar/space widths (modules, bar first) of a linear symbol, via bwip-js. */
+export async function linearBarsAndSpaces(choice: SymbolChoice): Promise<number[] | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod = (await import('bwip-js/browser')) as any
+    // ESM build: the named export `raw` is the 'raw' symbology; the encoder API is default.raw (ToRaw).
+    const api = mod.default && typeof mod.default.raw === 'function' ? mod.default : mod
+    const raw = api.raw(FORMAT_TO_BWIP[choice.format], ['ean13', 'upca', 'ean8', 'itf14'].includes(choice.format) ? choice.value : choice.data, '') as Array<{ sbs?: number[] }>
+    const sbs = raw?.[0]?.sbs
+    return Array.isArray(sbs) && sbs.length ? sbs : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * HTML for one barcode element of a browser-printed label, drawn on the
+ * printer's dot grid: integer-dot module, bars at whole-dot positions (inline
+ * SVG, crisp edges, black on white, no image scaling), quiet zones kept white
+ * inside the label. `raw` is the value to encode (see barcodeSourceValue).
+ * The cell holding the label must start on a whole printer dot.
+ */
+export async function renderBarcodeElementHtml(
+  el: BarcodeElement,
+  raw: string,
+  labelWidthMm: number,
+  dpi = 203
+): Promise<string> {
+  const z = `z-index:${el.zIndex};`
+  const box = `position:absolute;left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;`
+  const choice = chooseSymbology(el.format, raw)
+  if ('error' in choice) {
+    return `<div style="${box}${z}border:0.3mm dashed #000;background:#fff;display:flex;align-items:center;justify-content:center;font:bold 6pt sans-serif;color:#000;text-align:center;" data-barcode-error="1">NO BARCODE</div>`
+  }
+  const rot = ((Math.round(Number(el.rotation) || 0) % 360) + 360) % 360
+  if (TWO_D_FORMATS.includes(choice.format) || rot !== 0) {
+    const is2D = TWO_D_FORMATS.includes(choice.format)
+    const dataUrl = await renderBarcodeDataUrl(choice.format, choice.format === 'ean13' || choice.format === 'upca' ? choice.value : choice.data, {
+      showText: el.showText,
+      height: is2D ? 12 : Math.max(8, Math.round(el.height - (el.showText ? 4 : 1))),
+    })
+    return `<div style="${box}${z}${rot ? `transform:rotate(${rot}deg);` : ''}background:#fff;display:flex;align-items:center;justify-content:center;"><img src="${dataUrl}" style="width:100%;height:100%;object-fit:contain;image-rendering:pixelated;display:block;" alt="barcode"/></div>`
+  }
+  const sbs = await linearBarsAndSpaces(choice)
+  if (!sbs) {
+    return `<div style="${box}${z}border:0.3mm dashed #000;display:flex;align-items:center;justify-content:center;font:bold 6pt sans-serif;" data-barcode-error="1">BARCODE ERROR</div>`
+  }
+  const dpm = dpi / 25.4
+  const modules = sbs.reduce((a, b) => a + b, 0)
+  const labelW = Math.round(labelWidthMm * dpm)
+  const plan = planLinear(choice.format, choice.data, dpi, Math.round(el.x * dpm), Math.max(1, Math.round(el.width * dpm)), labelW, modules)
+  const m = plan.module
+  const hDots = Math.max(8, Math.round(el.height * dpm))
+  const hri = el.showText ? Math.round(2.6 * dpm) : 0
+  const barH = Math.max(8, hDots - hri)
+  const W = plan.symbolDots + 2 * plan.quietDots
+  const left = plan.x - plan.quietDots
+  let x = plan.quietDots
+  let rects = ''
+  for (let i = 0; i < sbs.length; i++) {
+    const w = sbs[i] * m
+    if (i % 2 === 0) rects += `<rect x="${x}" y="0" width="${w}" height="${barH}"/>`
+    x += w
+  }
+  let text = ''
+  if (el.showText) {
+    const fs = Math.max(6, Math.min(Math.round(hri * 0.9), Math.floor(W / Math.max(1, choice.value.length * 0.62))))
+    text = `<text x="${W / 2}" y="${hDots - Math.max(1, Math.round((hri - fs) / 2))}" font-size="${fs}" font-family="Arial, Helvetica, sans-serif" text-anchor="middle" fill="#000">${escXml(choice.value)}</text>`
+  }
+  const mm = (d: number) => Math.round((d / dpm) * 10000) / 10000
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${mm(W)}mm" height="${mm(hDots)}mm" viewBox="0 0 ${W} ${hDots}" preserveAspectRatio="none" shape-rendering="crispEdges" style="display:block"><rect width="${W}" height="${hDots}" fill="#fff"/><g fill="#000">${rects}</g>${text}</svg>`
+  return `<div style="position:absolute;left:${mm(left)}mm;top:${el.y}mm;width:${mm(W)}mm;height:${mm(hDots)}mm;${z}overflow:visible;" data-barcode="${escXml(choice.value)}" data-symbology="${choice.format}" data-module-dots="${m}" data-fits="${plan.fits ? 1 : 0}">${svg}</div>`
 }

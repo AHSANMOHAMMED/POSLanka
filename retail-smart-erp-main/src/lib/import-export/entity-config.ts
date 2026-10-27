@@ -1,7 +1,7 @@
 // Central registry defining how each entity exports/imports
 // Adapted from ERPNext's Data Import/Export pattern
 
-export type BusinessType = 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'pharmacy'
+export type BusinessType = 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'pharmacy' | 'dealership' | 'electronics' | 'hardware' | 'print_studio' | 'office'
 
 export interface EntityFieldConfig {
   key: string              // DB column name (camelCase)
@@ -89,7 +89,7 @@ const itemFields: EntityFieldConfig[] = [
   { key: 'condition', label: 'Condition', type: 'enum', enumValues: ['new', 'refurbished', 'used'], defaultValue: 'new', businessTypes: ['auto_service'] },
   { key: 'weight', label: 'Weight (kg)', type: 'decimal' },
   { key: 'dimensions', label: 'Dimensions', type: 'string' },
-  { key: 'warrantyMonths', label: 'Warranty (months)', type: 'number', businessTypes: ['auto_service'] },
+  { key: 'warrantyMonths', label: 'Warranty (months)', type: 'number', businessTypes: ['auto_service', 'electronics', 'hardware', 'retail'] },
   { key: 'leadTimeDays', label: 'Lead Time (days)', type: 'number', businessTypes: ['auto_service'] },
   { key: 'description', label: 'Description', type: 'string' },
   // Compatible models (auto service / dealership)

@@ -73,7 +73,8 @@ export async function reversePurchaseCost(tx: DbTx, input: ReversePurchaseCostIn
     }
   } else {
     const lines = rows<{ item_id: string; quantity: string; unit_price: string }>(await tx.execute(sql`
-      SELECT item_id, quantity, unit_price FROM purchase_items
+      -- 0184: base units / cost per base unit (lines are in their own unit)
+      SELECT item_id, quantity * uom_factor AS quantity, unit_price / uom_factor AS unit_price FROM purchase_items
       WHERE purchase_id = ${purchaseId} AND item_id IS NOT NULL AND quantity > 0
       ORDER BY item_id
     `))
@@ -207,8 +208,9 @@ export async function reversePurchaseOrderReceipt(
   const lines = rows<{ item_id: string | null; quantity: string; purchase_order_item_id: string | null; po_received_qty: string | null }>(await tx.execute(sql`
     SELECT item_id, quantity, purchase_order_item_id, po_received_qty FROM purchase_items WHERE purchase_id = ${purchase.id}
   `))
-  const poItems = rows<{ id: string; item_id: string | null; quantity: string; received_quantity: string }>(await tx.execute(sql`
-    SELECT id, item_id, quantity, received_quantity FROM purchase_order_items
+  // 0184: po_received_qty / received_quantity are in the PO line's unit
+  const poItems = rows<{ id: string; item_id: string | null; quantity: string; received_quantity: string; uom_factor: string }>(await tx.execute(sql`
+    SELECT id, item_id, quantity, received_quantity, uom_factor FROM purchase_order_items
     WHERE purchase_order_id = ${poId}
     ORDER BY id
     FOR UPDATE
@@ -244,8 +246,10 @@ export async function reversePurchaseOrderReceipt(
     if (next !== parseFloat(p.received_quantity || '0')) {
       await tx.execute(sql`UPDATE purchase_order_items SET received_quantity = ${next.toFixed(3)}::numeric WHERE id = ${p.id}`)
     }
-    totalOrdered += parseFloat(p.quantity)
-    totalReceived += next
+    // status totals in base units (lines may be in different units)
+    const f = parseFloat(p.uom_factor || '1') || 1
+    totalOrdered = Math.round((totalOrdered + parseFloat(p.quantity) * f) * 1e6) / 1e6
+    totalReceived = Math.round((totalReceived + next * f) * 1e6) / 1e6
   }
   // A cancelled PO stays cancelled (cancelling its invoice must not re-open it)
   const status = po?.status === 'cancelled' ? 'cancelled'

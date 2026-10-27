@@ -7,6 +7,7 @@ import { AutoServiceConfig } from './AutoServiceConfig'
 import { DealershipConfig } from './DealershipConfig'
 import { useStepSuggestions } from './useStepSuggestions'
 import type { SetupWizardData } from '@/lib/setup/create-seed-data'
+import { getCategoriesForBusinessType } from '@/lib/setup/seed-data'
 
 interface StepBusinessConfigProps {
   data: SetupWizardData
@@ -57,6 +58,17 @@ export function StepBusinessConfig({
         </p>
       </div>
 
+      {['electronics', 'hardware', 'print_studio', 'office'].includes(businessType) && (
+        <RetailConfig
+          data={data}
+          onChange={onChange}
+          suggestions={suggestions}
+          suggestionsLoading={loading}
+          dismissed={dismissed}
+          onDismiss={dismiss}
+          categorySeeds={getCategoriesForBusinessType(businessType)}
+        />
+      )}
       {businessType === 'retail' && (
         <RetailConfig
           data={data}

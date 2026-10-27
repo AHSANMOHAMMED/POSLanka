@@ -164,6 +164,14 @@ async function handleApi(request: NextRequest): Promise<NextResponse> {
 export async function proxy(request: NextRequest) {
   const { pathname, searchParams, hostname } = request.nextUrl
 
+  // Fingerprint attendance devices (ZKTeco ADMS push, src/app/iclock/*): served on every host,
+  // over plain HTTP too (most terminals cannot do TLS or follow redirects), with no session,
+  // CSRF origin check or tenant rewrite. The route authenticates the device by its registered
+  // serial number. Must stay before the HTTP→HTTPS redirect below.
+  if (pathname === '/iclock' || pathname.startsWith('/iclock/')) {
+    return NextResponse.next()
+  }
+
   // Auto-redirect insecure HTTP to HTTPS on production host so WebUSB works without errors
   const forwardedHost = request.headers.get('x-forwarded-host')
   const hostHeader = request.headers.get('host')

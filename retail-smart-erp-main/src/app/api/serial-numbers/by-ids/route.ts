@@ -6,7 +6,7 @@ import { inArray } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 
 // GET /api/serial-numbers/by-ids?ids=uuid1,uuid2,...
-// Returns [{id, serialNumber}] for display on receipts
+// Returns [{id, serialNumber, warrantyEndDate}] for display on receipts / invoices
 export async function GET(request: NextRequest) {
   try {
     const session = await authWithCompany()
@@ -28,6 +28,8 @@ export async function GET(request: NextRequest) {
       const serials = await db.select({
         id: itemSerialNumbers.id,
         serialNumber: itemSerialNumbers.serialNumber,
+        // 0179: printed on A4 invoices next to the serial
+        warrantyEndDate: itemSerialNumbers.warrantyEndDate,
       })
         .from(itemSerialNumbers)
         .where(inArray(itemSerialNumbers.id, ids))

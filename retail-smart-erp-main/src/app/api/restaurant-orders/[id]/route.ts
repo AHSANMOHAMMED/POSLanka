@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { localDateString, saleLineWarranty } from '@/lib/sales/warranty'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission, requireModule } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
@@ -293,7 +294,7 @@ export async function PUT(
 
               const lineItemIds = [...new Set(orderItems.map(oi => oi.itemId).filter((x): x is string => !!x))]
               const lineItemRows = lineItemIds.length > 0
-                ? await tx.select({ id: itemsTable.id, name: itemsTable.name, trackStock: itemsTable.trackStock, trackBatches: itemsTable.trackBatches })
+                ? await tx.select({ id: itemsTable.id, name: itemsTable.name, trackStock: itemsTable.trackStock, trackBatches: itemsTable.trackBatches, warrantyMonths: itemsTable.warrantyMonths })
                     .from(itemsTable).where(inArray(itemsTable.id, lineItemIds))
                 : []
               const lineItemById = new Map(lineItemRows.map(r => [r.id, r]))
@@ -305,6 +306,7 @@ export async function PUT(
               const saleAllowNegative = await allowNegativeStockFor(tx as unknown as DbTx, { tenantId: session.user.tenantId, warehouseId: saleWarehouseId, whenNoProfile: true })
               const saleBatchLines: Array<{ saleItemId: string; itemId: string; name: string; qty: number }> = []
 
+              const saleDateLocal = localDateString(sale.createdAt ?? new Date())
               // Create sale items with per-item template tax
               for (let i = 0; i < orderItems.length; i++) {
                 const orderItem = orderItems[i]
@@ -325,6 +327,8 @@ export async function PUT(
                   taxAmount: String(itemTaxAmount),
                   taxBreakdown: perItem?.taxBreakdown || null,
                   total: String(itemLineTotal),
+                  // 0179: an item sold with a warranty keeps it on the restaurant path too
+                  ...(orderItem.quantity > 0 ? saleLineWarranty(orderItem.itemId ? lineItemById.get(orderItem.itemId) : null, saleDateLocal) : {}),
                 }).returning({ id: saleItems.id })
 
                 // E1: stock-tracked lines leave stock like a POS sale. A shortfall is recorded in

@@ -7,8 +7,7 @@ import { pickBitmapFont } from './tspl'
 import {
   CommandBuffer,
   asciiOnly,
-  fitModule,
-  hriHeight,
+  placeLinearBarcode,
   invertBits,
   isDarkColor,
   mmToDots,
@@ -141,25 +140,23 @@ async function emitElements(
           break
         }
         const data = res.data
-        if (el.format === 'qrcode') {
+        if (res.format === 'qrcode') {
           const cell = Math.max(1, Math.min(10, Math.floor(Math.min(w, h) / qrModules(data))))
           buf.line(`b${x},${y},Q,m2,s${cell},eM,${q(data)}`)
           break
         }
-        if (el.format === 'datamatrix' || el.format === 'pdf417') {
-          warnings.push(`Barcode ${el.id}: ${el.format} is not supported by the EPL encoder (skipped)`)
+        if (res.format === 'datamatrix' || res.format === 'pdf417') {
+          warnings.push(`Barcode ${el.id}: ${res.format} is not supported by the EPL encoder (skipped)`)
           break
         }
-        const sym = EPL_SYMBOLOGY[el.format]
+        const sym = EPL_SYMBOLOGY[res.format]
         if (!sym) {
-          warnings.push(`Barcode ${el.id}: ${el.format} not supported in EPL`)
+          warnings.push(`Barcode ${el.id}: ${res.format} not supported in EPL`)
           break
         }
-        const ratio = ['code39', 'codabar', 'itf14'].includes(el.format) ? 2 : 1
-        const { module, used } = fitModule(el.format, data, w)
-        const bh = Math.max(8, h - (el.showText ? hriHeight(dpi) : 0))
-        const bx = r === 0 ? x + Math.max(0, Math.floor((w - used) / 2)) : x
-        buf.line(`B${bx},${y},${r},${sym},${module},${module * ratio},${bh},${el.showText ? 'B' : 'N'},${q(data)}`)
+        const ratio = ['code39', 'codabar', 'itf14'].includes(res.format) ? 2 : 1
+        const p = placeLinearBarcode(template, el, res, o, ox, warnings)
+        buf.line(`B${p.x},${y},${r},${sym},${p.module},${p.module * ratio},${p.barHeight},${el.showText ? 'B' : 'N'},${q(data)}`)
         break
       }
       case 'shape': {

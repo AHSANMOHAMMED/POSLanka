@@ -12,6 +12,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { addPurchaseItemSchema, updatePurchaseOrderItemSchema } from '@/lib/validation/schemas/purchases'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { assertRecordBranch } from '@/lib/auth/branch-access'
+import { resolveLineUnits, lineUnitErrorResponse } from '@/lib/units/resolve-line-units'
 
 // Recalculate and update purchase order totals (dual mode: template or manual flat tax)
 async function recalculateTotals(db: TenantDb, tenantId: string, purchaseOrderId: string) {
@@ -106,6 +107,10 @@ export async function GET(
         unitPrice: purchaseOrderItems.unitPrice,
         tax: purchaseOrderItems.tax,
         total: purchaseOrderItems.total,
+        // 0184: unit of the line
+        uom: purchaseOrderItems.uom,
+        uomFactor: purchaseOrderItems.uomFactor,
+        baseUnit: itemsTable.unit,
       })
       .from(purchaseOrderItems)
       .leftJoin(itemsTable, eq(purchaseOrderItems.itemId, itemsTable.id))
@@ -134,7 +139,7 @@ export async function POST(
 
   const parsed = await validateBody(request, addPurchaseItemSchema)
   if (!parsed.success) return parsed.response
-  const { itemId, itemName, quantity, unitPrice, tax } = parsed.data
+  const { itemId, itemName, quantity, unitPrice, tax, uom } = parsed.data
 
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'managePurchases')
@@ -159,10 +164,20 @@ export async function POST(
       return { error: NextResponse.json({ error: 'Items can only be added to draft orders' }, { status: 400 }) }
     }
 
+    // 0184: the line keeps its unit; factor from item_uoms / standard units (never the client)
+    let unit: { uom: string | null; factor: number }
+    try {
+      [unit] = await resolveLineUnits(db, [{ itemId, uom, itemName }])
+    } catch (e) {
+      const r = lineUnitErrorResponse(e)
+      if (r) return { error: r }
+      throw e
+    }
+
     const itemTax = Math.max(0, tax || 0)
     const itemTotal = roundCurrency(quantity * unitPrice + itemTax)
 
-    // Check for existing item with same itemId/name and price
+    // Check for existing item with same itemId/name, price and unit
     let existingItem: (typeof purchaseOrderItems.$inferSelect)[] = []
     if (itemId) {
       existingItem = await db
@@ -173,7 +188,7 @@ export async function POST(
           eq(purchaseOrderItems.itemId, itemId),
           eq(purchaseOrderItems.unitPrice, unitPrice.toString())
         ))
-        .limit(1)
+      existingItem = existingItem.filter((r) => (r.uom || null) === unit.uom).slice(0, 1)
     } else {
       existingItem = await db
         .select()
@@ -209,6 +224,8 @@ export async function POST(
         unitPrice: unitPrice.toString(),
         tax: itemTax.toString(),
         total: itemTotal.toString(),
+        uom: unit.uom,
+        uomFactor: String(unit.factor),
       })
     }
 
@@ -244,7 +261,7 @@ export async function PUT(
 
   const parsed = await validateBody(request, updatePurchaseOrderItemSchema)
   if (!parsed.success) return parsed.response
-  const { itemId: poItemId, quantity, unitPrice, tax } = parsed.data
+  const { itemId: poItemId, quantity, unitPrice, tax, uom } = parsed.data
 
   const result = await withAuthTenant(async (session, db) => {
     const permError = requirePermission(session, 'managePurchases')
@@ -281,6 +298,19 @@ export async function PUT(
       return { error: NextResponse.json({ error: 'Item not found' }, { status: 404 }) }
     }
 
+    // 0184: unit change (factor resolved server-side)
+    let unitPatch: { uom: string | null; uomFactor: string } | undefined
+    if (uom !== undefined) {
+      try {
+        const [u] = await resolveLineUnits(db, [{ itemId: currentItem.itemId, uom, itemName: currentItem.itemName }])
+        unitPatch = { uom: u.uom, uomFactor: String(u.factor) }
+      } catch (e) {
+        const r = lineUnitErrorResponse(e)
+        if (r) return { error: r }
+        throw e
+      }
+    }
+
     const newQty = quantity !== undefined ? quantity : parseCurrency(currentItem.quantity)
     const newPrice = unitPrice !== undefined ? unitPrice : parseCurrency(currentItem.unitPrice)
     const newTax = tax !== undefined ? Math.max(0, tax) : parseCurrency(currentItem.tax)
@@ -288,6 +318,7 @@ export async function PUT(
 
     await db.update(purchaseOrderItems)
       .set({
+        ...unitPatch,
         quantity: newQty.toString(),
         unitPrice: newPrice.toString(),
         tax: newTax.toString(),

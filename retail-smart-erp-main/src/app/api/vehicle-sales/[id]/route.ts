@@ -10,6 +10,7 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateVehicleSaleDetailSchema } from '@/lib/validation/schemas/vehicles'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { planBlockMessage, planOnSale } from '@/lib/installments/sale-guard'
 
 export async function GET(
   _request: NextRequest,
@@ -124,6 +125,8 @@ export async function PUT(
         if (sale.status === 'void') {
           return NextResponse.json({ error: 'This vehicle sale is already cancelled' }, { status: 400 })
         }
+        const hpPlan = await planOnSale(db, sale.id)
+        if (hpPlan) return NextResponse.json({ error: planBlockMessage(hpPlan), code: 'HP_PLAN_EXISTS' }, { status: 409 })
         await db.update(sales)
           .set({ status: 'void', voidReason: cancellationReason || 'Vehicle sale cancelled', voidedAt: new Date() })
           .where(eq(sales.id, sale.id))

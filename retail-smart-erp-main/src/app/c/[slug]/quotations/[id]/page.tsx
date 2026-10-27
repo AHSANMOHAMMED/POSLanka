@@ -3,7 +3,9 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Printer, ShoppingCart, Share2, AlertCircle } from 'lucide-react'
+import { ArrowLeft, ShoppingCart, Share2, AlertCircle, Pencil, Send, CheckCircle2, XCircle, Ban, Undo2, Trash2 } from 'lucide-react'
+import { PrintA4Button } from '@/components/print/PrintA4Button'
+import { quotationToDoc, companyFromTenant, TEMPLATE_DOC_TYPES, type QuotationApi } from '@/lib/print/invoice-document'
 
 interface QuotationItem {
   id: string
@@ -11,6 +13,11 @@ interface QuotationItem {
   quantity: string | number
   unitPrice: string | number
   discount: string | number
+  tax?: string | number
+  taxRate?: string | number | null
+  uom?: string | null
+  uomFactor?: string | number | null
+  warrantyMonths?: number | null
   total: string | number
 }
 
@@ -42,7 +49,20 @@ interface TenantData {
   brn: string | null
   taxId: string | null
   currency: string
+  website?: string | null
+  taxInclusive?: boolean
 }
+
+/** Status changes offered per status (PATCH /api/quotations/[id]). */
+const STATUS_ACTIONS: Record<string, Array<{ to: string; label: string }>> = {
+  draft: [{ to: 'sent', label: 'Mark as sent' }, { to: 'accepted', label: 'Accepted' }, { to: 'rejected', label: 'Rejected' }, { to: 'cancelled', label: 'Cancel' }],
+  sent: [{ to: 'accepted', label: 'Accepted' }, { to: 'rejected', label: 'Rejected' }, { to: 'draft', label: 'Back to draft' }, { to: 'cancelled', label: 'Cancel' }],
+  accepted: [{ to: 'sent', label: 'Back to sent' }, { to: 'rejected', label: 'Rejected' }, { to: 'cancelled', label: 'Cancel' }],
+  rejected: [{ to: 'draft', label: 'Reopen as draft' }, { to: 'sent', label: 'Mark as sent' }],
+  expired: [{ to: 'draft', label: 'Reopen as draft' }, { to: 'cancelled', label: 'Cancel' }],
+  cancelled: [{ to: 'draft', label: 'Reopen as draft' }],
+}
+const STATUS_ICONS: Record<string, typeof Send> = { sent: Send, accepted: CheckCircle2, rejected: XCircle, cancelled: Ban, draft: Undo2 }
 
 export default function QuotationDetailPage() {
   const params = useParams()
@@ -55,6 +75,9 @@ export default function QuotationDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [converting, setConverting] = useState(false)
+  const [busyStatus, setBusyStatus] = useState<string | null>(null)
+  // ?print=1 (POS "Save as quotation" link) opens the print dialog once loaded
+  const [autoPrint] = useState(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('print') === '1')
 
   useEffect(() => {
     async function load() {
@@ -95,8 +118,50 @@ export default function QuotationDetailPage() {
     }
   }
 
-  function handlePrint() {
-    window.print()
+  async function changeStatus(to: string) {
+    if (!quotation) return
+    if (to === 'cancelled' && !confirm('Cancel this quotation?')) return
+    setBusyStatus(to)
+    try {
+      const res = await fetch(`/api/quotations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: to }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        alert(typeof data.error === 'string' ? data.error : 'Failed to update status')
+        return
+      }
+      setQuotation((q) => (q ? { ...q, status: data.status || to } : q))
+    } catch {
+      alert('Network error while updating status')
+    } finally {
+      setBusyStatus(null)
+    }
+  }
+
+  async function deleteQuotation() {
+    if (!confirm('Delete this draft quotation?')) return
+    try {
+      const res = await fetch(`/api/quotations/${id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        alert(typeof data.error === 'string' ? data.error : 'Failed to delete quotation')
+        return
+      }
+      router.push(`/c/${slug}/quotations`)
+    } catch {
+      alert('Network error while deleting quotation')
+    }
+  }
+
+  async function loadPrintDocument() {
+    if (!quotation) throw new Error('Quotation not loaded')
+    return {
+      doc: quotationToDoc(quotation as unknown as QuotationApi, { taxInclusive: !!tenant?.taxInclusive }),
+      company: companyFromTenant(tenant as unknown as Record<string, unknown>),
+    }
   }
 
   if (loading) {
@@ -175,14 +240,32 @@ export default function QuotationDetailPage() {
               <Share2 size={15} /> WhatsApp
             </a>
           )}
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border border-slate-300 dark:border-slate-600 shadow-xs"
-          >
-            <Printer size={16} /> Print / Save PDF
-          </button>
-          {quotation.status !== 'converted' && (
+          {['draft', 'sent', 'expired'].includes(quotation.status) && (
+            <Link
+              href={`/c/${slug}/quotations/${id}/edit`}
+              className="px-3.5 py-2 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border border-slate-300 dark:border-slate-600"
+            >
+              <Pencil size={15} /> Edit
+            </Link>
+          )}
+          {quotation.status === 'draft' && (
+            <button
+              type="button"
+              onClick={deleteQuotation}
+              title="Delete draft"
+              className="p-2 rounded-xl text-slate-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 border border-slate-300 dark:border-slate-600 transition-colors"
+            >
+              <Trash2 size={15} />
+            </button>
+          )}
+          <PrintA4Button
+            documentTypes={TEMPLATE_DOC_TYPES.quotation}
+            loadDocument={loadPrintDocument}
+            label="Print / Save PDF"
+            autoPrint={autoPrint}
+            className="px-4 py-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 rounded-xl text-xs font-bold transition-all flex items-center gap-2 border border-slate-300 dark:border-slate-600 shadow-xs disabled:opacity-50"
+          />
+          {!['converted', 'cancelled', 'rejected'].includes(quotation.status) && (
             <button
               type="button"
               onClick={convertToSale}
@@ -195,6 +278,26 @@ export default function QuotationDetailPage() {
           )}
         </div>
       </header>
+
+      {(STATUS_ACTIONS[quotation.status] || []).length > 0 && (
+        <div className="max-w-4xl mx-auto mt-4 px-4 sm:px-6 flex flex-wrap items-center gap-2 print:hidden">
+          <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 mr-1">Status:</span>
+          {STATUS_ACTIONS[quotation.status].map((a) => {
+            const Icon = STATUS_ICONS[a.to] || Send
+            return (
+              <button
+                key={a.to}
+                type="button"
+                disabled={busyStatus !== null}
+                onClick={() => changeStatus(a.to)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Icon size={13} /> {busyStatus === a.to ? 'Saving...' : a.label}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {/* Printable Quotation Document Paper */}
       <main className="max-w-4xl mx-auto mt-8 px-4 sm:px-6 print:m-0 print:p-0 print:max-w-none">
@@ -282,6 +385,7 @@ export default function QuotationDetailPage() {
                   <th className="py-3 px-3 w-24 text-right">Qty</th>
                   <th className="py-3 px-3 w-32 text-right">Unit Price</th>
                   <th className="py-3 px-3 w-28 text-right">Discount</th>
+                  <th className="py-3 px-3 w-20 text-right">Tax</th>
                   <th className="py-3 px-4 w-36 text-right">Line Total</th>
                 </tr>
               </thead>
@@ -298,15 +402,21 @@ export default function QuotationDetailPage() {
                       </td>
                       <td className="py-3 px-4 font-semibold text-slate-800">
                         {item.itemName}
+                        {(item.warrantyMonths || 0) > 0 && (
+                          <div className="text-[11px] font-medium text-slate-500">Warranty: {item.warrantyMonths} month{item.warrantyMonths === 1 ? '' : 's'}</div>
+                        )}
                       </td>
                       <td className="py-3 px-3 text-right font-medium">
-                        {q}
+                        {q}{item.uom ? <span className="text-xs text-slate-500"> {item.uom}</span> : null}
                       </td>
                       <td className="py-3 px-3 text-right font-mono text-slate-700">
                         {p.toFixed(2)}
                       </td>
                       <td className="py-3 px-3 text-right font-mono text-rose-600">
                         {d > 0 ? `-${d.toFixed(2)}` : '—'}
+                      </td>
+                      <td className="py-3 px-3 text-right text-xs text-slate-600">
+                        {Number(item.taxRate) > 0 ? `${Number(item.taxRate)}%` : '—'}
                       </td>
                       <td className="py-3 px-4 text-right font-mono font-bold text-slate-900">
                         {lineTot.toFixed(2)}
@@ -347,6 +457,12 @@ export default function QuotationDetailPage() {
                 <div className="flex justify-between text-sm text-rose-600">
                   <span>Discounts</span>
                   <span className="font-mono font-bold">-{currencyCode} {discountNum.toFixed(2)}</span>
+                </div>
+              )}
+              {Number(quotation.tax) > 0 && (
+                <div className="flex justify-between text-sm text-slate-600">
+                  <span>Tax{tenant?.taxInclusive ? ' (included)' : ''}</span>
+                  <span className="font-mono font-bold">{currencyCode} {Number(quotation.tax).toFixed(2)}</span>
                 </div>
               )}
               <div className="pt-3 border-t-2 border-slate-300 flex justify-between items-baseline">

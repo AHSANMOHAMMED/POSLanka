@@ -13,6 +13,7 @@ import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { salarySlipsListSchema, createSalarySlipSchema } from '@/lib/validation/schemas/hr'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
+import { getAttendancePayroll } from '@/lib/attendance/payroll'
 
 export async function GET(request: NextRequest) {
   try {
@@ -119,15 +120,21 @@ export async function POST(request: NextRequest) {
 
       // Compute salary (bad days / formula / structure problems are input errors, not 500s)
       let computed: Awaited<ReturnType<typeof computeSalarySlip>>
+      // Attendance-tracked employees: days from attendance (src/lib/attendance/payroll.ts), else as entered
+      const att = await getAttendancePayroll(db, session.user.tenantId, employeeProfileId, payrollYear, payrollMonth,
+        totalWorkingDays, Math.min(paymentDays, totalWorkingDays))
+      const slipWorkingDays = att.totalWorkingDays
+      const slipPaymentDays = att.summary.source === 'attendance' ? att.paymentDays : paymentDays
       try {
         computed = await computeSalarySlip(db, {
           employeeProfileId,
           payrollMonth,
           payrollYear,
-          totalWorkingDays,
-          paymentDays,
+          totalWorkingDays: slipWorkingDays,
+          paymentDays: slipPaymentDays,
           commissionAmount,
           includeAdvanceRecovery: true,
+          extraVariables: att.variables,
         })
       } catch (computeError) {
         return NextResponse.json({ error: computeError instanceof Error ? computeError.message : 'Could not compute salary' }, { status: 400 })
@@ -154,8 +161,9 @@ export async function POST(request: NextRequest) {
             payrollYear,
             startDate,
             endDate,
-            totalWorkingDays: String(totalWorkingDays),
-            paymentDays: String(paymentDays),
+            totalWorkingDays: String(slipWorkingDays),
+            paymentDays: String(slipPaymentDays),
+            attendanceSummary: att.summary,
             baseSalary: String(computed.baseSalary),
             grossPay: String(computed.grossPay),
             totalDeductions: String(computed.totalDeductions),

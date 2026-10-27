@@ -85,6 +85,8 @@ export const RECYCLE_ENTITIES = {
   payment_terms_template: A('payment_terms_templates', 'Payment terms template'),
   dunning_type: A('dunning_types', 'Dunning type'),
   recurring_journal_template: A('recurring_journal_templates', 'Recurring journal'),
+  recurring_invoice: A('recurring_invoices', 'Recurring invoice profile', ['profile_name']), // drizzle/0185
+  project: A('projects', 'Project', ['name', 'project_no']), // drizzle/0185
   pos_profile: A('pos_profiles', 'POS profile', ['name', 'code'], { activeColumn: 'status', activeValue: 'active', archivedValue: 'inactive' }),
   loyalty_program: A('loyalty_programs', 'Loyalty program', ['name'], { activeColumn: 'status', activeValue: 'active', archivedValue: 'inactive' }),
 
@@ -95,6 +97,7 @@ export const RECYCLE_ENTITIES = {
   purchase: D('purchases', 'Purchase invoice (draft)', ['purchase_no', 'supplier_invoice_no'], [{ table: 'purchase_items', fk: 'purchase_id' }]),
   purchase_requisition: D('purchase_requisitions', 'Purchase requisition (draft)', ['requisition_no'], [{ table: 'purchase_requisition_items', fk: 'requisition_id' }]),
   supplier_quotation: D('supplier_quotations', 'Supplier quotation (draft)', ['quotation_no'], [{ table: 'supplier_quotation_items', fk: 'quotation_id' }]),
+  quotation: D('quotations', 'Quotation (draft)', ['quotation_no', 'customer_name'], [{ table: 'quotation_items', fk: 'quotation_id' }]),
   stock_take: D('stock_takes', 'Stock take (draft)', ['count_no'], [{ table: 'stock_take_items', fk: 'stock_take_id' }]),
   stock_transfer: D('stock_transfers', 'Stock transfer (draft)', ['transfer_no'], [{ table: 'stock_transfer_items', fk: 'transfer_id' }]),
   journal_entry: D('journal_entries', 'Journal entry (draft)', ['entry_number'], [{ table: 'journal_entry_items', fk: 'journal_entry_id' }]),
@@ -110,6 +113,7 @@ export const RECYCLE_ENTITIES = {
   appointment: D('appointments', 'Appointment', ['customer_name', 'service_name']),
   gift_card: D('gift_cards', 'Gift card (unused)', ['card_number']),
   saved_report: D('saved_reports', 'Saved report', ['name']),
+  time_entry: D('project_time_entries', 'Timesheet entry (not invoiced)', ['entry_date', 'notes']), // drizzle/0185
   collection: D('collections', 'Collection', ['name'], [{ table: 'collection_files', fk: 'collection_id' }]),
   labor_guide: D('labor_guides', 'Labor guide', ['id']),
   vehicle: D('vehicles', 'Customer vehicle', ['license_plate', 'make', 'model']),

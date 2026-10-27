@@ -4,7 +4,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Printer, Minus, Plus } from 'lucide-react'
 import { Modal } from '@/components/ui/modal'
 import { LabelPreview } from './LabelPreview'
-import { isRawLabelPrinter, printLabels, printLabelsOnRoll, printLabelsRaw } from '@/lib/labels/label-print'
+import { isRawLabelPrinter, printAlignmentTestDialog, printLabels, printLabelsOnRoll, printLabelsRaw, rawLabelDpi } from '@/lib/labels/label-print'
+import { preflightLabels } from '@/lib/print/label/preflight'
+import { DirectLabelPrinterPanel } from './DirectLabelPrinterPanel'
+import { BrowserLabelPrintGuide, browserGuideHidden } from './BrowserLabelPrintGuide'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
 import { usePrinters } from '@/hooks/usePrinter'
@@ -42,7 +45,14 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const { symbol: currencySymbol } = useTenantCurrency()
   const company = useCompanyOptional()
   const { printers } = usePrinters()
-  const labelPrinter = printers.find((printer) => printer.role === 'label') || null
+  // Direct (raw) label printer first; the browser dialog only when none is set up.
+  const [printerId, setPrinterId] = useState<string | null>(null)
+  const labelPrinter =
+    (printerId !== null ? printers.find((p) => p.id === printerId) : null) ||
+    printers.find((p) => isRawLabelPrinter(p)) ||
+    printers.find((printer) => printer.role === 'label') ||
+    null
+  const [guideJob, setGuideJob] = useState<null | { run: () => Promise<boolean>; rows: number; setup: StickerSetup }>(null)
 
   // Fetch templates and label settings on open, reset state on close
   useEffect(() => {
@@ -161,6 +171,17 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       isDefault: false,
     }
 
+    const direct = !!labelPrinter && isRawLabelPrinter(labelPrinter)
+    const pf = preflightLabels(template, items, {
+      dpi: direct && labelPrinter ? rawLabelDpi(labelPrinter, effectiveSetup) : effectiveSetup.dpi,
+      labelWidthMm: Number(template.widthMm),
+      tenantName: company?.tenantName,
+    })
+    if (pf.errors > 0) {
+      const lines = pf.issues.filter((i) => i.severity === 'error').slice(0, 6).map((i) => `- ${i.itemName}: ${i.message}`).join('\n')
+      if (!window.confirm(`${pf.errors} barcode problem${pf.errors === 1 ? '' : 's'} - these labels would not scan at the POS:\n\n${lines}\n\nPrint anyway?`)) return
+    }
+
     setPrinting(true)
     try {
       if (labelPrinter && isRawLabelPrinter(labelPrinter)) {
@@ -171,16 +192,14 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
             codeWord,
             setup: effectiveSetup,
           })
-          if (result.warnings.length) {
-            toast.warning(result.warnings.slice(0, 3).join('; '))
-          }
           if (result.ok) {
             toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${labelPrinter.name}`)
+            if (result.warnings.length) toast.warning(result.warnings.slice(0, 2).join('; '))
             return
           }
-          toast.warning(`USB printer: ${result.error || 'held by OS'}. Opening OS Print Dialog...`)
-        } catch {
-          toast.warning('USB connection issue. Opening OS Print Dialog...')
+          toast.error(`${labelPrinter.name}: ${result.error || 'printer not reachable'}. Using the print dialog instead.`)
+        } catch (e) {
+          toast.error(`${labelPrinter.name}: ${e instanceof Error ? e.message : 'print failed'}. Using the print dialog instead.`)
         }
         // Seamless fallback to the OS / browser print dialog (same as the barcode page)
         const fallback = await printViaDialog()
@@ -200,7 +219,13 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
 
     async function printViaDialog(): Promise<boolean> {
       if (config.pageSize === 'Label') {
-        return printLabelsOnRoll(template, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
+        const run = () => printLabelsOnRoll(template!, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
+        if (!browserGuideHidden(effectiveSetup)) {
+          // Paper-size checklist first; the dialog opens from the guide.
+          setGuideJob({ run, rows: Math.ceil(totalLabels / Math.max(1, effectiveSetup.columns)), setup: effectiveSetup })
+          return true
+        }
+        return run()
       }
       return printLabels(
         template,
@@ -221,6 +246,14 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       size="3xl"
     >
       <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto">
+        <DirectLabelPrinterPanel
+          compact
+          setup={activeSetup}
+          printers={printers}
+          selectedId={labelPrinter && isRawLabelPrinter(labelPrinter) ? labelPrinter.id : ''}
+          onSelect={setPrinterId}
+          basePath={`/c/${company?.tenantSlug || ''}`}
+        />
         {/* Template selector */}
         <div className="flex items-center gap-4">
           <div className="flex-1">
@@ -371,6 +404,12 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       <div className="flex items-center justify-between pt-4 mt-4 border-t">
         <span className="text-sm text-gray-500">
           Total: {totalLabels} label{totalLabels !== 1 ? 's' : ''} for {items.length} item{items.length !== 1 ? 's' : ''}
+          <span className="block text-xs text-gray-400">
+            Prints to:{' '}
+            {labelPrinter && isRawLabelPrinter(labelPrinter)
+              ? `${labelPrinter.name}${labelPrinter.transport === 'agent' && labelPrinter.agentTarget ? ` (${labelPrinter.agentTarget})` : ''}`
+              : 'system print dialog (choose the printer there)'}
+          </span>
         </span>
         <div className="flex gap-2">
           <button
@@ -389,6 +428,22 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
           </button>
         </div>
       </div>
+      {guideJob && (
+        <BrowserLabelPrintGuide
+          isOpen
+          setup={guideJob.setup}
+          rows={guideJob.rows}
+          onClose={() => setGuideJob(null)}
+          onAlignmentTest={() => {
+            printAlignmentTestDialog(guideJob.setup).then((ok) => !ok && toast.error('Failed to open print dialog'))
+          }}
+          onContinue={() => {
+            const job = guideJob
+            setGuideJob(null)
+            job.run().then((ok) => !ok && toast.error('Failed to open print dialog'))
+          }}
+        />
+      )}
     </Modal>
   )
 }

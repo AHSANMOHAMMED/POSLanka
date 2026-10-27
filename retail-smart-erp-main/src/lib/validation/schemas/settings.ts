@@ -19,6 +19,22 @@ export const printTemplatesListSchema = z.object({
   documentType: z.string().max(50).optional(),
 })
 
+// 0179: template-designer settings (partial InvoiceTemplateConfig, merged with defaults on read).
+// Images are data URLs (≤ 1 MB each, enforced by the designer), so the whole object is capped at 5 MB.
+// Also accepted as a JSON string: validateBody drops empty strings from objects, and a label or
+// footer text cleared on purpose must stay empty (not fall back to the default).
+const printTemplateConfigSchema = z.union([z.record(z.string(), z.unknown()), z.string().max(5_000_000)])
+  .transform((v, ctx) => {
+    if (typeof v !== 'string') return v
+    try {
+      const parsed: unknown = JSON.parse(v)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+    } catch { /* fall through */ }
+    ctx.addIssue({ code: 'custom', message: 'Invalid template settings' })
+    return z.NEVER
+  })
+  .refine((v) => JSON.stringify(v).length <= 5_000_000, 'Template settings are too large (images must be under 1 MB)')
+
 // POST /api/print-templates
 export const createPrintTemplateSchema = z.object({
   name: shortTextSchema,
@@ -34,6 +50,7 @@ export const createPrintTemplateSchema = z.object({
   headerFields: z.array(z.string().max(100)).max(20).nullish(),
   bodyFields: z.array(z.string().max(100)).max(50).nullish(),
   footerFields: z.array(z.string().max(100)).max(20).nullish(),
+  config: printTemplateConfigSchema.optional(),
   isDefault: z.boolean().default(false),
 })
 
@@ -52,6 +69,7 @@ export const updatePrintTemplateSchema = z.object({
   headerFields: z.array(z.string().max(100)).max(20).nullish(),
   bodyFields: z.array(z.string().max(100)).max(50).nullish(),
   footerFields: z.array(z.string().max(100)).max(20).nullish(),
+  config: printTemplateConfigSchema.optional(),
   isDefault: z.boolean().optional(),
   isActive: z.boolean().optional(),
 })

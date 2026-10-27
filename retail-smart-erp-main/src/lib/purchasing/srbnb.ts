@@ -50,7 +50,7 @@ export async function unbilledSrbnb(
   const exclude = excludePurchaseId || null
   const list = rows<{ item_id: string; pq: string; pv: string; cq: string; cv: string }>(await tx.execute(sql`
     WITH posted AS (
-      SELECT ri.item_id, SUM(ri.quantity_accepted) AS q, SUM(ROUND(ri.quantity_accepted * COALESCE(ri.unit_cost, 0), 2)) AS v
+      SELECT ri.item_id, SUM(ri.quantity_accepted * ri.uom_factor) AS q, SUM(ROUND(ri.quantity_accepted * COALESCE(ri.unit_cost, 0), 2)) AS v
       FROM purchase_receipt_items ri
       JOIN purchase_receipts r ON r.id = ri.receipt_id
       WHERE r.tenant_id = ${tenantId}
@@ -88,9 +88,11 @@ export interface ClearingLine {
   /** purchase_items.id (when the line already exists) */
   lineId?: string
   itemId: string | null
+  /** 0184: base units (quantity × uom_factor) */
   qty: number
+  /** 0184: price per base unit (line unit price / uom_factor) */
   unitPrice: number
-  /** Quantity of this line taken from the PO's GRN stock (not received again by the invoice). */
+  /** Base quantity of this line taken from the PO's GRN stock (not received again by the invoice). */
   fromGrn: number
 }
 

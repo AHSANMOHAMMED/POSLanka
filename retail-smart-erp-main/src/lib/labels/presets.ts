@@ -243,7 +243,7 @@ export const LABEL_PRESETS: LabelPreset[] = [
     id: 'auto-parts',
     name: 'Parts Label',
     description: 'Name + OEM# + barcode + price (100 x 30 mm)',
-    businessTypes: ['auto_service', 'dealership'],
+    businessTypes: ['auto_service', 'dealership', 'hardware', 'electronics'],
     widthMm: 100,
     heightMm: 30,
     labelShape: 'rectangle',

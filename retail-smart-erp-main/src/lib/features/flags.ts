@@ -26,6 +26,8 @@ export const FEATURE_FLAGS = [
   'commissions',
   'customer_display',
   'cheques',
+  'recurring_invoices',
+  'projects',
   // Stock
   'multi_warehouse',
   'stock_takes',
@@ -43,6 +45,11 @@ export const FEATURE_FLAGS = [
   // Industry
   'pharmacy',
   'appointments',
+  'installments',
+  'deliveries',
+  'warranty_claims',
+  'print_jobs',
+  'hr_attendance',
   // Communication & platform
   'whatsapp',
   'sms',
@@ -104,6 +111,12 @@ export const FEATURE_DEFS: FeatureDef[] = [
   { key: 'cheques', group: 'Sales & POS', default: true, label: 'Cheques',
     description: 'Take and issue cheques (post-dated too): cheque payments at the POS, against credit and to suppliers; cheques register with deposit / clear / bounce and due reminders.',
     hrefs: ['/accounting/cheques'], api: ['/api/cheques'] },
+  { key: 'recurring_invoices', group: 'Sales & POS', default: true, label: 'Recurring invoices',
+    description: 'Invoice profiles that raise an invoice for a customer every week / month / N months / year (draft or on account), with run history.',
+    hrefs: ['/recurring-invoices'], api: ['/api/recurring-invoices'] },
+  { key: 'projects', group: 'Sales & POS', default: true, label: 'Projects & time tracking',
+    description: 'Client projects with tasks, staff rates, timesheets and a running timer; bill unbilled hours or a fixed price as an invoice.',
+    hrefs: ['/projects'], api: ['/api/projects', '/api/time-entries'] },
 
   // ------------------------------------------------------------------ Stock
   { key: 'multi_warehouse', group: 'Stock', default: false, label: 'Multiple branches / warehouses',
@@ -163,6 +176,23 @@ export const FEATURE_DEFS: FeatureDef[] = [
   { key: 'appointments', group: 'Industry', default: true, label: 'Appointments',
     description: 'Book customers in for service.', businessTypes: ['auto_service', 'dealership'],
     hrefs: ['/appointments'], api: ['/api/appointments'] },
+  { key: 'installments', group: 'Industry', default: true, label: 'Hire purchase / installments',
+    description: 'Installment plans on a sale: down payment, interest, monthly or weekly schedule, guarantor, receipts, late fees, overdue list, early settlement.',
+    businessTypes: ['electronics', 'hardware', 'retail'], hrefs: ['/installments'], api: ['/api/installments'] },
+  { key: 'deliveries', group: 'Industry', default: true, label: 'Deliveries & installation',
+    description: 'Schedule delivery (and installation) of sold goods: date and slot, vehicle, driver, technician, proof of delivery, delivery notes.',
+    businessTypes: ['electronics', 'hardware', 'retail', 'supermarket'], hrefs: ['/deliveries'], api: ['/api/deliveries'] },
+  { key: 'warranty_claims', group: 'Industry', default: true, label: 'Warranty claims & service',
+    description: 'Look up a unit by serial / IMEI, invoice or phone, check warranty, log repairs and replacements, print job sheets.',
+    businessTypes: ['electronics', 'retail', 'hardware'], hrefs: ['/warranty-claims'], api: ['/api/warranty-claims'] },
+  { key: 'print_jobs', group: 'Industry', default: true, label: 'Print & photo job orders',
+    description: 'Job orders by size and quantity with advance payments, due dates and ready-for-pickup tracking.',
+    businessTypes: ['print_studio'], hrefs: ['/print-jobs'], api: ['/api/print-jobs'] },
+  { key: 'hr_attendance', group: 'Industry', default: true, label: 'Attendance, shifts & leave',
+    description: 'Staff attendance (fingerprint devices or manual), work shifts, leave and holidays.',
+    hrefs: ['/hr/attendance', '/hr/shifts', '/hr/attendance-devices', '/hr/leave', '/hr/holidays'],
+    api: ['/api/hr/attendance', '/api/hr/attendance-devices', '/api/hr/shifts', '/api/hr/shift-assignments', '/api/hr/holidays',
+      '/api/hr/leave-types', '/api/hr/leave-requests', '/api/hr/leave-balances'] },
 
   // ------------------------------------------------------------------ Communication & platform
   // Both also gate the paid messaging add-on (src/lib/messaging): sending refuses while the switch is
@@ -183,6 +213,45 @@ export const FEATURE_FLAG_LABELS = Object.fromEntries(FEATURE_DEFS.map((d) => [d
 
 /** Default switches for new vendors and for keys a vendor has never saved */
 export const DEFAULT_VENDOR_FEATURE_FLAGS = Object.fromEntries(FEATURE_DEFS.map((d) => [d.key, d.default])) as FeatureFlagsMap
+
+/**
+ * Switches a new vendor of each business type starts with, on top of the defaults (the super
+ * admin can still change any of them later). Only differences from the defaults are listed.
+ */
+export const BUSINESS_TYPE_FEATURE_PRESETS: Record<string, Partial<FeatureFlagsMap>> = {
+  retail: { print_jobs: false },
+  supermarket: { installments: false, warranty_claims: false, print_jobs: false },
+  pharmacy: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, variants: false },
+  restaurant: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, serial_numbers: false, weighing_scale: false, layaways: false },
+  auto_service: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, weighing_scale: false },
+  dealership: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, weighing_scale: false },
+  // Big-ticket appliance / phone shops: hire purchase, delivery & installation, serial / IMEI warranty
+  electronics: {
+    installments: true, deliveries: true, warranty_claims: true, serial_numbers: true,
+    weighing_scale: false, batches_expiry: false, print_jobs: false,
+  },
+  // Hardware: loose goods by weight / length, credit customers, site deliveries
+  hardware: {
+    installments: true, deliveries: true, warranty_claims: true, weighing_scale: true, credit_customer: true,
+    batches_expiry: false, print_jobs: false,
+  },
+  print_studio: {
+    print_jobs: true, installments: false, deliveries: false, warranty_claims: false,
+    weighing_scale: false, batches_expiry: false, serial_numbers: false, layaways: false,
+  },
+  // Offices: staff, attendance, payroll and billing; no counter-retail extras
+  office: {
+    hr_payroll: true, hr_attendance: true,
+    installments: false, deliveries: false, warranty_claims: false, print_jobs: false,
+    weighing_scale: false, batches_expiry: false, serial_numbers: false, variants: false, layaways: false,
+    customer_display: false, loyalty: false, gift_cards: false, promotions: false, barcode_labels: false,
+  },
+}
+
+/** The switches a new vendor of this business type starts with (defaults + the type's preset). */
+export function defaultFeatureFlagsForBusinessType(businessType: string | null | undefined): FeatureFlagsMap {
+  return { ...DEFAULT_VENDOR_FEATURE_FLAGS, ...((businessType && BUSINESS_TYPE_FEATURE_PRESETS[businessType]) || {}) }
+}
 
 export function getFeatureDef(flag: FeatureFlag): FeatureDef | undefined {
   return DEF_BY_KEY.get(flag)
@@ -220,13 +289,17 @@ export function featureForApiPath(path: string): FeatureFlag | null {
   return null
 }
 
-/** The switch that hides a page (relative href, query ignored), if any */
+/** The switch that hides a page (relative href, query ignored), if any. The most specific href
+ * wins, so /hr/attendance follows hr_attendance while the rest of /hr follows hr_payroll. */
 export function featureForHref(href: string): FeatureFlag | null {
   const path = href.split('?')[0]
+  let best: { key: FeatureFlag; len: number } | null = null
   for (const d of FEATURE_DEFS) {
-    if (d.hrefs?.some((h) => path === h || path.startsWith(`${h}/`))) return d.key
+    for (const h of d.hrefs || []) {
+      if ((path === h || path.startsWith(`${h}/`)) && (!best || h.length > best.len)) best = { key: d.key, len: h.length }
+    }
   }
-  return null
+  return best?.key ?? null
 }
 
 /** The switch that hides a whole module (navbar tab), if any */

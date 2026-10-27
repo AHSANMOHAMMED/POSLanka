@@ -19,6 +19,9 @@ import { formatDate } from '@/lib/utils/date-format'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { LinkField, LinkFieldOption } from '@/components/ui/link-field'
 import { formatItemLabel, buildItemSearchOption } from '@/lib/utils/item-display'
+import { LineUnitSelect } from '@/components/items/LineUnitSelect'
+import { type LineUnitFields } from '@/hooks/useItemUnitOptions'
+import { unitAllowsFraction } from '@/lib/units/conversions'
 import { DocumentCommentsAndActivity } from '@/components/ui/document-comments'
 import { PrintPreview, PurchaseOrderTemplate } from '@/components/print'
 import { DEFAULT_PRINT_SETTINGS } from '@/lib/print/types'
@@ -36,7 +39,13 @@ interface OrderItem {
   unitPrice: string
   tax: string
   total: string
+  /** 0184: unit of the line (null = base unit); quantity / receivedQuantity / unitPrice are in it */
+  uom?: string | null
+  uomFactor?: string | null
+  baseUnit?: string | null
 }
+
+const unitOf = (i: { uom?: string | null; baseUnit?: string | null }) => i.uom || i.baseUnit || ''
 
 interface PurchaseOrder {
   id: string
@@ -96,7 +105,7 @@ interface Supplier {
   name: string
 }
 
-interface EditableItem {
+interface EditableItem extends LineUnitFields {
   id: string
   itemId: string
   itemName: string
@@ -131,6 +140,8 @@ interface ReceiptRecord {
     quantityReceived: string
     quantityAccepted: string
     quantityRejected: string
+    uom?: string | null
+    baseUnit?: string | null
   }[]
 }
 
@@ -244,6 +255,11 @@ export default function PurchaseOrderDetailPage() {
           quantity: parseFloat(item.quantity) || 0,
           unitPrice: parseFloat(item.unitPrice) || 0,
           total: parseFloat(item.total) || 0,
+          // 0184: the saved unit comes back as entered
+          baseUnit: item.baseUnit || null,
+          uom: item.uom || '',
+          uomFactor: Number(item.uomFactor) || 1,
+          basePrice: (parseFloat(item.unitPrice) || 0) / (Number(item.uomFactor) || 1),
         })))
         setHasUnsavedChanges(false)
         try { setTags(data.tags ? JSON.parse(data.tags) : []) } catch { setTags([]) }
@@ -439,11 +455,13 @@ export default function PurchaseOrderDetailPage() {
           const res = await fetch(`/api/purchase-orders/${id}/items`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            // 0184: the line is saved in the unit it was entered in (box of 12, 500 g ...)
             body: JSON.stringify({
               itemId: item.itemId,
               itemName: item.itemName,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
+              uom: item.uom || null,
               tax: 0,
             }),
           })
@@ -460,6 +478,7 @@ export default function PurchaseOrderDetailPage() {
             body: JSON.stringify({
               quantity: item.quantity,
               unitPrice: item.unitPrice,
+              uom: item.uom || null,
               tax: 0,
             }),
           })
@@ -644,6 +663,7 @@ export default function PurchaseOrderDetailPage() {
             itemName: item.itemName,
             quantity: receivedQty,
             unitPrice: parseFloat(item.unitPrice),
+            uom: item.uom || null,
             tax: Math.round(itemTax * 100) / 100,
           }
         })
@@ -767,6 +787,11 @@ export default function PurchaseOrderDetailPage() {
         itemBarcode: option.data?.barcode as string || null,
         itemPartNumber: (option.data?.oemPartNumber || option.data?.sku || option.data?.pluCode) as string || null,
         unitPrice: costPrice,
+        baseUnit: (option.data?.unit as string) || null,
+        basePrice: costPrice,
+        uom: '',
+        uomFactor: 1,
+        uomIsItemUom: false,
         total: newItems[index].quantity * costPrice,
       }
     } else if (field === 'quantity') {
@@ -814,6 +839,9 @@ export default function PurchaseOrderDetailPage() {
         itemBarcode: item.barcode || null,
         itemPartNumber: item.oemPartNumber || item.pluCode || null,
         unitPrice: costPrice,
+        basePrice: costPrice,
+        uom: '',
+        uomFactor: 1,
         total: newItems[pendingItemRowIndex].quantity * costPrice,
       }
       setEditingItems(newItems)
@@ -1411,6 +1439,7 @@ export default function PurchaseOrderDetailPage() {
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase w-10">No.</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-20">Ordered</th>
+                        {isDraft && <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase w-28">Unit</th>}
                         {!isDraft && (
                           <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-20">Received</th>
                         )}
@@ -1422,7 +1451,7 @@ export default function PurchaseOrderDetailPage() {
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                       {editingItems.length === 0 ? (
                         <tr>
-                          <td colSpan={isDraft ? 6 : 6} className="px-3 py-8 text-center text-gray-500">
+                          <td colSpan={isDraft ? 7 : 6} className="px-3 py-8 text-center text-gray-500">
                             <Package size={24} className="mx-auto mb-2 text-gray-300" />
                             <p className="text-sm">No items</p>
                           </td>
@@ -1470,12 +1499,29 @@ export default function PurchaseOrderDetailPage() {
                                     type="number"
                                     value={item.quantity}
                                     onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                                    min="0"
+                                    step={!item.isNew || unitAllowsFraction(item.uom || item.baseUnit) ? 'any' : '1'}
                                     className="w-16 px-2 py-1 text-right text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                                   />
                                 ) : (
-                                  <span className="text-sm">{item.quantity}</span>
+                                  <span className="text-sm">{item.quantity} <span className="text-xs text-gray-500 dark:text-gray-400">{unitOf(item)}</span></span>
                                 )}
                               </td>
+                              {isDraft && (
+                                <td className="px-2 py-2">
+                                  <LineUnitSelect
+                                    itemId={item.itemId}
+                                    baseUnit={item.baseUnit}
+                                    value={item.uom}
+                                    basePrice={item.basePrice ?? item.unitPrice}
+                                    priceMode="cost"
+                                    onChange={(patch) => {
+                                      setEditingItems((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch, total: row.quantity * patch.unitPrice } : row)))
+                                      setHasUnsavedChanges(true)
+                                    }}
+                                  />
+                                </td>
+                              )}
                               {!isDraft && (
                                 <td className="px-3 py-2 text-right">
                                   <span className={`text-sm font-medium ${
@@ -1618,7 +1664,7 @@ export default function PurchaseOrderDetailPage() {
                                 <div key={item.id} className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 pl-2 border-l-2 border-gray-200 dark:border-gray-600">
                                   <span>{formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemOemPartNumber, pluCode: item.itemPluCode }, businessType)}</span>
                                   <span className="font-medium">
-                                    {parseFloat(item.quantityReceived).toFixed(0)} received
+                                    {parseFloat(item.quantityReceived)} {unitOf(item)} received
                                     {parseFloat(item.quantityRejected) > 0 && (
                                       <span className="text-red-500 ml-1">({parseFloat(item.quantityRejected).toFixed(0)} rejected)</span>
                                     )}
@@ -1742,7 +1788,8 @@ export default function PurchaseOrderDetailPage() {
           itemId: item.itemId,
           itemName: item.itemName,
           itemSku: item.itemSku,
-          displayName: formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemOemPartNumber, pluCode: item.itemPluCode }, businessType),
+          displayName: formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemOemPartNumber, pluCode: item.itemPluCode }, businessType)
+            + (unitOf(item) ? ` (${unitOf(item)})` : ''),
           orderedQty: parseFloat(item.quantity),
           receivedQty: parseFloat(item.receivedQuantity || '0'),
         }))}
@@ -1798,6 +1845,7 @@ export default function PurchaseOrderDetailPage() {
               itemName: item.itemName,
               itemSku: item.itemSku,
               quantity: item.quantity,
+              uom: unitOf(item) || null,
               receivedQuantity: item.receivedQuantity,
               unitPrice: item.unitPrice,
               tax: item.tax,

@@ -1,6 +1,6 @@
 'use client'
 
-import { retailCategories } from '@/lib/setup/seed-data'
+import { retailCategories, type CategorySeed } from '@/lib/setup/seed-data'
 import type { SetupWizardData } from '@/lib/setup/create-seed-data'
 import { useState, useEffect } from 'react'
 import { Plus, X } from 'lucide-react'
@@ -14,9 +14,11 @@ interface RetailConfigProps {
   suggestionsLoading?: boolean
   dismissed?: Set<string>
   onDismiss?: (key: string) => void
+  /** Category list to offer (electronics, hardware, print studio, office reuse this step) */
+  categorySeeds?: CategorySeed[]
 }
 
-export function RetailConfig({ data, onChange, suggestions, suggestionsLoading, dismissed, onDismiss }: RetailConfigProps) {
+export function RetailConfig({ data, onChange, suggestions, suggestionsLoading, dismissed, onDismiss, categorySeeds = retailCategories }: RetailConfigProps) {
   const [customCategory, setCustomCategory] = useState('')
 
   const toggleCategory = (name: string) => {
@@ -39,14 +41,14 @@ export function RetailConfig({ data, onChange, suggestions, suggestionsLoading, 
   // Initialize with defaults if empty - using useEffect to avoid render-time state updates
   useEffect(() => {
     if (data.selectedCategories.length === 0) {
-      const defaults = retailCategories.filter(c => c.selected).map(c => c.name)
+      const defaults = categorySeeds.filter(c => c.selected).map(c => c.name)
       onChange({ selectedCategories: defaults })
     }
-  }, [data.selectedCategories.length, onChange])
+  }, [data.selectedCategories.length, onChange, categorySeeds])
 
   const allCategories = [
-    ...retailCategories.map(c => c.name),
-    ...data.selectedCategories.filter(c => !retailCategories.find(r => r.name === c)),
+    ...categorySeeds.map(c => c.name),
+    ...data.selectedCategories.filter(c => !categorySeeds.find(r => r.name === c)),
   ]
 
   return (
@@ -115,10 +117,10 @@ export function RetailConfig({ data, onChange, suggestions, suggestionsLoading, 
       </div>
 
       {/* Custom categories tags */}
-      {data.selectedCategories.filter(c => !retailCategories.find(r => r.name === c)).length > 0 && (
+      {data.selectedCategories.filter(c => !categorySeeds.find(r => r.name === c)).length > 0 && (
         <div className="flex flex-wrap gap-2 mt-2">
           {data.selectedCategories
-            .filter(c => !retailCategories.find(r => r.name === c))
+            .filter(c => !categorySeeds.find(r => r.name === c))
             .map(name => (
               <span key={name} className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-xs">
                 {name}

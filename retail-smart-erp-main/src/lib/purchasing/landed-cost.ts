@@ -60,8 +60,8 @@ export async function loadLandedCostSources(
   const out: LandedCostSourceLine[] = []
   if (grnIds.length > 0) {
     const list = rows<{ id: string; receipt_no: string; status: string; item_id: string | null; item_name: string; qty: string; unit_cost: string | null; po_price: string | null; has_stock: boolean }>(await tx.execute(sql`
-      SELECT r.id, r.receipt_no, r.status, ri.item_id, ri.item_name, ri.quantity_accepted AS qty, ri.unit_cost,
-             poi.unit_price AS po_price,
+      SELECT r.id, r.receipt_no, r.status, ri.item_id, ri.item_name, ri.quantity_accepted * ri.uom_factor AS qty,
+             ri.unit_cost / ri.uom_factor AS unit_cost, poi.unit_price / poi.uom_factor AS po_price,
              EXISTS (SELECT 1 FROM stock_movements m WHERE m.tenant_id = r.tenant_id AND m.reference_type = 'purchase_order_receive'
                      AND m.idempotency_key LIKE 'po-receive:' || r.id::text || ':%') AS has_stock
       FROM purchase_receipts r
@@ -83,7 +83,9 @@ export async function loadLandedCostSources(
   }
   if (purchaseIds.length > 0) {
     const list = rows<{ id: string; purchase_no: string; status: string; is_return: boolean; item_id: string | null; item_name: string; qty: string; unit_price: string }>(await tx.execute(sql`
-      SELECT p.id, p.purchase_no, p.status, p.is_return, pi.item_id, pi.item_name, pi.quantity AS qty, pi.unit_price
+      -- 0184: base units / cost per base unit
+      SELECT p.id, p.purchase_no, p.status, p.is_return, pi.item_id, pi.item_name, pi.quantity * pi.uom_factor AS qty,
+             pi.unit_price / pi.uom_factor AS unit_price
       FROM purchases p
       JOIN purchase_items pi ON pi.purchase_id = p.id
       WHERE p.tenant_id = ${tenantId} AND p.id IN (${sql.join(purchaseIds.map(i => sql`${i}::uuid`), sql`, `)})

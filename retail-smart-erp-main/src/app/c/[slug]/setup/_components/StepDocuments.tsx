@@ -39,6 +39,14 @@ const getDefaultPrefixes = (businessType: string) => {
       return { invoice: 'SM-', quotation: 'SMQ-' }
     case 'pharmacy':
       return { invoice: 'PH-', quotation: 'PHQ-' }
+    case 'electronics':
+      return { invoice: 'EL-', quotation: 'ELQ-' }
+    case 'hardware':
+      return { invoice: 'HW-', quotation: 'HWQ-' }
+    case 'print_studio':
+      return { invoice: 'PS-', quotation: 'PSQ-' }
+    case 'office':
+      return { invoice: 'OF-', quotation: 'OFQ-' }
     case 'retail':
     default:
       return { invoice: 'INV-', quotation: 'QUO-' }

@@ -21,6 +21,8 @@ import { postSaleToGL } from '@/lib/accounting/auto-post'
 import { requireAccountingConfig } from '@/lib/accounting/validate-config'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { assertRecordBranch } from '@/lib/auth/branch-access'
+import { localDateString, saleLineWarranty } from '@/lib/sales/warranty'
+import { toBaseQty } from '@/lib/units/resolve-line-units'
 
 // POST create sales invoice from sales order
 export async function POST(
@@ -143,7 +145,11 @@ export async function POST(
         taxRate: item.taxRate,
         total: itemTotal.toString(),
         soItemId: item.id,
+        // 0184: the invoice line keeps the order's unit; fulfillQty is in it, stock moves base units
+        uom: item.uom,
+        uomFactor: item.uomFactor || '1',
         fulfillQty,
+        baseQty: toBaseQty(fulfillQty, item.uomFactor),
       }
     }).filter(item => item.fulfillQty > 0)
 
@@ -198,6 +204,14 @@ export async function POST(
       createdBy: session.user.id,
     }).returning()
 
+    // 0179: warranty of each line (items.warranty_months) runs from the invoice date
+    const saleDateLocal = localDateString(newSale.createdAt ?? new Date())
+    const warrantyItemIds = [...new Set(invoiceItems.map(i => i.itemId).filter((v): v is string => !!v))]
+    const warrantyRows = warrantyItemIds.length
+      ? await tx.select({ id: itemsTable.id, warrantyMonths: itemsTable.warrantyMonths }).from(itemsTable).where(inArray(itemsTable.id, warrantyItemIds))
+      : []
+    const warrantyByItem = new Map(warrantyRows.map(r => [r.id, r]))
+
     // Create sale items
     const saleItemsData = invoiceItems.map(item => ({
       tenantId: session.user.tenantId,
@@ -212,6 +226,9 @@ export async function POST(
       taxAmount: item.taxAmount,
       taxRate: item.taxRate,
       total: item.total,
+      uom: item.uom,
+      uomFactor: item.uomFactor,
+      ...saleLineWarranty(item.itemId ? warrantyByItem.get(item.itemId) : null, saleDateLocal),
     }))
     // One insert per line so each sale line id is known (batch allocations reference it)
     const insertedLines: Array<{ id: string }> = []
@@ -235,7 +252,8 @@ export async function POST(
 
       if (!itemRecord?.trackStock) continue
 
-      const qty = item.fulfillQty
+      // 0184: base units (fulfillQty is in the order line's unit)
+      const qty = item.baseQty
       if (!(qty > 0)) continue
 
       // Single stock writer (locks, enforces non-negative, signed ledger row)
@@ -295,7 +313,7 @@ export async function POST(
     const totalCOGS = roundCurrency(invoiceItems.reduce((sum, i) => {
       const c = i.itemId ? costById.get(i.itemId) : undefined
       if (!c || c.isGiftCard) return sum
-      return sum + roundCurrency((parseFloat(c.costPrice || '0') || 0) * i.fulfillQty)
+      return sum + roundCurrency((parseFloat(c.costPrice || '0') || 0) * i.baseQty)
     }, 0))
     await postSaleToGL(tx, session.user.tenantId, {
       saleId: newSale.id,

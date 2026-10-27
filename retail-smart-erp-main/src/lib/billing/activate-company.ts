@@ -33,6 +33,7 @@ import { eq, sql } from 'drizzle-orm'
 import { getCurrencyByCountry } from '@/lib/utils/countries'
 import { getNextPeriodDates } from '@/lib/billing/proration'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
+import { BUSINESS_TYPE_FEATURE_PRESETS } from '@/lib/features/flags'
 
 // Valid plan enum values from schema
 const VALID_PLANS = ['trial', 'basic', 'standard', 'premium'] as const
@@ -57,7 +58,7 @@ export interface PendingCompanyData {
   email: string | null
   phone: string | null
   address: string | null
-  businessType: 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'dealership' | 'pharmacy'
+  businessType: 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'dealership' | 'pharmacy' | 'electronics' | 'hardware' | 'print_studio' | 'office'
   country: string
   dateFormat: string
   timeFormat: string
@@ -164,10 +165,12 @@ export async function activateCompanyFromPending(
       status: 'active',
       settings: {
         featureFlags: {
+          // the business type's preset (electronics: installments, deliveries …; office: HR)
+          ...(BUSINESS_TYPE_FEATURE_PRESETS[pending.businessType] || {}),
           accounting: true,
           purchase: true,
           credit_customer: true,
-          loyalty: true,
+          loyalty: BUSINESS_TYPE_FEATURE_PRESETS[pending.businessType]?.loyalty ?? true,
           multi_warehouse: false,
           advanced_reports: true,
           whatsapp: true,

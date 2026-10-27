@@ -10,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updatePurchaseItemSchema } from '@/lib/validation/schemas/purchases'
 import { z } from 'zod'
+import { resolveLineUnits, LineUnitError } from '@/lib/units/resolve-line-units'
 
 // PUT update item in purchase
 export async function PUT(
@@ -30,7 +31,7 @@ export async function PUT(
     const { id, itemId } = paramsParsed.data
     const parsed = await validateBody(request, updatePurchaseItemSchema)
     if (!parsed.success) return parsed.response
-    const { quantity, unitPrice, tax } = parsed.data
+    const { quantity, unitPrice, tax, uom } = parsed.data
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -80,6 +81,18 @@ export async function PUT(
 
       if (tax !== undefined) {
         updateData.tax = tax.toString()
+      }
+
+      // 0184: unit change (factor resolved server-side, never from the client)
+      if (uom !== undefined) {
+        try {
+          const [u] = await resolveLineUnits(db, [{ itemId: existingItem.itemId, uom, itemName: existingItem.itemName }])
+          ;(updateData as Record<string, string | null>).uom = u.uom
+          updateData.uomFactor = String(u.factor)
+        } catch (e) {
+          if (e instanceof LineUnitError) return NextResponse.json({ error: e.message, code: 'UOM_NOT_FOUND' }, { status: 400 })
+          throw e
+        }
       }
 
       // Calculate new total

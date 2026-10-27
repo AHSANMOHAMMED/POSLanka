@@ -23,12 +23,14 @@ import { nextDocumentNumber } from '@/lib/inventory/item-codes'
 import { validateSerialAvailability, allocateSerials } from '@/lib/inventory/serial-numbers'
 import type { DbTx } from '@/lib/inventory/db-types'
 import { roundCurrency } from '@/lib/utils/currency'
+import { normalizeUnit, standardFactor } from '@/lib/units/conversions'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { createReturnInTx, SaleFlowError, type CreateReturnResult, type ReturnContext, type SaleRow } from './returns'
 import { allocateSaleLineBatches, type BatchAllocation } from '@/lib/inventory/batches'
 import { getTenantSalesSettings, type RestockMode } from './return-settings'
+import { localDateString, saleLineWarranty, applySerialWarranty } from './warranty'
 
 export interface ExchangeCartItem {
   itemId?: string | null
@@ -123,13 +125,16 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
     let uom: string | null = (c.uom || '').trim().toLowerCase() || null
     if (uom && uom === (item.unit || '').trim().toLowerCase()) uom = null
     const conv = uom ? uomOf.get(`${item.id}|${uom}`) : undefined
-    if (uom && !conv) throw new SaleFlowError(400, 'UOM_NOT_FOUND', `"${item.name}" has no "${uom}" unit`)
-    const factor = conv ? Number(conv.factor) || 1 : 1
+    // A standard unit of the same measure (g for a kg item) needs no item_uoms row
+    const std = uom && !conv ? standardFactor(uom, item.unit || '') : null
+    if (uom && !conv && std == null) throw new SaleFlowError(400, 'UOM_NOT_FOUND', `"${item.name}" has no "${uom}" unit`)
+    if (std != null) uom = normalizeUnit(uom)
+    const factor = conv ? Number(conv.factor) || 1 : std ?? 1
     if (factor !== 1 && item.trackSerialNumbers) {
       throw new SaleFlowError(400, 'SERIAL_UOM', `"${item.name}" is serial-tracked: sell it in its base unit`)
     }
-    const listPrice = conv
-      ? (conv.sellingPrice != null ? Number(conv.sellingPrice) : roundCurrency(Number(item.sellingPrice) * factor))
+    const listPrice = conv || std != null
+      ? (conv?.sellingPrice != null ? Number(conv.sellingPrice) : roundCurrency(Number(item.sellingPrice) * factor))
       : Number(item.sellingPrice)
     return {
       item, name: c.name || item.name, qty, unitPrice, discount, total: roundCurrency(unitPrice * qty - discount), serialIds,
@@ -212,9 +217,12 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
   const saleLines: ExchangeResult['saleLines'] = []
   const stockInputs: StockChangeInput[] = []
   const batchLines: Array<{ lineIndex: number; saleItemId: string; c: (typeof cart)[number] }> = []
+  // 0179: new lines of an exchange carry their warranty like a POS sale (from today's local date)
+  const saleDateLocal = localDateString(sale.createdAt ?? new Date())
   for (let i = 0; i < cart.length; i++) {
     const c = cart[i]
     const per = taxResult.perItemTax[i]
+    const lineWarranty = c.qty > 0 ? saleLineWarranty(c.item, saleDateLocal) : { warrantyMonths: null, warrantyUntil: null }
     const [row] = await tx.insert(saleItems).values({
       tenantId,
       saleId: sale.id,
@@ -231,6 +239,8 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
       listPrice: String(c.listPrice),
       uom: c.uom,
       uomFactor: String(c.factor),
+      warrantyMonths: lineWarranty.warrantyMonths,
+      warrantyUntil: lineWarranty.warrantyUntil,
     }).returning({ id: saleItems.id })
     saleLines.push({ id: row.id, itemId: c.item.id, itemName: c.name, quantity: c.qty, unitPrice: c.unitPrice, total: c.total, taxAmount: per?.taxAmount ?? 0, batches: [] })
     if (c.item.trackBatches) batchLines.push({ lineIndex: saleLines.length - 1, saleItemId: row.id, c })
@@ -241,6 +251,7 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
         tenantId, serialNumberIds: c.serialIds, newStatus: 'sold',
         referenceType: 'sale', referenceId: sale.id, changedBy: userId,
       })
+      await applySerialWarranty(tx, c.serialIds, saleDateLocal, lineWarranty.warrantyUntil)
     }
     if (c.item.trackStock) {
       stockInputs.push({

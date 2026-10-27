@@ -2,7 +2,8 @@
 
 import { useState, useCallback } from 'react'
 import Link from 'next/link'
-import { Home, ChevronRight, Plus, Star, Pencil, Trash2, Loader2, FileText, Sparkles } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Home, ChevronRight, Plus, Star, Pencil, Trash2, Loader2, FileText, Sparkles, Palette } from 'lucide-react'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { useRealtimeData } from '@/hooks'
 import { toast } from '@/components/ui/toast'
@@ -39,13 +40,18 @@ const DOCUMENT_TYPES = [
   { value: 'work_order', label: 'Work Order' },
   { value: 'estimate', label: 'Estimate' },
   { value: 'invoice', label: 'Invoice' },
+  { value: 'quotation', label: 'Quotation' },
   { value: 'purchase_order', label: 'Purchase Order' },
   { value: 'purchase_invoice', label: 'Purchase Invoice' },
   { value: 'stock_transfer', label: 'Stock Transfer' },
 ]
 
+/** Document types laid out by the A4 template designer (src/lib/print/invoice-template.ts). */
+const DESIGNER_DOC_TYPES = ['invoice', 'sales_invoice', 'quotation', 'estimate']
+
 export default function PrintTemplatesPage() {
   const { tenantSlug, tenantName } = useCompany()
+  const router = useRouter()
   const [templates, setTemplates] = useState<PrintTemplate[]>([])
   const [letterHeads, setLetterHeads] = useState<LetterHead[]>([])
   const [loading, setLoading] = useState(true)
@@ -139,9 +145,13 @@ export default function PrintTemplatesPage() {
 
       if (res.ok) {
         toast.success(editingId ? 'Template updated' : 'Template created')
+        const saved = await res.json().catch(() => null) as { id?: string } | null
+        const openDesigner = !editingId && saved?.id && DESIGNER_DOC_TYPES.includes(form.documentType)
         setShowModal(false)
         resetForm()
         fetchData()
+        // New invoice / quotation templates open straight in the designer
+        if (openDesigner) router.push(`/c/${tenantSlug}/settings/print-templates/${saved!.id}`)
       } else {
         const err = await res.json()
         toast.error(err.error || 'Failed to save')
@@ -263,6 +273,11 @@ export default function PrintTemplatesPage() {
                     <button onClick={() => handleSetDefault(t.id)} className="p-2 text-gray-400 hover:text-yellow-500 transition-colors" title="Set as default">
                       <Star size={16} />
                     </button>
+                  )}
+                  {DESIGNER_DOC_TYPES.includes(t.documentType) && (
+                    <Link href={`/c/${tenantSlug}/settings/print-templates/${t.id}`} className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-900/20 rounded hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors" title="Open template designer">
+                      <Palette size={14} /> Design
+                    </Link>
                   )}
                   <button onClick={() => openEdit(t)} className="p-2 text-gray-400 hover:text-blue-500 transition-colors" title="Edit">
                     <Pencil size={16} />

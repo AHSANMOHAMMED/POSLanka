@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     const branchError = await requireAllBranches(session)
     if (branchError) return branchError
 
-    if (!['retail', 'supermarket', 'pharmacy'].includes(session.user.businessType)) {
+    if (!['retail', 'supermarket', 'pharmacy', 'electronics', 'hardware', 'print_studio'].includes(session.user.businessType)) {
       return NextResponse.json({ error: 'This report is for shops (retail, supermarket, pharmacy)' }, { status: 403 })
     }
 

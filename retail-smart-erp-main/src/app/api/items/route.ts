@@ -422,6 +422,8 @@ export async function POST(request: NextRequest) {
       pluCode, shelfLifeDays, storageTemp, expiryDate,
       // Pharmacy fields
       genericName, strength, dosageForm, drugSchedule,
+      // Print studio pricing
+      pricingMode, areaUnit, minChargeArea,
       // Gift card
       isGiftCard,
       // Tax template
@@ -508,6 +510,10 @@ export async function POST(request: NextRequest) {
           strength: strength || null,
           dosageForm: dosageForm || null,
           drugSchedule: drugSchedule || null,
+          // Print studio pricing (drizzle/0182)
+          pricingMode: pricingMode || 'unit',
+          areaUnit: areaUnit || 'sqft',
+          minChargeArea: minChargeArea !== undefined && minChargeArea !== null && minChargeArea !== '' && Number(minChargeArea) > 0 ? String(minChargeArea) : null,
           // Gift card
           isGiftCard: isGiftCard || false,
           // Tax template

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { currentOpenShiftId } from '@/lib/pos/shift-collections'
 import { requirePermission } from '@/lib/auth/roles'
 import { hasAnyPermission, LAYAWAY_VIEW_PERMISSIONS } from '@/lib/auth/field-access'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
@@ -296,6 +297,8 @@ export async function POST(request: NextRequest) {
         paymentMethod: 'cash', // Default to cash for initial deposit
         reference: 'Initial deposit',
         receivedBy: session.user.id,
+        // 0187: the deposit goes into this user's drawer / open shift (none → no shift)
+        posOpeningEntryId: await currentOpenShiftId(tx, session.user.id),
       })
 
       // Post deposit to GL: Dr Cash, Cr Advance Received

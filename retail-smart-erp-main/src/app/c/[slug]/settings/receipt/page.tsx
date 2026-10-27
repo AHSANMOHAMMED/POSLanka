@@ -64,6 +64,7 @@ const TOGGLES: Array<{ key: keyof ReceiptSettings; label: string }> = [
   { key: 'showCustomer', label: 'Customer name & phone' },
   { key: 'showItemSku', label: 'Item SKU / code under each line' },
   { key: 'showItemBarcode', label: 'Item barcode under each line' },
+  { key: 'showWarranty', label: 'Warranty period under lines sold with a warranty' },
   { key: 'showPoweredBy', label: '"Powered by skyERPOS" (small, last line)' },
 ]
 

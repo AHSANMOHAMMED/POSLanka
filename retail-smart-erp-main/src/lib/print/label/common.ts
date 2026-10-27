@@ -5,6 +5,7 @@
 import type { BarcodeElement, BarcodeFormat, LabelElement, LabelItemData, LabelTemplate, TextElement } from '@/lib/labels/types'
 import { resolveField } from '@/lib/labels/label-renderer'
 import type { PackedRaster } from '@/lib/print/escpos/encoder'
+import { chooseSymbology, planLinear, type LinearPlan, type SymbolChoice } from './barcode-fit'
 
 export type RawLabelLanguage = 'tspl' | 'zpl' | 'epl' | 'escpos-raster'
 
@@ -176,45 +177,27 @@ export function resolveText(el: TextElement, item: LabelItemData | null, o: Enco
 }
 
 /**
+ * Value a barcode element encodes: its data field, else (for an item) the
+ * item's barcode, then SKU, then PLU - the fields /api/items/barcode-lookup
+ * matches, so a scanned label always finds the item. Never invents a code.
+ */
+export function barcodeSourceValue(el: BarcodeElement, item: LabelItemData | null, o: Pick<EncodeLabelOptions, 'tenantName'>): string {
+  let raw = (resolveField(el.dataField, item, el.customValue, undefined, o.tenantName) || '').trim()
+  if (!raw && item) raw = (item.barcode || item.sku || item.pluCode || '').trim()
+  return raw
+}
+
+/**
  * Barcode data cleaned for printer symbologies (check digits are computed by
- * the printer). Returns null (+ reason) when the data cannot be encoded.
+ * the printer) and the symbology actually printed (EAN-13 / UPC-A for valid
+ * retail codes, else Code 128). Returns an error when nothing can be encoded.
  */
 export function resolveBarcodeData(
   el: BarcodeElement,
   item: LabelItemData | null,
   o: EncodeLabelOptions
-): { data: string } | { error: string } {
-  let raw = (resolveField(el.dataField, item, el.customValue, undefined, o.tenantName) || '').trim()
-  if (!raw && item) {
-    raw = (item.barcode || item.sku || item.pluCode || '1001').trim()
-  }
-  if (!raw) return { error: 'no data' }
-  const digits = (n: number[], name: string) => {
-    if (!/^\d+$/.test(raw) || !n.includes(raw.length)) return { error: `${name} needs ${n.join(' or ')} digits (got "${raw}")` }
-    return { data: raw.slice(0, Math.min(...n)) }
-  }
-  switch (el.format) {
-    case 'ean13':
-      return digits([12, 13], 'EAN-13')
-    case 'ean8':
-      return digits([7, 8], 'EAN-8')
-    case 'upca':
-      return digits([11, 12], 'UPC-A')
-    case 'itf14': {
-      const r = digits([13, 14], 'ITF-14')
-      return r
-    }
-    case 'codabar':
-      if (!/^[A-Da-d][0-9\-$:/.+]+[A-Da-d]$/.test(raw)) return { error: `invalid Codabar data "${raw}"` }
-      return { data: raw.toUpperCase() }
-    case 'code39': {
-      const up = raw.toUpperCase()
-      if (!/^[0-9A-Z \-.$/+%]+$/.test(up)) return { error: `invalid Code 39 data "${raw}"` }
-      return { data: up }
-    }
-    default:
-      return { data: raw }
-  }
+): (SymbolChoice & { data: string }) | { error: string } {
+  return chooseSymbology(el.format, barcodeSourceValue(el, item, o))
 }
 
 /** Approximate number of modules for linear symbologies (used to fit the element width). */
@@ -257,6 +240,38 @@ export function fitModule(format: BarcodeFormat, data: string, widthDots: number
   const modules = linearModules(format, data)
   const mod = Math.max(1, Math.min(maxModule, Math.floor(widthDots / modules)))
   return { module: mod, used: modules * mod }
+}
+
+/**
+ * Dot-exact placement of a linear barcode element (module width, left edge of
+ * the bars, bar height) on a label whose left edge is at `ox` dots. Pushes a
+ * warning when the code cannot be printed scannably (too long for the label)
+ * or when the symbology was changed.
+ */
+export function placeLinearBarcode(
+  template: LabelTemplateLike,
+  el: BarcodeElement,
+  choice: SymbolChoice,
+  o: EncodeLabelOptions,
+  ox: number,
+  warnings: string[]
+): { module: number; x: number; barHeight: number; plan: LinearPlan } {
+  const dpi = o.dpi
+  const labelWmm = o.widthMm ?? Number(template.widthMm)
+  const labelW = mmToDots(labelWmm, dpi)
+  const boxX = mmToDots(el.x, dpi)
+  const boxW = Math.max(1, mmToDots(el.width, dpi))
+  const plan = planLinear(choice.format, choice.data, dpi, boxX, boxW, labelW)
+  if (choice.note) warnings.push(`Barcode ${el.id}: ${choice.note}`)
+  if (!plan.fits) {
+    warnings.push(
+      `Barcode ${el.id}: "${choice.value}" is too long for a ${labelWmm} mm wide label (needs ${Math.ceil(((plan.symbolDots + 2 * plan.quietDots) / dpi) * 254) / 10} mm with quiet zones at ${plan.module}-dot bars) - it may not scan. Use a shorter code or a wider label.`
+    )
+  }
+  const h = Math.max(1, mmToDots(el.height, dpi))
+  const barHeight = Math.max(8, h - (el.showText ? hriHeight(dpi) : 0))
+  const r = rightAngle(el.rotation) ?? 0
+  return { module: plan.module, x: r === 0 ? ox + plan.x : Math.max(0, ox + boxX), barHeight, plan }
 }
 
 /** Human-readable text height reserved below linear barcodes (dots). */

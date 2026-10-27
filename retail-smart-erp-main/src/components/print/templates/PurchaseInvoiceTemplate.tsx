@@ -8,6 +8,8 @@ interface PurchaseItem {
   itemName: string
   itemSku: string | null
   quantity: string
+  /** 0184: unit of the line (quantity is in it) */
+  uom?: string | null
   unitPrice: string
   tax: string | null
   total: string
@@ -210,7 +212,7 @@ export function PurchaseInvoiceTemplate({
                   <td className="py-2 px-2">{index + 1}</td>
                   <td className="py-2 px-2">{item.itemName}</td>
                   <td className="py-2 px-2">{item.itemSku || '-'}</td>
-                  <td className="text-right py-2 px-2">{parseFloat(item.quantity).toLocaleString()}</td>
+                  <td className="text-right py-2 px-2">{parseFloat(item.quantity).toLocaleString()}{item.uom ? ` ${item.uom}` : ''}</td>
                   <td className="text-right py-2 px-2">{formatCurrency(item.unitPrice)}</td>
                   <td className="text-right py-2 px-2">{item.tax ? formatCurrency(item.tax) : '-'}</td>
                   <td className="text-right py-2 px-2">{formatCurrency(item.total)}</td>

@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     const {
       name, documentType, letterHeadId, paperSize, orientation,
       margins, showLogo, showHeader, showFooter, customCss,
-      headerFields, bodyFields, footerFields, isDefault
+      headerFields, bodyFields, footerFields, config, isDefault
     } = parsed.data
 
     const result = await withAuthTenant(async (session, db) => {
@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
         headerFields: headerFields || null,
         bodyFields: bodyFields || null,
         footerFields: footerFields || null,
+        config: config || {},
         isDefault,
       }).returning()
 
@@ -84,6 +85,8 @@ export async function POST(request: NextRequest) {
     if (result === null) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    if (result instanceof NextResponse) return result
+    if ('error' in result && result.error instanceof NextResponse) return result.error
 
     return NextResponse.json(result, { status: 201 })
   } catch (error) {

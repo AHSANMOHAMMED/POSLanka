@@ -74,7 +74,8 @@ export function ShortcutsHelpModal({ isOpen, onClose }: { isOpen: boolean; onClo
           ))}
         </div>
         <p className="px-5 py-3 border-t border-slate-100 dark:border-gray-700 text-xs text-slate-500">
-          Shortcuts pause while a window (payment, discount …) is open and work again when it closes. Esc closes this list.
+          Shortcuts pause while a window (payment, discount …) is open and work again when it closes. Every action is also
+          in the Actions panel (Alt+A or Ctrl+K). Esc closes this list.
         </p>
       </div>
     </div>

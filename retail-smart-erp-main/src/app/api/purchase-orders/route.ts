@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { resolveLineUnits, lineUnitErrorResponse, type ResolvedLineUnit } from '@/lib/units/resolve-line-units'
 import { authWithCompany } from '@/lib/auth'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { purchaseOrders, purchaseOrderItems, suppliers, warehouses, users } from '@/lib/db/schema'
@@ -223,6 +224,16 @@ export async function POST(request: NextRequest) {
     const branchDenied = await assertBranchAccess(session, warehouseId, tx)
     if (branchDenied) return { error: branchDenied }
 
+    // 0184: each line keeps its unit (box of 12 …); the factor comes from item_uoms / standard units
+    let units: ResolvedLineUnit[]
+    try {
+      units = await resolveLineUnits(tx, items || [])
+    } catch (e) {
+      const r = lineUnitErrorResponse(e)
+      if (r) return { error: r }
+      throw e
+    }
+
     // Generate order number with lock
     const orderNo = await nextDocNo(tx, session.user.tenantId, 'purchase_order')
 
@@ -244,7 +255,7 @@ export async function POST(request: NextRequest) {
       let subtotal = 0
       let taxAmount = 0
 
-      const orderItems = items.map((item) => {
+      const orderItems = items.map((item, idx) => {
         const itemTotal = item.quantity * item.unitPrice
         const itemTax = Math.max(0, item.tax || 0)
         subtotal += itemTotal
@@ -259,6 +270,8 @@ export async function POST(request: NextRequest) {
           unitPrice: item.unitPrice.toString(),
           tax: itemTax.toString(),
           total: (Math.round((itemTotal + itemTax) * 100) / 100).toString(),
+          uom: units[idx].uom,
+          uomFactor: String(units[idx].factor),
         }
       })
 

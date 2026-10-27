@@ -7,7 +7,7 @@ name: Scheduled jobs
 
 on:
   schedule:
-    - cron: '7 * * * *'      # hourly: stock-alerts, cheque-reminders
+    - cron: '7 * * * *'      # hourly: stock-alerts, cheque-reminders, recurring-invoices
     - cron: '*/15 * * * *'   # every 15 min: import-maintenance
     - cron: '*/10 * * * *'   # every 10 min: einvoice-sync
     - cron: '17 */6 * * *'   # every 6 h: enforce-subscriptions
@@ -24,6 +24,7 @@ on:
         options:
           - stock-alerts
           - cheque-reminders
+          - recurring-invoices
           - import-maintenance
           - enforce-subscriptions
           - subscription-reminders
@@ -60,7 +61,7 @@ jobs:
             exit 0
           fi
           case "$SCHEDULE" in
-            '7 * * * *')    JOBS="stock-alerts cheque-reminders" ;;
+            '7 * * * *')    JOBS="stock-alerts cheque-reminders recurring-invoices" ;;
             '*/15 * * * *') JOBS="import-maintenance" ;;
             '*/10 * * * *') JOBS="einvoice-sync" ;;
             '0 21 * * *')   JOBS="auto-reorder" ;;
@@ -69,7 +70,7 @@ jobs:
             '45 20 * * *')  JOBS="retention" ;;
             *)
               if [ "$INPUT_JOB" = "all" ]; then
-                JOBS="stock-alerts cheque-reminders import-maintenance enforce-subscriptions subscription-reminders calculate-storage cleanup-held-sales refresh-exchange-rates einvoice-sync auto-reorder retention"
+                JOBS="stock-alerts cheque-reminders recurring-invoices import-maintenance enforce-subscriptions subscription-reminders calculate-storage cleanup-held-sales refresh-exchange-rates einvoice-sync auto-reorder retention"
               else
                 JOBS="$INPUT_JOB"
               fi

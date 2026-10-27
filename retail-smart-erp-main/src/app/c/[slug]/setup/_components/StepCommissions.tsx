@@ -243,7 +243,7 @@ export function StepCommissions({
           onClick={handleNext}
           className="px-6 py-2.5 bg-blue-600 text-white rounded hover:bg-blue-700"
         >
-          {['retail', 'restaurant', 'supermarket', 'dealership', 'pharmacy'].includes(businessType)
+          {['retail', 'restaurant', 'supermarket', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio'].includes(businessType)
             ? 'Next: Loyalty Program'
             : 'Next: Notifications'}
         </button>

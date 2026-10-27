@@ -1,6 +1,6 @@
 'use client'
 
-import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart } from 'lucide-react'
+import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText } from 'lucide-react'
 import { CreatableSelect } from '@/components/ui/creatable-select'
 import { FormInput } from '@/components/ui/form-elements'
 import { OrderTypeSelector } from './OrderTypeSelector'
@@ -10,6 +10,7 @@ import { useCurrency } from '@/hooks/useCurrency'
 import type { CartItem, Customer, Vehicle, HeldSale, SaleForReturn, LoyaltyProgram, POSBusinessConfig, RestaurantTable } from './types'
 import { useEffect, useRef } from 'react'
 import { Kbd } from './Kbd'
+import { normalizeUnit, unitAllowsFraction, type UnitOption } from '@/lib/units/conversions'
 
 /** DOM id of the focusable cart line list (keyboard: arrows select, digits = quantity, + - Del) */
 export const POS_CART_LIST_ID = 'pos-cart-list'
@@ -87,6 +88,15 @@ interface CartPanelProps {
   cartFocused?: boolean
   onSelectLine?: (cartLineId: string) => void
   onCartFocusChange?: (focused: boolean) => void
+
+  /** Selling units a line can switch to (null / one option = no unit picker on that line) */
+  getUnitOptions?: (line: CartItem) => UnitOption[] | null
+  /** Cashier picked another unit for a line (U cycles it from the keyboard) */
+  onChangeUnit?: (cartLineId: string, uom: string) => void
+  /** Save the cart as a quotation (Alt+Q) */
+  onSaveQuotation?: () => void
+  /** Print studio: reopen the size dialog of an area / length priced line */
+  onEditSize?: (cartLineId: string) => void
 }
 
 export function CartPanel({
@@ -106,6 +116,7 @@ export function CartPanel({
   onRemoveFromCart,
   onUpdatePrice,
   onSetQuantityDirectly,
+  onEditSize,
   onChangeBatch,
   onClearCart,
   onCancelReturnMode,
@@ -144,6 +155,9 @@ export function CartPanel({
   cartFocused = false,
   onSelectLine,
   onCartFocusChange,
+  getUnitOptions,
+  onChangeUnit,
+  onSaveQuotation,
 }: CartPanelProps) {
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()
@@ -288,12 +302,22 @@ export function CartPanel({
           <div className="p-3 min-[1920px]:p-4 space-y-2.5">
             {cartFocused && (
               <p className="text-[11px] font-mono text-teal-700 dark:text-teal-400 px-1">
-                ↑↓ line · type qty + Enter · + / − · Del remove · Esc search
+                ↑↓ line · type qty + Enter · + / − · U unit · Del remove · Esc search
               </p>
             )}
             {cart.map((item) => {
               const isSelected = item.cartLineId === selectedLineId
               const typing = isSelected && cartFocused && qtyBuffer !== ''
+              const allUnits = onChangeUnit && getUnitOptions ? getUnitOptions(item) : null
+              const unitOptions = allUnits && allUnits.length > 1 ? allUnits : null
+              const showUnitPicker = unitOptions !== null
+              const lineUnit = item.uom || item.unit || ''
+              const unitValue = unitOptions
+                ? (unitOptions.find(o => normalizeUnit(o.uom) === normalizeUnit(lineUnit))?.uom ?? unitOptions[0].uom)
+                : ''
+              const decimalQty = !!item.isWeighable || unitAllowsFraction(lineUnit) || !!item.sizeSpec
+              // Print studio size line: the quantity is the billable area, changed through the size dialog
+              const sizeEdit = item.sizeSpec && onEditSize && !isReturnMode ? () => onEditSize(item.cartLineId) : null
               return (
               <div
                 key={item.cartLineId}
@@ -329,8 +353,8 @@ export function CartPanel({
                       </span>
                     )}
                     {/* H5: unit, price list and promotions of the line */}
-                    {item.uom && (
-                      <span className="inline-block mt-0.5 mr-1 px-1.5 py-0.5 text-xs rounded bg-gray-100 text-gray-700">
+                    {item.uom && !showUnitPicker && (
+                      <span className="inline-block mt-0.5 mr-1 px-1.5 py-0.5 text-xs rounded bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200">
                         {item.uom}{item.uomFactor && item.uomFactor !== 1 ? ` × ${item.uomFactor}` : ''}
                       </span>
                     )}
@@ -419,24 +443,32 @@ export function CartPanel({
                     </button>
                     <FormInput
                       type="number"
-                      step={item.isWeighable ? '0.001' : '1'}
+                      step={decimalQty ? '0.001' : '1'}
                       inputSize="sm"
                       key={`qty-${item.cartLineId}-${item.isWeighable ? item.weight : item.quantity}`}
                       defaultValue={item.isWeighable ? item.weight : item.quantity}
+                      readOnly={!!sizeEdit}
+                      title={sizeEdit ? 'Change the size' : undefined}
                       onFocus={(e) => {
                         onSelectLine?.(item.cartLineId)
                         e.target.select()
                       }}
                       onClick={(e) => {
                         onSelectLine?.(item.cartLineId)
+                        if (sizeEdit) { sizeEdit(); return }
                         ;(e.target as HTMLInputElement).select()
                       }}
                       onBlur={(e) => {
+                        if (sizeEdit) return
                         const newQty = parseFloat(e.currentTarget.value) || 0
                         const current = item.isWeighable ? (item.weight || 1) : item.quantity
                         if (newQty !== current) onSetQuantityDirectly(item.cartLineId, newQty)
                       }}
-                      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter') return
+                        if (sizeEdit) { e.preventDefault(); sizeEdit(); return }
+                        e.currentTarget.blur()
+                      }}
                       className="w-16 text-center font-bold !border-0 !ring-0 !shadow-none"
                     />
                     <button
@@ -449,9 +481,22 @@ export function CartPanel({
                     >
                       <Plus size={16} />
                     </button>
-                    {item.unit && item.unit !== 'pcs' && (
+                    {unitOptions ? (
+                      <select
+                        aria-label={`Unit of ${item.name}`}
+                        title="Unit (select the line and press U to change it)"
+                        value={unitValue}
+                        onFocus={() => onSelectLine?.(item.cartLineId)}
+                        onChange={(e) => onChangeUnit?.(item.cartLineId, e.target.value)}
+                        className="text-[12px] font-semibold max-w-[6.5rem] border border-slate-200 dark:border-gray-600 rounded px-1 py-1 bg-white dark:bg-gray-800 text-slate-700 dark:text-gray-200"
+                      >
+                        {unitOptions.map(o => (
+                          <option key={o.uom} value={o.uom}>{o.isBase ? o.uom : o.label}</option>
+                        ))}
+                      </select>
+                    ) : (item.uom || item.unit) && (item.uom || item.unit) !== 'pcs' && (
                       <span className="text-[12px] font-semibold text-slate-500 px-1 select-none">
-                        {item.unit}
+                        {item.uom || item.unit}
                       </span>
                     )}
                   </div>
@@ -618,6 +663,23 @@ export function CartPanel({
               className="w-full py-2.5 bg-orange-50 text-orange-700 rounded-xl font-bold hover:bg-orange-100 transition-colors flex items-center justify-center gap-2 border border-orange-200 disabled:opacity-50"
             >
               Send to Kitchen
+            </button>
+          </div>
+        )}
+
+        {/* Save the cart as a quotation for the customer (Alt+Q) */}
+        {onSaveQuotation && !isReturnMode && (
+          <div className="px-5 pb-2">
+            <button
+              type="button"
+              onClick={onSaveQuotation}
+              disabled={cart.length === 0}
+              title="Save the cart as a quotation (Alt+Q)"
+              className="w-full py-2 rounded-xl text-sm font-bold border border-slate-200 dark:border-gray-700 text-slate-700 dark:text-gray-200 hover:bg-slate-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+            >
+              <FileText size={15} />
+              Save as quotation
+              <Kbd>Alt+Q</Kbd>
             </button>
           </div>
         )}

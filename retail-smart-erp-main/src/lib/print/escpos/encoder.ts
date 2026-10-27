@@ -703,6 +703,8 @@ export interface ZReportDetails {
     paidIn: number; paidOut: number; net: number; count: number; voidedCount?: number
     items?: Array<{ movementNo: string; type: string; category: string; amount: number; note: string | null; status: string }>
   }
+  /** 0187: advances / invoice / layaway payments taken outside the POS sale screen, by source */
+  outsideCollections?: { total: number; count: number; bySource: Record<string, number> }
   approvals?: { count: number }
   ledger?: { posted: boolean; ledgerCash: number; expectedCashMovement: number; difference: number; tiesOut: boolean }
 }
@@ -714,6 +716,15 @@ const Z_CATEGORY_LABELS: Record<string, string> = {
   float_top_up: 'Float top-up',
   void_refund: 'Void refund',
   other: 'Other',
+}
+
+const Z_OUTSIDE_SOURCE_LABELS: Record<string, string> = {
+  print_job_advance: 'Print advances',
+  print_job_refund: 'Print adv. refunds',
+  print_job_invoice: 'Print job invoices',
+  work_order_invoice: 'Work order invoices',
+  layaway_payment: 'Layaway payments',
+  invoice_payment: 'Invoice payments',
 }
 
 export interface ZReportInput {
@@ -848,6 +859,14 @@ export function buildZReportEscPos(input: ZReportInput, opts: ZReportBuildOption
       b.row('Paid in', money(d.cashMovements.paidIn, dec))
       b.row('Paid out', `-${money(d.cashMovements.paidOut, dec)}`)
       if (d.cashMovements.voidedCount) b.row('Voided movements', String(d.cashMovements.voidedCount))
+    }
+    if (d.outsideCollections && d.outsideCollections.count > 0) {
+      b.hr()
+      b.styledLine('OTHER COLLECTIONS', { bold: true })
+      for (const [source, amount] of Object.entries(d.outsideCollections.bySource)) {
+        b.row(Z_OUTSIDE_SOURCE_LABELS[source] || source, money(amount, dec))
+      }
+      b.row('Total', money(d.outsideCollections.total, dec))
     }
     if (d.tax) {
       b.hr()

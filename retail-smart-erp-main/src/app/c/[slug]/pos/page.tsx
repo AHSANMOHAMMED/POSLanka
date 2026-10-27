@@ -3,7 +3,11 @@
 import { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react'
 import { useSession, signOut } from 'next-auth/react'
 import { useRouter, useParams } from 'next/navigation'
-import { Clock, Loader2, Tag, Wallet, Keyboard, MonitorUp } from 'lucide-react'
+import {
+  Clock, Loader2, Tag, Wallet, Keyboard, MonitorUp, LayoutGrid, Printer, RotateCcw, PlusCircle,
+  FileText, Files, Camera, ScanBarcode, Lock, ArrowDownUp, Power, Play, History,
+  Ruler, ClipboardList, ShieldCheck, CalendarClock, Truck,
+} from 'lucide-react'
 import { CustomerFormModal, VehicleModal } from '@/components/modals'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import {
@@ -31,6 +35,7 @@ import { ShortcutsHelpModal } from '@/components/pos/ShortcutsHelpModal'
 import { Kbd } from '@/components/pos/Kbd'
 import { matchPosShortcut, isFunctionKey, type PosShortcutAction } from '@/lib/pos/shortcuts'
 import { applyQtyKey, parseQtyBuffer, moveSelection } from '@/lib/pos/qty-buffer'
+import { emptyBurst, pushBurstKey, isScanTerminator, stripAimPrefix, SCAN_BURST_RESET_MS } from '@/lib/pos/scan-burst'
 import { openCustomerDisplayWindow } from '@/lib/pos/customer-display-window'
 import { WeightInputModal } from '@/components/pos/WeightInputModal'
 import { VariantPickerModal } from '@/components/pos/VariantPickerModal'
@@ -60,7 +65,10 @@ import type {
   GiftCardInfo,
   CartBatchOption,
   ChequeFormValue,
+  CartSizeSpec,
 } from '@/components/pos/types'
+import { SizeEntryDialog, sizeLineName, foldSizeLine, type SizeEntryTarget } from '@/components/pos/SizeEntryDialog'
+import { featureAppliesTo } from '@/lib/features/flags'
 import { toast } from '@/components/ui/toast'
 import { LoadingSpinner } from '@/components/ui/loading-spinner'
 import { useUnsavedChangesWarning } from '@/hooks/useUnsavedChangesWarning'
@@ -84,6 +92,7 @@ import {
 import { fetchLogoRaster, loadReceiptModel, buildLocalReceiptModel, type SaleForReceipt } from '@/lib/print/receipt-loader'
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
 import { invoiceNoFromScan } from '@/lib/print/invoice-verify'
+import { sanitizeScan, codesMatch } from '@/lib/inventory/barcode-parse'
 import type { PaperSize } from '@/lib/print/types'
 import { useCurrency } from '@/hooks/useCurrency'
 import { roundCurrency } from '@/lib/utils/currency'
@@ -96,6 +105,11 @@ import { useOfflinePos } from '@/hooks/useOfflinePos'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel } from '@/lib/utils/item-display'
 import { usePriceQuote, lineNet } from '@/components/pos/price-quote'
+import { loadPricingBundleCache } from '@/lib/offline/pricing-cache'
+import { unitOptionsFor, unitPriceFor, unitAllowsFraction, normalizeUnit, type UnitOption } from '@/lib/units/conversions'
+import { PosActionsPanel, type PosActionTile } from '@/components/pos/PosActionsPanel'
+import { ScannerTestModal } from '@/components/pos/ScannerTestModal'
+import { SaveQuotationModal, type QuotationLineInput } from '@/components/pos/SaveQuotationModal'
 
 /** Printed receipt / return / offline receipt numbers scanned at the POS (W8). */
 const RECEIPT_CODE_RE = /^(INV|RTN|OFF)-/i
@@ -121,12 +135,16 @@ export default function POSPage() {
     return () => document.documentElement.classList.remove('pos-large-text')
   }, [])
 
+  // Quotation the cart was loaded from: sent with the sale (/api/sales links it as converted)
+  const fromQuotationIdRef = useRef<string | null>(null)
+
   // Load cart from converted quotation (sessionStorage)
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem('poslanka_quote_cart')
       if (!raw) return
       const data = JSON.parse(raw) as {
+        quotationId?: string | null
         customerId?: string | null
         customerName?: string | null
         cartItems?: Array<{
@@ -139,6 +157,9 @@ export default function POSPage() {
         }>
       }
       sessionStorage.removeItem('poslanka_quote_cart')
+      fromQuotationIdRef.current = data.quotationId
+        || new URLSearchParams(window.location.search).get('fromQuotation')
+        || null
       if (data.cartItems?.length) {
         setCart(
           data.cartItems.map((line, idx) => {
@@ -279,6 +300,10 @@ export default function POSPage() {
 
   // Supermarket: weighable item state
   const [weightInputItem, setWeightInputItem] = useState<Item | null>(null)
+  // Print studio: area / length priced item waiting for its size (new line, or editing cartLineId)
+  const [sizeEntry, setSizeEntry] = useState<{ target: SizeEntryTarget; item?: Item; cartLineId?: string } | null>(null)
+  // Hire purchase: this payment is a down payment, the balance is left on account for an installment plan
+  const [hirePurchase, setHirePurchase] = useState(false)
 
   // Product Variants & Quick Add Item modals
   const [variantPickerParentItem, setVariantPickerParentItem] = useState<Item | null>(null)
@@ -397,6 +422,10 @@ export default function POSPage() {
   const [qtyBuffer, setQtyBuffer] = useState('')
   const [cartFocused, setCartFocused] = useState(false)
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false)
+  /** Actions launcher (Alt+A / Ctrl+K), scanner test and "save cart as quotation" windows */
+  const [showActions, setShowActions] = useState(false)
+  const [showScannerTest, setShowScannerTest] = useState(false)
+  const [showQuotation, setShowQuotation] = useState(false)
 
   // Tax template state
   const [taxTemplatesMap, setTaxTemplatesMap] = useState<Map<string, ResolvedTaxTemplate>>(new Map())
@@ -814,9 +843,16 @@ export default function POSPage() {
   // ─── Cart Functions ───────────────────────────────────────────
 
   function addToCart(item: Item, quantity = 1) {
+    rememberItem(item)
     // Parent item with variants opens variant picker first
     if (item.hasVariants && !isReturnMode) {
       setVariantPickerParentItem(item)
+      return
+    }
+
+    // Print studio: sold by size (sq ft / sq m / running length) → size dialog
+    if (isSizePriced(item) && !isReturnMode) {
+      openSizeEntry(item)
       return
     }
 
@@ -875,6 +911,8 @@ export default function POSPage() {
     },
     overrideQty?: number
   ) {
+    rememberItem(item)
+    if (isSizePriced(item) && !isReturnMode && !item.hasVariants) { openSizeEntry(item); return }
     const scan = item.scan
     const effectiveMult = (overrideQty && overrideQty > 0) ? overrideQty : 1
 
@@ -924,7 +962,82 @@ export default function POSPage() {
     addToCart(item, effectiveMult)
   }
 
+  // ─── Print studio: area / length priced lines ────────────────
+  function isSizePriced(item: Pick<Item, 'pricingMode'> | null | undefined): boolean {
+    return item?.pricingMode === 'area' || item?.pricingMode === 'length'
+  }
+
+  function openSizeEntry(item: Item) {
+    if (item.trackStock && !(parseFloat(item.availableStock) > 0)) {
+      toast.error('This item is out of stock')
+      return
+    }
+    const min = parseFloat(String(item.minChargeArea ?? ''))
+    setSizeEntry({
+      item,
+      target: {
+        name: formatItemLabel(item, company.businessType),
+        pricingMode: item.pricingMode === 'length' ? 'length' : 'area',
+        areaUnit: item.areaUnit === 'sqm' ? 'sqm' : 'sqft',
+        minChargeArea: min > 0 ? min : null,
+        rate: parseFloat(item.sellingPrice) || 0,
+      },
+    })
+  }
+
+  /** +/- or a typed quantity on a size line reopens its size dialog (quantity = billable area) */
+  function editSizeLine(line: CartItem) {
+    if (!line.sizeSpec) return
+    setSizeEntry({
+      cartLineId: line.cartLineId,
+      target: {
+        name: line.sizeSpec.baseName,
+        pricingMode: line.sizeSpec.pricingMode,
+        areaUnit: line.sizeSpec.areaUnit,
+        minChargeArea: line.sizeSpec.minChargeArea,
+        // print rate before add-ons (the line price folds the add-ons in)
+        rate: line.sizeSpec.rate ?? line.unitPrice,
+        initial: line.sizeSpec,
+      },
+    })
+  }
+
+  function confirmSizeEntry(spec: CartSizeSpec, billQty: number) {
+    const entry = sizeEntry
+    if (!entry) return
+    setSizeEntry(null)
+    const name = sizeLineName(spec, billQty)
+    // Finishing add-ons are folded into the line price (POST /api/sales needs an item per line)
+    if (entry.cartLineId) {
+      setCart(prev => prev.map(c => {
+        if (c.cartLineId !== entry.cartLineId) return c
+        const folded = foldSizeLine(spec, spec.rate ?? c.sizeSpec?.rate ?? c.unitPrice)
+        return { ...c, name, quantity: folded.billQty, unitPrice: folded.unitPrice, total: folded.total, notes: folded.notes, sizeSpec: spec, priceLocked: c.priceLocked || !!folded.notes || undefined }
+      }))
+      return
+    }
+    const item = entry.item
+    if (!item) return
+    const rate = parseFloat(item.sellingPrice) || 0
+    const folded = foldSizeLine({ ...spec, rate }, rate)
+    // every size is its own line (6 × 3 ft and A4 of the same media never merge)
+    setCart(prev => [...prev, {
+      cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      itemId: item.id,
+      name,
+      quantity: folded.billQty,
+      unitPrice: folded.unitPrice,
+      total: folded.total,
+      notes: folded.notes,
+      // the add-ons make it a price above the catalog: kept as is by the pricing engine
+      priceLocked: folded.notes ? true : undefined,
+      taxTemplateId: item.taxTemplateId || null,
+      sizeSpec: { ...spec, rate },
+    }])
+  }
+
   function addToCartWithWeight(item: Item, weight: number, displayLabel?: string) {
+    rememberItem(item)
     const unitPrice = parseFloat(item.sellingPrice)
     const total = roundCurrency(weight * unitPrice)
     const baseUnit = (item.unit || (item.isWeighable ? 'kg' : 'pcs')).toLowerCase()
@@ -1078,9 +1191,10 @@ export default function POSPage() {
     }
 
     setCart(prev => {
-      const existing = prev.find(c => c.itemId === item.id && c.unitPrice === price
+      // a line sold in another unit (box, g …) never takes a base-unit add
+      const existing = prev.find(c => c.itemId === item.id && c.unitPrice === price && !c.uom && !c.isWeighable
         && (!ownBatchLine || (c.batchNumber || '').toUpperCase() === (opts.batchNumber || '').toUpperCase()))
-      const totalInCart = prev.filter(c => c.itemId === item.id).reduce((sum, c) => sum + c.quantity, 0)
+      const totalInCart = prev.filter(c => c.itemId === item.id).reduce((sum, c) => sum + baseQtyOf(c), 0)
 
       if (item.trackStock && totalInCart + qtyToAdd > stock) {
         toast.warning('Not enough stock available')
@@ -1109,6 +1223,140 @@ export default function POSPage() {
     if (item.trackBatches) void loadBatchOptions(item.id, newLineId, opts.batchNumber)
   }
 
+  /** Stock a line takes, in the item's base unit (weighed lines: the weight; other units: qty × factor) */
+  function baseQtyOf(c: CartItem): number {
+    return c.isWeighable ? (c.weight || 1) : c.quantity * (c.uomFactor || 1)
+  }
+
+  // ─── Selling unit of a cart line (kg ↔ g, m ↔ yard, pcs ↔ box …) ─────
+  // Items seen on this till (search, scan, quick add) so a line knows its base unit and price
+  const knownItemsRef = useRef<Map<string, Item>>(new Map())
+  function rememberItem(item: Item) {
+    if (item?.id) knownItemsRef.current.set(item.id, item)
+  }
+  /** Per item: base unit, base price and its unit conversions (null = could not be loaded) */
+  const [unitInfo, setUnitInfo] = useState<Record<string, {
+    baseUnit: string
+    basePrice: number
+    serial: boolean
+    uoms: Array<{ uom: string; factor: number | string; sellingPrice?: number | string | null; isActive?: boolean }>
+  } | null>>({})
+  const unitRequestedRef = useRef<Set<string>>(new Set())
+
+  // Loaded once per item when it first lands in the cart (offline: the cached pricing bundle)
+  useEffect(() => {
+    if (isReturnMode) return
+    const ids = [...new Set(cart.map(c => c.itemId))].filter(id => /^[0-9a-f-]{36}$/i.test(id) && !unitRequestedRef.current.has(id))
+    for (const id of ids) {
+      unitRequestedRef.current.add(id)
+      void (async () => {
+        const known = knownItemsRef.current.get(id) || items.find(i => i.id === id)
+        let base: { unit?: string | null; sellingPrice?: string; isWeighable?: boolean; trackSerialNumbers?: boolean } | null = known || null
+        let uoms: Array<{ uom: string; factor: number | string; sellingPrice?: number | string | null; isActive?: boolean }> | null = null
+        if (online) {
+          try {
+            const [u, it] = await Promise.all([
+              fetch(`/api/items/${id}/uoms`).then(r => (r.ok ? r.json() : null)),
+              base ? Promise.resolve(null) : fetch(`/api/items/${id}`).then(r => (r.ok ? r.json() : null)),
+            ])
+            if (Array.isArray(u)) uoms = u
+            if (it && !base) base = it
+          } catch {
+            // offline / network: cached bundle below
+          }
+        }
+        if (!uoms) uoms = (loadPricingBundleCache(company.tenantSlug)?.itemUoms || []).filter(u => u.itemId === id)
+        setUnitInfo(prev => ({
+          ...prev,
+          [id]: base ? {
+            baseUnit: base.unit || (base.isWeighable ? 'kg' : 'pcs'),
+            basePrice: parseFloat(base.sellingPrice || '0') || 0,
+            serial: !!base.trackSerialNumbers,
+            uoms: uoms || [],
+          } : null,
+        }))
+      })()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cart, isReturnMode])
+
+  /** Units this line can switch to; null when it cannot change unit */
+  function lineUnitOptions(line: CartItem): UnitOption[] | null {
+    if (isReturnMode || exchangeFrom || restaurantOrderId) return null
+    if (line.serialNumberIds?.length || line.modifiers?.length || line.originalSaleItemId || line.coreCharge || line.sizeSpec) return null
+    // scale / GS1 label: the label fixes weight and amount
+    if (line.isWeighable && line.baseUnitPrice == null) return null
+    const info = unitInfo[line.itemId]
+    if (!info || info.serial) return null
+    const opts = unitOptionsFor(info.baseUnit, info.uoms)
+    return opts.length > 1 ? opts : null
+  }
+
+  /** Sell a line in another unit: the quantity number stays, price and stock follow the unit */
+  function changeLineUnit(cartLineId: string, uom: string) {
+    const line = cart.find(c => c.cartLineId === cartLineId)
+    const opts = line ? lineUnitOptions(line) : null
+    const info = line ? unitInfo[line.itemId] : null
+    if (!line || !opts || !info) return
+    const opt = opts.find(o => normalizeUnit(o.uom) === normalizeUnit(uom))
+    if (!opt) return
+    const currentUnit = line.uom || info.baseUnit
+    if (!line.isWeighable && normalizeUnit(currentUnit) === normalizeUnit(opt.uom)) return
+    let qty = Math.abs(line.isWeighable ? (line.weight || 1) : line.quantity)
+    if (!unitAllowsFraction(opt.uom) && !Number.isInteger(qty)) qty = Math.max(1, Math.round(qty))
+    const item = items.find(i => i.id === line.itemId) || knownItemsRef.current.get(line.itemId)
+    if (item?.trackStock) {
+      const others = cart.filter(c => c.itemId === line.itemId && c.cartLineId !== cartLineId).reduce((sum, c) => sum + baseQtyOf(c), 0)
+      if (others + qty * opt.factor > parseFloat(item.availableStock)) { toast.warning('Not enough stock available in that unit'); return }
+    }
+    // A price the cashier set by hand is converted by the factor ratio; otherwise the unit's own
+    // price (or base price × factor) — price lists then re-quote the line for its new unit
+    const oldFactor = line.isWeighable ? 1 : (line.uomFactor || 1)
+    const manual = !!line.priceLocked && !line.isWeighable && !line.barcode
+    const unitPrice = manual
+      ? roundCurrency((line.unitPrice * opt.factor) / oldFactor)
+      : unitPriceFor(opt, line.isWeighable ? (line.baseUnitPrice ?? info.basePrice) : info.basePrice)
+    let baseName = line.name
+    for (const sfx of [line.displayUnit, line.uom]) {
+      if (sfx && baseName.endsWith(` (${sfx})`)) baseName = baseName.slice(0, -(sfx.length + 3))
+    }
+    setCart(prev => prev.map(c => c.cartLineId !== cartLineId ? c : {
+      ...c,
+      name: opt.isBase ? baseName : `${baseName} (${opt.uom})`,
+      quantity: qty,
+      unitPrice,
+      total: roundCurrency(qty * unitPrice),
+      // same shape as a unit / pack barcode line; the base unit has no uom (the sale schema takes no null)
+      uom: opt.isBase ? undefined : opt.uom,
+      uomFactor: opt.factor,
+      unit: info.baseUnit,
+      priceLocked: manual,
+      barcode: undefined,
+      isWeighable: false,
+      weight: undefined,
+      unitQuantity: undefined,
+      displayUnit: undefined,
+      baseUnitPrice: undefined,
+      catalogPrice: undefined,
+      priceListName: null,
+    }))
+  }
+
+  /** U in the cart: next unit of the selected line */
+  function cycleLineUnit(line: CartItem) {
+    const opts = lineUnitOptions(line)
+    if (!opts) {
+      toast.info(unitInfo[line.itemId] === undefined ? 'Loading the units of this item…' : 'This line has no other unit')
+      return
+    }
+    const info = unitInfo[line.itemId]
+    const cur = normalizeUnit(line.isWeighable ? (line.unit || info?.baseUnit) : (line.uom || info?.baseUnit))
+    const idx = opts.findIndex(o => normalizeUnit(o.uom) === cur)
+    // a weighed line starts on its base unit: U goes to the next one
+    const next = opts[(idx + 1) % opts.length]
+    changeLineUnit(line.cartLineId, next.uom)
+  }
+
   function updateQuantity(cartLineId: string, delta: number) {
     const cartItem = cart.find(c => c.cartLineId === cartLineId)
     if (!cartItem) return
@@ -1118,6 +1366,8 @@ export default function POSPage() {
       toast.warning('Remove and re-add to change serial number selection')
       return
     }
+    // Print studio size line: the quantity is the billable area → change the size instead
+    if (cartItem.sizeSpec && !isReturnMode) { editSizeLine(cartItem); return }
 
     const item = items.find(i => i.id === cartItem.itemId)
     if (!item && !isReturnMode) return
@@ -1134,9 +1384,9 @@ export default function POSPage() {
     }
 
     if (!isReturnMode && item && item.trackStock) {
-      const totalInCart = cart.filter(c => c.itemId === cartItem.itemId).reduce((sum, c) => sum + (c.isWeighable ? (c.weight || 1) : c.quantity), 0)
+      const totalInCart = cart.filter(c => c.itemId === cartItem.itemId).reduce((sum, c) => sum + baseQtyOf(c), 0)
       const availableStock = parseFloat(item.availableStock)
-      if (totalInCart + delta > availableStock) {
+      if (totalInCart + delta * (cartItem.isWeighable ? 1 : (cartItem.uomFactor || 1)) > availableStock) {
         toast.warning('Not enough stock available')
         return
       }
@@ -1165,10 +1415,19 @@ export default function POSPage() {
     setCart(cart.filter(c => c.cartLineId !== cartLineId))
   }
 
+  /** A typed price; on a size line it becomes the all-in rate (folded add-ons are dropped). */
+  function withManualPrice(c: CartItem, newPrice: number): CartItem {
+    if (c.sizeSpec) {
+      const spec: CartSizeSpec = { ...c.sizeSpec, rate: newPrice, finishing: undefined }
+      return { ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true, sizeSpec: spec, name: sizeLineName(spec, c.quantity), notes: undefined }
+    }
+    return { ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true }
+  }
+
   function applyPrice(cartLineId: string, newPrice: number) {
     setCart(prev => prev.map(c =>
       c.cartLineId === cartLineId
-        ? { ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true }
+        ? withManualPrice(c, newPrice)
         : c
     ))
   }
@@ -1188,13 +1447,15 @@ export default function POSPage() {
     }
     setCart(cart.map(c =>
       c.cartLineId === cartLineId
-        ? { ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true }
+        ? withManualPrice(c, newPrice)
         : c
     ))
   }
 
   function setQuantityDirectly(cartLineId: string, newQty: number) {
     if (newQty <= 0) { removeFromCart(cartLineId); return }
+    const sizeLine = cart.find(c => c.cartLineId === cartLineId && c.sizeSpec)
+    if (sizeLine && !isReturnMode) { editSizeLine(sizeLine); return }
     setCart(cart.map(c => {
       if (c.cartLineId !== cartLineId) return c
       if (c.isWeighable) {
@@ -1215,6 +1476,8 @@ export default function POSPage() {
   }
 
   function clearCart() {
+    fromQuotationIdRef.current = null
+    setHirePurchase(false)
     newClientSaleId()
     approvalTokensRef.current = []
     setCart([])
@@ -1587,11 +1850,13 @@ export default function POSPage() {
         invalidItems.push(cartItem.name)
       } else {
         // Add back this held sale's reserved qty since it will be released on recall
-        const availableStock = parseFloat(item.availableStock) + (item.trackStock ? cartItem.quantity : 0)
+        // stock is in base units; the held line may be in another unit (box = 12 pcs)
+        const factor = Number(cartItem.uomFactor) || 1
+        const availableStock = parseFloat(item.availableStock) + (item.trackStock ? cartItem.quantity * factor : 0)
         if (item.trackStock && availableStock <= 0) {
           outOfStockItems.push(cartItem.name)
         } else {
-          const adjustedQty = item.trackStock ? Math.min(cartItem.quantity, availableStock) : cartItem.quantity
+          const adjustedQty = item.trackStock ? Math.min(cartItem.quantity, Math.floor((availableStock / factor) * 1000) / 1000) : cartItem.quantity
           validCartItems.push({
             cartLineId: cartItem.cartLineId || `${cartItem.itemId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             itemId: cartItem.itemId,
@@ -1599,6 +1864,10 @@ export default function POSPage() {
             quantity: adjustedQty,
             unitPrice: cartItem.unitPrice,
             total: adjustedQty * cartItem.unitPrice,
+            // the unit the line was held in (box, g …), so its price stays per that unit
+            ...(cartItem.uom ? { uom: cartItem.uom, uomFactor: Number(cartItem.uomFactor) || 1 } : {}),
+            // size lines keep their size when the held cart kept it (older held carts: plain qty lines)
+            ...(cartItem.sizeSpec && adjustedQty === cartItem.quantity ? { sizeSpec: cartItem.sizeSpec } : {}),
           })
           if (item.trackStock && adjustedQty < cartItem.quantity) {
             toast.warning(`${cartItem.name}: quantity adjusted to ${adjustedQty} (stock limited)`)
@@ -2101,80 +2370,140 @@ export default function POSPage() {
     if (el) { el.focus(); el.select() }
   }
 
-  async function handleScanSubmit(code: string): Promise<boolean> {
-    let rawTrimmed = code.trim()
-    if (!rawTrimmed) return false
-    // Strip common non-GS1 2D barcode scanner AIM prefixes (e.g. ]C0, ]E0, ]A0, ]Q1, ]d1)
-    if (/^\][a-zA-Z][0-9]/.test(rawTrimmed) && !/^\](C1|d2|Q3|e0)/.test(rawTrimmed)) {
-      rawTrimmed = rawTrimmed.slice(3)
+  /** Put a code back in the search box, selected, so the cashier sees what the scanner read */
+  function showCodeInSearch(code: string) {
+    const el = document.getElementById(POS_SEARCH_INPUT_ID) as HTMLInputElement | null
+    // a new scan already started while this one was looked up: leave it alone
+    if (el && el.value.trim() && el.value.trim() !== code) return
+    setSearch(code)
+    if (el) { el.value = code; el.focus(); el.select() }
+  }
+
+  /** Type a character into the search box from outside it (scanner / cashier typing on the page) */
+  function typeIntoSearch(ch: string, append: boolean) {
+    const el = document.getElementById(POS_SEARCH_INPUT_ID) as HTMLInputElement | null
+    if (!el) return
+    const next = append ? el.value + ch : ch
+    el.focus()
+    el.value = next
+    el.setSelectionRange(next.length, next.length)
+    setSearch(next)
+  }
+
+  /** Exact server lookup of one code. `error` = offline / server trouble (local matching decides then). */
+  async function lookupScanCode(code: string): Promise<{ status: 'found'; item: Parameters<typeof addScannedItem>[0] } | { status: 'missing' | 'error' }> {
+    try {
+      const qs = new URLSearchParams({ barcode: code })
+      // without a branch the lookup still finds the item (stock shows 0 and is checked at payment)
+      if (posWarehouse) qs.set('warehouseId', posWarehouse.id)
+      const res = await fetch(`/api/items/barcode-lookup?${qs.toString()}`)
+      if (res.ok) return { status: 'found', item: await res.json() }
+      return { status: res.status === 404 ? 'missing' : 'error' }
+    } catch {
+      return { status: 'error' }
     }
+  }
+
+  /** "5*8901234567890", "250g*VEG", "500ml*MILK", "1.5kg*RICE", "12xPEN" → quantity / unit + code */
+  function parseScanMultiplier(s: string): { qty: number; uom: string | null; rawQtyStr: string; code: string } | null {
+    const m = s.match(/^(\d+(?:\.\d+)?)\s*(kg|g|l|ml|m|pcs|doz)?\s*[*xX]\s*(.+)$/i)
+    if (!m) return null
+    const rawVal = parseFloat(m[1])
+    const uom = m[2] ? m[2].toLowerCase() : null
+    // g → kg, ml → l, dozen → pieces
+    const qty = uom === 'g' || uom === 'ml' ? rawVal / 1000 : uom === 'doz' ? rawVal * 12 : rawVal
+    return { qty, uom, rawQtyStr: m[1], code: m[3].trim() }
+  }
+
+  async function handleScanSubmit(code: string): Promise<boolean> {
+    const raw = sanitizeScan(code)
+    if (!raw) return false
+    // The box is emptied right away so the next scan never lands on top of this code
+    setSearch('')
+    const searchEl = document.getElementById(POS_SEARCH_INPUT_ID) as HTMLInputElement | null
+    if (searchEl && sanitizeScan(searchEl.value) === raw) searchEl.value = ''
+
+    // Non-GS1 2D / Code 128 scanners may prefix an AIM identifier (]C0, ]E0, ]A0, ]Q1, ]d1)
+    const withoutAim = stripAimPrefix(raw)
     // Receipt barcode (INV-/RTN-/OFF-) → open the return lookup with that sale
-    if (RECEIPT_CODE_RE.test(rawTrimmed)) {
-      setSearch('')
-      setReturnSearchQuery(rawTrimmed.toUpperCase())
+    const receipt = [raw, withoutAim].find((c): c is string => !!c && RECEIPT_CODE_RE.test(c))
+    if (receipt) {
+      setReturnSearchQuery(receipt.toUpperCase())
       setShowReturnLookupModal(true)
       return true
     }
 
-    // Support multiplier & UOM format: e.g. "5*8901234567890", "250g*VEG", "500ml*MILK", "1.5kg*RICE", "12xPEN"
-    let scanQty = 1
-    let scanUom: string | null = null
-    let rawQtyStr = ''
-    let trimmed = rawTrimmed
-    const uomMultMatch = rawTrimmed.match(/^(\d+(?:\.\d+)?)\s*(kg|g|l|ml|m|pcs|doz)?\s*[*xX]\s*(.+)$/i)
-    if (uomMultMatch) {
-      rawQtyStr = uomMultMatch[1]
-      const rawVal = parseFloat(rawQtyStr)
-      scanUom = uomMultMatch[2] ? uomMultMatch[2].toLowerCase() : null
-      trimmed = uomMultMatch[3].trim()
+    // Interpretations, most literal first: the full code, then without the AIM prefix, and only
+    // then "qty*code" (a code like 12X345 is an item code before it is "12 × 345")
+    type Mult = NonNullable<ReturnType<typeof parseScanMultiplier>>
+    const attempts: Array<{ code: string; mult: Mult | null }> = [{ code: raw, mult: null }]
+    if (withoutAim) attempts.push({ code: withoutAim, mult: null })
+    for (const c of [raw, withoutAim]) {
+      const mult = c ? parseScanMultiplier(c) : null
+      if (mult && mult.code && !attempts.some((a) => a.code === mult.code)) attempts.push({ code: mult.code, mult })
+    }
 
-      if (scanUom === 'g') {
-        scanQty = rawVal / 1000 // Convert grams to kg
-      } else if (scanUom === 'ml') {
-        scanQty = rawVal / 1000 // Convert ml to L
-      } else if (scanUom === 'doz') {
-        scanQty = rawVal * 12
+    const addWithMult = (item: Item, mult: Mult | null, add: (qty: number) => void) => {
+      if (isSizePriced(item) && !isReturnMode) { add(1); return } // opens the size dialog
+      if (mult && (mult.uom || (item.isWeighable && mult.qty !== 1))) {
+        addToCartWithWeight(item, mult.qty, mult.uom ? `${mult.rawQtyStr} ${mult.uom}` : undefined)
       } else {
-        scanQty = rawVal
+        add(mult?.qty ?? 1)
       }
     }
 
-    if (posWarehouse) {
-      try {
-        const res = await fetch(`/api/items/barcode-lookup?barcode=${encodeURIComponent(trimmed)}&warehouseId=${posWarehouse.id}`)
-        if (res.ok) {
-          const item: Item = await res.json()
-          if (scanUom || (item.isWeighable && scanQty !== 1)) {
-            addToCartWithWeight(item, scanQty, scanUom ? `${rawQtyStr} ${scanUom}` : undefined)
-          } else {
-            addScannedItem(item, scanQty)
-          }
-          setSearch('')
+    let serverAnswered = false
+    if (online) {
+      serverAnswered = true
+      for (const a of attempts) {
+        const r = await lookupScanCode(a.code)
+        if (r.status === 'found') {
+          const found = r.item
+          addWithMult(found, a.mult, (qty) => addScannedItem(found, qty))
           return true
         }
-      } catch {
-        // fall through to local matching
+        if (r.status === 'error') { serverAnswered = false; break }
       }
     }
-    const q = trimmed.toLowerCase()
-    const exact = items.filter(i => i.barcode === trimmed || i.pluCode === trimmed || (i.sku || '').toLowerCase() === q)
-    const candidates = exact.length > 0
-      ? exact
-      : items.filter(i => i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q) || (i.barcode || '').includes(trimmed) || (i.genericName || '').toLowerCase().includes(q))
-    if (candidates.length === 1) {
-      const match = candidates[0]
-      if (scanUom || (match.isWeighable && scanQty !== 1)) {
-        addToCartWithWeight(match, scanQty, scanUom ? `${rawQtyStr} ${scanUom}` : undefined)
-      } else {
-        addToCart(match, scanQty)
+
+    // Items loaded on this till: exact codes first (case-insensitive), then search-style matches
+    for (const a of attempts) {
+      const q = a.code.toLowerCase()
+      const exact = items.filter(i => codesMatch(i.barcode, a.code, 'barcode') || (i.pluCode || '').toLowerCase() === q || codesMatch(i.sku, a.code, 'sku'))
+      if (exact.length === 1) {
+        addWithMult(exact[0], a.mult, (qty) => addToCart(exact[0], qty))
+        return true
       }
-      setSearch('')
-      return true
+      if (exact.length > 1) {
+        showCodeInSearch(a.code)
+        toast.info(`${exact.length} items match "${a.code}" — pick one`)
+        return false
+      }
     }
-    if (candidates.length === 0) {
-      toast.error(`No item found for "${trimmed}". Press F4 to Quick Add.`)
-      setQuickAddInitialBarcode(trimmed)
+    for (const a of attempts) {
+      const q = a.code.toLowerCase()
+      const byText = items.filter(i => i.name.toLowerCase().includes(q) || (i.sku || '').toLowerCase().includes(q) || (i.genericName || '').toLowerCase().includes(q))
+      const byCode = items.filter(i => !byText.includes(i) && (i.barcode || '').toLowerCase().includes(q))
+      // One name / SKU match: a typed search + Enter adds it. Part of another item's barcode is
+      // never added on its own — that is a misread or unknown label, not that item.
+      if (byText.length === 1 && byCode.length === 0) {
+        addWithMult(byText[0], a.mult, (qty) => addToCart(byText[0], qty))
+        return true
+      }
+      const n = byText.length + byCode.length
+      if (n > 0) {
+        showCodeInSearch(a.code)
+        toast.info(`${n} item${n === 1 ? '' : 's'} match "${a.code}" — pick one`)
+        return false
+      }
     }
+
+    // Nothing anywhere: say so, and leave the code on screen so the cashier sees what was read
+    showCodeInSearch(raw)
+    setQuickAddInitialBarcode(attempts[attempts.length - 1].code)
+    toast.error(serverAnswered
+      ? `No item with barcode/code "${raw}". Press F4 to Quick Add it.`
+      : `No item with barcode/code "${raw}" on this till (server not reachable). Press F4 to Quick Add it.`)
     return false
   }
 
@@ -2211,14 +2540,15 @@ export default function POSPage() {
 
   /** Weighed / measured lines take decimals (1.25 kg); pieces take whole numbers */
   function lineAllowsDecimal(line: CartItem): boolean {
-    const unit = (line.unit || '').toLowerCase()
-    return !!line.isWeighable || ['kg', 'g', 'l', 'ml', 'm'].includes(unit)
+    const unit = (line.uom || line.unit || '').toLowerCase()
+    return !!line.isWeighable || ['kg', 'g', 'l', 'ml', 'm'].includes(unit) || unitAllowsFraction(unit)
   }
 
   /** Set a line to an absolute (positive) quantity, honouring serials, stock and return limits */
   function setLineQuantity(line: CartItem, qty: number) {
     if (line.serialNumberIds?.length) { toast.warning('Remove and re-add to change serial number selection'); return }
     if (!(qty > 0)) { removeFromCart(line.cartLineId); return }
+    if (line.sizeSpec && !isReturnMode) { editSizeLine(line); return }
     if (isReturnMode) {
       if (line.maxReturnQuantity !== undefined && qty > line.maxReturnQuantity) {
         toast.warning(`Only ${line.maxReturnQuantity} returnable on this invoice line`)
@@ -2233,8 +2563,8 @@ export default function POSPage() {
     if (item?.trackStock) {
       const others = cart
         .filter(c => c.itemId === line.itemId && c.cartLineId !== line.cartLineId)
-        .reduce((sum, c) => sum + (c.isWeighable ? (c.weight || 1) : c.quantity), 0)
-      if (others + qty > parseFloat(item.availableStock)) { toast.warning('Not enough stock available'); return }
+        .reduce((sum, c) => sum + baseQtyOf(c), 0)
+      if (others + qty * (line.isWeighable ? 1 : (line.uomFactor || 1)) > parseFloat(item.availableStock)) { toast.warning('Not enough stock available'); return }
     }
     setQuantityDirectly(line.cartLineId, qty)
   }
@@ -2272,6 +2602,7 @@ export default function POSPage() {
     if (!line) return false
     if (k === '+' || k === '-') { e.preventDefault(); setQtyBuffer(''); stepLine(line, k === '+' ? 1 : -1); return true }
     if (k === 'Delete') { e.preventDefault(); setQtyBuffer(''); removeFromCart(line.cartLineId); return true }
+    if (k === 'u' || k === 'U') { e.preventDefault(); if (qtyBuffer) commitQtyBuffer(); cycleLineUnit(line); return true }
     if (/^[0-9]$/.test(k) && timeDiff < 30 && qtyBuffer.length > 0) {
       // Keys this fast are a barcode scanner, not the cashier: hand them to the search box
       e.preventDefault()
@@ -2366,8 +2697,45 @@ export default function POSPage() {
       case 'closeShift': if (activeShift) setShowShiftCloseModal(true); break
       case 'cashMovement': if (activeShift) setShowCashMovementModal(true); break
       case 'customerDisplay': openCustomerDisplay(); break
+      case 'actions': setShowActions(true); break
+      case 'saveQuotation': openSaveQuotation(); break
       case 'help': setShowShortcutsHelp(true); break
     }
+  }
+
+  const quotationsEnabled = featureFlags.quotation !== false
+  /** Industry module: switched on for this business and meant for its business type (flags.ts) */
+  const industryOn = (flag: 'installments' | 'deliveries' | 'warranty_claims' | 'print_jobs') =>
+    !!featureFlags[flag] && !!company.businessType && featureAppliesTo(flag, company.businessType)
+  /** Hire purchase in the payment modal: installments module, a plain sale (no return / exchange / table order) */
+  const hirePurchaseAvailable = industryOn('installments') && !isReturnMode && !exchangeFrom && !restaurantOrderId
+
+  function openSaveQuotation() {
+    if (!quotationsEnabled) { toast.info('Quotations are switched off for this business'); return }
+    if (isReturnMode || exchangeFrom) { toast.info('Finish or cancel the return first'); return }
+    if (cart.length === 0) { toast.info('Add items to the cart first'); return }
+    setShowQuotation(true)
+  }
+
+  /** Cart lines as POST /api/quotations takes them (weighed lines: quantity = weight, per-unit price) */
+  function quotationLines(): QuotationLineInput[] {
+    return cartWithTax.map(toSaleLine).map(l => {
+      const quantity = Math.abs(l.quantity)
+      const gross = roundCurrency(l.unitPrice * quantity)
+      const discount = Math.min(gross, roundCurrency((l.discount || 0) + (l.promotionDiscount || 0)))
+      return {
+        itemId: /^[0-9a-f-]{36}$/i.test(l.itemId) ? l.itemId : null,
+        itemName: l.name,
+        quantity,
+        unitPrice: l.unitPrice,
+        discount,
+        tax: Math.max(0, roundCurrency(l.taxAmount || 0)),
+        total: Math.max(0, roundCurrency(gross - discount)),
+        uom: l.uom || l.unit || undefined,
+        uomFactor: l.uomFactor || 1,
+        ...(typeof l.taxRate === 'number' ? { taxRate: l.taxRate } : {}),
+      }
+    })
   }
 
   /** Any modal / dialog / full-screen overlay on top of the POS: page shortcuts pause while one is open */
@@ -2376,7 +2744,8 @@ export default function POSPage() {
       || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || showFloatModal || showPriceCheckModal
       || showQuickAddModal || !!variantPickerParentItem || !!supervisorRequest || clearCartConfirm || showCashMovementModal
       || showRecentSalesModal || showPrinterSettings || showCameraScan || showShortcutsHelp || !!lastSale
-      || !!weightInputItem || !!serialPickerItem || showModifierPicker || returnModeConfirm
+      || showActions || showScannerTest || showQuotation
+      || !!weightInputItem || !!sizeEntry || !!serialPickerItem || showModifierPicker || returnModeConfirm
       || recallConfirm.open || deleteHeldConfirm.open) return true
     return !!document.querySelector('[role="dialog"], [aria-modal="true"], .fixed.inset-0')
   }
@@ -2387,7 +2756,16 @@ export default function POSPage() {
   // Enter confirms, + / − change it, Del removes it, Esc goes back to search. ↓ from a search WITH text
   // moves into the product results (arrows move, Enter adds). Shortcuts (src/lib/pos/shortcuts.ts) pause
   // while any modal / overlay is open and come back when it closes.
-  const keyStateRef = useRef({ barcodeBuffer: '', lastKeyTime: 0 })
+  const keyStateRef = useRef({ barcodeBuffer: '', lastKeyTime: 0, burst: emptyBurst() })
+  const pendingDeliveryKeyRef = useRef<{ key: string; timer: number } | null>(null)
+
+  /** Deliveries module: a completed (synced) sale can get a delivery scheduled */
+  function canScheduleDelivery(sale: { invoiceNo: string; isReturn: boolean }): boolean {
+    return industryOn('deliveries') && !sale.isReturn && !/^OFF-/i.test(sale.invoiceNo)
+  }
+  function scheduleDelivery(invoiceNo: string) {
+    window.open(`/c/${params.slug}/deliveries?invoiceNo=${encodeURIComponent(invoiceNo)}`, '_blank', 'noopener')
+  }
   const keyHandlerRef = useRef<(e: KeyboardEvent) => void>(() => {})
   const openPaymentRef = useRef<() => void>(() => {})
 
@@ -2399,6 +2777,9 @@ export default function POSPage() {
     const now = Date.now()
     const timeDiff = now - ks.lastKeyTime
     ks.lastKeyTime = now
+    // Key timing tells a scanner burst from a person typing (Tab may end a scan, see below)
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) pushBurstKey(ks.burst, now)
+    else if (!['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab', 'Enter'].includes(e.key)) ks.burst = emptyBurst()
 
     const target = e.target as HTMLElement | null
     const isTyping = (el: Element | null) =>
@@ -2414,10 +2795,32 @@ export default function POSPage() {
     const plain = !e.ctrlKey && !e.altKey && !e.metaKey
     // "Sale completed" window: the next scan / typed key closes it and starts the next sale
     if (lastSale && e.key.length === 1 && plain && !isOtherInput) {
+      // D = schedule delivery. Held back a moment: a scan that starts with "D" is still a scan.
+      const pend = pendingDeliveryKeyRef.current
+      if (!pend && (e.key === 'd' || e.key === 'D') && canScheduleDelivery(lastSale)) {
+        e.preventDefault()
+        const invoiceNo = lastSale.invoiceNo
+        pendingDeliveryKeyRef.current = {
+          key: e.key,
+          timer: window.setTimeout(() => { pendingDeliveryKeyRef.current = null; scheduleDelivery(invoiceNo) }, 120),
+        }
+        return
+      }
       setLastSale(null)
       setLastSaleId(null)
-      ks.barcodeBuffer = timeDiff > 100 ? e.key : ks.barcodeBuffer + e.key
-      focusSearch()
+      if (pend) {
+        window.clearTimeout(pend.timer)
+        pendingDeliveryKeyRef.current = null
+        e.preventDefault()
+        ks.barcodeBuffer = pend.key + e.key
+        typeIntoSearch(pend.key, false)
+        typeIntoSearch(e.key, true)
+        return
+      }
+      ks.barcodeBuffer = timeDiff > SCAN_BURST_RESET_MS ? e.key : ks.barcodeBuffer + e.key
+      // Already in the search box: the key types itself. Otherwise it is put there, so the first
+      // character of a scan is never lost on the way.
+      if (!isSearchInput) { e.preventDefault(); typeIntoSearch(e.key, ks.burst.count > 1) }
       return
     }
 
@@ -2441,22 +2844,22 @@ export default function POSPage() {
       return
     }
 
-    // Barcode wedge scanner: Enter outside other inputs submits what was typed / scanned
-    if (e.key === 'Enter' && !isOtherInput) {
+    // Barcode wedge scanner: Enter outside other inputs submits what was typed / scanned. Tab does
+    // too when it ends a scanner burst (scanners set up with a Tab suffix); a person's Tab still moves focus.
+    const tabEndsScan = e.key === 'Tab' && plain && !e.shiftKey && isScanTerminator(ks.burst, now)
+    if ((e.key === 'Enter' || tabEndsScan) && !isOtherInput) {
       const inputEl = document.getElementById(POS_SEARCH_INPUT_ID) as HTMLInputElement | null
-      const domSearchVal = inputEl ? inputEl.value.trim() : ''
-      const searchCode = isSearchInput ? (domSearchVal || search.trim()) : (domSearchVal || '')
-      const bufferCode = ks.barcodeBuffer.trim()
-      const codeToScan = (searchCode.length >= bufferCode.length && searchCode.length >= 2)
-        ? searchCode
-        : (bufferCode.length >= 2 ? bufferCode : searchCode)
-
-      if (codeToScan.length >= 2) {
+      // the DOM value, not React state: a fast scanner can be ahead of the last render
+      const searchCode = sanitizeScan(inputEl ? inputEl.value : search)
+      const bufferCode = sanitizeScan(ks.barcodeBuffer)
+      const codeToScan = searchCode.length >= bufferCode.length ? searchCode : bufferCode
+      // Enter on a focused button / tile is that button's own action unless a scan just arrived
+      const onButton = !!target && (target.tagName === 'BUTTON' || target.tagName === 'A' || target.getAttribute('role') === 'button')
+      ks.burst = emptyBurst()
+      if (codeToScan.length >= 2 && (!onButton || bufferCode.length >= 2 || tabEndsScan)) {
         e.preventDefault()
         ks.barcodeBuffer = ''
-        if (inputEl) inputEl.value = ''
-        if (isSearchInput) setSearch('')
-        handleScanSubmit(codeToScan)
+        void handleScanSubmit(codeToScan)
         return
       }
       ks.barcodeBuffer = ''
@@ -2475,10 +2878,13 @@ export default function POSPage() {
       return
     }
 
-    // Printable characters outside inputs (scanner or cashier) go to the search box
+    // Printable characters outside inputs (scanner or cashier) go to the search box. The key is
+    // typed there explicitly so the first character of a scan is not lost while focus moves.
     if (!inTextInput && e.key.length === 1 && plain) {
-      ks.barcodeBuffer = timeDiff > 100 ? e.key : ks.barcodeBuffer + e.key
-      focusSearch()
+      ks.barcodeBuffer = timeDiff > SCAN_BURST_RESET_MS ? e.key : ks.barcodeBuffer + e.key
+      if (e.key === ' ') { focusSearch(); return }
+      e.preventDefault()
+      typeIntoSearch(e.key, ks.burst.count > 1)
     }
   }
 
@@ -2707,6 +3113,29 @@ export default function POSPage() {
       return
     }
 
+    // Hire purchase: down payment now, the balance on account (financed by the installment plan)
+    const hp = hirePurchase && hirePurchaseAvailable
+    if (hp) {
+      if (!selectedCustomer) {
+        toast.error('Hire purchase needs a customer — pick or add the customer, then press Payment again')
+        setShowPayment(false)
+        window.setTimeout(openCustomerPicker, 50)
+        return
+      }
+      if (!featureFlags.credit_customer) {
+        toast.error('Hire purchase leaves the balance on the customer\'s account, but credit sales are switched off for this business. Ask the administrator to turn on "Credit customers" in Features.')
+        return
+      }
+      if (!online) {
+        toast.error('Hire purchase needs a connection — the installment plan is set up online')
+        return
+      }
+      if (['credit', 'gift_card', 'cheque'].includes(paymentMethod)) {
+        toast.error('Take the down payment in cash, card, transfer or mobile payment')
+        return
+      }
+    }
+
     // Credit sales require a customer (need to know who owes the money)
     if (paymentMethod === 'credit' && !selectedCustomer) {
       toast.error('Please select a customer for credit sales')
@@ -2749,8 +3178,19 @@ export default function POSPage() {
           ].filter((s) => s.amount > 0)
         : undefined
 
+    // Hire purchase: [down payment, balance on account] (no down payment → a plain credit sale)
+    const hpDown = hp ? roundCurrency(amountVal) : 0
+    const hpBalance = hp ? roundCurrency(saleTotal - creditUsed - hpDown) : 0
+    if (hp && !(hpBalance > 0)) {
+      toast.error('The down payment covers the whole bill — untick Hire purchase and complete it as a normal sale')
+      return
+    }
+    const hpSplits = hp && hpDown > 0
+      ? [{ method: paymentMethod, amount: hpDown }, { method: 'credit', amount: hpBalance }]
+      : undefined
+
     // K1: a cheque tender carries its details
-    const chequeTender = paymentSplits ? paymentSplits.some((p) => p.method === 'cheque') : paymentMethod === 'cheque'
+    const chequeTender = !hp && (paymentSplits ? paymentSplits.some((p) => p.method === 'cheque') : paymentMethod === 'cheque')
     if (chequeTender && (!chequeDetails.chequeNo.trim() || !chequeDetails.bankName.trim() || !chequeDetails.chequeDate)) {
       toast.error('Enter the cheque number, bank and date')
       return
@@ -2769,8 +3209,8 @@ export default function POSPage() {
         ? `${selectedVehicle.year ? `${selectedVehicle.year} ` : ''}${selectedVehicle.make} ${selectedVehicle.model}`
         : undefined,
       cartItems: cartWithTax.map(toSaleLine),
-      paymentMethod,
-      paymentSplits,
+      paymentMethod: hp && !hpSplits ? 'credit' : paymentMethod,
+      paymentSplits: hp ? hpSplits : paymentSplits,
       subtotal,
       discount: discountAmount,
       discountType: saleDiscount.value > 0 ? saleDiscount.type : undefined,
@@ -2778,12 +3218,13 @@ export default function POSPage() {
       tax,
       taxBreakdown: saleTaxBreakdown.length > 0 ? saleTaxBreakdown : undefined,
       total: saleTotal,
-      amountPaid: splitEnabled ? firstAmt + secondAmt : effectiveCashCardPaid,
+      amountPaid: hp ? hpDown : splitEnabled ? firstAmt + secondAmt : effectiveCashCardPaid,
       creditAmount: creditUsed,
       addOverpaymentToCredit: false,
       loyaltyPointsRedeemed: loyaltyRedeemPoints > 0 ? loyaltyRedeemPoints : undefined,
       loyaltyRedeemValue: loyaltyRedeemValue > 0 ? loyaltyRedeemValue : undefined,
       restaurantOrderId: restaurantOrderId || undefined,
+      quotationId: fromQuotationIdRef.current || undefined,
       tipAmount: tip > 0 ? tip : undefined,
       giftCardId: paymentMethod === 'gift_card' && giftCardInfo ? giftCardInfo.id : undefined,
       approvalTokens: approvalTokensRef.current.length > 0 ? [...approvalTokensRef.current] : undefined,
@@ -2838,8 +3279,18 @@ export default function POSPage() {
           }).catch(console.error)
         }
 
-        if (posProfile?.printReceiptOnComplete && sale.id) {
-          printReceiptForSale(sale.id)
+        const printing = posProfile?.printReceiptOnComplete && sale.id ? printReceiptForSale(sale.id) : null
+
+        if (hp) {
+          // The plan form looks the invoice up and finances its open balance
+          clearCart()
+          setShowPayment(false)
+          setAmountPaid('')
+          setCreditAmount('')
+          toast.success(`${sale.invoiceNo} saved on account — set up the installment plan`)
+          if (printing) await printing
+          router.push(`/c/${params.slug}/installments/new?invoiceNo=${encodeURIComponent(sale.invoiceNo)}`)
+          return
         }
 
         if (selectedCustomer?.id && loyaltyProgram) {
@@ -2920,14 +3371,16 @@ export default function POSPage() {
       : loadReceiptModel(saleId, receiptOpts)
     // Direct ESC/POS printing (USB / Bluetooth / print agent). Falls back to the HTML path below on failure.
     if (printer.isRawPrinter) {
-      const printed = offlineSale
-        ? await printer.printReceiptModel((await loadModel()).model)
-        : await printer.printReceipt(saleId, receiptOpts)
-      if (printed) {
+      const result = offlineSale
+        ? await printer.printReceiptModelEx((await loadModel()).model)
+        : await printer.printReceiptEx(saleId, receiptOpts)
+      if (result === 'printed') {
         setLastSale(null)
         setLastSaleId(null)
         return
       }
+      // Closed in the print preview: keep the "sale completed" window (print again / send / delivery)
+      if (result === 'cancelled') return
       toast.warning(printer.status.message ? `Printer: ${printer.status.message}. Using browser print.` : 'Printer unavailable, using browser print')
     }
     try {
@@ -3019,6 +3472,48 @@ export default function POSPage() {
     )
   }
 
+  // ─── Actions launcher tiles (Alt+A / Ctrl+K) ──────────────────
+  const noShift = activeShift ? null : 'Open a shift first'
+  const openModuleTab = (path: string) => { window.open(`/c/${params.slug}${path}`, '_blank', 'noopener') }
+  const actionTiles: PosActionTile[] = [
+    activeShift
+      ? { id: 'closeShift', label: `Close shift ${activeShift.entryNumber}`, icon: Power, shortcut: 'Alt+X', keywords: 'end day z report', tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('closeShift') }
+      : { id: 'openShift', label: 'Open shift', icon: Play, shortcut: 'Alt+O', keywords: 'start day', tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('openShift') },
+    { id: 'cashMovement', label: 'Cash in / out', icon: ArrowDownUp, shortcut: 'Alt+M', keywords: 'paid in paid out petty', disabledReason: noShift, run: () => runPosAction('cashMovement') },
+    { id: 'floatDrop', label: 'Float / safe drop', icon: Wallet, shortcut: 'F10', keywords: 'drawer cash', disabledReason: noShift, tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('floatDrop') },
+    { id: 'billsHistory', label: 'Bills history', icon: Clock, shortcut: 'Alt+B', keywords: 'recent sales receipts whatsapp', tone: 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400', run: () => runPosAction('billsHistory') },
+    { id: 'reprintLast', label: 'Reprint last bill', icon: Printer, shortcut: 'Alt+R', keywords: 'receipt print again', run: () => runPosAction('reprintLast') },
+    { id: 'priceCheck', label: 'Price & stock check', icon: Tag, shortcut: 'F7', keywords: 'inquiry lookup', tone: 'bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400', run: () => runPosAction('priceCheck') },
+    { id: 'returnSale', label: 'Return / refund', icon: RotateCcw, shortcut: 'F6', keywords: 'refund exchange', disabledReason: isReturnMode ? 'Already in return mode' : null, tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('returnSale') },
+    { id: 'quickAdd', label: 'Quick add item', icon: PlusCircle, shortcut: 'F4', keywords: 'new item create', disabledReason: isReturnMode ? 'Not in return mode' : null, run: () => runPosAction('quickAdd') },
+    { id: 'recallHeld', label: heldSales.length ? `Recall held (${heldSales.length})` : 'Recall held sale', icon: History, shortcut: 'F3', keywords: 'hold parked', disabledReason: heldSales.length ? null : 'No held sales', tone: 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400', run: () => runPosAction('recallHeld') },
+    { id: 'saveQuotation', label: 'Save as quotation', icon: FileText, shortcut: 'Alt+Q', keywords: 'quote estimate proforma',
+      disabledReason: !quotationsEnabled ? 'Quotations are switched off' : isReturnMode || exchangeFrom ? 'Not during a return' : cart.length === 0 ? 'Cart is empty' : null,
+      tone: 'bg-teal-100 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300', run: () => runPosAction('saveQuotation') },
+    { id: 'quotations', label: 'Quotations list', icon: Files, keywords: 'quote estimate', disabledReason: quotationsEnabled ? null : 'Quotations are switched off',
+      run: () => { window.open(`/c/${params.slug}/quotations`, '_blank', 'noopener') } },
+    // Industry modules (feature switch on and relevant to this business type) — new tab, the sale stays
+    ...(industryOn('print_jobs') ? [
+      { id: 'newPrintJob', label: 'New print job', icon: Ruler, keywords: 'print photo job order size banner flex', tone: 'bg-teal-100 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300', run: () => openModuleTab('/print-jobs/new') },
+      { id: 'printJobs', label: 'Print jobs', icon: ClipboardList, keywords: 'print photo job orders pickup ready', run: () => openModuleTab('/print-jobs') },
+    ] : []),
+    ...(industryOn('warranty_claims') ? [
+      { id: 'warrantyClaims', label: 'Warranty claim lookup', icon: ShieldCheck, keywords: 'warranty serial imei repair service claim', tone: 'bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400', run: () => openModuleTab('/warranty-claims') },
+    ] : []),
+    ...(industryOn('installments') ? [
+      { id: 'installmentsDue', label: 'Installments due', icon: CalendarClock, keywords: 'hire purchase installment plan due overdue collect', tone: 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400', run: () => openModuleTab('/installments?view=due') },
+    ] : []),
+    ...(industryOn('deliveries') ? [
+      { id: 'deliveriesToday', label: 'Deliveries today', icon: Truck, keywords: 'delivery installation schedule driver', run: () => openModuleTab('/deliveries') },
+    ] : []),
+    { id: 'customerDisplay', label: 'Customer display', icon: MonitorUp, shortcut: 'Alt+D', keywords: 'second screen monitor', disabledReason: customerDisplayEnabled ? null : 'Turned off for this shop / counter', tone: 'bg-teal-100 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300', run: () => runPosAction('customerDisplay') },
+    { id: 'printer', label: `Printer: ${printer.transportLabel}`, icon: Printer, keywords: 'receipt printer settings', run: () => setShowPrinterSettings(true) },
+    { id: 'camera', label: 'Camera scan', icon: Camera, keywords: 'barcode webcam', run: () => setShowCameraScan(true) },
+    { id: 'scannerTest', label: 'Scanner test', icon: ScanBarcode, keywords: 'barcode check label diagnose', run: () => setShowScannerTest(true) },
+    { id: 'lock', label: 'Lock terminal', icon: Lock, shortcut: 'F8', keywords: 'pin away', disabledReason: noShift, run: () => runPosAction('lock') },
+    { id: 'help', label: 'Keyboard shortcuts', icon: Keyboard, shortcut: '?', keywords: 'help keys', run: () => runPosAction('help') },
+  ]
+
   // ─── Main Render ──────────────────────────────────────────────
 
   return (
@@ -3065,97 +3560,15 @@ export default function POSPage() {
           <span className="text-amber-400 font-bold">
             {activeShift ? `Shift ${activeShift.entryNumber}` : 'No open shift'}
           </span>
-          <span className="text-slate-600 hidden xl:inline">•</span>
           <button
             type="button"
-            onClick={() => setShowRecentSalesModal(true)}
-            className="px-2 py-0.5 rounded bg-blue-900/80 hover:bg-blue-800 text-blue-200 font-bold border border-blue-700/80 flex items-center gap-1"
-            title="Recent Sales & Bills — reprint or share via WhatsApp (Alt+B)"
+            onClick={() => setShowActions(true)}
+            className="px-2.5 py-0.5 rounded bg-teal-700 hover:bg-teal-600 text-white font-bold border border-teal-500 flex items-center gap-1.5"
+            title="Actions: shift, cash in/out, bills history, reprint, price check, return, quotation … (Alt+A or Ctrl+K)"
           >
-            <Clock className="w-3 h-3" />
-            Bills History
-            <Kbd tone="dark">Alt+B</Kbd>
-          </button>
-          <button
-            type="button"
-            onClick={reprintLastBill}
-            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700 flex items-center gap-1"
-            title="Reprint the last bill (Alt+R)"
-          >
-            Reprint
-            <Kbd tone="dark">Alt+R</Kbd>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowPriceCheckModal(true)}
-            className="px-2 py-0.5 rounded bg-indigo-900/80 hover:bg-indigo-800 text-indigo-200 font-bold border border-indigo-700/80 flex items-center gap-1"
-            title="Price & Stock Check (F7)"
-          >
-            <Tag className="w-3 h-3" />
-            Price Check
-            <Kbd tone="dark">F7</Kbd>
-          </button>
-          {activeShift && (
-            <button
-              type="button"
-              onClick={() => setShowFloatModal(true)}
-              className="px-2 py-0.5 rounded bg-emerald-900/80 hover:bg-emerald-800 text-emerald-200 font-bold border border-emerald-700/80 flex items-center gap-1"
-              title="Cash Drawer Float / Safe Drop (F10)"
-            >
-              <Wallet className="w-3 h-3" />
-              Float / Drop
-              <Kbd tone="dark">F10</Kbd>
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowCameraScan(true)}
-            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700"
-            title="Scan barcode with camera"
-          >
-            Camera
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowPrinterSettings(true)}
-            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700"
-            title={`Printer: ${printer.transportLabel}${printer.deviceName ? ` (${printer.deviceName})` : ''}`}
-          >
-            Printer: {printer.transportLabel}
-          </button>
-          {activeShift && (
-            <button
-              type="button"
-              onClick={() => setTerminalLocked(true)}
-              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700"
-              title="Lock terminal (F8)"
-            >
-              Lock
-              <Kbd tone="dark" className="ml-1">F8</Kbd>
-            </button>
-          )}
-          {customerDisplayEnabled && (
-            <button
-              type="button"
-              onClick={openCustomerDisplay}
-              className="px-2 py-0.5 rounded bg-teal-900/80 hover:bg-teal-800 text-teal-100 font-bold border border-teal-700/80 flex items-center gap-1"
-              title="Open the customer display on the second screen (Alt+D)"
-            >
-              <MonitorUp className="w-3 h-3" />
-              <span className="hidden xl:inline">Customer Display</span>
-              <span className="xl:hidden">Display</span>
-              <Kbd tone="dark">Alt+D</Kbd>
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowShortcutsHelp(true)}
-            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold border border-slate-700 flex items-center gap-1"
-            title="Keyboard shortcuts (? or Ctrl+/)"
-            aria-label="Keyboard shortcuts"
-          >
-            <Keyboard className="w-3 h-3" />
-            <Kbd tone="dark">?</Kbd>
+            <LayoutGrid className="w-3.5 h-3.5" />
+            Actions
+            <Kbd tone="dark">Alt+A</Kbd>
           </button>
           <div className="flex items-center text-slate-300">
             <AppTextSizeControl variant="pos" userId={sessionData?.user?.id || null} />
@@ -3181,14 +3594,11 @@ export default function POSPage() {
         posWarehouseName={posWarehouse?.name || null}
         onOpenShift={() => setShowShiftOpenModal(true)}
         onCloseShift={() => setShowShiftCloseModal(true)}
-        onCashMovement={() => setShowCashMovementModal(true)}
-        onOpenReturnLookup={() => setShowReturnLookupModal(true)}
         cartHasItems={cart.length > 0}
-        onReturnModeConfirm={() => setReturnModeConfirm(true)}
+        shiftLabelOnly
         config={config}
         businessType={company.businessType}
         onScanSubmit={handleScanSubmit}
-        onOpenQuickAdd={handleOpenQuickAdd}
       />
 
       <CartPanel
@@ -3208,6 +3618,7 @@ export default function POSPage() {
         onRemoveFromCart={removeFromCart}
         onUpdatePrice={updatePrice}
         onSetQuantityDirectly={setQuantityDirectly}
+        onEditSize={(id) => { const line = cart.find(c => c.cartLineId === id); if (line) editSizeLine(line) }}
         onChangeBatch={changeBatch}
         onClearCart={handleClearCartRequest}
         onCancelReturnMode={cancelReturnMode}
@@ -3246,11 +3657,16 @@ export default function POSPage() {
         cartFocused={cartFocused}
         onSelectLine={(id) => { setSelectedLineId(id); setQtyBuffer('') }}
         onCartFocusChange={(f) => { setCartFocused(f); if (!f) setQtyBuffer('') }}
+        getUnitOptions={lineUnitOptions}
+        onChangeUnit={changeLineUnit}
+        onSaveQuotation={quotationsEnabled && !exchangeFrom ? openSaveQuotation : undefined}
       />
 
       <POSPaymentModal
         isOpen={showPayment}
-        onClose={() => setShowPayment(false)}
+        onClose={() => { setShowPayment(false); setHirePurchase(false) }}
+        hirePurchase={hirePurchase}
+        setHirePurchase={hirePurchaseAvailable ? setHirePurchase : undefined}
         onCompleteSale={completeSale}
         isReturnMode={isReturnMode}
         splitEnabled={splitEnabled}
@@ -3368,6 +3784,7 @@ export default function POSPage() {
         onPrintReceipt={printReceiptForSale}
         printingReceipt={printingReceipt}
         shopName={company?.tenantName || 'skyERPOS'}
+        onScheduleDelivery={lastSale && canScheduleDelivery(lastSale) ? () => scheduleDelivery(lastSale.invoiceNo) : undefined}
       />
 
       {/* Recent Sales / Bill History Modal */}
@@ -3506,6 +3923,16 @@ export default function POSPage() {
       />
 
       {/* Supermarket: Weight / Measurement Input Modal */}
+      {sizeEntry && (
+        <SizeEntryDialog
+          key={sizeEntry.cartLineId || sizeEntry.item?.id}
+          target={sizeEntry.target}
+          onClose={() => setSizeEntry(null)}
+          onConfirm={confirmSizeEntry}
+          onRemove={sizeEntry.cartLineId ? () => { const id = sizeEntry.cartLineId!; setSizeEntry(null); setCart(prev => prev.filter(c => c.cartLineId !== id)) } : undefined}
+        />
+      )}
+
       <WeightInputModal
         isOpen={!!weightInputItem}
         item={weightInputItem}
@@ -3561,6 +3988,50 @@ export default function POSPage() {
 
       {/* Receipt printer settings (per terminal) */}
       <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} />
+
+      {/* Actions launcher (Alt+A / Ctrl+K): secondary till actions as tiles, arrow-key navigable */}
+      {showActions && (
+        <PosActionsPanel
+          isOpen
+          actions={actionTiles}
+          onClose={() => { setShowActions(false); window.setTimeout(focusSearch, 0) }}
+        />
+      )}
+
+      {/* Scanner test: what the scanner sends and what the lookup makes of it */}
+      <ScannerTestModal
+        isOpen={showScannerTest}
+        onClose={() => { setShowScannerTest(false); window.setTimeout(focusSearch, 0) }}
+        warehouseId={posWarehouse?.id || null}
+      />
+
+      {/* Save the cart as a quotation (Alt+Q) */}
+      {showQuotation && (
+        <SaveQuotationModal
+          slug={String(params.slug || '')}
+          lines={quotationLines()}
+          totals={{
+            subtotal: Math.max(0, subtotal),
+            discount: roundCurrency(discountAmount + cartPromotionDiscount),
+            tax: exclusiveTax,
+            total: Math.max(0, total),
+          }}
+          customer={selectedCustomer ? {
+            id: selectedCustomer.id || null,
+            name: selectedCustomer.name,
+            phone: selectedCustomer.phone || null,
+            email: (selectedCustomer as { email?: string | null }).email || null,
+          } : null}
+          currencyCode={currencyCode}
+          onClose={() => { setShowQuotation(false); window.setTimeout(focusSearch, 0) }}
+          onClearCart={() => {
+            // the counter may require a supervisor to void a cart; the quotation itself is already saved
+            const cp = (activeShift?.posProfile?.receiptSettings as { cashierPermissions?: { allowCartClear?: boolean } } | undefined)?.cashierPermissions
+            if (cp?.allowCartClear === false) setSupervisorRequest({ type: 'cart_void' })
+            else clearCart()
+          }}
+        />
+      )}
 
       {/* Keyboard shortcuts overlay (? / Ctrl+/) */}
       <ShortcutsHelpModal isOpen={showShortcutsHelp} onClose={() => setShowShortcutsHelp(false)} />

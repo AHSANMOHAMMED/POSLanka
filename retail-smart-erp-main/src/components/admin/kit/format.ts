@@ -46,6 +46,10 @@ export const BUSINESS_TYPE_LABELS: Record<string, string> = {
   auto_service: 'Auto service',
   dealership: 'Dealership',
   pharmacy: 'Pharmacy',
+  electronics: 'Electronics & appliances',
+  hardware: 'Hardware',
+  print_studio: 'Printing & photo studio',
+  office: 'Office & services',
 }
 
 export function businessTypeLabel(t: string | null | undefined): string {

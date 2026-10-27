@@ -70,6 +70,9 @@ const nextConfig: NextConfig = {
       "https://*.retailsmarterp.com",
       "wss://*.retailsmarterp.com",
       "ws://localhost:*",
+      // local print agent (tools/print-agent) on the cashier PC
+      "http://127.0.0.1:*",
+      "http://localhost:*",
       "https://api.resend.com",
       "https://www.payhere.lk",
       "https://sandbox.payhere.lk",

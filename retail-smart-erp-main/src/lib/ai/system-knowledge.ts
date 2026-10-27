@@ -1462,7 +1462,7 @@ export const COMMON_WORKFLOWS: WorkflowEntry[] = [
     name: 'Setting Up a New Company',
     steps: [
       'Register for an account at the registration page.',
-      'Enter your company name, business type (retail, restaurant, supermarket, auto_service, dealership), and other details.',
+      'Enter your company name, business type (retail, restaurant, supermarket, pharmacy, auto_service, dealership, electronics, hardware, print_studio, office), and other details.',
       'Complete email verification.',
       'Log in to your new company workspace.',
       'Go to Settings to configure company details, currency, and logo.',
@@ -1773,7 +1773,7 @@ export function getSystemKnowledgeCatalog(): string {
     '- searchWorkflows(query) - Find step-by-step workflow instructions.',
     '- getAccessiblePages(businessType, userRole) - Get all pages a user can access.',
     '',
-    'Business types: retail, restaurant, supermarket, auto_service, dealership',
+    'Business types: retail, restaurant, supermarket, pharmacy, auto_service, dealership, electronics (appliances & phones: hire purchase, deliveries, warranty claims), hardware, print_studio (print & photo job orders), office (HR & attendance)',
     'User roles: owner, manager, cashier, technician, chef, waiter, system_manager, accounts_manager, sales_manager, purchase_manager, hr_manager, stock_manager, pos_user, report_user',
     '',
     'Use these functions to answer questions like:',

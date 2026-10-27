@@ -5,7 +5,11 @@ import Link from 'next/link'
 import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3, Lock, Ruler, ArrowLeft, Layout, AlertTriangle } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
 import { LabelPreview } from '@/components/labels/LabelPreview'
-import { printLabels, printLabelsOnRoll, printLabelsRaw, isRawLabelPrinter } from '@/lib/labels/label-print'
+import { printLabels, printLabelsOnRoll, printLabelsRaw, isRawLabelPrinter, rawLabelDpi, printAlignmentTestDialog } from '@/lib/labels/label-print'
+import { DirectLabelPrinterPanel } from '@/components/labels/DirectLabelPrinterPanel'
+import { BrowserLabelPrintGuide, browserGuideHidden } from '@/components/labels/BrowserLabelPrintGuide'
+import { preflightLabels } from '@/lib/print/label/preflight'
+import { PrintAgentTransport } from '@/lib/print/escpos/transports'
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
 import { usePermission } from '@/hooks/usePermission'
@@ -80,16 +84,38 @@ export default function BarcodePrintPage() {
   const { printers } = usePrinters()
   const labelPrinters = printers.filter((p) => p.role === 'label')
   const otherPrinters = printers.filter((p) => p.role !== 'label')
-  const [printerChoice, setPrinterChoice] = useState<string>(() => {
+  // null = not chosen this session: a direct (raw) label printer is the default when one is configured,
+  // the browser dialog only when there is none (or the cashier picks it explicitly).
+  const [printerChoice, setPrinterChoice] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('sky_barcode_printer_id') ?? ''
+      return localStorage.getItem('sky_barcode_printer_id') || null
     }
-    return ''
+    return null
   })
   const [showPrinterSettings, setShowPrinterSettings] = useState(false)
   const [printing, setPrinting] = useState(false)
-  const chosenPrinterId = printerChoice
+  const firstRawPrinter = printers.find((p) => isRawLabelPrinter(p)) || null
+  const chosenPrinterId =
+    printerChoice !== null && (printerChoice === '' || printers.some((p) => p.id === printerChoice)) ? printerChoice : firstRawPrinter?.id || ''
   const chosenPrinter = printers.find((p) => p.id === chosenPrinterId) || null
+  const choosePrinter = (id: string) => {
+    setPrinterChoice(id)
+    if (typeof window !== 'undefined') {
+      if (id) localStorage.setItem('sky_barcode_printer_id', id)
+      else localStorage.removeItem('sky_barcode_printer_id')
+    }
+  }
+  // Print agent on this PC (for the browser-dialog guide's recommendation)
+  const [agentUp, setAgentUp] = useState(false)
+  useEffect(() => {
+    let alive = true
+    PrintAgentTransport.health().then((ok) => alive && setAgentUp(ok))
+    return () => {
+      alive = false
+    }
+  }, [])
+  // Browser print dialog checklist (paper size), shown before the dialog opens
+  const [guideJob, setGuideJob] = useState<null | { run: () => Promise<boolean>; rows: number; setup: StickerSetup }>(null)
 
   const [isSecure, setIsSecure] = useState(true)
   useEffect(() => {
@@ -769,8 +795,37 @@ export default function BarcodePrintPage() {
     }
 
     const printViaRoll = config.pageSize === 'Label'
+    const direct = !forceBrowserPrint && isRawLabelPrinter(chosenPrinter)
 
-    if (!forceBrowserPrint && isRawLabelPrinter(chosenPrinter)) {
+    // Pre-print barcode check: never send an unscannable / unfindable barcode silently.
+    const pf = preflightLabels(templateToPrint, items, {
+      dpi: direct && chosenPrinter ? rawLabelDpi(chosenPrinter, effectiveSetup) : effectiveSetup.dpi,
+      labelWidthMm: Number(templateToPrint.widthMm),
+      tenantName: company?.tenantName,
+    })
+    if (pf.errors > 0) {
+      const lines = pf.issues
+        .filter((i) => i.severity === 'error')
+        .slice(0, 6)
+        .map((i) => `- ${i.itemName}: ${i.message}`)
+        .join('\n')
+      if (!window.confirm(`${pf.errors} barcode problem${pf.errors === 1 ? '' : 's'} - these labels would not scan at the POS:\n\n${lines}\n\nPrint anyway?`)) return
+    }
+
+    const dialogPrint = () =>
+      printViaRoll
+        ? printLabelsOnRoll(templateToPrint, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
+        : printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
+    // Browser dialog: show the paper-size checklist first (unless dismissed for this size).
+    const viaDialog = async () => {
+      if (printViaRoll && !browserGuideHidden(effectiveSetup)) {
+        setGuideJob({ run: dialogPrint, rows: Math.ceil(totalLabels / Math.max(1, effectiveSetup.columns)), setup: effectiveSetup })
+        return
+      }
+      if (!(await dialogPrint())) toast.error('Failed to open print dialog')
+    }
+
+    if (direct && chosenPrinter) {
       setPrinting(true)
       try {
         const res = await printLabelsRaw(chosenPrinter, templateToPrint, items, {
@@ -779,49 +834,41 @@ export default function BarcodePrintPage() {
           codeWord,
           setup: effectiveSetup,
         })
-        if (res.warnings.length) toast.warning(res.warnings.slice(0, 3).join('; '))
         if (res.ok) {
-          toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${chosenPrinter.name}`)
-          return
-        } else {
-          toast.warning(`USB printer: ${res.error || 'held by OS'}. Opening OS Print Dialog...`)
-          // Automatic seamless fallback to OS / browser print dialog
-          const rollSuccess = printViaRoll
-            ? await printLabelsOnRoll(templateToPrint, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
-            : await printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
-          if (!rollSuccess) toast.error('Failed to open print dialog')
+          const rows = Math.ceil(totalLabels / Math.max(1, effectiveSetup.columns))
+          toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} (${rows} row${rows !== 1 ? 's' : ''}) to ${chosenPrinter.name}`)
+          if (res.warnings.length) toast.warning(res.warnings.slice(0, 2).join('; '))
           return
         }
-      } catch {
-        toast.warning('USB connection issue. Opening OS Print Dialog...')
-        const rollSuccess = printViaRoll
-          ? await printLabelsOnRoll(templateToPrint, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
-          : await printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
-        if (!rollSuccess) toast.error('Failed to open print dialog')
-        return
+        toast.error(`${chosenPrinter.name}: ${res.error || 'printer not reachable'}. Check the printer / print agent; using the print dialog instead.`)
+        await viaDialog()
+      } catch (e) {
+        toast.error(`${chosenPrinter.name}: ${e instanceof Error ? e.message : 'print failed'}. Using the print dialog instead.`)
+        await viaDialog()
       } finally {
         setPrinting(false)
       }
+      return
     }
 
     try {
-      const success = printViaRoll
-        ? await printLabelsOnRoll(templateToPrint, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
-        : await printLabels(
-          templateToPrint,
-          items,
-          config,
-          currencySymbol,
-          company?.tenantName,
-          codeWord
-        )
-      if (!success) {
-        toast.error('Failed to open print dialog')
-      }
+      await viaDialog()
     } catch {
       toast.error('Failed to generate labels')
     }
   }
+
+  // Live barcode check of the current list (shown under the items table).
+  const preflight = useMemo(() => {
+    const t = activeTemplate || selectedTemplate
+    if (!t || items.length === 0) return null
+    const raw = isRawLabelPrinter(chosenPrinter)
+    return preflightLabels(t, items, {
+      dpi: raw && chosenPrinter ? rawLabelDpi(chosenPrinter, activeSetup) : activeSetup?.dpi === 300 ? 300 : 203,
+      labelWidthMm: Number(t.widthMm),
+      tenantName: company?.tenantName,
+    })
+  }, [activeTemplate, selectedTemplate, items, chosenPrinter, activeSetup, company?.tenantName])
 
   return (
     <div className="space-y-4">
@@ -1013,10 +1060,34 @@ export default function BarcodePrintPage() {
               </div>
             )}
           </div>
+          {preflight && preflight.issues.length > 0 && (
+            <div className={`rounded-lg border p-3 text-xs space-y-1 ${preflight.errors ? 'bg-red-50 border-red-300 text-red-900' : 'bg-amber-50 border-amber-300 text-amber-900'}`}>
+              <div className="font-semibold flex items-center gap-1.5">
+                <AlertTriangle size={13} />
+                {preflight.errors
+                  ? `${preflight.errors} label${preflight.errors === 1 ? '' : 's'} would not scan - fix before printing`
+                  : 'Barcode notes'}
+              </div>
+              <ul className="list-disc ml-5 space-y-0.5">
+                {preflight.issues.slice(0, 8).map((i, k) => (
+                  <li key={k}>
+                    <b>{i.itemName}</b>: {i.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
 
         {/* Right: Template & Preview */}
         <div className="space-y-3">
+          <DirectLabelPrinterPanel
+            setup={activeSetup}
+            printers={printers}
+            selectedId={chosenPrinterId}
+            onSelect={choosePrinter}
+            basePath={`/c/${company?.tenantSlug || ''}`}
+          />
           {/* Template selector */}
           <div className="bg-white rounded-lg border p-4 space-y-3">
             <div>
@@ -1033,17 +1104,12 @@ export default function BarcodePrintPage() {
               </div>
               <select
                 value={chosenPrinterId}
-                onChange={(e) => {
-                  setPrinterChoice(e.target.value)
-                  if (typeof window !== 'undefined') {
-                    localStorage.setItem('sky_barcode_printer_id', e.target.value)
-                  }
-                }}
+                onChange={(e) => choosePrinter(e.target.value)}
                 className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm font-medium bg-white"
               >
-                <option value="">🖨️ Browser print dialog (System driver / Any OS) — Recommended</option>
+                <option value="">🖨️ Browser print dialog (needs the label paper size set in the driver)</option>
                 {labelPrinters.length > 0 && (
-                  <optgroup label="Direct USB Label Printers">
+                  <optgroup label="Direct label printers (no dialog)">
                     {labelPrinters.map(p => (
                       <option key={p.id} value={p.id}>
                         {p.name} ({LABEL_LANGUAGE_LABELS[p.label.language] || p.label.language.toUpperCase()}, {p.label.dpi} dpi)
@@ -1063,7 +1129,11 @@ export default function BarcodePrintPage() {
               </select>
               <div className="flex items-center justify-between mt-1 text-xs">
                 <span className="text-gray-500">
-                  {!chosenPrinterId ? 'Uses your OS default printer. Works with any driver.' : 'Direct hardware USB connection active.'}
+                  {!chosenPrinterId
+                    ? 'Chrome dialog: the driver paper size must be the label size (a checklist opens before printing).'
+                    : isRawLabelPrinter(chosenPrinter)
+                      ? `Direct: ${chosenPrinter?.transport === 'agent' ? 'print agent' : chosenPrinter?.transport} → ${(chosenPrinter?.label.language || '').toUpperCase()}, ${chosenPrinter ? rawLabelDpi(chosenPrinter, activeSetup) : 203} dpi, no dialog.`
+                      : 'This printer is not a label printer profile; labels use the print dialog.'}
                 </span>
                 <button
                   type="button"
@@ -1079,7 +1149,7 @@ export default function BarcodePrintPage() {
                 </div>
               ) : !chosenPrinter || !isRawLabelPrinter(chosenPrinter) ? (
                 <div className="mt-2 p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800 flex items-center gap-1.5">
-                  <span className="font-semibold">✓ System Print Dialog Active:</span> Prints directly to your default Windows / Mac / OS printer with zero setup.
+                  <span className="font-semibold">Print dialog mode:</span> set the label paper size in the printer driver once (checklist shown before printing), or use <b>Print directly</b> above.
                 </div>
               ) : null}
             </div>
@@ -1891,6 +1961,23 @@ export default function BarcodePrintPage() {
       )}
 
       <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} initialRole="label" />
+      {guideJob && (
+        <BrowserLabelPrintGuide
+          isOpen
+          setup={guideJob.setup}
+          rows={guideJob.rows}
+          agentAvailable={agentUp}
+          onClose={() => setGuideJob(null)}
+          onAlignmentTest={() => {
+            printAlignmentTestDialog(guideJob.setup).then((ok) => !ok && toast.error('Failed to open print dialog'))
+          }}
+          onContinue={() => {
+            const job = guideJob
+            setGuideJob(null)
+            job.run().then((ok) => !ok && toast.error('Failed to open print dialog'))
+          }}
+        />
+      )}
     </div>
   )
 }

@@ -174,11 +174,27 @@ export async function printLabels(
   return executePrint('Barcode Labels', styles, content)
 }
 
+export interface RollPrintDocument {
+  title: string
+  styles: string
+  content: string
+  /** Physical rows = pages the dialog prints. */
+  pages: number
+  /** Page (= one physical row) size the printer driver's paper must match. */
+  pageWidthMm: number
+  pageHeightMm: number
+}
+
+const r4 = (n: number) => Math.round(n * 10000) / 10000
+
 /**
- * Build the full print document (title, styles, page content) for a browser /
- * OS-dialog print on a multi-across roll: one page per physical row (page size
- * = liner width x label height), every label absolutely placed at its column
- * with the setup's margins, gaps and calibration offsets.
+ * Build the print document (title, styles, page content) for a browser /
+ * OS-dialog print on a label roll: exactly one page per physical row, page
+ * size = liner width x label height (the paper size the driver must have),
+ * every label absolutely placed at its column with the setup's margins, gaps
+ * and calibration offsets snapped to whole printer dots, so barcode bars land
+ * on the printer's dot grid. Pages are separated by `break-before` only
+ * (never break-after), so there is no trailing blank page.
  */
 export async function buildRollPrintDocument(
   template: LabelTemplate,
@@ -188,13 +204,14 @@ export async function buildRollPrintDocument(
   tenantName?: string,
   codeWord?: string,
   copies = 1
-): Promise<{ title: string; styles: string; content: string }> {
-  const isSingleCol = setup.columns === 1
-  const rollW = isSingleCol
-    ? (setup.marginLeftMm > 0 ? setup.labelWidthMm + setup.marginLeftMm * 2 : setup.labelWidthMm)
-    : stickerRollWidthMm(setup)
+): Promise<RollPrintDocument> {
+  const dpi = setup.dpi === 300 ? 300 : 203
+  const dpm = dpi / 25.4
+  const snap = (mm: number) => r4(Math.round(mm * dpm) / dpm)
+  const rollW = stickerRollWidthMm(setup)
   const h = setup.labelHeightMm
-  const safeH = Math.max(1, h - 0.25)
+  const cellW = Number(template.widthMm) || setup.labelWidthMm
+  const cellH = Number(template.heightMm) || h
   const cache = new Map<string, string>()
   const pages: string[] = []
   for (const row of packLabelRows(items, setup.columns, copies)) {
@@ -203,172 +220,71 @@ export async function buildRollPrintDocument(
       const cell = row.cells[k]
       if (!cell) continue
       const key = cell.item?.id || cell.item?.barcode || cell.item?.sku || cell.item?.name || String(k)
-      if (!cache.has(key)) cache.set(key, await renderLabelHtml(template, cell.item, currencySymbol, tenantName, codeWord))
-      const left = isSingleCol
-        ? Math.max(0, setup.offsetXMm)
-        : setup.marginLeftMm + setup.offsetXMm + k * (setup.labelWidthMm + setup.columnGapMm)
-      cells.push(`<div class="cell" style="left:${left}mm;top:${setup.offsetYMm}mm">${cache.get(key)}</div>`)
+      if (!cache.has(key)) cache.set(key, await renderLabelHtml(template, cell.item, currencySymbol, tenantName, codeWord, dpi))
+      const left = snap(setup.marginLeftMm + setup.offsetXMm + k * (setup.labelWidthMm + setup.columnGapMm))
+      cells.push(`<div class="cell" data-col="${k + 1}" style="left:${left}mm;top:${snap(setup.offsetYMm)}mm">${cache.get(key)}</div>`)
     }
-    // Each row wrapped in a .page container — Chrome sees each .page as a
-    // separate page even when it ignores the small @page size and falls back
-    // to A4/Letter.  The .row inside is sized to the physical sticker.
-    const rowHtml = `<div class="row">${cells.join('')}</div>`
-    const pageHtml = `<div class="page">${rowHtml}</div>`
+    const pageHtml = `<div class="page">${cells.join('')}</div>`
     for (let i = 0; i < row.count; i++) pages.push(pageHtml)
   }
+  return { title: 'Barcode Labels', styles: rollPageStyles(rollW, h, cellW, cellH), content: pages.join(''), pages: pages.length, pageWidthMm: rollW, pageHeightMm: h }
+}
 
-  // ── Robust CSS: works whether Chrome honours the custom @page size or
-  //    falls back to A4/Letter.  The key trick is that each .page is a block
-  //    with `page-break-after: always` + `break-after: page` so Chrome
-  //    treats it as a full page boundary.  When the custom page size IS
-  //    honoured the .page is exactly 1 label high; when Chrome falls back to
-  //    A4 the .page still forces a page boundary, so each physical page
-  //    contains exactly one row of labels (top-aligned) with empty space
-  //    below.  Users can then set the OS printer paper size to the sticker
-  //    dimensions to eliminate the blank area.
-  //
-  //    NOTE: @page descriptor rules MUST NOT include `!important` or `padding`
-  //    as CSS Paged Media 3 treats `!important` in @page as invalid, causing
-  //    Chromium to drop the page size and default to A4!
-  const styles = `
-    @page {
-      size: ${rollW}mm ${h}mm;
-      margin: 0;
-    }
-    * {
-      box-sizing: border-box !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
-    html, body {
-      margin: 0 !important;
-      padding: 0 !important;
-      width: ${rollW}mm !important;
-      height: auto !important;
-      min-height: 0 !important;
-      background: #ffffff !important;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      -webkit-print-color-adjust: exact !important;
-      print-color-adjust: exact !important;
-    }
-    .print-content {
-      margin: 0 !important;
-      padding: 0 !important;
-      width: ${rollW}mm !important;
-      height: auto !important;
-      display: block !important;
-    }
+/**
+ * CSS for roll printing. Notes:
+ *  - @page must not contain !important (Chromium drops the whole size then).
+ *  - Each .page is exactly one page tall; separation uses break-before on
+ *    every page but the first, never break-after (that adds a blank page).
+ */
+function rollPageStyles(pageW: number, pageH: number, cellW: number, cellH: number): string {
+  return `
+    @page { size: ${pageW}mm ${pageH}mm; margin: 0; }
+    html, body { margin: 0; padding: 0; background: #ffffff; }
+    body { font-family: Arial, Helvetica, sans-serif; color: #000; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .print-content { margin: 0; padding: 0; width: ${pageW}mm; }
     .page {
-      display: block !important;
-      position: relative !important;
-      width: ${rollW}mm !important;
-      height: ${safeH}mm !important;
-      min-height: ${safeH}mm !important;
-      max-height: ${safeH}mm !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      overflow: visible !important;
-      page-break-inside: avoid !important;
-      break-inside: avoid !important;
+      position: relative; display: block; margin: 0; padding: 0;
+      width: ${pageW}mm; height: ${pageH}mm; overflow: hidden;
+      break-inside: avoid; page-break-inside: avoid;
     }
-    .page:not(:last-child) {
-      page-break-after: always !important;
-      break-after: page !important;
-    }
-    .page:not(:first-child) {
-      page-break-before: always !important;
-      break-before: page !important;
-    }
-    .page:last-child {
-      page-break-after: avoid !important;
-      break-after: avoid !important;
-    }
-    .row {
-      display: block !important;
-      position: relative !important;
-      width: ${rollW}mm !important;
-      height: ${safeH}mm !important;
-      max-height: ${safeH}mm !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      overflow: hidden !important;
-      box-sizing: border-box !important;
-      page-break-inside: avoid !important;
-      break-inside: avoid !important;
-    }
-    .cell {
-      position: absolute !important;
-      width: ${Number(template.widthMm)}mm !important;
-      height: ${Number(template.heightMm)}mm !important;
-      max-width: ${Number(template.widthMm)}mm !important;
-      max-height: ${Number(template.heightMm)}mm !important;
-      overflow: hidden !important;
-      box-sizing: border-box !important;
-      page-break-inside: avoid !important;
-      break-inside: avoid !important;
-      font-size: initial !important;
-      line-height: normal !important;
-    }
-    @media print {
-      @page {
-        size: ${rollW}mm ${h}mm;
-        margin: 0;
-      }
-      html, body {
-        width: ${rollW}mm !important;
-        height: auto !important;
-        margin: 0 !important;
-        padding: 0 !important;
-      }
-      .print-content {
-        width: ${rollW}mm !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        display: block !important;
-      }
-      .page {
-        width: ${rollW}mm !important;
-        height: ${safeH}mm !important;
-        min-height: ${safeH}mm !important;
-        max-height: ${safeH}mm !important;
-        overflow: visible !important;
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
-      }
-      .page:not(:last-child) {
-        page-break-after: always !important;
-        break-after: page !important;
-      }
-      .page:not(:first-child) {
-        page-break-before: always !important;
-        break-before: page !important;
-      }
-      .page:last-child {
-        page-break-after: avoid !important;
-        break-after: avoid !important;
-      }
-      .row {
-        width: ${rollW}mm !important;
-        height: ${safeH}mm !important;
-        max-height: ${safeH}mm !important;
-        overflow: hidden !important;
-        page-break-inside: avoid !important;
-        break-inside: avoid !important;
-      }
-      * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color-adjust: exact !important;
-      }
-      img {
-        max-width: 100% !important;
-        display: block !important;
-        image-rendering: -webkit-optimize-contrast !important;
-        image-rendering: crisp-edges !important;
-      }
-    }
+    .page + .page { break-before: page; page-break-before: always; }
+    .cell { position: absolute; width: ${cellW}mm; height: ${cellH}mm; overflow: hidden; }
+    svg { shape-rendering: crispEdges; }
   `
-  return { title: 'Barcode Labels', styles, content: pages.join('') }
+}
+
+/** The exact HTML executePrint() hands to the browser (used by tests / downloads). */
+export function rollPrintHtml(doc: Pick<RollPrintDocument, 'title' | 'styles' | 'content'>): string {
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(doc.title)}</title><style>${doc.styles}</style></head><body><div class="print-content">${doc.content}</div></body></html>`
+}
+
+/**
+ * Alignment test for the browser path: 2 rows, every label numbered in print
+ * order (1, 2 / 3, 4 on a 2-across roll) with a border 0.5 mm inside its edge.
+ * Wrong paper size / order shows at once while wasting only 2 rows.
+ */
+export function buildAlignmentTestDocument(setup: StickerSetup): RollPrintDocument {
+  const dpm = (setup.dpi === 300 ? 300 : 203) / 25.4
+  const snap = (mm: number) => r4(Math.round(mm * dpm) / dpm)
+  const rollW = stickerRollWidthMm(setup)
+  const w = setup.labelWidthMm
+  const h = setup.labelHeightMm
+  const pages: string[] = []
+  let n = 1
+  for (let row = 0; row < 2; row++) {
+    const cells: string[] = []
+    for (let k = 0; k < setup.columns; k++) {
+      const left = snap(setup.marginLeftMm + setup.offsetXMm + k * (w + setup.columnGapMm))
+      cells.push(
+        `<div class="cell" data-col="${k + 1}" style="left:${left}mm;top:${snap(setup.offsetYMm)}mm"><div style="position:absolute;left:0.5mm;top:0.5mm;right:0.5mm;bottom:0.5mm;border:0.35mm solid #000;"></div><div style="position:absolute;left:0;right:0;top:${r4(h * 0.12)}mm;text-align:center;font:bold ${Math.max(10, Math.min(40, Math.round(h * 1.1)))}pt Arial,sans-serif;line-height:1;">${n}</div><div style="position:absolute;left:0;right:0;bottom:${r4(h * 0.1)}mm;text-align:center;font:6pt Arial,sans-serif;">${w}x${h} mm - row ${row + 1} col ${k + 1}</div></div>`
+      )
+      n++
+    }
+    pages.push(`<div class="page">${cells.join('')}</div>`)
+  }
+  return { title: 'Label alignment test', styles: rollPageStyles(rollW, h, w, h), content: pages.join(''), pages: 2, pageWidthMm: rollW, pageHeightMm: h }
 }
 
 /** Send a roll print document to the OS / browser print dialog. */
@@ -393,16 +309,40 @@ export interface RawLabelPrintResult {
   error?: string
 }
 
-/** True when the profile should receive raw printer commands instead of the browser dialog. */
+const ZEBRA_NAME = /zebra|zdesigner|\bzd\s?-?\d{3}|\bg[kxc]4\d\d|\bzt\s?-?\d{3}/i
+
+/**
+ * True when the profile should receive raw printer commands instead of the
+ * browser dialog: a label-role printer with a raw language and a real
+ * transport (print agent / WebUSB / Bluetooth). Receipt / kitchen printers
+ * never get label commands.
+ */
 export function isRawLabelPrinter(profile: PrinterProfile | null | undefined): profile is PrinterProfile {
-  if (!profile || profile.transport === 'browser') return false
-  const isZebra = /zebra|zd2|zd4|gk4|gx4|zt2|zt4/i.test(profile.name)
-  return profile.role === 'label' || isZebra || profile.label?.language !== 'browser'
+  if (!profile || profile.transport === 'browser' || profile.role !== 'label') return false
+  return (profile.label?.language || 'tspl') !== 'browser'
+}
+
+/**
+ * Language actually sent to a label printer: the profile's choice, except
+ * that a Zebra (ZDesigner) printer left on the TSPL / raster default gets ZPL
+ * (Zebra firmware does not understand TSPL). EPL stays EPL (LP 2844 etc).
+ */
+export function effectiveLabelLanguage(profile: PrinterProfile): PrinterProfile['label']['language'] {
+  const lang = profile.label?.language || 'tspl'
+  const names = `${profile.name} ${profile.agentTarget || ''} ${profile.deviceKey || ''}`
+  if ((lang === 'tspl' || lang === 'escpos-raster') && ZEBRA_NAME.test(names)) return 'zpl'
+  return lang
+}
+
+/** Printer resolution for raw printing: 300 if the printer profile or the roll setup says so. */
+export function rawLabelDpi(profile: PrinterProfile, setup?: StickerSetup | null): 203 | 300 {
+  return profile.label?.dpi === 300 || setup?.dpi === 300 ? 300 : 203
 }
 
 /**
  * Encode labels in the printer's language and send them through its transport
- * (WebUSB / Web Bluetooth / print agent).
+ * (print agent / WebUSB / Web Bluetooth). One printer command block per
+ * physical row of a multi-across roll, labels strictly in order.
  */
 export async function printLabelsRaw(
   profile: PrinterProfile,
@@ -418,11 +358,7 @@ export async function printLabelsRaw(
     setup?: StickerSetup | null
   } = {}
 ): Promise<RawLabelPrintResult> {
-  let language = profile.label?.language || 'tspl'
-  const isZebra = /zebra|zd2|zd4|gk4|gx4|zt2|zt4/i.test(profile.name) || /zebra|zd2|zd4|gk4|gx4|zt2|zt4/i.test(profile.deviceKey)
-  if (isZebra) {
-    language = 'zpl'
-  }
+  const language = effectiveLabelLanguage(profile)
   const setup = opts.setup || null
   if (language === 'browser') return { ok: false, warnings: [], error: 'Printer is set to browser printing' }
   const { encodeLabels } = await import('@/lib/print/label')
@@ -430,13 +366,13 @@ export async function printLabelsRaw(
   const { sendToPrinter } = await import('@/lib/print/printer-profiles')
   const res = await encodeLabels(template, items, {
     language,
-    dpi: setup?.dpi ?? profile.label?.dpi ?? 203,
+    dpi: rawLabelDpi(profile, setup),
     copies: opts.copies ?? 1,
     codeWord: opts.codeWord,
     currencySymbol: opts.currencySymbol,
     tenantName: opts.tenantName,
     gapMm: setup?.rowGapMm ?? profile.label?.gapMm ?? 2,
-    darkness: setup?.darkness ?? profile.label?.darkness ?? 20,
+    darkness: setup?.darkness ?? profile.label?.darkness,
     speed: setup?.speed ?? profile.label?.speed,
     ...(setup ? { widthMm: setup.labelWidthMm, heightMm: setup.labelHeightMm, layout: stickerLayout(setup) } : {}),
     rasterizeElement: createImageElementRasterizer(opts.logoUrl),
@@ -449,4 +385,34 @@ export async function printLabelsRaw(
   } catch (e) {
     return { ok: false, warnings: res.warnings, error: e instanceof Error ? e.message : String(e) }
   }
+}
+
+/**
+ * Raw alignment test: 2 rows of numbered labels (1, 2 / 3, 4 on a 2-across
+ * roll) with a border 0.5 mm inside each label, so order, size and offsets
+ * can be checked while wasting only two rows.
+ */
+export async function printAlignmentTestRaw(profile: PrinterProfile, setup: StickerSetup): Promise<RawLabelPrintResult> {
+  const w = setup.labelWidthMm
+  const h = setup.labelHeightMm
+  const template: LabelTemplateLike = {
+    widthMm: w,
+    heightMm: h,
+    elements: [
+      { id: 'border', type: 'shape', shape: 'rectangle', x: 0.5, y: 0.5, width: w - 1, height: h - 1, rotation: 0, zIndex: 0, borderWidth: 2, borderColor: '#000', borderStyle: 'solid' },
+      { id: 'n', type: 'text', dataField: 'item.name', x: 1, y: h * 0.15, width: w - 2, height: h * 0.5, rotation: 0, zIndex: 1, fontSize: Math.max(10, Math.min(36, Math.round(h * 0.9))), fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: 'sz', type: 'text', dataField: 'custom', customValue: `${w}x${h}mm`, x: 1, y: h * 0.72, width: w - 2, height: h * 0.2, rotation: 0, zIndex: 1, fontSize: 6, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
+    ],
+  }
+  const items = Array.from({ length: setup.columns * 2 }, (_, i) => ({
+    item: { id: `align-${i + 1}`, name: String(i + 1), sku: null, barcode: null, sellingPrice: '0', costPrice: '0', brand: null, oemPartNumber: null, pluCode: null, category: null, unit: '', weight: null, dimensions: null, imageUrl: null } as LabelItemData,
+    quantity: 1,
+  }))
+  return printLabelsRaw(profile, template, items, { setup })
+}
+
+/** Browser alignment test (2 numbered rows) through the print dialog. */
+export function printAlignmentTestDialog(setup: StickerSetup): Promise<boolean> {
+  const doc = buildAlignmentTestDocument(setup)
+  return executePrint(doc.title, doc.styles, doc.content)
 }

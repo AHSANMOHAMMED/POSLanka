@@ -18,6 +18,9 @@ import { formatDate } from '@/lib/utils/date-format'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { LinkField, LinkFieldOption } from '@/components/ui/link-field'
 import { formatItemLabel, buildItemSearchOption } from '@/lib/utils/item-display'
+import { LineUnitSelect } from '@/components/items/LineUnitSelect'
+import { type LineUnitFields } from '@/hooks/useItemUnitOptions'
+import { unitAllowsFraction } from '@/lib/units/conversions'
 import { DocumentCommentsAndActivity } from '@/components/ui/document-comments'
 import { PrintPreview, SalesOrderTemplate } from '@/components/print'
 import { DEFAULT_PRINT_SETTINGS } from '@/lib/print/types'
@@ -39,6 +42,10 @@ interface OrderItem {
   taxAmount: string
   taxRate: string
   total: string
+  /** 0184: unit of the line (null = base unit); quantity / fulfilledQuantity are in it */
+  uom?: string | null
+  uomFactor?: string | null
+  baseUnit?: string | null
 }
 
 interface LinkedInvoice {
@@ -122,7 +129,7 @@ interface CustomerAddress {
   formatted: string
 }
 
-interface EditableItem {
+interface EditableItem extends LineUnitFields {
   id: string
   itemId: string
   itemName: string
@@ -242,6 +249,11 @@ export default function SalesOrderDetailPage() {
           taxAmount: parseFloat(item.taxAmount) || 0,
           taxRate: parseFloat(item.taxRate) || 0,
           total: parseFloat(item.total) || 0,
+          // 0184: the saved unit comes back as entered
+          baseUnit: item.baseUnit || null,
+          uom: item.uom || '',
+          uomFactor: Number(item.uomFactor) || 1,
+          basePrice: (parseFloat(item.unitPrice) || 0) / (Number(item.uomFactor) || 1),
         })))
         setHasUnsavedChanges(false)
       } else {
@@ -433,12 +445,14 @@ export default function SalesOrderDetailPage() {
           notes: headerForm.notes || null,
           expectedUpdatedAt: order.updatedAt,
           changesSummary,
+          // 0184: each line is saved in the unit it was entered in (the server resolves the factor)
           items: editingItems.map(item => ({
             id: item.isNew ? undefined : item.id,
             itemId: item.itemId || undefined,
             itemName: item.itemName,
             quantity: item.quantity,
             unitPrice: item.unitPrice,
+            uom: item.uom || null,
             discount: item.discount,
             taxAmount: item.taxAmount,
             taxRate: item.taxRate,
@@ -593,6 +607,11 @@ export default function SalesOrderDetailPage() {
         itemBarcode: option.data?.barcode as string || null,
         itemPartNumber: (option.data?.oemPartNumber || option.data?.sku || option.data?.pluCode) as string || null,
         unitPrice: sellingPrice,
+        baseUnit: (option.data?.unit as string) || null,
+        basePrice: sellingPrice,
+        uom: '',
+        uomFactor: 1,
+        uomIsItemUom: false,
         total: newItems[index].quantity * sellingPrice - newItems[index].discount + newItems[index].taxAmount,
       }
     } else if (field === 'quantity') {
@@ -630,6 +649,9 @@ export default function SalesOrderDetailPage() {
         itemBarcode: item.barcode || null,
         itemPartNumber: item.oemPartNumber || item.pluCode || null,
         unitPrice: sellingPrice,
+        basePrice: sellingPrice,
+        uom: '',
+        uomFactor: 1,
         total: newItems[pendingItemRowIndex].quantity * sellingPrice,
       }
       setEditingItems(newItems)
@@ -1070,6 +1092,7 @@ export default function SalesOrderDetailPage() {
                       <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-8">#</th>
                       <th className="text-left px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Item</th>
                       <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-24">Qty</th>
+                      {isDraft && <th className="text-left px-2 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-28">Unit</th>}
                       {!isDraft && <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-24">Fulfilled</th>}
                       <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-28">Rate</th>
                       <th className="text-right px-4 py-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase w-28">Amount</th>
@@ -1107,12 +1130,26 @@ export default function SalesOrderDetailPage() {
                               onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
                               className="w-20 px-2 py-1 text-right border border-gray-300 dark:border-gray-600 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                               min="0"
-                              step="any"
+                              step={!item.isNew || unitAllowsFraction(item.uom || item.baseUnit) ? 'any' : '1'}
                             />
                           ) : (
-                            <span>{item.quantity}</span>
+                            <span>{item.quantity} <span className="text-xs text-gray-500 dark:text-gray-400">{item.uom || item.baseUnit || ''}</span></span>
                           )}
                         </td>
+                        {isDraft && (
+                          <td className="px-2 py-2">
+                            <LineUnitSelect
+                              itemId={item.itemId}
+                              baseUnit={item.baseUnit}
+                              value={item.uom}
+                              basePrice={item.basePrice ?? item.unitPrice}
+                              onChange={(patch) => {
+                                setEditingItems((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch, total: row.quantity * patch.unitPrice - row.discount + row.taxAmount } : row)))
+                                setHasUnsavedChanges(true)
+                              }}
+                            />
+                          </td>
+                        )}
                         {!isDraft && (
                           <td className="px-4 py-2 text-right">
                             <span className={parseFloat(String(order.items[index]?.fulfilledQuantity || '0')) >= item.quantity ? 'text-green-600' : 'text-orange-600'}>
@@ -1366,7 +1403,8 @@ export default function SalesOrderDetailPage() {
           items={order.items.map(item => ({
             id: item.id,
             itemName: item.itemName,
-            displayName: formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemOemPartNumber, pluCode: item.itemPluCode }, businessType),
+            displayName: formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemOemPartNumber, pluCode: item.itemPluCode }, businessType)
+              + ((item.uom || item.baseUnit) ? ` (${item.uom || item.baseUnit})` : ''),
             quantity: parseFloat(item.quantity),
             fulfilledQuantity: parseFloat(item.fulfilledQuantity),
           }))}
@@ -1403,6 +1441,7 @@ export default function SalesOrderDetailPage() {
                 itemName: item.itemName,
                 itemSku: item.itemSku,
                 quantity: item.quantity,
+                uom: item.uom || item.baseUnit || null,
                 fulfilledQuantity: item.fulfilledQuantity,
                 unitPrice: item.unitPrice,
                 discount: item.discount,

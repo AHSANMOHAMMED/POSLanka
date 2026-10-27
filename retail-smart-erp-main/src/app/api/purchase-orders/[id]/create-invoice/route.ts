@@ -21,6 +21,7 @@ import { receiveIntoBatch } from '@/lib/purchasing/batch-receipt'
 import { findDuplicateSupplierInvoice, duplicateSupplierInvoiceResponse } from '@/lib/purchasing/supplier-invoice'
 import { unbilledGrnStock } from '@/lib/purchasing/grn-coverage'
 import { planGrnClearing } from '@/lib/purchasing/srbnb'
+import { toBaseQty, perBaseUnit } from '@/lib/units/resolve-line-units'
 import { evaluateThreeWayMatch, matchBlockedMessage } from '@/lib/purchasing/three-way-match'
 import { assertRecordBranch } from '@/lib/auth/branch-access'
 
@@ -177,6 +178,9 @@ export async function POST(
           tax: itemTax.toString(),
           total: itemTotal.toString(),
           purchaseOrderItemId: item.id,
+          // 0184: the invoice line keeps the PO line's unit (quantity / price are in it)
+          uom: item.uom,
+          uomFactor: item.uomFactor || '1',
           // D1: what this line adds to purchase_order_items.received_quantity (reversed exactly on cancel/delete)
           poReceivedQty: (receivedQuantities?.[item.id] !== undefined ? receivedQty : 0).toString(),
         }
@@ -210,7 +214,7 @@ export async function POST(
       const match = await evaluateThreeWayMatch(tx, {
         tenantId: session.user.tenantId,
         purchaseOrderId: id,
-        lines: invoiceItems.map(item => ({ itemId: item.itemId, itemName: item.itemName, quantity: parseFloat(item.quantity), unitPrice: parseFloat(item.unitPrice) })),
+        lines: invoiceItems.map(item => ({ itemId: item.itemId, itemName: item.itemName, quantity: parseFloat(item.quantity), unitPrice: parseFloat(item.unitPrice), uomFactor: item.uomFactor })),
       })
       if (match.status === 'mismatch' && match.action === 'block') {
         throw new Error(matchBlockedMessage(match))
@@ -255,10 +259,11 @@ export async function POST(
       if (grnRemaining.size > 0) {
         const remaining = new Map(grnRemaining)
         const lines = invoiceItems.map((item) => {
-          const qty = parseFloat(item.quantity)
+          // 0184: GRN coverage is in base units
+          const qty = toBaseQty(item.quantity, item.uomFactor)
           const fromGrn = item.itemId ? Math.min(qty, Math.max(0, remaining.get(item.itemId) || 0)) : 0
           if (item.itemId && fromGrn > 0) remaining.set(item.itemId, Math.round(((remaining.get(item.itemId) || 0) - fromGrn) * 1000) / 1000)
-          return { itemId: item.itemId, qty, unitPrice: parseFloat(item.unitPrice), fromGrn }
+          return { itemId: item.itemId, qty, unitPrice: perBaseUnit(item.unitPrice, item.uomFactor), fromGrn }
         })
         const linesValue = lines.reduce((sum, l) => sum + l.qty * l.unitPrice, 0)
         const plan = await planGrnClearing(tx, {
@@ -323,12 +328,13 @@ export async function POST(
           if (!item.itemId) return
           stockInputs.push({
             poLineId: item.purchaseOrderItemId,
-            unitPrice: parseFloat(item.unitPrice),
+            // 0184: base units in, cost per base unit
+            unitPrice: perBaseUnit(item.unitPrice, item.uomFactor),
             tenantId: session.user.tenantId,
             warehouseId: order.warehouseId,
             itemId: item.itemId,
             mode: 'delta',
-            qty: parseFloat(item.quantity),
+            qty: toBaseQty(item.quantity, item.uomFactor),
             type: 'in',
             referenceType: 'purchase',
             referenceId: newPurchase.id,

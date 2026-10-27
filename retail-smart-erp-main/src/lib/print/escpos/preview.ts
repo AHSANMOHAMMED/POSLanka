@@ -18,6 +18,8 @@ export interface EscPosPreviewLine {
   /** Image size in dots. */
   width?: number
   height?: number
+  /** Packed 1-bit raster (GS v 0), `width / 8` bytes per row, MSB = leftmost dot. */
+  raster?: Uint8Array
 }
 
 const CP437_HIGH =
@@ -94,7 +96,7 @@ export function decodeEscPosPreview(bytes: Uint8Array): EscPosPreviewLine[] {
         const bpr = bytes[i + 4] | (bytes[i + 5] << 8)
         const rows = bytes[i + 6] | (bytes[i + 7] << 8)
         if (text) flush()
-        push('image', '', { width: bpr * 8, height: rows })
+        push('image', '', { width: bpr * 8, height: rows, raster: bytes.subarray(i + 8, i + 8 + bpr * rows) })
         i += 8 + bpr * rows
       } else i += 3 // GS h / GS w / GS H
     } else {

@@ -5,6 +5,18 @@ import { withTenant } from '@/lib/db'
 import { salarySlips, salarySlipComponents, payrollRuns } from '@/lib/db/schema'
 import { and, eq, sql } from 'drizzle-orm'
 import { computeSalarySlip } from '@/lib/payroll/compute-salary-slip'
+import { attendanceFormulaVariables, type AttendancePayrollSummary } from '@/lib/attendance/payroll'
+
+function attendanceVariablesOf(summary: unknown): Record<string, number> | undefined {
+  const s = summary as AttendancePayrollSummary | null
+  if (!s || s.source !== 'attendance') return undefined
+  // payment / working days follow the edited values (computeSalarySlip defaults them)
+  const vars = attendanceFormulaVariables(s)
+  delete vars.payment_days
+  delete vars.working_days
+  delete vars.absent_days
+  return vars
+}
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
@@ -104,6 +116,8 @@ export async function PUT(
             paymentDays,
             commissionAmount: Number(existing.commissionAmount) || 0,
             includeAdvanceRecovery: true,
+            // Keep the attendance figures (OT amount, late minutes …) the slip was created with
+            extraVariables: attendanceVariablesOf(existing.attendanceSummary),
           })
         } catch (computeError) {
           return NextResponse.json({ error: computeError instanceof Error ? computeError.message : 'Could not compute salary' }, { status: 400 })

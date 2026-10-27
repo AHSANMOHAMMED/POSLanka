@@ -51,7 +51,7 @@ export async function unbilledGrnStock(
         AND (${exclude}::uuid IS NULL OR p.id <> ${exclude}::uuid)
     ),
     billed AS (
-      SELECT pi.item_id, SUM(pi.quantity) AS q
+      SELECT pi.item_id, SUM(pi.quantity * pi.uom_factor) AS q
       FROM purchase_items pi
       WHERE pi.purchase_id IN (SELECT id FROM inv) AND pi.item_id IS NOT NULL AND pi.quantity > 0
       GROUP BY pi.item_id

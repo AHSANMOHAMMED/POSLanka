@@ -18,6 +18,8 @@ import { auditSaleIntegrity } from '@/lib/audit/realtime-hooks'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSerialAvailability, allocateSerials } from '@/lib/inventory/serial-numbers'
+import { localDateString, saleLineWarranty, applySerialWarranty } from '@/lib/sales/warranty'
+import { linkQuotationToSale } from '@/lib/sales/quotation-link'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { type TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { validateBody, validateSearchParams } from '@/lib/validation'
@@ -1154,6 +1156,18 @@ export async function POST(request: NextRequest) {
       }).returning()
       const newSale = (saleResult as typeof sales.$inferSelect[])[0]
 
+      // Quotation → sale (POS loaded the cart from ?fromQuotation): one quotation, one sale,
+      // linked inside the sale transaction (RLS + explicit tenant filter)
+      // (an offline sale syncing later never fails on it: the sale already happened)
+      if (parsed.data.quotationId && !isReturn) {
+        try {
+          await linkQuotationToSale(tx, session.user.tenantId, parsed.data.quotationId, newSale.id)
+        } catch (linkError) {
+          if (!isOfflineSale) throw linkError
+          logError('api/sales', linkError, { stage: 'offline-quotation-link', saleId: newSale.id })
+        }
+      }
+
       // Pharmacy prescription register
       if (parsed.data.prescription && rx.level !== 'none') {
         await recordPrescription(tx, { tenantId: session.user.tenantId, saleId: newSale.id, customerId: customerId || null, userId, level: rx.level, input: parsed.data.prescription })
@@ -1379,8 +1393,11 @@ export async function POST(request: NextRequest) {
         const stockLineQty: number[] = []
         // D1: batch-tracked lines draw from item_batches after the stock rows are locked
         const batchLines: Array<{ saleItemId: string; cartItem: ExpandedCartItem }> = []
+        // 0179: warranty runs from the sale's local date
+        const saleDateLocal = localDateString(newSale.createdAt ?? new Date())
         for (const cartItem of expandedCartItems) {
           const lockedItem = tenantItems.find(i => i.id === cartItem.itemId)
+          const lineWarranty = cartItem.quantity > 0 ? saleLineWarranty(lockedItem, saleDateLocal) : { warrantyMonths: null, warrantyUntil: null }
 
         // Calculate per-item tax: use client-provided per-item data or server-computed template data
         // (by line position: the same item may appear on several lines)
@@ -1433,6 +1450,8 @@ export async function POST(request: NextRequest) {
           })(),
           uom: cartItem.uom,
           uomFactor: String(cartItem.uomFactor),
+          warrantyMonths: lineWarranty.warrantyMonths,
+          warrantyUntil: lineWarranty.warrantyUntil,
         }).returning({ id: saleItems.id })
 
           if (lockedItem?.trackBatches && cartItem.quantity > 0) {
@@ -1456,6 +1475,7 @@ export async function POST(request: NextRequest) {
                 referenceId: newSale.id,
                 changedBy: userId,
               })
+              await applySerialWarranty(tx, cartItem.serialNumberIds, saleDateLocal, lineWarranty.warrantyUntil)
             }
 
             stockInputs.push({
@@ -1973,6 +1993,15 @@ export async function POST(request: NextRequest) {
     }
     if (message === 'INSUFFICIENT_CREDIT') {
       return NextResponse.json({ error: 'Insufficient customer credit balance' }, { status: 400 })
+    }
+    if (message === 'QUOTATION_NOT_FOUND') {
+      return NextResponse.json({ error: 'The quotation this cart came from was not found', code: 'QUOTATION_NOT_FOUND' }, { status: 400 })
+    }
+    if (message === 'QUOTATION_ALREADY_CONVERTED') {
+      return NextResponse.json({ error: 'This quotation has already been converted to another sale', code: 'QUOTATION_ALREADY_CONVERTED' }, { status: 409 })
+    }
+    if (message === 'QUOTATION_NOT_CONVERTIBLE') {
+      return NextResponse.json({ error: 'A cancelled or rejected quotation cannot be converted', code: 'QUOTATION_NOT_CONVERTIBLE' }, { status: 400 })
     }
     if (message === 'INSUFFICIENT_LOYALTY_POINTS') {
       return NextResponse.json({ error: 'Customer does not have enough loyalty points', code: 'INSUFFICIENT_LOYALTY_POINTS' }, { status: 400 })

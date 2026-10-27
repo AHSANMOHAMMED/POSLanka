@@ -12,9 +12,11 @@ export function isServiceCapable(businessType?: string): boolean {
 }
 
 /** Shops selling goods over a counter: retail (clothing, footwear, bags, stationery, fancy …),
- * supermarket and pharmacy share the store features (departments, scales, velocity, expiry). */
+ * supermarket, pharmacy, electronics & appliances, hardware and print / photo studios share the
+ * store features (departments, scales, velocity, category sales, variants). */
+export const STORE_BUSINESS_TYPES = ['retail', 'supermarket', 'pharmacy', 'electronics', 'hardware', 'print_studio'] as const
 export function isStoreBusiness(businessType?: string | null): boolean {
-  return businessType === 'retail' || businessType === 'supermarket' || businessType === 'pharmacy'
+  return !!businessType && (STORE_BUSINESS_TYPES as readonly string[]).includes(businessType)
 }
 
 export interface SidebarItem {
@@ -27,6 +29,8 @@ export interface SidebarItem {
   pharmacyOnly?: boolean
   restaurantOnly?: boolean
   dealershipOnly?: boolean
+  /** Only for these business types (electronics, hardware, print_studio, office …) */
+  businessTypes?: string[]
   permission?: Permission
 }
 
@@ -98,11 +102,18 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/sales', 'selling'],
   ['/quotations', 'selling'],
   ['/credit-notes', 'selling'],
+  ['/recurring-invoices', 'selling'],
+  ['/payments-received', 'selling'],
+  ['/projects', 'selling'],
   ['/debit-notes', 'selling'],
   ['/customers', 'selling'],
   ['/price-lists', 'selling'],
   ['/promotions', 'selling'],
   ['/layaways', 'selling'],
+  ['/installments', 'selling'],
+  ['/deliveries', 'selling'],
+  ['/warranty-claims', 'selling'],
+  ['/print-jobs', 'selling'],
   ['/pharmacy/prescriptions', 'selling'],
   ['/pharmacy/expiry', 'stock'],
 
@@ -247,6 +258,9 @@ const DETAIL_PAGE_ROUTES = [
   '/purchase-orders/',
   '/purchases/',
   '/sales-orders/',
+  '/recurring-invoices/',
+  '/payments-received/',
+  '/projects/',
   '/sales/',
   '/stock-transfers/',
   '/stock-takes/',
@@ -254,6 +268,8 @@ const DETAIL_PAGE_ROUTES = [
   '/work-orders/',
   '/settings/warehouses/',
   '/layaways/',
+  '/installments/',
+  '/warranty-claims/',
   '/accounting/journal-entries/',
   '/accounting/recurring-entries/',
   '/accounting/payment-entries/',
@@ -394,8 +410,17 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/credit-notes', label: 'Credit Notes', icon: 'Receipt', permission: 'manageSales' },
         { href: '/debit-notes', label: 'Debit Notes', icon: 'Receipt', permission: 'manageSales' },
         { href: '/sales', label: 'Sales Invoices', icon: 'Receipt' },
+        { href: '/recurring-invoices', label: 'Recurring Invoices', icon: 'RefreshCw', permission: 'createSales' },
+        { href: '/payments-received', label: 'Payments Received', icon: 'Banknote', permission: 'createSales' },
         { href: '/layaways', label: 'Layaways', icon: 'CreditCard', permission: 'createSales' },
+        { href: '/installments', label: 'Hire Purchase / Installments', icon: 'Wallet', businessTypes: ['electronics', 'hardware', 'retail'], permission: 'createSales' },
         { href: '/pharmacy/prescriptions', label: 'Prescription Register', icon: 'FileText', pharmacyOnly: true, permission: 'createSales' },
+      ],
+    },
+    {
+      title: 'Projects',
+      items: [
+        { href: '/projects', label: 'Projects & Timesheets', icon: 'Clock' },
       ],
     },
     {
@@ -410,6 +435,10 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/restaurant/orders', label: 'Orders', icon: 'ClipboardList', restaurantOnly: true, permission: 'manageRestaurantOrders' },
         { href: '/restaurant/deliveries', label: 'Deliveries', icon: 'Truck', restaurantOnly: true, permission: 'manageRestaurantOrders' },
         { href: '/restaurant/reservations', label: 'Reservations', icon: 'CalendarCheck', restaurantOnly: true, permission: 'manageRestaurantOrders' },
+        { href: '/print-jobs', label: 'Print Jobs', icon: 'Printer', businessTypes: ['print_studio'], permission: 'createSales' },
+        // Drivers and technicians use these too: no menu permission, the API checks per action
+        { href: '/deliveries', label: 'Deliveries & Installation', icon: 'Truck', businessTypes: ['electronics', 'hardware', 'retail', 'supermarket'] },
+        { href: '/warranty-claims', label: 'Warranty Claims', icon: 'ShieldCheck', businessTypes: ['electronics', 'retail', 'hardware'] },
       ],
     },
   ],
@@ -701,6 +730,16 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
       ],
     },
     {
+      title: 'Attendance',
+      items: [
+        { href: '/hr/attendance', label: 'Attendance', icon: 'UserCheck', permission: 'manageEmployees' },
+        { href: '/hr/shifts', label: 'Work Shifts', icon: 'Clock', permission: 'manageEmployees' },
+        { href: '/hr/attendance-devices', label: 'Fingerprint Devices', icon: 'Monitor', permission: 'manageEmployees' },
+        { href: '/hr/leave', label: 'Leave', icon: 'CalendarDays', permission: 'manageEmployees' },
+        { href: '/hr/holidays', label: 'Holidays', icon: 'Calendar', permission: 'manageEmployees' },
+      ],
+    },
+    {
       title: 'Advances',
       items: [
         { href: '/hr/employee-advances', label: 'Employee Advances', icon: 'Banknote', permission: 'approveAdvances' },
@@ -929,13 +968,14 @@ export function getModuleSidebar(
           if (item.pharmacyOnly && !isPharmacy) return false
           if (item.restaurantOnly && !isRestaurant) return false
           if (item.dealershipOnly && !isDealership) return false
+          if (item.businessTypes && !(businessType && item.businessTypes.includes(businessType))) return false
           if (item.permission && role && !check(item.permission)) return false
           return true
         })
         .map((item) => {
           const termKey = LABEL_OVERRIDES[item.label]
           if (termKey) {
-            return { ...item, label: t[termKey as keyof typeof t] }
+            return { ...item, label: t[termKey as keyof typeof t] ?? item.label }
           }
           return item
         }),

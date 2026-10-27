@@ -117,6 +117,8 @@ export async function PUT(
       pluCode, shelfLifeDays, storageTemp, expiryDate,
       // Pharmacy fields
       genericName, strength, dosageForm, drugSchedule,
+      // Print studio pricing
+      pricingMode, areaUnit, minChargeArea,
       // Gift card
       isGiftCard,
       // Tax template
@@ -246,6 +248,12 @@ export async function PUT(
             strength: strength !== undefined ? (strength || null) : undefined,
             dosageForm: dosageForm !== undefined ? (dosageForm || null) : undefined,
             drugSchedule: drugSchedule !== undefined ? (drugSchedule || null) : undefined,
+            // Print studio pricing (drizzle/0182)
+            pricingMode: pricingMode !== undefined ? pricingMode : undefined,
+            areaUnit: areaUnit !== undefined ? areaUnit : undefined,
+            minChargeArea: minChargeArea !== undefined
+              ? (minChargeArea !== null && minChargeArea !== '' && Number(minChargeArea) > 0 ? String(minChargeArea) : null)
+              : undefined,
             // Gift card
             isGiftCard: isGiftCard !== undefined ? isGiftCard : undefined,
             // Tax template

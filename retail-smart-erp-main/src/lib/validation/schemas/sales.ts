@@ -95,6 +95,8 @@ export const createSaleSchema = z.object({
   restaurantOrderId: optionalUuid,
   tipAmount: z.coerce.number().min(0).optional(),
   giftCardId: optionalUuid,
+  /** Quotation the cart was loaded from (POS ?fromQuotation): linked as converted to this sale */
+  quotationId: optionalUuid,
   /** Offline sync idempotency key */
   clientSaleId: z.string().uuid().optional(),
   /** Receipt number printed while offline ('OFF-<device>-<seq>'), unique per tenant */
@@ -155,6 +157,8 @@ const salesOrderItemSchema = z.object({
   tax: z.coerce.number().min(0).optional(),
   taxAmount: z.coerce.number().min(0).optional(),
   taxRate: z.coerce.number().min(0).optional(),
+  /** 0184: unit the line is entered in (blank = base unit); the factor is resolved server-side */
+  uom: z.string().trim().max(20).nullish(),
 })
 
 // POST /api/sales-orders

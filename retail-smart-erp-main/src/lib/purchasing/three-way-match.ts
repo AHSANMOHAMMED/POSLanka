@@ -55,7 +55,8 @@ export async function evaluateThreeWayMatch(
     purchaseOrderId: string | null
     /** the invoice itself, excluded from "previously billed" */
     purchaseId?: string | null
-    lines: { itemId: string | null; itemName: string; quantity: number; unitPrice: number }[]
+    /** quantity / unitPrice in the line's unit; uomFactor = base units per unit (0184, default 1) */
+    lines: { itemId: string | null; itemName: string; quantity: number; unitPrice: number; uomFactor?: number | string | null }[]
     settings?: PurchasingSettings
   },
 ): Promise<MatchResult> {
@@ -68,12 +69,12 @@ export async function evaluateThreeWayMatch(
   if (!opts.purchaseOrderId) return base
 
   const po = rows<{ item_id: string | null; item_name: string; qty: string; value: string }>(await tx.execute(sql`
-    SELECT item_id, MIN(item_name) AS item_name, SUM(quantity) AS qty, SUM(quantity * unit_price) AS value
+    SELECT item_id, MIN(item_name) AS item_name, SUM(quantity * uom_factor) AS qty, SUM(quantity * unit_price) AS value
     FROM purchase_order_items WHERE purchase_order_id = ${opts.purchaseOrderId}
     GROUP BY item_id
   `))
   const received = rows<{ item_id: string; qty: string }>(await tx.execute(sql`
-    SELECT ri.item_id, SUM(ri.quantity_accepted) AS qty
+    SELECT ri.item_id, SUM(ri.quantity_accepted * ri.uom_factor) AS qty
     FROM purchase_receipt_items ri JOIN purchase_receipts r ON r.id = ri.receipt_id
     WHERE r.tenant_id = ${opts.tenantId} AND r.purchase_order_id = ${opts.purchaseOrderId}
       AND r.status <> 'cancelled' AND ri.item_id IS NOT NULL
@@ -81,7 +82,7 @@ export async function evaluateThreeWayMatch(
   `))
   const exclude = opts.purchaseId || null
   const billed = rows<{ item_id: string; qty: string }>(await tx.execute(sql`
-    SELECT pi.item_id, SUM(pi.quantity) AS qty
+    SELECT pi.item_id, SUM(pi.quantity * pi.uom_factor) AS qty
     FROM purchase_items pi JOIN purchases p ON p.id = pi.purchase_id
     WHERE p.tenant_id = ${opts.tenantId} AND p.purchase_order_id = ${opts.purchaseOrderId}
       AND p.is_return = false AND p.status NOT IN ('draft', 'cancelled')
@@ -99,7 +100,8 @@ export async function evaluateThreeWayMatch(
     if (!(l.quantity > 0)) continue
     const key = l.itemId || `name:${l.itemName}`
     const agg = inv.get(key) || { itemId: l.itemId, itemName: l.itemName, qty: 0, value: 0 }
-    agg.qty = round3(agg.qty + l.quantity)
+    // 0184: compared in base units (PO / GRN / invoice lines may be in different units)
+    agg.qty = round3(agg.qty + l.quantity * (Number(l.uomFactor) || 1))
     agg.value += l.quantity * l.unitPrice
     inv.set(key, agg)
   }

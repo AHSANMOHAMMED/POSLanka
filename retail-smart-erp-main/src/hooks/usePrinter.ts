@@ -52,6 +52,7 @@ import {
 } from '@/lib/print/printer-profiles'
 
 export type { PrinterProfile, PrinterRole } from '@/lib/print/printer-profiles'
+import { openReceiptPreview } from '@/components/print/ReceiptPreviewDialog'
 
 // ─── Receipt printer settings (backed by the 'receipt' printer profile) ───
 
@@ -324,6 +325,31 @@ export async function printKitchenTicket(ticket: KitchenTicketInput): Promise<Ki
   }
 }
 
+export type PreviewPrintResult = 'printed' | 'cancelled' | 'failed'
+
+/**
+ * Send ESC/POS bytes to `profile`, first showing the print preview (Print /
+ * Cancel / change printer) when the profile has `previewBeforePrint` (or
+ * `forcePreview`). `rebuild` regenerates the bytes when another printer with a
+ * different paper width / code page is picked. Throws on transport errors.
+ */
+export async function printWithOptionalPreview(
+  profile: PrinterProfile,
+  bytes: Uint8Array,
+  opts: { title?: string; rebuild?: (p: PrinterProfile) => Promise<Uint8Array>; forcePreview?: boolean } = {}
+): Promise<Exclude<PreviewPrintResult, 'failed'>> {
+  let target = profile
+  let data = bytes
+  if (profile.previewBeforePrint || opts.forcePreview) {
+    const choice = await openReceiptPreview({ bytes, title: opts.title, profile, rebuild: opts.rebuild })
+    if (!choice) return 'cancelled'
+    target = choice.profile
+    data = choice.bytes
+  }
+  await sendToPrinter(target, data, { title: opts.title })
+  return 'printed'
+}
+
 /** All printer profiles of this terminal + edit helpers. */
 export function usePrinters() {
   const printers = usePrinterProfilesStore()
@@ -455,33 +481,61 @@ export function usePrinter() {
     [profile]
   )
 
-  const printReceipt = useCallback(
-    async (saleId: string, opts: PrintReceiptOptions = {}): Promise<boolean> => {
+  /** Result of the last receipt print ('cancelled' = closed in the print preview). */
+  const [lastPrintResult, setLastPrintResult] = useState<PreviewPrintResult | null>(null)
+
+  /**
+   * Receipt bytes -> (optional preview) -> printer. A preview cancel resolves
+   * true ("handled") so callers do not fall back to browser printing; check
+   * `lastPrintResult` / use `printReceiptEx` to tell it apart.
+   */
+  const printBuiltReceipt = useCallback(
+    async (build: (p: PrinterProfile) => Promise<{ bytes: Uint8Array; invoiceNo: string }>): Promise<PreviewPrintResult> => {
       let built: { bytes: Uint8Array; invoiceNo: string }
       try {
-        built = await buildReceiptBytesForSale(profile, saleId, opts)
+        built = await build(profile)
       } catch (e) {
         setStatus({ state: 'error', message: errorMessage(e) })
-        return false
+        setLastPrintResult('failed')
+        return 'failed'
       }
-      return printBytes(built.bytes, `Receipt-${built.invoiceNo}`)
+      try {
+        setStatus({ state: 'printing' })
+        const result = await printWithOptionalPreview(profile, built.bytes, {
+          title: `Receipt-${built.invoiceNo}`,
+          rebuild: async (p) => (await build(p)).bytes,
+        })
+        setStatus(result === 'printed' ? { state: 'idle', lastPrintedAt: Date.now() } : { state: 'idle' })
+        setLastPrintResult(result)
+        return result
+      } catch (e) {
+        setStatus({ state: 'error', message: errorMessage(e) })
+        setLastPrintResult('failed')
+        return 'failed'
+      }
     },
-    [profile, printBytes]
+    [profile]
+  )
+
+  const printReceiptEx = useCallback(
+    (saleId: string, opts: PrintReceiptOptions = {}) => printBuiltReceipt((p) => buildReceiptBytesForSale(p, saleId, opts)),
+    [printBuiltReceipt]
+  )
+
+  const printReceiptModelEx = useCallback(
+    (model: ReceiptModel, opts: PrintReceiptOptions = {}) => printBuiltReceipt((p) => buildReceiptBytesFromModel(p, model, opts)),
+    [printBuiltReceipt]
+  )
+
+  const printReceipt = useCallback(
+    async (saleId: string, opts: PrintReceiptOptions = {}): Promise<boolean> => (await printReceiptEx(saleId, opts)) !== 'failed',
+    [printReceiptEx]
   )
 
   /** Print a receipt model built on the device (offline sale, OFF- number). */
   const printReceiptModel = useCallback(
-    async (model: ReceiptModel, opts: PrintReceiptOptions = {}): Promise<boolean> => {
-      let built: { bytes: Uint8Array; invoiceNo: string }
-      try {
-        built = await buildReceiptBytesFromModel(profile, model, opts)
-      } catch (e) {
-        setStatus({ state: 'error', message: errorMessage(e) })
-        return false
-      }
-      return printBytes(built.bytes, `Receipt-${built.invoiceNo}`)
-    },
-    [profile, printBytes]
+    async (model: ReceiptModel, opts: PrintReceiptOptions = {}): Promise<boolean> => (await printReceiptModelEx(model, opts)) !== 'failed',
+    [printReceiptModelEx]
   )
 
   const printZReport = useCallback(
@@ -563,6 +617,10 @@ export function usePrinter() {
     isRawPrinter: settings.transport !== 'browser',
     printReceipt,
     printReceiptModel,
+    /** Like printReceipt but returns 'printed' | 'cancelled' | 'failed'. */
+    printReceiptEx,
+    printReceiptModelEx,
+    lastPrintResult,
     printZReport,
     openDrawer,
     testPrint,

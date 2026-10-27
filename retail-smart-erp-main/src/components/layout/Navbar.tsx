@@ -212,11 +212,11 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
     >
       {/* Left section: Hamburger + Logo + App Switcher + Company */}
       <div className="flex items-center gap-1 shrink-0 px-3">
-        {/* Mobile sidebar toggle (below lg) */}
+        {/* Mobile sidebar toggle (below md; the module sidebar is docked from md up) */}
         <button
           type="button"
           onClick={handleMobileToggle}
-          className="p-1.5 rounded transition-colors lg:hidden"
+          className="p-1.5 rounded transition-colors md:hidden"
           style={{ color: 'var(--navbar-text-muted)' }}
           onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
           onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}

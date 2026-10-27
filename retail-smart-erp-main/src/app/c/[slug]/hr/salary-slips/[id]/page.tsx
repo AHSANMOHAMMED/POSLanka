@@ -45,8 +45,41 @@ interface SalarySlipDetail {
   status: 'draft' | 'submitted' | 'cancelled'
   cancellationReason: string | null
   components: SlipComponent[]
+  attendanceSummary?: AttendanceSummary | null
   employeeProfile?: { user?: { fullName: string; email: string } }
 }
+
+interface AttendanceSummary {
+  source: 'attendance' | 'manual'
+  totalWorkingDays: number
+  paymentDays: number
+  absentDays: number
+  presentDays: number
+  halfDays: number
+  paidLeaveDays: number
+  unpaidLeaveDays: number
+  holidays: number
+  weeklyOffs: number
+  lateMinutes: number
+  earlyLeaveMinutes: number
+  otHours: number
+  holidayOtHours: number
+  otAmount: number
+  hourlyRate: number
+}
+
+function hm(minutes: number) {
+  const m = Math.round(Number(minutes) || 0)
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`
+}
+
+// Print only the slip (not the app shell)
+const PRINT_CSS = `@media print {
+  body * { visibility: hidden !important; }
+  #payslip-print, #payslip-print * { visibility: visible !important; }
+  #payslip-print { position: absolute; left: 0; top: 0; width: 100%; max-width: none; padding: 0; }
+  #payslip-print .no-print { display: none !important; }
+}`
 
 const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
@@ -133,8 +166,9 @@ export default function SalarySlipDetailPage({ params }: { params: Promise<{ slu
 
   return (
     <PermissionGuard permission="viewPayroll">
-      <div className="p-6 space-y-6 max-w-4xl mx-auto">
-        <div className="flex items-center gap-4">
+      <style>{PRINT_CSS}</style>
+      <div id="payslip-print" className="p-6 space-y-6 max-w-4xl mx-auto">
+        <div className="flex items-center gap-4 no-print">
           <Link href={`/c/${slug}/hr/salary-slips`} className="text-gray-400 hover:text-gray-600">
             <ArrowLeft className="w-5 h-5" />
           </Link>
@@ -208,6 +242,31 @@ export default function SalarySlipDetailPage({ params }: { params: Promise<{ slu
             </div>
           </div>
         </div>
+
+        {/* Attendance summary (fingerprint / attendance-based payroll) */}
+        {slip.attendanceSummary && slip.attendanceSummary.source === 'attendance' && (
+          <div className="bg-white rounded border avoid-break">
+            <div className="px-4 py-3 border-b bg-blue-50 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-blue-800">Attendance</h3>
+              <span className="text-xs text-blue-700">From fingerprint / attendance records</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3 p-4 text-sm">
+              <div><p className="text-xs text-gray-500">Working days</p><p className="font-medium">{slip.attendanceSummary.totalWorkingDays}</p></div>
+              <div><p className="text-xs text-gray-500">Paid days</p><p className="font-medium">{slip.attendanceSummary.paymentDays}</p></div>
+              <div><p className="text-xs text-gray-500">Absent / no-pay days</p><p className={`font-medium ${slip.attendanceSummary.absentDays > 0 ? 'text-red-600' : ''}`}>{slip.attendanceSummary.absentDays}</p></div>
+              <div><p className="text-xs text-gray-500">Present / half days</p><p className="font-medium">{slip.attendanceSummary.presentDays} / {slip.attendanceSummary.halfDays}</p></div>
+              <div><p className="text-xs text-gray-500">Paid leave</p><p className="font-medium">{slip.attendanceSummary.paidLeaveDays}{slip.attendanceSummary.unpaidLeaveDays > 0 ? ` (+${slip.attendanceSummary.unpaidLeaveDays} unpaid)` : ''}</p></div>
+              <div><p className="text-xs text-gray-500">Holidays / weekly offs</p><p className="font-medium">{slip.attendanceSummary.holidays} / {slip.attendanceSummary.weeklyOffs}</p></div>
+              <div><p className="text-xs text-gray-500">Late</p><p className={`font-medium ${slip.attendanceSummary.lateMinutes > 0 ? 'text-amber-600' : ''}`}>{hm(slip.attendanceSummary.lateMinutes)}</p></div>
+              <div><p className="text-xs text-gray-500">Overtime</p><p className="font-medium">{slip.attendanceSummary.otHours} h{slip.attendanceSummary.holidayOtHours > 0 ? ` (${slip.attendanceSummary.holidayOtHours} h off-day)` : ''}</p></div>
+            </div>
+            {slip.attendanceSummary.otAmount > 0 && (
+              <p className="px-4 pb-3 text-xs text-gray-500">
+                OT value {fmt(slip.attendanceSummary.otAmount)} at hourly rate {fmt(slip.attendanceSummary.hourlyRate)} (paid through the Overtime component, formula ot_amount)
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Earnings */}
         <div className="bg-white rounded border">
@@ -327,12 +386,15 @@ export default function SalarySlipDetailPage({ params }: { params: Promise<{ slu
         </div>
 
         {/* Comments & Activity */}
-        <DocumentCommentsAndActivity
-          documentType="salary_slip"
-          documentId={id}
-          entityType="salary-slip"
-        />
+        <div className="no-print">
+          <DocumentCommentsAndActivity
+            documentType="salary_slip"
+            documentId={id}
+            entityType="salary-slip"
+          />
+        </div>
 
+        <div className="no-print">
         <DetailPageActions actions={(() => {
           const a: ActionConfig[] = []
           if (slip.status === 'draft') {
@@ -357,6 +419,13 @@ export default function SalarySlipDetailPage({ params }: { params: Promise<{ slu
                 confirmText: 'Submit',
               },
             })
+            a.push({
+              key: 'print',
+              label: 'Print',
+              icon: <Printer className="w-4 h-4" />,
+              variant: 'outline',
+              onClick: () => window.print(),
+            })
           }
           if (slip.status === 'submitted') {
             a.push({
@@ -377,6 +446,7 @@ export default function SalarySlipDetailPage({ params }: { params: Promise<{ slu
           }
           return a
         })()} />
+        </div>
 
         <CancellationReasonModal
           isOpen={showCancelModal}

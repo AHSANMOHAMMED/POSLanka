@@ -79,6 +79,11 @@ export async function POST(
         unitPrice: Number(i.unitPrice),
         discount: Number(i.discount),
         tax: Number(i.tax),
+        // 0179: unit quoted (quantity is in uom), tax rate and warranty
+        uom: i.uom,
+        uomFactor: Number(i.uomFactor) || 1,
+        taxRate: Number(i.taxRate) || 0,
+        warrantyMonths: i.warrantyMonths,
       })),
       subtotal: Number(quote.subtotal),
       discount: Number(quote.discount),

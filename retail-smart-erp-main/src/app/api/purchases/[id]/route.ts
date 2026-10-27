@@ -21,6 +21,7 @@ import { reversePurchaseCost, reversePurchaseOrderReceipt } from '@/lib/purchasi
 import { adjustSupplierBalance } from '@/lib/purchasing/supplier-balance'
 import { unbilledGrnStock } from '@/lib/purchasing/grn-coverage'
 import { receiveIntoBatch, reverseDocBatches } from '@/lib/purchasing/batch-receipt'
+import { toBaseQty, perBaseUnit } from '@/lib/units/resolve-line-units'
 import { findDuplicateSupplierInvoice, duplicateSupplierInvoiceResponse } from '@/lib/purchasing/supplier-invoice'
 import { planGrnClearing, reversePriceVariance } from '@/lib/purchasing/srbnb'
 import { evaluateThreeWayMatch, matchBlockedMessage } from '@/lib/purchasing/three-way-match'
@@ -106,6 +107,10 @@ export async function GET(
         total: purchaseItems.total,
         srbnbQty: purchaseItems.srbnbQty,
         srbnbAmount: purchaseItems.srbnbAmount,
+        // 0184: unit of the line (quantity / unitPrice are in it)
+        uom: purchaseItems.uom,
+        uomFactor: purchaseItems.uomFactor,
+        baseUnit: itemsTable.unit,
       })
       .from(purchaseItems)
       .leftJoin(itemsTable, eq(purchaseItems.itemId, itemsTable.id))
@@ -477,7 +482,7 @@ export async function PUT(
         tenantId: session.user.tenantId,
         purchaseOrderId: currentPurchase.purchaseOrderId,
         purchaseId: id,
-        lines: purchaseItemsList.map(item => ({ itemId: item.itemId, itemName: item.itemName, quantity: parseFloat(item.quantity), unitPrice: parseFloat(item.unitPrice) })),
+        lines: purchaseItemsList.map(item => ({ itemId: item.itemId, itemName: item.itemName, quantity: parseFloat(item.quantity), unitPrice: parseFloat(item.unitPrice), uomFactor: item.uomFactor })),
       })
       if (match.status === 'mismatch' && match.action === 'block') {
         throw new Error(matchBlockedMessage(match))
@@ -497,6 +502,49 @@ export async function PUT(
         })
       }
 
+      // Serial numbers per purchase line. itemSerials is keyed by line id; a legacy key by item id
+      // is split over that item's lines in document order (one serial per base unit, the rest on
+      // the last line). The same serial twice in the document is rejected here; serials already
+      // registered for the item are rejected per line below. Throw (not return) so the writes
+      // above roll back.
+      const serialsByLine = new Map<string, string[]>()
+      {
+        const linesByItem = new Map<string, typeof purchaseItemsList>()
+        for (const item of purchaseItemsList) {
+          if (!item.itemId) continue
+          const raw = itemSerials[item.id]
+          if (raw !== undefined) {
+            serialsByLine.set(item.id, parseSerialNumberInput(raw))
+          } else if (itemSerials[item.itemId] !== undefined) {
+            linesByItem.set(item.itemId, [...(linesByItem.get(item.itemId) || []), item])
+          }
+        }
+        for (const [itemId, lines] of linesByItem) {
+          const all = parseSerialNumberInput(itemSerials[itemId])
+          let at = 0
+          lines.forEach((line, k) => {
+            const take = k === lines.length - 1 ? all.length - at : Math.max(0, Math.round(toBaseQty(line.quantity, line.uomFactor)))
+            serialsByLine.set(line.id, all.slice(at, at + take))
+            at += take
+          })
+        }
+        const seenSerials = new Map<string, Set<string>>()
+        const repeated: string[] = []
+        for (const item of purchaseItemsList) {
+          const list = item.itemId ? serialsByLine.get(item.id) : undefined
+          if (!list) continue
+          const seen = seenSerials.get(item.itemId!) || new Set<string>()
+          for (const sn of list) {
+            if (seen.has(sn)) repeated.push(sn)
+            seen.add(sn)
+          }
+          seenSerials.set(item.itemId!, seen)
+        }
+        if (repeated.length > 0) {
+          throw new Error(`DUPLICATE_SERIALS:Serial numbers entered more than once on this invoice: ${[...new Set(repeated)].join(', ')}`)
+        }
+      }
+
       // Update warehouse stock + weighted-average cost for each line. Lines are
       // processed in itemId order so concurrent documents lock rows consistently.
       const effectiveWarehouseId = currentPurchase.warehouseId
@@ -507,7 +555,9 @@ export async function PUT(
           .sort((x, y) => (x.item.itemId! < y.item.itemId! ? -1 : x.item.itemId! > y.item.itemId! ? 1 : x.idx - y.idx))
         for (const { item } of stockLines) {
           const itemId = item.itemId!
-          const qty = parseFloat(item.quantity)
+          // 0184: stock, GRN coverage and costing in base units (the line is in its own unit)
+          const qty = toBaseQty(item.quantity, item.uomFactor)
+          const baseCost = perBaseUnit(item.unitPrice, item.uomFactor)
           // Part of this line may already be in stock from the PO's goods receipt
           const fromGrn = Math.min(qty, Math.max(0, grnRemaining.get(itemId) || 0))
           if (fromGrn > 0) grnRemaining.set(itemId, Math.round(((grnRemaining.get(itemId) || 0) - fromGrn) * 1000) / 1000)
@@ -521,7 +571,7 @@ export async function PUT(
               tenantId: session.user.tenantId,
               itemId,
               supplierId: currentPurchase.supplierId,
-              unitPrice: parseFloat(item.unitPrice),
+              unitPrice: baseCost,
               qty: stockQty,
               referenceId: currentPurchase.id,
               referenceNo: currentPurchase.purchaseNo,
@@ -559,8 +609,9 @@ export async function PUT(
             .where(eq(itemsTable.id, itemId))
             .limit(1)
 
-          if (itemRecord?.trackSerialNumbers && itemSerials[itemId]) {
-            const parsedSerials = parseSerialNumberInput(itemSerials[itemId])
+          const lineSerials = serialsByLine.get(item.id)
+          if (itemRecord?.trackSerialNumbers && lineSerials) {
+            const parsedSerials = lineSerials
 
             if (parsedSerials.length > 0) {
               // Check for duplicates
@@ -614,7 +665,7 @@ export async function PUT(
             if (existingSupplierCost) {
               await tx.update(itemSupplierCosts)
                 .set({
-                  lastCostPrice: item.unitPrice,
+                  lastCostPrice: baseCost.toFixed(2),
                   lastPurchaseDate: new Date(),
                   lastPurchaseId: currentPurchase.id,
                   totalPurchasedQty: sql`${itemSupplierCosts.totalPurchasedQty} + ${qty}`,
@@ -626,7 +677,7 @@ export async function PUT(
                 tenantId: session.user.tenantId,
                 itemId,
                 supplierId: currentPurchase.supplierId,
-                lastCostPrice: item.unitPrice,
+                lastCostPrice: baseCost.toFixed(2),
                 lastPurchaseDate: new Date(),
                 lastPurchaseId: currentPurchase.id,
                 totalPurchasedQty: qty.toString(),
@@ -646,7 +697,8 @@ export async function PUT(
           excludePurchaseId: id,
           grnRemaining: grnRemainingAll,
           lines: purchaseItemsList.map(item => ({
-            lineId: item.id, itemId: item.itemId, qty: parseFloat(item.quantity), unitPrice: parseFloat(item.unitPrice),
+            // 0184: base units / cost per base unit (fromGrn is in base units)
+            lineId: item.id, itemId: item.itemId, qty: toBaseQty(item.quantity, item.uomFactor), unitPrice: perBaseUnit(item.unitPrice, item.uomFactor),
             fromGrn: fromGrnByLine.get(item.id) || 0,
           })),
           netFactor: linesValue > 0 ? (total - taxAmount) / linesValue : 1,

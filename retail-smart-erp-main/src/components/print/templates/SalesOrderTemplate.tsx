@@ -8,6 +8,8 @@ interface SalesOrderItem {
   itemName: string
   itemSku: string | null
   quantity: string
+  /** 0184: unit of the line (quantity is in it) */
+  uom?: string | null
   fulfilledQuantity: string
   unitPrice: string
   discount: string
@@ -173,7 +175,7 @@ export function SalesOrderTemplate({
                   <td className="py-2 px-2">{index + 1}</td>
                   <td className="py-2 px-2">{item.itemName}</td>
                   <td className="py-2 px-2">{item.itemSku || '-'}</td>
-                  <td className="text-right py-2 px-2">{parseFloat(item.quantity).toLocaleString()}</td>
+                  <td className="text-right py-2 px-2">{parseFloat(item.quantity).toLocaleString()}{item.uom ? ` ${item.uom}` : ''}</td>
                   <td className="text-right py-2 px-2">{parseFloat(item.fulfilledQuantity).toLocaleString()}</td>
                   <td className="text-right py-2 px-2">{formatCurrency(item.unitPrice)}</td>
                   <td className="text-right py-2 px-2">{item.discount && parseFloat(item.discount) > 0 ? formatCurrency(item.discount) : '-'}</td>

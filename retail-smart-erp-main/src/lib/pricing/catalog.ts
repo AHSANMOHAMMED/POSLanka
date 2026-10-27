@@ -24,13 +24,57 @@ export const DEFAULT_UNITS: Array<{ code: string; name: string; allowFraction: b
   { code: 'dozen', name: 'Dozen', allowFraction: false },
 ]
 
+/** Extra units seeded for some business types (on top of DEFAULT_UNITS). */
+export const BUSINESS_TYPE_UNITS: Record<string, Array<{ code: string; name: string; allowFraction: boolean }>> = {
+  // Hardware & building supplies: cement by the bag, sand / metal by the cube, steel by the kg,
+  // wire / pipe by the metre or foot, roofing / plywood by the sheet, paint by the litre
+  hardware: [
+    { code: 'm', name: 'Metre', allowFraction: true },
+    { code: 'ft', name: 'Feet', allowFraction: true },
+    { code: 'yard', name: 'Yard', allowFraction: true },
+    { code: 'bag', name: 'Bag', allowFraction: false },
+    { code: 'cube', name: 'Cube', allowFraction: true },
+    { code: 'sheet', name: 'Sheet', allowFraction: false },
+    { code: 'roll', name: 'Roll', allowFraction: false },
+    { code: 'length', name: 'Length', allowFraction: false },
+    { code: 'sqft', name: 'Square Feet', allowFraction: true },
+  ],
+  // Printing & photo studio: prints by the sheet, banners by the square foot
+  print_studio: [
+    { code: 'sheet', name: 'Sheet', allowFraction: false },
+    { code: 'sqft', name: 'Square Feet', allowFraction: true },
+    { code: 'set', name: 'Set', allowFraction: false },
+    { code: 'ream', name: 'Ream', allowFraction: false },
+  ],
+  electronics: [
+    { code: 'set', name: 'Set', allowFraction: false },
+    { code: 'unit', name: 'Unit', allowFraction: false },
+  ],
+  office: [
+    { code: 'hour', name: 'Hour', allowFraction: true },
+    { code: 'month', name: 'Month', allowFraction: false },
+  ],
+}
+
+/** The units a new tenant of this business type starts with. */
+export function defaultUnitsFor(businessType?: string | null): Array<{ code: string; name: string; allowFraction: boolean }> {
+  const extra = (businessType && BUSINESS_TYPE_UNITS[businessType]) || []
+  const seen = new Set(DEFAULT_UNITS.map((u) => u.code))
+  return [...DEFAULT_UNITS, ...extra.filter((u) => !seen.has(u.code))]
+}
+
 /** Seed the default units for a tenant that has none yet (tenants created after drizzle/0161). */
-export async function ensureDefaultUnits(db: TenantDb, tenantId: string): Promise<void> {
+export async function ensureDefaultUnits(db: TenantDb, tenantId: string, businessType?: string | null): Promise<void> {
   const [{ c }] = rowsOf<{ c: number }>(await db.execute(sql`SELECT count(*)::int AS c FROM units WHERE tenant_id = ${tenantId}::uuid`))
   if (c > 0) return
+  let bt = businessType ?? null
+  if (!bt) {
+    const [t] = rowsOf<{ bt: string | null }>(await db.execute(sql`SELECT business_type::text AS bt FROM tenants WHERE id = ${tenantId}::uuid`))
+    bt = t?.bt ?? null
+  }
   await db.execute(sql`
     INSERT INTO units (tenant_id, code, name, allow_fraction)
-    VALUES ${sql.join(DEFAULT_UNITS.map((u) => sql`(${tenantId}::uuid, ${u.code}, ${u.name}, ${u.allowFraction})`), sql`, `)}
+    VALUES ${sql.join(defaultUnitsFor(bt).map((u) => sql`(${tenantId}::uuid, ${u.code}, ${u.name}, ${u.allowFraction})`), sql`, `)}
     ON CONFLICT DO NOTHING
   `)
 }

@@ -81,13 +81,20 @@ export const DOCUMENT_SERIES = {
   quotation: simple('quotation', 'quotations', 'quotation_no', 'QT-', 5),
   held_sale: simple('held_sale', 'held_sales', 'hold_number', 'HOLD-', 4),
   work_order: simple('work_order', 'work_orders', 'order_no', 'WO-', 6),
+  print_job: simple('print_job', 'print_jobs', 'job_no', 'PJ-', 6), // drizzle/0182 print studio job orders
   insurance_estimate: simple('insurance_estimate', 'insurance_estimates', 'estimate_no', 'EST-', 6),
+  installment_plan: simple('installment_plan', 'installment_plans', 'plan_no', 'HP-', 6), // drizzle/0181 hire purchase
+  installment_receipt: simple('installment_receipt', 'installment_payments', 'receipt_no', 'HPR-', 6),
+  delivery: simple('delivery', 'deliveries', 'delivery_no', 'DN-', 6),
+  warranty_claim: simple('warranty_claim', 'warranty_claims', 'claim_no', 'WC-', 6),
   vehicle_sale: simple('vehicle_sale', 'sales', 'invoice_no', 'VS-', 6),
   commission_payout: simple('commission_payout', 'commission_payouts', 'payout_no', 'PAY-', 6),
   employee_advance: simple('employee_advance', 'employee_advances', 'advance_no', 'ADV-', 5),
   restaurant_order: simple('restaurant_order', 'restaurant_orders', 'order_no', 'RO-', 6),
   expense: simple('expense', 'expenses', 'expense_no', 'EXP-', 5), // K1
   expense_claim: simple('expense_claim', 'expenses', 'expense_no', 'CLM-', 5), // K1 reimbursement claims
+  payment_receipt: simple('payment_receipt', 'payment_receipts', 'receipt_no', 'RCPT-', 6), // drizzle/0185 payments received
+  project: simple('project', 'projects', 'project_no', 'PRJ-', 5), // drizzle/0185 projects
 } satisfies Record<string, SeriesDef>
 
 export type DocumentSeries = keyof typeof DOCUMENT_SERIES

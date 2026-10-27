@@ -31,6 +31,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { nextDocNo } from '@/lib/documents/numbering'
 import { assertBranchAccess } from '@/lib/auth/branch-access'
+import { shiftOutsideCollections } from '@/lib/pos/shift-collections'
 
 /** Payment methods that never sit in the cash drawer / card terminal batch */
 const NON_DRAWER_METHODS = new Set<string>(['credit', 'gift_card'])
@@ -263,6 +264,9 @@ export async function POST(
 
       // H1: cash paid into / out of the drawer during the shift (posted movements only)
       const movementTotals = await shiftCashMovementTotals(db, id)
+      // 0187: money this shift took outside the POS sale screen (print-job advances / refunds,
+      // print-job and work-order invoice payments, layaway payments), per tender
+      const outsideCollections = await shiftOutsideCollections(db, id)
 
       // Calculate expected amounts and variances for every method that was opened OR used in a sale
       // (cash too when the drawer had paid-ins / paid-outs)
@@ -270,11 +274,13 @@ export async function POST(
         ...openingPaymentMethods,
         ...(Object.keys(salesByPaymentMethod) as PaymentMethod[]),
         ...(movementTotals.count > 0 ? ['cash' as PaymentMethod] : []),
+        ...(Object.keys(outsideCollections.byMethod) as PaymentMethod[]),
       ]))
       const reconciliationValues = reconciliationMethods.map(method => {
         const openingAmount = openingBalanceMap[method] || 0
         const expectedAmount = calculateExpectedAmount(openingAmount, salesByPaymentMethod[method]?.totalSales || 0, salesByPaymentMethod[method]?.totalReturns || 0)
           + (method === 'cash' ? movementTotals.net : 0)
+          + (outsideCollections.byMethod[method] || 0)
         // Store credit and gift cards are not tenders in the drawer: nothing to count, so they
         // reconcile at the expected amount instead of posting a fake cash shortage.
         const actualAmount = NON_DRAWER_METHODS.has(method) ? expectedAmount : (actualAmountsMap[method] || 0)
@@ -316,6 +322,7 @@ export async function POST(
         sales: openingEntry.sales,
         openingCash: cashRec ? parseFloat(cashRec.openingAmount) : 0,
         expectedCash: cashRec ? parseFloat(cashRec.expectedAmount) : 0,
+        outsideCollections,
       })
 
       // Closing entry number CLOSE-YYYYMMDD-### from the per-tenant daily sequence
@@ -421,6 +428,7 @@ export async function POST(
           varianceReason: hasVariance ? varianceReason : null,
           varianceNote: hasVariance ? varianceNote || null : null,
           cashMovements: movementTotals,
+          outsideCollections: { total: outsideCollections.total, bySource: outsideCollections.bySource },
           ledgerTiesOut: reportData.ledger.tiesOut,
         },
       })
@@ -447,6 +455,7 @@ export async function POST(
           totalVariance: Math.round(totalVariance * 100) / 100,
           cashPaidIn: movementTotals.paidIn,
           cashPaidOut: movementTotals.paidOut,
+          outsideCollections: outsideCollections.total,
         },
         varianceReason: hasVariance ? varianceReason : null,
         varianceNote: hasVariance ? varianceNote || null : null,

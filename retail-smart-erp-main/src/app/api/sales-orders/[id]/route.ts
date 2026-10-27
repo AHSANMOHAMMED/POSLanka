@@ -10,6 +10,7 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
+import { resolveLineUnits, lineUnitErrorResponse, toBaseQty } from '@/lib/units/resolve-line-units'
 
 /** Stock problem while confirming: thrown so the whole transaction (earlier reservations) rolls back. */
 class SalesOrderStockError extends Error {}
@@ -97,6 +98,10 @@ export async function GET(
         taxAmount: salesOrderItems.taxAmount,
         taxRate: salesOrderItems.taxRate,
         total: salesOrderItems.total,
+        // 0184: unit of the line (quantity / fulfilledQuantity are in it)
+        uom: salesOrderItems.uom,
+        uomFactor: salesOrderItems.uomFactor,
+        baseUnit: itemsTable.unit,
       })
       .from(salesOrderItems)
       .leftJoin(itemsTable, eq(salesOrderItems.itemId, itemsTable.id))
@@ -281,7 +286,8 @@ export async function PUT(
 
           if (!itemRecord?.trackStock) continue
 
-          const qty = parseFloat(item.quantity)
+          // 0184: reserve base units (quantity is in the line's unit)
+          const qty = toBaseQty(item.quantity, item.uomFactor)
 
           // Lock warehouse stock row
           const [stock] = await tx
@@ -338,7 +344,8 @@ export async function PUT(
 
             if (!itemRecord?.trackStock) continue
 
-            const unfulfilledQty = parseFloat(item.quantity) - parseFloat(item.fulfilledQuantity)
+            // 0184: quantities are in the line's unit; the reservation is in base units
+            const unfulfilledQty = toBaseQty(parseFloat(item.quantity) - parseFloat(item.fulfilledQuantity), item.uomFactor)
             if (unfulfilledQty <= 0) continue
 
             await tx.update(warehouseStock)
@@ -367,8 +374,11 @@ export async function PUT(
         let subtotal = 0
         let totalDiscount = 0
         let totalTax = 0
+        // 0184: each line keeps its unit; the factor comes from item_uoms / standard units
+        // (an unknown unit throws LineUnitError → 400, rolling the whole update back)
+        const units = await resolveLineUnits(tx, items)
 
-        const orderItems = items.map((item) => {
+        const orderItems = items.map((item, idx) => {
           const itemSubtotal = item.quantity * item.unitPrice
           const itemDiscount = Math.max(0, item.discount || 0)
           const itemTaxAmount = Math.max(0, item.taxAmount || item.tax || 0)
@@ -390,6 +400,8 @@ export async function PUT(
             taxAmount: itemTaxAmount.toString(),
             taxRate: (item.taxRate || 0).toString(),
             total: (Math.round(itemTotal * 100) / 100).toString(),
+            uom: units[idx].uom,
+            uomFactor: String(units[idx].factor),
           }
         })
 
@@ -475,6 +487,8 @@ export async function PUT(
     if (err instanceof SalesOrderStockError) {
       return NextResponse.json({ error: err.message }, { status: 400 })
     }
+    const unitErr = lineUnitErrorResponse(err)
+    if (unitErr) return unitErr
     throw err
   }
 

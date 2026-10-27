@@ -32,7 +32,7 @@ const item: LabelItemData = {
   id: 'i1',
   name: 'Rice "Keeri" 5kg',
   sku: 'RICE-5KG',
-  barcode: '4791234567892',
+  barcode: '4791234567891', // valid EAN-13 (check digit 1)
   sellingPrice: '1500',
   costPrice: '1200',
   brand: null,

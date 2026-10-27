@@ -1,12 +1,13 @@
 'use client'
 
-import { CheckCircle, Printer } from 'lucide-react'
+import { CheckCircle, Printer, Truck } from 'lucide-react'
 import { useTerminology } from '@/hooks/useTerminology'
 import { useCurrency } from '@/hooks/useCurrency'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { buildWhatsAppShareUrl } from '@/lib/whatsapp'
 import { useFeatureFlag } from '@/hooks/useFeatureFlag'
 import { SendReceiptButtons, useMessagingAvailability } from './SendReceiptButtons'
+import { Kbd } from './Kbd'
 
 interface SaleSuccessModalProps {
   lastSale: {
@@ -21,6 +22,8 @@ interface SaleSuccessModalProps {
   onPrintReceipt: (saleId: string) => void
   printingReceipt?: boolean
   shopName?: string
+  /** Deliveries module: open the delivery scheduler for this invoice (key D; the page handles the key) */
+  onScheduleDelivery?: () => void
 }
 
 export function SaleSuccessModal({
@@ -30,6 +33,7 @@ export function SaleSuccessModal({
   onPrintReceipt,
   printingReceipt,
   shopName = 'skyERPOS',
+  onScheduleDelivery,
 }: SaleSuccessModalProps) {
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()
@@ -101,6 +105,19 @@ export function SaleSuccessModal({
             >
               <Printer size={18} className="text-gray-600 dark:text-gray-300" />
               {printingReceipt ? 'Printing...' : 'Print Bill Receipt'}
+            </button>
+          )}
+
+          {onScheduleDelivery && !lastSale.isReturn && (
+            <button
+              type="button"
+              onClick={onScheduleDelivery}
+              title="Schedule delivery / installation (opens in a new tab)"
+              className="w-full py-3 border-2 border-teal-200 dark:border-teal-900 text-teal-800 dark:text-teal-300 bg-teal-50/60 dark:bg-teal-950/30 rounded-xl font-semibold hover:bg-teal-50 dark:hover:bg-teal-950/50 transition-colors flex items-center justify-center gap-2 active:scale-[0.98]"
+            >
+              <Truck size={18} />
+              Schedule delivery
+              <Kbd>D</Kbd>
             </button>
           )}
 

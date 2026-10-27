@@ -23,6 +23,9 @@ import { createMinimalDefaults } from '@/lib/setup/create-seed-data'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import {
   DEFAULT_VENDOR_FEATURE_FLAGS,
+  BUSINESS_TYPE_FEATURE_PRESETS,
+  FEATURE_FLAGS,
+  defaultFeatureFlagsForBusinessType,
   normalizeFeatureFlags,
   type FeatureFlagsMap,
 } from '@/lib/features/flags'
@@ -72,6 +75,8 @@ export async function GET(request: NextRequest) {
       statusCounts: Object.fromEntries(statusCounts.map((c) => [c.status, c.count])),
       tiers,
       defaults: DEFAULT_VENDOR_FEATURE_FLAGS,
+      /** Per business type differences from `defaults` applied when a vendor is created */
+      typeDefaults: BUSINESS_TYPE_FEATURE_PRESETS,
     })
   } catch (error) {
     logError('api/sys-control/vendors', error)
@@ -216,9 +221,17 @@ export async function POST(request: NextRequest) {
     }
     const free = isFreeTier(tier)
 
-    const mergedFlags = featureFlags
-      ? normalizeFeatureFlags(featureFlags as Partial<FeatureFlagsMap>)
-      : DEFAULT_VENDOR_FEATURE_FLAGS
+    // The business type's preset (electronics: installments, deliveries, warranty …; office: HR,
+    // no counter extras), then any switches the admin set explicitly
+    const typeFlags = defaultFeatureFlagsForBusinessType(businessType)
+    const mergedFlags: FeatureFlagsMap = featureFlags
+      ? {
+          ...typeFlags,
+          ...(Object.fromEntries(Object.entries(featureFlags).filter(
+            ([k, v]) => (FEATURE_FLAGS as readonly string[]).includes(k) && typeof v === 'boolean',
+          )) as Partial<FeatureFlagsMap>),
+        }
+      : typeFlags
 
     // Another business for an owner who already has a skyERPOS account: it is added to that
     // account and the owner keeps signing in with their current password (no new password)

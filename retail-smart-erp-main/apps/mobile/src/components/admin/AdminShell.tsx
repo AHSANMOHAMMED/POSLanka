@@ -185,8 +185,16 @@ export function businessTypeLabel(t: string | null | undefined): string {
       return 'Dealership'
     case 'pharmacy':
       return 'Pharmacy'
+    case 'electronics':
+      return 'Electronics & appliances'
+    case 'hardware':
+      return 'Hardware'
+    case 'print_studio':
+      return 'Printing & photo studio'
+    case 'office':
+      return 'Office & services'
     default:
-      return t || 'Unknown'
+      return t ? t.replace(/_/g, ' ') : 'Unknown'
   }
 }
 

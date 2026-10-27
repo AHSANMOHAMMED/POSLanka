@@ -190,6 +190,82 @@ export function getChartOfAccountsForBusinessType(businessType: string): Account
       )
       break
 
+    case 'electronics':
+      // Hire purchase: the financed balance sits in Installment Receivable; interest is income
+      addToGroup('1100',
+        leaf('1180', 'Installment Receivable (Hire Purchase)', 'asset', 'current_asset'),
+      )
+      addToGroup('2100',
+        leaf('2130', 'Gift Card Liability', 'liability', 'current_liability'),
+        leaf('2140', 'Customer Deposits (Advance Orders)', 'liability', 'current_liability'),
+        leaf('2160', 'Unearned Hire Purchase Interest', 'liability', 'current_liability'),
+      )
+      addToGroup('4000',
+        leaf('4200', 'Hire Purchase Interest Income', 'income', 'income_account'),
+        leaf('4210', 'Installment Late Fee Income', 'income', 'income_account'),
+        leaf('4220', 'Delivery & Installation Income', 'income', 'income_account'),
+        leaf('4230', 'Repair & Service Income', 'income', 'income_account'),
+        leaf('4240', 'Extended Warranty Income', 'income', 'income_account'),
+      )
+      addToGroup('5200',
+        leaf('5240', 'Commission Expense', 'expense', 'expense_account'),
+        leaf('5250', 'Delivery & Transport', 'expense', 'expense_account'),
+        leaf('5260', 'Warranty Repair Cost', 'expense', 'expense_account'),
+        leaf('5270', 'Bad Debts (Hire Purchase)', 'expense', 'expense_account'),
+      )
+      break
+
+    case 'hardware':
+      addToGroup('1100',
+        leaf('1180', 'Installment Receivable', 'asset', 'current_asset'),
+      )
+      addToGroup('2100',
+        leaf('2140', 'Customer Deposits', 'liability', 'current_liability'),
+      )
+      addToGroup('4000',
+        leaf('4200', 'Site Delivery Income', 'income', 'income_account'),
+        leaf('4210', 'Cutting & Service Charges', 'income', 'income_account'),
+        leaf('4220', 'Hire Purchase Interest Income', 'income', 'income_account'),
+      )
+      addToGroup('5200',
+        leaf('5240', 'Transport & Lorry Hire', 'expense', 'expense_account'),
+        leaf('5250', 'Loading & Unloading', 'expense', 'expense_account'),
+        leaf('5260', 'Breakage & Wastage', 'expense', 'expense_account'),
+      )
+      break
+
+    case 'print_studio':
+      addToGroup('2100',
+        leaf('2140', 'Job Advances', 'liability', 'current_liability'),
+      )
+      addToGroup('4000',
+        leaf('4200', 'Printing Income', 'income', 'income_account'),
+        leaf('4210', 'Photography Income', 'income', 'income_account'),
+        leaf('4220', 'Design Income', 'income', 'income_account'),
+        leaf('4230', 'Framing & Lamination Income', 'income', 'income_account'),
+      )
+      addToGroup('5200',
+        leaf('5240', 'Paper, Ink & Media', 'expense', 'expense_account'),
+        leaf('5250', 'Machine Maintenance', 'expense', 'expense_account'),
+        leaf('5260', 'Print Wastage', 'expense', 'expense_account'),
+      )
+      break
+
+    case 'office':
+      addToGroup('2100',
+        leaf('2140', 'Client Advances', 'liability', 'current_liability'),
+      )
+      addToGroup('4000',
+        leaf('4200', 'Service Income', 'income', 'income_account'),
+        leaf('4210', 'Consulting Fees', 'income', 'income_account'),
+      )
+      addToGroup('5200',
+        leaf('5240', 'Office Supplies', 'expense', 'expense_account'),
+        leaf('5250', 'Travel & Conveyance', 'expense', 'expense_account'),
+        leaf('5260', 'Professional Fees', 'expense', 'expense_account'),
+      )
+      break
+
     case 'auto_service':
       // Income
       addToGroup('4000',

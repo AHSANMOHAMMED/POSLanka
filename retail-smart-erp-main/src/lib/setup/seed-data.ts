@@ -97,6 +97,66 @@ export const pharmacyCategories: CategorySeed[] = [
   { name: 'Veterinary', selected: false },
 ]
 
+// ==================== ELECTRONICS & APPLIANCES ====================
+
+// Showrooms like the big appliance chains: big-ticket items sold on hire purchase, delivered
+// and installed, tracked by serial / IMEI with a warranty.
+export const electronicsCategories: CategorySeed[] = [
+  { name: 'Refrigerators & Freezers', selected: true },
+  { name: 'Televisions', selected: true },
+  { name: 'Washing Machines', selected: true },
+  { name: 'Air Conditioners', selected: true },
+  { name: 'Mobile Phones & Tablets', selected: true },
+  { name: 'Sewing Machines', selected: true },
+  { name: 'Kitchen Appliances', selected: true },
+  { name: 'Audio & Home Theatre', selected: true },
+  { name: 'Computers & Laptops', selected: false },
+  { name: 'Fans & Small Appliances', selected: true },
+  { name: 'Furniture', selected: false },
+  { name: 'Accessories & Spares', selected: true },
+]
+
+// ==================== HARDWARE ====================
+
+export const hardwareCategories: CategorySeed[] = [
+  { name: 'Cement & Building Materials', selected: true },
+  { name: 'Steel, Iron & Roofing', selected: true },
+  { name: 'Paints & Chemicals', selected: true },
+  { name: 'Plumbing & Pipes', selected: true },
+  { name: 'Electrical & Wiring', selected: true },
+  { name: 'Tools & Power Tools', selected: true },
+  { name: 'Nails, Screws & Fasteners', selected: true },
+  { name: 'Tiles & Sanitaryware', selected: true },
+  { name: 'Timber & Plywood', selected: false },
+  { name: 'Garden & Agriculture', selected: false },
+  { name: 'Locks & Door Fittings', selected: true },
+]
+
+// ==================== PRINTING & PHOTO STUDIO ====================
+
+export const printStudioCategories: CategorySeed[] = [
+  { name: 'Photo Prints', selected: true },
+  { name: 'Passport & ID Photos', selected: true },
+  { name: 'Photocopy & Printouts', selected: true },
+  { name: 'Large Format & Banners', selected: true },
+  { name: 'Business Cards & Stationery', selected: true },
+  { name: 'Frames & Albums', selected: true },
+  { name: 'Lamination & Binding', selected: true },
+  { name: 'Event Photography', selected: false },
+  { name: 'Mugs, T-shirts & Gifts', selected: false },
+  { name: 'Design Services', selected: true },
+]
+
+// ==================== OFFICE & SERVICES ====================
+
+export const officeCategories: CategorySeed[] = [
+  { name: 'Services', selected: true },
+  { name: 'Consulting', selected: true },
+  { name: 'Subscriptions', selected: false },
+  { name: 'Products', selected: true },
+  { name: 'General', selected: true },
+]
+
 // ==================== AUTO SERVICE ====================
 
 export const autoServiceGroups: ServiceGroupSeed[] = [
@@ -233,6 +293,38 @@ export function getCancellationReasonsForBusinessType(businessType: string): Can
         purchaseOrder.reasons.push('Short expiry', 'Not NMRA registered', 'Cold chain broken')
         const salesInvoice = base.find(b => b.documentType === 'sales_invoice')!
         salesInvoice.reasons.push('Prescription not valid', 'Wrong medicine dispensed')
+      }
+      break
+    case 'electronics':
+      {
+        const salesOrder = base.find(b => b.documentType === 'sales_order')!
+        salesOrder.reasons.push('Hire purchase not approved', 'Guarantor not accepted', 'Delivery area not covered')
+        const salesInvoice = base.find(b => b.documentType === 'sales_invoice')!
+        salesInvoice.reasons.push('Unit defective on delivery (DOA)', 'Wrong model / colour', 'Serial / IMEI mismatch')
+        const purchaseOrder = base.find(b => b.documentType === 'purchase_order')!
+        purchaseOrder.reasons.push('Model discontinued', 'Damaged in transit')
+      }
+      break
+    case 'hardware':
+      {
+        const salesInvoice = base.find(b => b.documentType === 'sales_invoice')!
+        salesInvoice.reasons.push('Wrong size / gauge', 'Short measure', 'Site delivery cancelled')
+        const purchaseOrder = base.find(b => b.documentType === 'purchase_order')!
+        purchaseOrder.reasons.push('Quality issue', 'Short supply')
+      }
+      break
+    case 'print_studio':
+      {
+        const salesOrder = base.find(b => b.documentType === 'sales_order')!
+        salesOrder.reasons.push('Artwork not approved', 'Customer did not collect', 'Reprint required')
+        const salesInvoice = base.find(b => b.documentType === 'sales_invoice')!
+        salesInvoice.reasons.push('Print quality issue', 'Wrong size printed')
+      }
+      break
+    case 'office':
+      {
+        const salesInvoice = base.find(b => b.documentType === 'sales_invoice')!
+        salesInvoice.reasons.push('Service not delivered', 'Billing dispute')
       }
       break
     case 'dealership':
@@ -535,6 +627,14 @@ export function getCategoriesForBusinessType(businessType: string): CategorySeed
       return supermarketCategories
     case 'pharmacy':
       return pharmacyCategories
+    case 'electronics':
+      return electronicsCategories
+    case 'hardware':
+      return hardwareCategories
+    case 'print_studio':
+      return printStudioCategories
+    case 'office':
+      return officeCategories
     case 'auto_service':
       return autoServicePartCategories
     case 'dealership':

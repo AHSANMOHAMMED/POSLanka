@@ -472,7 +472,7 @@ export async function getReorderSuggestions(
 ) {
   const res = await db.execute(sql`
     WITH on_order AS (
-      SELECT po.warehouse_id, poi.item_id, SUM(GREATEST(poi.quantity - poi.received_quantity, 0)) AS q
+      SELECT po.warehouse_id, poi.item_id, SUM(GREATEST(poi.quantity - poi.received_quantity, 0) * poi.uom_factor) AS q
       FROM purchase_order_items poi
       JOIN purchase_orders po ON po.id = poi.purchase_order_id
       WHERE po.tenant_id = ${tenantId}

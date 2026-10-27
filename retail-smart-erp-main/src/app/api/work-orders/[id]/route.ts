@@ -19,6 +19,7 @@ import { restoreSaleLineBatches } from '@/lib/inventory/batches'
 import { allocateSerials } from '@/lib/inventory/serial-numbers'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
+import { planBlockMessage, planOnSale } from '@/lib/installments/sale-guard'
 
 // Issue #24: Expanded workflow with intermediate states
 const validStatusTransitions: Record<string, string[]> = {
@@ -464,6 +465,9 @@ export async function PUT(
             if (openReturn) {
               throw new Error('HAS_RETURNS')
             }
+            // A sale financed by a hire purchase plan: cancel / settle the plan first
+            const hpPlan = await planOnSale(tx, sale.id)
+            if (hpPlan) throw new Error(`HP_PLAN_EXISTS:${planBlockMessage(hpPlan)}`)
 
             // Reverse GL entries for the sale (all voucher types)
             await postVoidToGL(tx, session.user.tenantId, 'sale', sale.id)
@@ -829,6 +833,9 @@ export async function PUT(
     }
     if (message === 'VOID_PERMISSION') {
       return NextResponse.json({ error: 'Cancelling an invoiced work order voids its invoice and requires the Void Sales permission' }, { status: 403 })
+    }
+    if (message.startsWith('HP_PLAN_EXISTS:')) {
+      return NextResponse.json({ error: message.slice('HP_PLAN_EXISTS:'.length), code: 'HP_PLAN_EXISTS' }, { status: 409 })
     }
     if (message === 'HAS_RETURNS') {
       return NextResponse.json({ error: 'This invoice has returns against it. Void the return(s) first, or return the remaining parts instead of cancelling.' }, { status: 400 })

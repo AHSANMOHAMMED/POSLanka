@@ -504,6 +504,16 @@ export interface PrintAgentTarget {
   name: string
   type: 'tcp' | 'system' | 'serial'
   description?: string
+  /** Agent >= 1.1: same as `type` ('system' for printers installed in the OS). */
+  kind?: 'tcp' | 'system' | 'serial'
+  /** OS driver name (installed printers). */
+  driver?: string | null
+  /** Port / device URI / host:port. */
+  port?: string | null
+  /** printers.json default, or the OS default printer for installed printers. */
+  isDefault?: boolean
+  /** 'config' = printers.json target, 'os' = installed in Windows / macOS / Linux. Missing on agent 1.0. */
+  source?: 'config' | 'os'
 }
 
 export function bytesToBase64(bytes: Uint8Array): string {
@@ -540,8 +550,8 @@ export class PrintAgentTransport implements PrinterTransport {
     }
   }
 
-  static async listTargets(baseUrl = DEFAULT_AGENT_URL): Promise<PrintAgentTarget[]> {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/printers`)
+  static async listTargets(baseUrl = DEFAULT_AGENT_URL, refresh = false): Promise<PrintAgentTarget[]> {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/printers${refresh ? '?refresh=1' : ''}`)
     if (!res.ok) throw new TransportError(`Agent returned ${res.status}`, 'network')
     const data = (await res.json()) as { printers?: PrintAgentTarget[] } | PrintAgentTarget[]
     return Array.isArray(data) ? data : data.printers || []

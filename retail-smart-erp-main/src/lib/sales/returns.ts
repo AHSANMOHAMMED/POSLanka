@@ -45,6 +45,7 @@ import { roundCurrency } from '@/lib/utils/currency'
 import { postSaleToGL } from '@/lib/accounting/auto-post'
 import { restoreSaleLineBatches, getSaleLineBatches, type RestoredBatch, type SaleLineBatchInfo } from '@/lib/inventory/batches'
 import { getOrCreateQuarantineWarehouse } from '@/lib/inventory/quarantine'
+import { HP_PLAN_EXISTS, planBlockMessage, planOnSale, returnTouchesPlan } from '@/lib/installments/sale-guard'
 import { getTenantSalesSettings, type RestockMode } from './return-settings'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
@@ -398,6 +399,19 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
         uomFactor: 1,
       })
     })
+  }
+
+  // 2b. hire purchase: a plan's goods (or the whole sale) cannot come back while the plan lives
+  if (original) {
+    const plan = await planOnSale(tx, original.id)
+    if (plan) {
+      const thisQty = new Map<string, number>()
+      for (const p of planned) if (p.original) thisQty.set(p.original.id, (thisQty.get(p.original.id) || 0) + p.qty)
+      const fullReturn = originalLines.length > 0 && originalLines.every((l) =>
+        !(num(l.quantity) > 0) || round3(num(l.returnedQuantity) + (thisQty.get(l.id) || 0)) >= round3(num(l.quantity)))
+      const touched = returnTouchesPlan(plan, planned.filter((p) => p.original).map((p) => ({ saleItemId: p.original!.id, itemId: p.original!.itemId })))
+      if (fullReturn || touched) throw new SaleFlowError(409, HP_PLAN_EXISTS, planBlockMessage(plan), { planId: plan.id, planNo: plan.planNo })
+    }
   }
 
   // 3. totals

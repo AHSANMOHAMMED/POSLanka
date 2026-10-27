@@ -126,6 +126,8 @@ function yymmdd(v: string): string | undefined {
 export function parseGs1(input: string): Gs1Fields | null {
   let s = input.trim()
   if (s.startsWith(']C1') || s.startsWith(']d2') || s.startsWith(']Q3') || s.startsWith(']e0')) s = s.slice(3)
+  // some scanners send the leading FNC1 as a GS
+  s = s.replace(/^\u001d+/, '')
   // Bracketed human-readable form "(01)09501101530003(17)260131(10)AB12"
   if (s.startsWith('(')) s = s.replace(/\((\d{2,4})\)/g, (_, ai) => `${GS}${ai}`).replace(/^\u001d/, '')
   if (!/^\d{2}/.test(s)) return null
@@ -203,26 +205,59 @@ export interface ScanAnalysis {
  * Analyse a scanned string and produce the ordered list of values to look up
  * (barcode / PLU / SKU columns). The first candidate that matches an item wins.
  */
+/**
+ * What a scanner / keyboard wedge actually delivered, minus the noise: leading / trailing whitespace
+ * and control characters (CR, LF, TAB, NUL …) are dropped. GS (FNC1) is kept — it separates GS1
+ * fields; analyseScan drops it again when the code is not GS1.
+ */
+export function sanitizeScan(input: string): string {
+  return String(input ?? '').replace(/[\u0000-\u001c\u001e-\u001f\u007f]/g, '').trim()
+}
+
+/**
+ * True when a stored code equals a scanned lookup value: case-insensitive, whitespace / control
+ * characters ignored, and for numeric barcodes leading zeros ignored (0012345 = 12345). Never a
+ * partial match.
+ */
+export function codesMatch(stored: string | null | undefined, lookup: string, field: ScanCandidate['field']): boolean {
+  const a = sanitizeScan(stored || '').replace(/\u001d/g, '').toLowerCase()
+  const b = sanitizeScan(lookup).replace(/\u001d/g, '').toLowerCase()
+  if (!a || !b) return false
+  if (a === b) return true
+  if (field === 'barcode' && /^\d+$/.test(a) && /^\d+$/.test(b)) {
+    const za = a.replace(/^0+/, '')
+    return za !== '' && za === b.replace(/^0+/, '')
+  }
+  return false
+}
+
 export function analyseScan(input: string, scaleConfig?: Partial<ScaleBarcodeConfig> | null): ScanAnalysis {
   const cfg = normalizeScaleConfig(scaleConfig)
-  const raw = input.trim()
+  const withGs = sanitizeScan(input)
   const candidates: ScanCandidate[] = []
   const push = (kind: Symbology, lookup: string, field: ScanCandidate['field']) => {
     if (lookup && !candidates.some((c) => c.lookup === lookup && c.field === field)) candidates.push({ kind, lookup, field })
   }
 
   // 1. GS1 element strings (FNC1 / AIM prefix / bracketed)
-  if (raw.includes(GS) || /^\](C1|d2|Q3|e0)/.test(raw) || /^\(\d{2,4}\)/.test(raw) || (/^01\d{14}/.test(raw) && raw.length > 16)) {
-    const gs1 = parseGs1(raw)
+  if (withGs.includes(GS) || /^\](C1|d2|Q3|e0)/.test(withGs) || /^\(\d{2,4}\)/.test(withGs) || (/^01\d{14}/.test(withGs) && withGs.length > 16)) {
+    const gs1 = parseGs1(withGs)
     if (gs1?.gtin) {
       const gtin = gs1.gtin
       push('gs1', gtin, 'barcode')
       const stripped = gtin.replace(/^0+/, '')
       if (stripped.length === 13 || stripped.length === 12 || stripped.length === 8) push('gs1', stripped, 'barcode')
       if (gtin.length === 14 && gtin.startsWith('0')) push('gs1', gtin.slice(1), 'barcode')
+      // GTIN not on file: the whole code may be an item's own barcode / SKU (Code 128 label that
+      // happens to start with 01…)
+      const plain = withGs.replace(/\u001d/g, '')
+      push('gs1', plain, 'barcode')
+      push('gs1', plain, 'sku')
       return { symbology: 'gs1', normalized: gtin, candidates, gs1, gtinValid: isValidGtin(gtin) }
     }
   }
+  // Not GS1: a stray GS is noise
+  const raw = withGs.replace(/\u001d/g, '').trim()
 
   // 2. Weighing-scale label
   const scale = parseScaleBarcode(raw, cfg)
@@ -254,6 +289,9 @@ export function analyseScan(input: string, scaleConfig?: Partial<ScaleBarcodeCon
       push('itf14', raw.slice(1), 'barcode')
       push('itf14', raw.replace(/^0+/, ''), 'barcode')
     }
+    // Stored without the leading zeros the label prints (0012345 on file as 12345)
+    const noZeros = raw.replace(/^0+/, '')
+    if (noZeros && noZeros !== raw) push(symbology, noZeros, 'barcode')
     push('plu', raw, 'sku')
     const gtinValid = [8, 12, 13, 14].includes(raw.length) ? isValidGtin(raw) : undefined
     return { symbology, normalized: raw, candidates, gtinValid }

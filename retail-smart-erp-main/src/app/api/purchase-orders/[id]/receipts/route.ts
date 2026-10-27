@@ -60,6 +60,10 @@ export async function GET(
             quantityRejected: purchaseReceiptItems.quantityRejected,
             rejectionReason: purchaseReceiptItems.rejectionReason,
             notes: purchaseReceiptItems.notes,
+            // 0184: unit of the line
+            uom: purchaseReceiptItems.uom,
+            uomFactor: purchaseReceiptItems.uomFactor,
+            baseUnit: itemsTable.unit,
           })
           .from(purchaseReceiptItems)
           .leftJoin(itemsTable, eq(purchaseReceiptItems.itemId, itemsTable.id))

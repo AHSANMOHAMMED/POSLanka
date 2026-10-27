@@ -29,6 +29,8 @@ export type PosShortcutAction =
   | 'closeShift'
   | 'cashMovement'
   | 'customerDisplay'
+  | 'actions'
+  | 'saveQuotation'
   | 'help'
 
 export interface KeyLike {
@@ -74,6 +76,7 @@ export const POS_SHORTCUTS: PosShortcutDef[] = [
   { action: 'priceCheck', group: 'Sale', label: 'Price & stock check', keys: ['F7'], bindings: [{ key: 'F7' }] },
   { action: 'newSale', group: 'Sale', label: 'New sale (clear cart, asks first)', keys: ['Ctrl+Del', 'Alt+N'],
     bindings: [{ key: 'Delete', ctrl: true }, { code: 'KeyN', alt: true }] },
+  { action: 'saveQuotation', group: 'Sale', label: 'Save the cart as a quotation', keys: ['Alt+Q'], bindings: [{ code: 'KeyQ', alt: true }] },
   { action: 'customer', group: 'Customer & bills', label: 'Select / add customer', keys: ['Alt+C'], bindings: [{ code: 'KeyC', alt: true }] },
   { action: 'reprintLast', group: 'Customer & bills', label: 'Reprint last bill', keys: ['Alt+R'], bindings: [{ code: 'KeyR', alt: true }] },
   { action: 'billsHistory', group: 'Customer & bills', label: 'Bills history', keys: ['Alt+B'], bindings: [{ code: 'KeyB', alt: true }] },
@@ -83,6 +86,8 @@ export const POS_SHORTCUTS: PosShortcutDef[] = [
   { action: 'openShift', group: 'Till & shift', label: 'Open shift', keys: ['Alt+O'], bindings: [{ code: 'KeyO', alt: true }] },
   { action: 'closeShift', group: 'Till & shift', label: 'Close shift', keys: ['Alt+X'], bindings: [{ code: 'KeyX', alt: true }] },
   { action: 'customerDisplay', group: 'Screen', label: 'Open customer display (2nd screen)', keys: ['Alt+D'], bindings: [{ code: 'KeyD', alt: true }] },
+  { action: 'actions', group: 'Screen', label: 'Actions panel (shift, bills, reprint, quotation …)', keys: ['Alt+A', 'Ctrl+K'],
+    bindings: [{ code: 'KeyA', alt: true }, { code: 'KeyK', ctrl: true }] },
   { action: 'help', group: 'Screen', label: 'Keyboard shortcuts (this list)', keys: ['?', 'Ctrl+/'],
     bindings: [{ key: '?', outsideInput: true }, { key: '/', ctrl: true }] },
 ]
@@ -94,12 +99,19 @@ export const POS_CONTEXT_SHORTCUTS: Array<{ group: string; keys: string; label: 
   { group: 'Cart', keys: 'Enter', label: 'Confirm the typed quantity (Enter again → back to search)' },
   { group: 'Cart', keys: '+ / −', label: 'Add / remove one (also from an empty search box)' },
   { group: 'Cart', keys: 'Del', label: 'Remove the selected line' },
+  { group: 'Cart', keys: 'U', label: 'Change the unit of the selected line (kg → g, pcs → box …)' },
   { group: 'Cart', keys: 'Esc', label: 'Cancel typing / back to search' },
   { group: 'Variants', keys: '← → Tab', label: 'Move between sizes / colours (Tab = next attribute)' },
   { group: 'Variants', keys: 'm, l, xl, 1–9', label: 'Type a size or its number to pick it' },
   { group: 'Variants', keys: 'Enter / Esc', label: 'Add the variant / cancel' },
+  { group: 'Actions panel', keys: '← → ↑ ↓', label: 'Move between the action tiles (Home / End = first / last)' },
+  { group: 'Actions panel', keys: 'Enter / Space', label: 'Run the highlighted action' },
+  { group: 'Actions panel', keys: 'a–z', label: 'Type to filter the actions (Backspace = undo)' },
+  { group: 'Actions panel', keys: 'Esc', label: 'Close and go back to search' },
   { group: 'Payment', keys: 'F1–F6', label: 'Pick the payment method shown on the button (1–6 when not typing an amount)' },
   { group: 'Payment', keys: 'Enter / Esc', label: 'Complete the sale / close' },
+  { group: 'Sale completed', keys: 'D', label: 'Schedule delivery for the invoice (deliveries module, opens a new tab)' },
+  { group: 'Size entry', keys: 'Enter / Esc', label: 'Add the sized line / cancel (area or length priced items; +/− on the line reopens it)' },
 ]
 
 function bindingMatches(b: Binding, e: KeyLike, inTextInput: boolean): boolean {

@@ -30,6 +30,37 @@ export interface Item {
   variantAttributes?: Record<string, string> | null
   hasVariants?: boolean
   variants?: Item[]
+  /** Print studio (drizzle/0182): 'area' / 'length' items are sold by size (POS size-entry dialog) */
+  pricingMode?: 'unit' | 'area' | 'length' | null
+  areaUnit?: 'sqft' | 'sqm' | null
+  minChargeArea?: string | number | null
+}
+
+/**
+ * Size of an area / length priced cart line (print studio). The line itself is a plain
+ * quantity × price line (quantity = billable sq ft / sq m / running ft, unitPrice = rate);
+ * this rides along so the cart can reopen the size dialog. Never sent as anything but an
+ * ignored extra field.
+ */
+export interface CartSizeSpec {
+  pricingMode: 'area' | 'length'
+  areaUnit: 'sqft' | 'sqm'
+  width: number
+  height: number | null
+  sizeUnit: 'inch' | 'ft' | 'cm' | 'mm' | 'm'
+  pieces: number
+  sides: number
+  minChargeArea: number | null
+  /** item name without the size text */
+  baseName: string
+  /** print rate per sq ft / sq m / running ft before add-ons (the cart line price folds them in) */
+  rate?: number
+  /**
+   * Finishing add-ons (lamination, eyelets, frame …, src/lib/print-jobs/size-pricing.ts). POST
+   * /api/sales needs an item on every line, so they are not lines of their own: their amount is
+   * folded into the size line's unit price, with the breakdown in the line name and notes.
+   */
+  finishing?: Array<{ code: string; label?: string | null; rate: number; count?: number | null }>
 }
 
 export interface Category {
@@ -98,6 +129,8 @@ export interface CartItem {
   promotionLabels?: string[]
   priceListName?: string | null
   catalogPrice?: number
+  /** Print studio: size of an area / length priced line (quantity = billable area) */
+  sizeSpec?: CartSizeSpec
 }
 
 export interface CartBatchOption {

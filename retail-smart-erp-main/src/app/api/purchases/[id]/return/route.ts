@@ -108,7 +108,8 @@ export async function POST(
 
         for (const eri of existingReturnItems) {
           const key = lineKey(eri)
-          alreadyReturnedMap.set(key, (alreadyReturnedMap.get(key) || 0) + Math.abs(parseFloat(eri.quantity)))
+          // 0184: compared in base units (lines may be in different units)
+          alreadyReturnedMap.set(key, (alreadyReturnedMap.get(key) || 0) + Math.abs(parseFloat(eri.quantity)) * (parseFloat(eri.uomFactor) || 1))
         }
       }
 
@@ -116,7 +117,7 @@ export async function POST(
       const totalOriginalQtyByKey = new Map<string, number>()
       for (const oi of originalItems) {
         const key = lineKey(oi)
-        totalOriginalQtyByKey.set(key, (totalOriginalQtyByKey.get(key) || 0) + parseFloat(oi.quantity))
+        totalOriginalQtyByKey.set(key, (totalOriginalQtyByKey.get(key) || 0) + parseFloat(oi.quantity) * (parseFloat(oi.uomFactor) || 1))
       }
 
       // Validate return quantities
@@ -137,13 +138,16 @@ export async function POST(
 
         // Validate against the total purchased for this key across all lines, minus
         // everything already returned (prior returns + earlier lines of this request).
+        // 0184: returnQuantity is in the original line's unit; the check runs in base units
         const key = lineKey(origItem)
-        const totalOriginalQty = totalOriginalQtyByKey.get(key) || 0
-        const alreadyReturned = alreadyReturnedMap.get(key) || 0
+        const factor = parseFloat(origItem.uomFactor) || 1
+        const baseReturn = round3(ri.returnQuantity * factor)
+        const totalOriginalQty = round3(totalOriginalQtyByKey.get(key) || 0)
+        const alreadyReturned = round3(alreadyReturnedMap.get(key) || 0)
         const batchReturned = batchReturnByKey.get(key) || 0
         const maxReturnable = round3(totalOriginalQty - alreadyReturned - batchReturned)
 
-        if (ri.returnQuantity > maxReturnable) {
+        if (baseReturn > maxReturnable + 0.0005) {
           return { error: NextResponse.json({
             error: alreadyReturned + batchReturned > 0
               ? `Cannot return ${ri.returnQuantity} of ${origItem.itemName}. Only ${Math.max(0, maxReturnable)} remaining (${round3(alreadyReturned + batchReturned)} already returned)`
@@ -151,7 +155,7 @@ export async function POST(
           }, { status: 400 }) }
         }
 
-        batchReturnByKey.set(key, round3(batchReturned + ri.returnQuantity))
+        batchReturnByKey.set(key, round3(batchReturned + baseReturn))
         validatedItems.push({ item: origItem, returnQty: ri.returnQuantity, serialNumberIds: [...new Set(ri.serialNumberIds || [])] })
       }
 
@@ -175,9 +179,11 @@ export async function POST(
           }
           continue
         }
-        if (!Number.isInteger(v.returnQty) || v.serialNumberIds.length !== v.returnQty) {
+        // 0184: one serial per base unit (a box of 12 needs 12 serials)
+        const serialQty = Math.round(v.returnQty * (parseFloat(v.item.uomFactor) || 1) * 1000) / 1000
+        if (!Number.isInteger(serialQty) || v.serialNumberIds.length !== serialQty) {
           return { error: NextResponse.json({
-            error: `${name} is serial-tracked: provide exactly ${v.returnQty} serial number(s) to return (got ${v.serialNumberIds.length})`,
+            error: `${name} is serial-tracked: provide exactly ${serialQty} serial number(s) to return (got ${v.serialNumberIds.length})`,
           }, { status: 400 }) }
         }
         for (const sid of v.serialNumberIds) {
@@ -283,6 +289,9 @@ export async function POST(
           itemName: item.itemName,
           quantity: (-returnQty).toString(),
           unitPrice: item.unitPrice,
+          // 0184: the return line keeps the original line's unit
+          uom: item.uom,
+          uomFactor: item.uomFactor,
           tax: (-itemTaxAmount).toString(),
           taxRate: perItem ? perItem.taxRate.toString() : '0',
           taxAmount: (-itemTaxAmount).toString(),
@@ -302,7 +311,7 @@ export async function POST(
             warehouseId: originalPurchase.warehouseId!,
             itemId: item.itemId,
             mode: 'delta',
-            qty: -returnQty,
+            qty: -round3(returnQty * (parseFloat(item.uomFactor) || 1)),
             type: 'out',
             referenceType: 'purchase',
             referenceId: returnPurchase.id,
@@ -322,7 +331,7 @@ export async function POST(
         for (const { item, returnQty } of validatedItems) {
           if (!item.itemId) continue
           await takeOutOfBatches(tx, {
-            tenantId: session.user.tenantId, itemId: item.itemId, warehouseId: originalPurchase.warehouseId, qty: returnQty,
+            tenantId: session.user.tenantId, itemId: item.itemId, warehouseId: originalPurchase.warehouseId, qty: round3(returnQty * (parseFloat(item.uomFactor) || 1)),
             preferDocType: 'purchase', preferDocId: originalPurchase.id,
             docType: 'purchase', docId: returnPurchase.id, lineId: item.id, itemName: item.itemName,
           })

@@ -4,8 +4,7 @@
 import type { LabelItemData } from '@/lib/labels/types'
 import {
   CommandBuffer,
-  fitModule,
-  hriHeight,
+  placeLinearBarcode,
   isDarkColor,
   mmToDots,
   ptToDots,
@@ -123,28 +122,28 @@ async function emitElements(
         }
         const data = res.data
         const hr = el.showText ? 'Y' : 'N'
-        if (el.format === 'qrcode') {
+        if (res.format === 'qrcode') {
           const mag = Math.max(1, Math.min(10, Math.floor(Math.min(w, h) / qrModules(data))))
           buf.line(`^FO${x},${y}^BQN,2,${mag}^FH\\^FDMA,${zplEscape(data)}^FS`)
           break
         }
-        if (el.format === 'datamatrix') {
+        if (res.format === 'datamatrix') {
           const approx = 10 + 2 * Math.ceil(Math.sqrt(data.length * 1.5))
           const mod = Math.max(1, Math.floor(Math.min(w, h) / approx))
           buf.line(`^FO${x},${y}^BX${ori},${mod},200^FH\\^FD${zplEscape(data)}^FS`)
           break
         }
-        if (el.format === 'pdf417') {
+        if (res.format === 'pdf417') {
           buf.line(`^FO${x},${y}^BY2^B7${ori},${Math.max(2, Math.floor(h / 12))},0,0,0,N^FH\\^FD${zplEscape(data)}^FS`)
           break
         }
-        const { module, used } = fitModule(el.format, data, w)
-        const bh = Math.max(8, h - (el.showText ? hriHeight(dpi) : 0))
-        const bx = rot === 0 || rot === null ? x + Math.max(0, Math.floor((w - used) / 2)) : x
-        const ratio = ['code39', 'codabar', 'itf14'].includes(el.format) ? '2.0' : '3.0'
+        // Native printer barcode: integer-dot module (^BY), quiet zones inside the label.
+        const p = placeLinearBarcode(template, el, res, o, ox, warnings)
+        const bh = p.barHeight
+        const ratio = ['code39', 'codabar', 'itf14'].includes(res.format) ? '2.0' : '3.0'
         let cmd: string
         let fd = data
-        switch (el.format) {
+        switch (res.format) {
           case 'ean13':
             cmd = `^BE${ori},${bh},${hr},N`
             break
@@ -169,13 +168,13 @@ async function emitElements(
             break
           case 'code128':
           default:
-            // Mode 'A' = Automatic subset selection (Subset A/B/C).
-            // Without 'A', Zebra requires manual subset specifiers (>:, >;) and will refuse to print unadorned data!
+            // Mode 'A' = automatic subset selection (B / C), so digit runs pack two per symbol.
             cmd = `^BC${ori},${bh},${hr},N,N,A`
             break
         }
-        const cleanData = fd.replace(/[\^~]/g, '')
-        buf.line(`^BY${module},${ratio},${bh}^FO${bx},${y}${cmd}^FD${cleanData}^FS`)
+        // ^ ~ \ in the data are sent hex-escaped (^FH) so the scanned value equals the item code.
+        const special = /[\^~\\]/.test(fd)
+        buf.line(`^BY${p.module},${ratio},${bh}^FO${p.x},${y}${cmd}${special ? '^FH\\' : ''}^FD${special ? zplEscape(fd) : fd}^FS`)
         break
       }
       case 'shape': {
