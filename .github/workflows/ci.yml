@@ -113,6 +113,7 @@ jobs:
           npx tsx scripts/tests/w7-code128.ts
           npx tsx scripts/tests/w7-mobile-receipt.ts
           npx tsx scripts/tests/l7-print-agent-install.ts
+          npx tsx scripts/tests/l8-driver-image.ts
 
       - name: Staff accounts
         run: npx tsx scripts/tests/w1-staff.ts

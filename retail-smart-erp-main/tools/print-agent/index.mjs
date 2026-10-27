@@ -13,6 +13,12 @@
  *                               ?refresh=1 bypasses the 10 s discovery cache
  *   POST /print              -> { target?: string, data: base64 }  => { ok: true, target, bytes }
  *                               `target` = a printers.json key OR the exact name of an installed OS printer
+ *   POST /print-image        -> { printer, widthMm, heightMm, dpi, copies?, pages: [base64 PNG, ...] }
+ *                               => { ok: true, printer, pages }
+ *                               "Through the driver": one page per PNG (one physical label row each),
+ *                               printed by the printer's own driver at exactly widthMm x heightMm.
+ *                               Works with any installed driver (GDI-only / unknown brands too).
+ *                               Windows: System.Drawing PrintDocument; macOS / Linux: CUPS lp.
  *
  * Targets are configured in printers.json next to this file (see printers.example.json):
  *   { "default": "counter1",
@@ -38,12 +44,15 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 
-const VERSION = '1.3.0'
+const VERSION = '1.4.0'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const HOST = process.env.PRINT_AGENT_HOST || '127.0.0.1'
 const PORT = Number(process.env.PRINT_AGENT_PORT || 9123)
 const CONFIG_PATH = process.env.PRINT_AGENT_CONFIG || path.join(__dirname, 'printers.json')
 const MAX_BODY = 8 * 1024 * 1024
+/** POST /print-image: whole JSON body (base64 PNGs) cap. */
+const MAX_IMAGE_BODY = 25 * 1024 * 1024
+const MAX_IMAGE_PAGES = 2000
 
 function log(...args) {
   console.log(new Date().toISOString(), ...args)
@@ -124,11 +133,11 @@ function run(cmd, args, opts = {}) {
 }
 
 /** Run a PowerShell script without any quoting problems (-EncodedCommand = base64 UTF-16LE). */
-function powershell(script, env = {}) {
+function powershell(script, env = {}, timeout = 30_000) {
   const encoded = Buffer.from(script, 'utf16le').toString('base64')
   return run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
     env: { ...process.env, ...env },
-    timeout: 30_000,
+    timeout,
   })
 }
 
@@ -419,6 +428,194 @@ async function dispatch(target, bytes) {
   }
 }
 
+// ─── Image printing through the driver (POST /print-image) ──────────────
+
+class HttpError extends Error {
+  constructor(status, message) {
+    super(message)
+    this.status = status
+  }
+}
+
+/** Width / height of a PNG (IHDR), or null when the bytes are not a PNG. */
+function pngSize(buf) {
+  if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47 || buf.readUInt32BE(4) !== 0x0d0a1a0a || buf.toString('latin1', 12, 16) !== 'IHDR') return null
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+}
+
+/**
+ * Validate a POST /print-image body. Throws HttpError(400) with a clear message.
+ * Every page must be a PNG of round(mm / 25.4 * dpi) pixels (+-2 px).
+ */
+function validateImageRequest(body) {
+  if (!body || typeof body !== 'object') throw new HttpError(400, 'Body must be a JSON object')
+  const printer = typeof body.printer === 'string' ? body.printer.trim() : ''
+  if (!printer) throw new HttpError(400, 'Missing "printer" (name of an installed printer)')
+  if (printer.length > 256 || /[\x00-\x1f]/.test(printer)) throw new HttpError(400, 'Invalid printer name')
+  const num = (v) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() ? Number(v) : NaN)
+  const widthMm = num(body.widthMm)
+  const heightMm = num(body.heightMm)
+  const dpi = num(body.dpi)
+  if (!Number.isFinite(widthMm) || widthMm < 5 || widthMm > 300) throw new HttpError(400, '"widthMm" must be 5..300')
+  if (!Number.isFinite(heightMm) || heightMm < 5 || heightMm > 600) throw new HttpError(400, '"heightMm" must be 5..600')
+  if (!Number.isFinite(dpi) || dpi < 100 || dpi > 1200) throw new HttpError(400, '"dpi" must be 100..1200')
+  const copies = body.copies == null ? 1 : Math.round(num(body.copies))
+  if (!Number.isFinite(copies) || copies < 1 || copies > 100) throw new HttpError(400, '"copies" must be 1..100')
+  if (!Array.isArray(body.pages) || body.pages.length === 0) throw new HttpError(400, 'Missing "pages" (base64 PNG per label row)')
+  if (body.pages.length > MAX_IMAGE_PAGES) throw new HttpError(400, `Too many pages (max ${MAX_IMAGE_PAGES} per request)`)
+  const wantW = Math.round((widthMm / 25.4) * dpi)
+  const wantH = Math.round((heightMm / 25.4) * dpi)
+  let total = 0
+  const pages = body.pages.map((p, i) => {
+    if (typeof p !== 'string' || !p) throw new HttpError(400, `Page ${i + 1} is not a base64 string`)
+    const buf = Buffer.from(p.replace(/^data:image\/png;base64,/, ''), 'base64')
+    total += buf.length
+    if (total > MAX_IMAGE_BODY) throw new HttpError(413, 'Images too large (max 25 MB per request)')
+    const size = pngSize(buf)
+    if (!size) throw new HttpError(400, `Page ${i + 1} is not a PNG image`)
+    if (Math.abs(size.width - wantW) > 2 || Math.abs(size.height - wantH) > 2) {
+      throw new HttpError(400, `Page ${i + 1} is ${size.width}x${size.height} px, expected ${wantW}x${wantH} px (${widthMm}x${heightMm} mm at ${dpi} dpi)`)
+    }
+    return buf
+  })
+  return { printer, widthMm, heightMm, dpi, copies, pages }
+}
+
+/** Hundredths of an inch (System.Drawing paper units). */
+const hundredths = (mm) => Math.round((mm / 25.4) * 100)
+
+/**
+ * Windows PowerShell 5.1 script: print every PNG in $env:POSLANKA_DIR (sorted
+ * by name) as one page of exactly widthMm x heightMm through the printer's
+ * driver. Paper = a matching driver form if one exists, else a custom
+ * PaperSize; no margins; StandardPrintController (no "Printing..." dialog);
+ * each image drawn 1:1 over the whole page with nearest-neighbour sampling so
+ * barcode bars stay crisp. Printer name / folder / copies come from env vars
+ * (never interpolated into the script).
+ */
+function buildWindowsImagePrintScript({ widthMm, heightMm, dpi }) {
+  const W = hundredths(widthMm)
+  const H = hundredths(heightMm)
+  const exactW = Math.round((widthMm / 25.4) * 100 * 1000) / 1000
+  const exactH = Math.round((heightMm / 25.4) * 100 * 1000) / 1000
+  return `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+$name = $env:POSLANKA_PRINTER
+$installed = @([System.Drawing.Printing.PrinterSettings]::InstalledPrinters)
+if ($installed -notcontains $name) { throw "Printer not found: '$name' is not installed on this PC. Installed: $($installed -join ', ')" }
+$files = @(Get-ChildItem -LiteralPath $env:POSLANKA_DIR -Filter '*.png' | Sort-Object Name | ForEach-Object { $_.FullName })
+if ($files.Count -eq 0) { throw 'No label images to print' }
+$copies = [Math]::Max(1, [int]$env:POSLANKA_COPIES)
+$queue = New-Object 'System.Collections.Generic.List[string]'
+for ($c = 0; $c -lt $copies; $c++) { foreach ($f in $files) { $queue.Add($f) } }
+
+$doc = New-Object System.Drawing.Printing.PrintDocument
+$doc.DocumentName = 'skyERPOS labels'
+$doc.PrinterSettings.PrinterName = $name
+if (-not $doc.PrinterSettings.IsValid) { throw "Printer not found: '$name'" }
+# Prefer the driver's own form of this size (drivers honour their forms best), else a custom size.
+$paper = $null
+foreach ($ps in $doc.PrinterSettings.PaperSizes) {
+  if ([Math]::Abs($ps.Width - ${W}) -le 2 -and [Math]::Abs($ps.Height - ${H}) -le 2) { $paper = $ps; break }
+}
+if ($paper -eq $null) { $paper = New-Object System.Drawing.Printing.PaperSize('skyERPOS', ${W}, ${H}) }
+$res = $null
+foreach ($r in $doc.PrinterSettings.PrinterResolutions) { if ($r.X -eq ${dpi}) { $res = $r; break } }
+$margins = New-Object System.Drawing.Printing.Margins(0, 0, 0, 0)
+$doc.DefaultPageSettings.PaperSize = $paper
+$doc.DefaultPageSettings.Margins = $margins
+$doc.DefaultPageSettings.Landscape = $false
+if ($res -ne $null) { $doc.DefaultPageSettings.PrinterResolution = $res }
+$doc.OriginAtMargins = $false
+$doc.PrintController = New-Object System.Drawing.Printing.StandardPrintController
+$state = @{ i = 0 }
+$doc.add_QueryPageSettings({
+  param($sender, $ev)
+  $ev.PageSettings.PaperSize = $paper
+  $ev.PageSettings.Margins = $margins
+  $ev.PageSettings.Landscape = $false
+})
+$doc.add_PrintPage({
+  param($sender, $ev)
+  $img = [System.Drawing.Image]::FromFile($queue[$state.i])
+  try {
+    $g = $ev.Graphics
+    $g.PageUnit = [System.Drawing.GraphicsUnit]::Display
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::None
+    # OriginAtMargins = false puts (0,0) at the printable-area corner: move it to the paper corner.
+    $g.TranslateTransform(-$ev.PageSettings.HardMarginX, -$ev.PageSettings.HardMarginY)
+    $dest = New-Object System.Drawing.RectangleF(0, 0, ${exactW}, ${exactH})
+    $src = New-Object System.Drawing.RectangleF(0, 0, $img.Width, $img.Height)
+    $g.DrawImage($img, $dest, $src, [System.Drawing.GraphicsUnit]::Pixel)
+  } finally {
+    $img.Dispose()
+  }
+  $state.i++
+  $ev.HasMorePages = ($state.i -lt $queue.Count)
+})
+try {
+  $doc.Print()
+} catch {
+  $m = $_.Exception.GetBaseException().Message
+  if ($m -match 'denied') { throw "Access denied printing to '$name' (check the printer's Security settings / run as the logged-in user): $m" }
+  if ($m -match 'invalid|not found|settings to access printer') { throw "Printer not found or offline: '$name': $m" }
+  throw "Printing to '$name' failed: $m"
+} finally {
+  $doc.Dispose()
+}
+Write-Output ('printed ' + $state.i + ' page(s)')
+`
+}
+
+/** CUPS lp arguments: one job, files in order, page = exactly widthMm x heightMm. */
+function buildCupsImageArgs({ printer, widthMm, heightMm, copies = 1 }, files) {
+  const mm = (v) => String(Math.round(v * 100) / 100)
+  return [
+    '-d', printer,
+    '-n', String(copies),
+    '-t', 'skyERPOS labels',
+    '-o', `media=Custom.${mm(widthMm)}x${mm(heightMm)}mm`,
+    '-o', 'fit-to-page',
+    '-o', 'page-left=0',
+    '-o', 'page-right=0',
+    '-o', 'page-top=0',
+    '-o', 'page-bottom=0',
+    ...(copies > 1 ? ['-o', 'collate=true'] : []),
+    ...files,
+  ]
+}
+
+function writeImagePages(pages) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'poslanka-img-'))
+  const files = pages.map((buf, i) => {
+    const f = path.join(dir, `page-${String(i + 1).padStart(5, '0')}.png`)
+    fs.writeFileSync(f, buf)
+    return f
+  })
+  return { dir, files }
+}
+
+async function printImages(req) {
+  const { dir, files } = writeImagePages(req.pages)
+  try {
+    if (process.platform === 'win32') {
+      const timeout = Math.min(600_000, 60_000 + files.length * req.copies * 1000)
+      try {
+        await powershell(buildWindowsImagePrintScript(req), { POSLANKA_PRINTER: req.printer, POSLANKA_DIR: dir, POSLANKA_COPIES: String(req.copies) }, timeout)
+      } catch (e) {
+        throw new Error(String(e.message).replace(/^.*?(Printer not found|Access denied|Printing to)/s, '$1').split(/\r?\n\s*At line:/)[0].trim())
+      }
+    } else {
+      await run('lp', buildCupsImageArgs(req, files), { timeout: 60_000 })
+    }
+  } finally {
+    fs.rm(dir, { recursive: true, force: true }, () => {})
+  }
+}
+
 // ─── HTTP ─────────────────────────────────────────────────────────────────
 
 /**
@@ -498,26 +695,40 @@ function json(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
-function readBody(req) {
+function readBody(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
-    const chunks = []
+    let chunks = []
     let size = 0
+    let tooLarge = false
     req.on('data', (c) => {
+      if (tooLarge) return // discard the rest so the 413 reaches the client
       size += c.length
-      if (size > MAX_BODY) {
-        reject(new Error('Body too large'))
-        req.destroy()
+      if (size > max) {
+        tooLarge = true
+        chunks = []
+        reject(new HttpError(413, `Body too large (max ${Math.round(max / 1048576)} MB)`))
         return
       }
       chunks.push(c)
     })
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('end', () => {
+      if (!tooLarge) resolve(Buffer.concat(chunks).toString('utf8'))
+    })
     req.on('error', reject)
   })
 }
 
+/** True when run as `node index.mjs` (not imported by the tests). */
+const IS_MAIN = (() => {
+  try {
+    return !!process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url))
+  } catch {
+    return false
+  }
+})()
+
 // `node index.mjs --allow-origin <origin>`: remember an extra app origin and exit (installers).
-const allowIdx = process.argv.indexOf('--allow-origin')
+const allowIdx = IS_MAIN ? process.argv.indexOf('--allow-origin') : -1
 if (allowIdx !== -1) {
   let origin = ''
   try {
@@ -563,7 +774,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
   try {
     if (req.method === 'GET' && url.pathname === '/health') {
-      return json(res, 200, { ok: true, version: VERSION, platform: process.platform, targets: listTargets(cfg) })
+      return json(res, 200, { ok: true, version: VERSION, platform: process.platform, capabilities: { raw: true, image: true }, targets: listTargets(cfg) })
     }
     if (req.method === 'GET' && url.pathname === '/printers') {
       const { printers, discoveryError } = await listAllPrinters(cfg, url.searchParams.has('refresh'))
@@ -580,14 +791,32 @@ const server = http.createServer(async (req, res) => {
       log(`printed ${bytes.length} bytes -> ${target.key} (${target.type}, ${target.source})`)
       return json(res, 200, { ok: true, target: target.key, bytes: bytes.length })
     }
+    if (req.method === 'POST' && url.pathname === '/print-image') {
+      let body
+      try {
+        body = JSON.parse((await readBody(req, MAX_IMAGE_BODY)) || '{}')
+      } catch (e) {
+        if (e instanceof HttpError) throw e
+        throw new HttpError(400, 'Body is not valid JSON')
+      }
+      const job = validateImageRequest(body)
+      const target = await resolveTarget(cfg, job.printer)
+      if (target.type !== 'system') throw new HttpError(400, `"${job.printer}" is a ${target.type} target: image printing needs a printer installed in the OS`)
+      job.printer = target.name
+      await printImages(job)
+      log(`printed ${job.pages.length} image page(s) x${job.copies} -> ${job.printer} (${job.widthMm}x${job.heightMm} mm, ${job.dpi} dpi)`)
+      return json(res, 200, { ok: true, printer: job.printer, pages: job.pages.length, copies: job.copies })
+    }
     return json(res, 404, { error: 'Not found' })
   } catch (e) {
     log('error:', e.message)
-    return json(res, 500, { error: e.message })
+    return json(res, e instanceof HttpError ? e.status : 500, { error: e.message })
   }
 })
 
-server.listen(PORT, HOST, () => {
+export { VERSION, validateImageRequest, buildWindowsImagePrintScript, buildCupsImageArgs, pngSize, hundredths, HttpError, server }
+
+if (IS_MAIN) server.listen(PORT, HOST, () => {
   const cfg = loadConfig()
   log(`POSLanka print agent v${VERSION} listening on http://${HOST}:${PORT}`)
   log(`config: ${CONFIG_PATH} (${Object.keys(cfg.printers).length} target(s), default: ${cfg.default || '-'})`)

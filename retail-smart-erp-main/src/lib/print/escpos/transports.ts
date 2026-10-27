@@ -586,6 +586,61 @@ export class PrintAgentTransport implements PrinterTransport {
     }
   }
 
+  /**
+   * "Through the driver" printing (agent >= 1.4, POST /print-image): one PNG
+   * per page (physical label row), printed by the printer's own driver at
+   * exactly widthMm x heightMm. Large jobs are split into several requests
+   * (agent cap 25 MB each), pages stay in order.
+   */
+  async printImages(job: { widthMm: number; heightMm: number; dpi: number; copies?: number; pages: Uint8Array[] }): Promise<void> {
+    if (!this.target) throw new TransportError('Pick the installed printer to print through its driver', 'unsupported')
+    const LIMIT = 18 * 1024 * 1024
+    const encoded = job.pages.map((p) => bytesToBase64(p))
+    const batches: string[][] = []
+    let cur: string[] = []
+    let size = 0
+    for (const b64 of encoded) {
+      if (cur.length && (size + b64.length > LIMIT || cur.length >= 1000)) {
+        batches.push(cur)
+        cur = []
+        size = 0
+      }
+      cur.push(b64)
+      size += b64.length
+    }
+    if (cur.length) batches.push(cur)
+    // Copies of a multi-request job: repeat the whole sequence so the order stays 1, 2, 3 ... 1, 2, 3.
+    const copies = Math.max(1, Math.round(job.copies || 1))
+    const runs = batches.length > 1 ? copies : 1
+    for (let c = 0; c < runs; c++) {
+      for (const pages of batches) {
+        let res: Response
+        try {
+          res = await fetch(this.url('/print-image'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ printer: this.target, widthMm: job.widthMm, heightMm: job.heightMm, dpi: job.dpi, copies: runs > 1 ? 1 : copies, pages }),
+          })
+        } catch (e) {
+          throw new TransportError(`Print agent not reachable at ${this.baseUrl}: ${e instanceof Error ? e.message : e}`, 'network')
+        }
+        if (!res.ok) {
+          let msg = `Agent returned ${res.status}`
+          if (res.status === 404) msg = 'The print agent on this PC is too old for "Through the driver" printing. Reinstall it (version 1.4 or newer) and try again.'
+          else {
+            try {
+              const data = await res.json()
+              if (data?.error) msg = data.error
+            } catch {
+              /* ignore */
+            }
+          }
+          throw new TransportError(msg, 'io')
+        }
+      }
+    }
+  }
+
   async close(): Promise<void> {
     /* stateless */
   }

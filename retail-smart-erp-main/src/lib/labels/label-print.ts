@@ -361,6 +361,7 @@ export async function printLabelsRaw(
   const language = effectiveLabelLanguage(profile)
   const setup = opts.setup || null
   if (language === 'browser') return { ok: false, warnings: [], error: 'Printer is set to browser printing' }
+  if (language === 'driver') return printLabelsThroughDriver(profile, template, items, opts)
   const { encodeLabels } = await import('@/lib/print/label')
   const { createCanvasLabelRasterizer, createImageElementRasterizer } = await import('@/lib/print/label/canvas-raster')
   const { sendToPrinter } = await import('@/lib/print/printer-profiles')
@@ -384,6 +385,43 @@ export async function printLabelsRaw(
     return { ok: true, warnings: res.warnings }
   } catch (e) {
     return { ok: false, warnings: res.warnings, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+/**
+ * "Through the driver": render every physical row (columns, gaps, margins,
+ * offsets, copies, order) to an exact-size 1-bit PNG at the printer's dpi and
+ * let the print agent print it with the installed driver (POST /print-image).
+ * Works with drivers that do not accept raw ZPL / TSPL.
+ */
+export async function printLabelsThroughDriver(
+  profile: PrinterProfile,
+  template: LabelTemplateLike,
+  items: (LabelPrintItem | LabelItemData)[],
+  opts: { currencySymbol?: string; tenantName?: string; codeWord?: string; logoUrl?: string | null; copies?: number; setup?: StickerSetup | null } = {}
+): Promise<RawLabelPrintResult> {
+  if (profile.transport !== 'agent' || !profile.agentTarget) {
+    return { ok: false, warnings: [], error: '"Through the driver" printing needs the skyERPOS print agent and an installed printer. Pick the printer under "Print directly".' }
+  }
+  const setup = opts.setup || null
+  const { buildDriverImageJob } = await import('@/lib/print/label/driver-image')
+  const { createCanvasLabelRasterizer } = await import('@/lib/print/label/canvas-raster')
+  const { PrintAgentTransport } = await import('@/lib/print/escpos/transports')
+  const job = await buildDriverImageJob(template, items, {
+    dpi: rawLabelDpi(profile, setup),
+    copies: opts.copies ?? 1,
+    codeWord: opts.codeWord,
+    currencySymbol: opts.currencySymbol,
+    tenantName: opts.tenantName,
+    ...(setup ? { widthMm: setup.labelWidthMm, heightMm: setup.labelHeightMm, layout: stickerLayout(setup) } : {}),
+    rasterizeLabel: createCanvasLabelRasterizer(opts.logoUrl),
+  })
+  if (job.pages.length === 0) return { ok: false, warnings: job.warnings, error: 'Nothing to print' }
+  try {
+    await new PrintAgentTransport(profile.agentUrl, profile.agentTarget).printImages(job)
+    return { ok: true, warnings: job.warnings }
+  } catch (e) {
+    return { ok: false, warnings: job.warnings, error: e instanceof Error ? e.message : String(e) }
   }
 }
 

@@ -14,13 +14,19 @@ export const PRINTERS_KEY = 'poslanka:printers'
 export const LEGACY_PRINTER_KEY = 'poslanka:printer'
 
 export type PrinterRole = 'receipt' | 'label' | 'kitchen'
-export type LabelLanguage = 'tspl' | 'zpl' | 'epl' | 'escpos-raster' | 'browser'
-export const LABEL_LANGUAGES: LabelLanguage[] = ['tspl', 'zpl', 'epl', 'escpos-raster', 'browser']
+/**
+ * 'driver' = "Through the driver": each label row is sent as an exact-size
+ * image to the print agent (POST /print-image), which prints it with the
+ * printer's installed driver. Works with any driver (needs the agent).
+ */
+export type LabelLanguage = 'tspl' | 'zpl' | 'epl' | 'escpos-raster' | 'driver' | 'browser'
+export const LABEL_LANGUAGES: LabelLanguage[] = ['tspl', 'zpl', 'epl', 'escpos-raster', 'driver', 'browser']
 export const LABEL_LANGUAGE_LABELS: Record<LabelLanguage, string> = {
   tspl: 'TSPL (TSC, Xprinter, Gainscha...)',
   zpl: 'ZPL (Zebra)',
   epl: 'EPL2 (older Zebra / Eltron)',
   'escpos-raster': 'ESC/POS raster (receipt printer)',
+  driver: 'Through the driver (works with any printer)',
   browser: 'Browser print dialog',
 }
 

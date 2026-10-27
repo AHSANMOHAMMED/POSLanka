@@ -77,3 +77,19 @@ export function sortPrintersForLabels<T extends { name: string; driver?: string 
     return a.name.localeCompare(b.name)
   })
 }
+
+/** Driver / printer names whose drivers are known to pass raw ZPL / TSPL / EPL through. */
+export const RAW_CAPABLE_PATTERN =
+  /zebra|zdesigner|eltron|\btlp\s?-?28|\blp\s?-?28\d\d|tsc|\bttp\b|\bttp-|\bte\s?-?2\d\d|xprinter|\bxp-|\bxp\s?\d{3}|gprinter|gainscha|hprt|rongta|\bdeli\b|\bsnbc|godex|\bzpl\b|\btspl\b|\bepl2?\b/i
+
+/**
+ * Default print mode for a printer installed in the OS (print agent list):
+ * its raw language for known raw-capable families (Zebra -> ZPL, TSC /
+ * Xprinter / Gprinter / HPRT / Rongta / Deli / SNBC -> TSPL, GoDEX -> ZPL
+ * emulation), else 'driver' (an exact-size image printed through the
+ * installed driver, works with any driver). The user can always switch.
+ */
+export function defaultAgentLabelLanguage(name: string, driver?: string | null): LabelPrinterGuess['language'] | 'driver' {
+  if (!RAW_CAPABLE_PATTERN.test(`${name} ${driver || ''}`)) return 'driver'
+  return guessLabelPrinter(name, driver).language
+}
