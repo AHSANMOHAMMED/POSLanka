@@ -44,7 +44,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 
-const VERSION = '1.4.0'
+const VERSION = '1.4.1'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const HOST = process.env.PRINT_AGENT_HOST || '127.0.0.1'
 const PORT = Number(process.env.PRINT_AGENT_PORT || 9123)
@@ -118,6 +118,34 @@ async function resolveTarget(cfg, name) {
 const DISCOVERY_TTL_MS = 10_000
 let discoveryCache = { at: 0, list: null, pending: null }
 
+/**
+ * PowerShell started with -EncodedCommand writes its error stream as CLIXML
+ * ("#< CLIXML <Objs ...><S S="Error">...</S>"), which users saw as garbage
+ * instead of the real message. Return the plain text of the error records
+ * (progress records dropped); other text is returned unchanged.
+ */
+function decodeClixml(text) {
+  const s = String(text || '')
+  if (!s.includes('#< CLIXML')) return s
+  const parts = []
+  for (const m of s.matchAll(/<S S="Error">([\s\S]*?)<\/S>/g)) parts.push(m[1])
+  const decoded = parts
+    .join('')
+    .replace(/_x([0-9A-Fa-f]{4})_/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+  // drop PowerShell's "At line:1 char:..." position block and the CategoryInfo lines
+  return decoded
+    .split(/\r?\n/)
+    .filter((l) => l.trim() && !/^\s*(At line:|At char:|\+ |\+\s+~|CategoryInfo|FullyQualifiedErrorId)/.test(l))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     execFile(
@@ -125,7 +153,10 @@ function run(cmd, args, opts = {}) {
       args,
       { timeout: 10_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, LANG: 'C', LC_ALL: 'C' }, ...opts },
       (err, stdout, stderr) => {
-        if (err) reject(new Error(String(stderr || err.message).trim()))
+        if (err) {
+          const msg = decodeClixml(stderr).trim()
+          reject(new Error(msg || (err.killed ? `${cmd} timed out` : `${cmd} failed (exit code ${err.code ?? 'unknown'})`)))
+        }
         else resolve(String(stdout))
       },
     )
@@ -134,7 +165,8 @@ function run(cmd, args, opts = {}) {
 
 /** Run a PowerShell script without any quoting problems (-EncodedCommand = base64 UTF-16LE). */
 function powershell(script, env = {}, timeout = 30_000) {
-  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  // No progress records ("Preparing modules for first use", Add-Type ...): they only add CLIXML noise on stderr.
+  const encoded = Buffer.from(`$ProgressPreference = 'SilentlyContinue'\n${script}`, 'utf16le').toString('base64')
   return run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded], {
     env: { ...process.env, ...env },
     timeout,
@@ -820,7 +852,7 @@ const server = http.createServer(async (req, res) => {
   }
 })
 
-export { VERSION, validateImageRequest, buildWindowsImagePrintScript, buildCupsImageArgs, pngSize, hundredths, HttpError, server }
+export { VERSION, decodeClixml, validateImageRequest, buildWindowsImagePrintScript, buildCupsImageArgs, pngSize, hundredths, HttpError, server }
 
 if (IS_MAIN) server.listen(PORT, HOST, () => {
   const cfg = loadConfig()

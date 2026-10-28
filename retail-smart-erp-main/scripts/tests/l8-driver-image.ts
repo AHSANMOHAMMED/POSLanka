@@ -210,7 +210,20 @@ async function agentSide() {
   const agentPath = path.resolve(__dirname, '../../tools/print-agent/index.mjs')
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const agent: any = await import(agentPath)
-  check(agent.VERSION === '1.4.0', `agent version 1.4.0 (${agent.VERSION})`)
+  check(agent.VERSION === '1.4.1', `agent version 1.4.1 (${agent.VERSION})`)
+  // Windows PowerShell 5.1 (-EncodedCommand) reports errors as CLIXML: users must get the plain message
+  const clixml =
+    '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><MS><PR N="Record"><AV>Preparing modules for first use.</AV></PR></MS></Obj>' +
+    '<S S="Error">Exception calling &quot;Send&quot; with &quot;3&quot; argument(s): &quot;OpenPrinter failed for &apos;ZDesigner ZD230&apos; (Win32 error 1801)&quot;_x000D__x000A_</S>' +
+    '<S S="Error">At line:69 char:1_x000D__x000A_</S><S S="Error">+ [PosLankaRawPrinter]::Send(...)_x000D__x000A_</S><S S="Error">    + CategoryInfo          : NotSpecified: (:) [], MethodInvocationException_x000D__x000A_</S>' +
+    '<S S="Error">    + FullyQualifiedErrorId : Exception_x000D__x000A_</S></Objs>'
+  const plain = agent.decodeClixml(clixml)
+  check(
+    plain === `Exception calling "Send" with "3" argument(s): "OpenPrinter failed for 'ZDesigner ZD230' (Win32 error 1801)"`,
+    'CLIXML error decoded to the plain message (no XML, no progress, no "At line" block)',
+    plain
+  )
+  check(agent.decodeClixml('plain text') === 'plain text' && agent.decodeClixml('#< CLIXML\r\n<Objs><Obj S="progress"></Obj></Objs>') === '', 'CLIXML: plain text unchanged, progress-only output empty')
   check(agent.server.listening === false, 'importing the agent does not start the server')
 
   const png = await encodePng1Bit({ width: 639, height: 200, data: new Uint8Array(80 * 200) }, 639, 203)
@@ -264,7 +277,7 @@ async function agentSide() {
   const base = `http://127.0.0.1:${(agent.server.address() as AddressInfo).port}`
   try {
     const health = await (await fetch(`${base}/health`)).json()
-    check(health.version === '1.4.0' && health.capabilities?.raw === true && health.capabilities?.image === true, '/health reports capabilities {raw, image}')
+    check(health.version === '1.4.1' && health.capabilities?.raw === true && health.capabilities?.image === true, '/health reports capabilities {raw, image}')
     const post = (body: unknown, headers: Record<string, string> = {}) => fetch(`${base}/print-image`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: typeof body === 'string' ? body : JSON.stringify(body) })
     let r = await post({ ...good, dpi: 5 })
     check(r.status === 400 && /dpi/.test((await r.json()).error), 'POST /print-image bad dpi -> 400')
