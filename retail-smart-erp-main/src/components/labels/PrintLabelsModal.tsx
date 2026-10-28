@@ -51,6 +51,15 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       return false
     }
   })()
+  // Shift down (+) / up (-) set on the Print Barcode Labels page
+  const offsetOverride = (() => {
+    try {
+      const v = typeof window !== 'undefined' ? Number(localStorage.getItem('sky_label_offset_y_mm') || 0) : 0
+      return Number.isFinite(v) ? v : 0
+    } catch {
+      return 0
+    }
+  })()
   // Gap between rows set on the Print Barcode Labels page (continuous roll), null = the roll's own gap
   const rowGapOverride = (() => {
     try {
@@ -199,9 +208,10 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
     }
 
     // Continuous roll: each page is one row plus its gap (printer feeds exactly that, no gap sensing)
+    const shifted: StickerSetup = { ...effectiveSetup, offsetYMm: effectiveSetup.offsetYMm + offsetOverride }
     const dialogSetup: StickerSetup = noGapSensing
-      ? { ...effectiveSetup, labelHeightMm: effectiveSetup.labelHeightMm + (rowGapOverride ?? effectiveSetup.rowGapMm), rowGapMm: 0 }
-      : effectiveSetup
+      ? { ...shifted, labelHeightMm: shifted.labelHeightMm + (rowGapOverride ?? shifted.rowGapMm), rowGapMm: 0 }
+      : shifted
     try {
       const ok =
         config.pageSize === 'Label'

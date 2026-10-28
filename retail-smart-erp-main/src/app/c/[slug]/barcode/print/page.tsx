@@ -128,6 +128,24 @@ export default function BarcodePrintPage() {
       /* private mode */
     }
   }
+  // Shift every sticker down (+) or up (-) on its page, mm. Fixes a constant offset (e.g. the first line in the gap).
+  const [offsetOverride, setOffsetOverride] = useState<number>(() => {
+    try {
+      const v = typeof window !== 'undefined' ? Number(localStorage.getItem('sky_label_offset_y_mm') || 0) : 0
+      return Number.isFinite(v) ? v : 0
+    } catch {
+      return 0
+    }
+  })
+  const changeOffset = (mm: number) => {
+    const v = Math.max(-10, Math.min(10, Math.round(mm * 2) / 2))
+    setOffsetOverride(v)
+    try {
+      localStorage.setItem('sky_label_offset_y_mm', String(v))
+    } catch {
+      /* private mode */
+    }
+  }
   const toggleNoGapSensing = (on: boolean) => {
     setNoGapSensing(on)
     try {
@@ -843,9 +861,10 @@ export default function BarcodePrintPage() {
     }
 
     // Continuous roll: each page is one row plus its gap, the printer feeds exactly that (no gap sensing).
+    const shifted: StickerSetup = { ...effectiveSetup, offsetYMm: effectiveSetup.offsetYMm + offsetOverride }
     const dialogSetup: StickerSetup = noGapSensing
-      ? { ...effectiveSetup, labelHeightMm: effectiveSetup.labelHeightMm + (rowGapOverride ?? effectiveSetup.rowGapMm), rowGapMm: 0 }
-      : effectiveSetup
+      ? { ...shifted, labelHeightMm: shifted.labelHeightMm + (rowGapOverride ?? shifted.rowGapMm), rowGapMm: 0 }
+      : shifted
     const dialogPrint = () =>
       printViaRoll
         ? printLabelsOnRoll(templateToPrint, items, dialogSetup, currencySymbol, company?.tenantName, codeWord)
@@ -1177,6 +1196,23 @@ export default function BarcodePrintPage() {
                     Later stickers print too high (into the gap above)? Make it bigger. Too low? Make it smaller. Change the printer&apos;s paper height to match:{' '}
                     {activeSetup.labelHeightMm + (rowGapOverride ?? activeSetup.rowGapMm)} mm.
                   </div>
+                </div>
+              )}
+              {activeSetup && (
+                <div className="mt-1.5 ml-5 text-xs text-gray-700">
+                  <div className="flex items-center gap-2">
+                    <span>Move print:</span>
+                    <button type="button" onClick={() => changeOffset(offsetOverride - 0.5)} className="p-0.5 border rounded hover:bg-gray-100" aria-label="Move print up">
+                      <Minus size={12} />
+                    </button>
+                    <b className="w-20 text-center">
+                      {offsetOverride === 0 ? '0 mm' : `${Math.abs(offsetOverride).toFixed(1)} mm ${offsetOverride > 0 ? 'down' : 'up'}`}
+                    </b>
+                    <button type="button" onClick={() => changeOffset(offsetOverride + 0.5)} className="p-0.5 border rounded hover:bg-gray-100" aria-label="Move print down">
+                      <Plus size={12} />
+                    </button>
+                  </div>
+                  <div className="text-gray-500 mt-0.5">Same shift on every sticker: top line cut off or in the gap? Press + (down). Bottom line cut off? Press – (up).</div>
                 </div>
               )}
             </div>
