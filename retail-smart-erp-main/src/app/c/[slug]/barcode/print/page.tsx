@@ -110,6 +110,24 @@ export default function BarcodePrintPage() {
       return false
     }
   })
+  // Continuous roll: real distance between sticker rows (mm). Fine-tuned here when labels drift row after row.
+  const [rowGapOverride, setRowGapOverride] = useState<number | null>(() => {
+    try {
+      const v = typeof window !== 'undefined' ? localStorage.getItem('sky_label_row_gap_mm') : null
+      return v !== null && Number.isFinite(Number(v)) ? Number(v) : null
+    } catch {
+      return null
+    }
+  })
+  const changeRowGap = (mm: number) => {
+    const v = Math.max(0, Math.min(10, Math.round(mm * 2) / 2))
+    setRowGapOverride(v)
+    try {
+      localStorage.setItem('sky_label_row_gap_mm', String(v))
+    } catch {
+      /* private mode */
+    }
+  }
   const toggleNoGapSensing = (on: boolean) => {
     setNoGapSensing(on)
     try {
@@ -168,8 +186,18 @@ export default function BarcodePrintPage() {
     }
     return '38x25x2'
   })
-  const activeSetup = forcedSetup
-    ?? (setupChoice !== null ? availableSetups.find((s) => s.id === setupChoice) || null : fallbackSetup || availableSetups[0] || null)
+  // A remembered built-in roll id (e.g. '38x25x2') is replaced in the list by the tenant's own saved copy of
+  // that roll (same size and columns): resolve to that copy so its calibration (row gap, offsets) is used.
+  const chosenSetup = (() => {
+    if (setupChoice === null) return null
+    const byId = availableSetups.find((s) => s.id === setupChoice)
+    if (byId) return byId
+    const preset = STICKER_PRESETS.find((p) => p.id === setupChoice)
+    return preset
+      ? availableSetups.find((s) => s.columns === preset.columns && near(s.labelWidthMm, preset.labelWidthMm) && near(s.labelHeightMm, preset.labelHeightMm)) || null
+      : null
+  })()
+  const activeSetup = forcedSetup ?? (setupChoice !== null ? chosenSetup : fallbackSetup || availableSetups[0] || null)
 
   // The template is picked once, on first load. Later refreshes (window focus, e.g. when Chrome's print
   // dialog closes) only update the list, so the label size never changes between prints by itself.
@@ -816,7 +844,7 @@ export default function BarcodePrintPage() {
 
     // Continuous roll: each page is one row plus its gap, the printer feeds exactly that (no gap sensing).
     const dialogSetup: StickerSetup = noGapSensing
-      ? { ...effectiveSetup, labelHeightMm: effectiveSetup.labelHeightMm + effectiveSetup.rowGapMm, rowGapMm: 0 }
+      ? { ...effectiveSetup, labelHeightMm: effectiveSetup.labelHeightMm + (rowGapOverride ?? effectiveSetup.rowGapMm), rowGapMm: 0 }
       : effectiveSetup
     const dialogPrint = () =>
       printViaRoll
@@ -1026,7 +1054,7 @@ export default function BarcodePrintPage() {
           <div className="bg-white rounded-lg border p-4 space-y-3">
             <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
               Print opens Chrome&apos;s print preview. One time only: install your printer model&apos;s driver and set its paper size to{' '}
-              <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
+              <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? rowGapOverride ?? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
               {noGapSensing ? <>, media type <b>Continuous</b></> : null}. In Chrome: More settings → that paper size, Margins None.
             </div>
             {/* Quick Roll Type Selector: 1 Across, 2 Across (Twin), 3 Across */}
@@ -1120,9 +1148,37 @@ export default function BarcodePrintPage() {
                 <input type="checkbox" className="mt-0.5" checked={noGapSensing} onChange={(e) => toggleNoGapSensing(e.target.checked)} />
                 <span>
                   My printer can&apos;t find the gaps (pressing FEED runs through many stickers). Print as a continuous roll:{' '}
-                  {activeSetup ? `${activeSetup.labelHeightMm + activeSetup.rowGapMm} mm` : 'label + gap'} per row.
+                  {activeSetup ? `${activeSetup.labelHeightMm + (rowGapOverride ?? activeSetup.rowGapMm)} mm` : 'label + gap'} per row.
                 </span>
               </label>
+              {noGapSensing && activeSetup && (
+                <div className="mt-1.5 ml-5 text-xs text-gray-700">
+                  <div className="flex items-center gap-2">
+                    <span>Gap between rows:</span>
+                    <button
+                      type="button"
+                      onClick={() => changeRowGap((rowGapOverride ?? activeSetup.rowGapMm) - 0.5)}
+                      className="p-0.5 border rounded hover:bg-gray-100"
+                      aria-label="Smaller gap"
+                    >
+                      <Minus size={12} />
+                    </button>
+                    <b className="w-12 text-center">{(rowGapOverride ?? activeSetup.rowGapMm).toFixed(1)} mm</b>
+                    <button
+                      type="button"
+                      onClick={() => changeRowGap((rowGapOverride ?? activeSetup.rowGapMm) + 0.5)}
+                      className="p-0.5 border rounded hover:bg-gray-100"
+                      aria-label="Bigger gap"
+                    >
+                      <Plus size={12} />
+                    </button>
+                  </div>
+                  <div className="text-gray-500 mt-0.5">
+                    Later stickers print too high (into the gap above)? Make it bigger. Too low? Make it smaller. Change the printer&apos;s paper height to match:{' '}
+                    {activeSetup.labelHeightMm + (rowGapOverride ?? activeSetup.rowGapMm)} mm.
+                  </div>
+                </div>
+              )}
             </div>
 
             <div>

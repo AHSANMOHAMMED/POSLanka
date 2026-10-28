@@ -51,6 +51,15 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       return false
     }
   })()
+  // Gap between rows set on the Print Barcode Labels page (continuous roll), null = the roll's own gap
+  const rowGapOverride = (() => {
+    try {
+      const v = typeof window !== 'undefined' ? localStorage.getItem('sky_label_row_gap_mm') : null
+      return v !== null && Number.isFinite(Number(v)) ? Number(v) : null
+    } catch {
+      return null
+    }
+  })()
 
   // Fetch templates and label settings on open, reset state on close
   useEffect(() => {
@@ -191,7 +200,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
 
     // Continuous roll: each page is one row plus its gap (printer feeds exactly that, no gap sensing)
     const dialogSetup: StickerSetup = noGapSensing
-      ? { ...effectiveSetup, labelHeightMm: effectiveSetup.labelHeightMm + effectiveSetup.rowGapMm, rowGapMm: 0 }
+      ? { ...effectiveSetup, labelHeightMm: effectiveSetup.labelHeightMm + (rowGapOverride ?? effectiveSetup.rowGapMm), rowGapMm: 0 }
       : effectiveSetup
     try {
       const ok =
@@ -214,7 +223,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto">
         <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
           Print opens Chrome&apos;s print preview. One time only: install your printer model&apos;s driver and set its paper size to{' '}
-          <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
+          <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? rowGapOverride ?? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
           {noGapSensing ? <>, media type <b>Continuous</b></> : null}. In Chrome: More settings → that paper size, Margins None.
         </div>
         {/* Template selector */}
