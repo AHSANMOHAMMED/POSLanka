@@ -1,17 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Printer, Minus, Plus } from 'lucide-react'
 import { Modal } from '@/components/ui/modal'
 import { LabelPreview } from './LabelPreview'
-import { isRawLabelPrinter, printAlignmentTestDialog, printLabels, printLabelsOnRoll, printLabelsRaw, rawLabelDpi } from '@/lib/labels/label-print'
+import { printLabels, printLabelsOnRoll } from '@/lib/labels/label-print'
 import { preflightLabels } from '@/lib/print/label/preflight'
-import { DirectLabelPrinterPanel } from './DirectLabelPrinterPanel'
-import { BrowserLabelPrintGuide, browserGuideHidden } from './BrowserLabelPrintGuide'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
-import { usePrinters } from '@/hooks/usePrinter'
-import { defaultStickerSetup, sanitizeStickerSetups, type StickerSetup } from '@/lib/labels/sticker-stock'
+import { defaultStickerSetup, sanitizeStickerSetups, stickerRollWidthMm, type StickerSetup } from '@/lib/labels/sticker-stock'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 import type { LabelTemplate, LabelItemData, PrintLabelConfig } from '@/lib/labels/types'
 
@@ -34,7 +31,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const [printing, setPrinting] = useState(false)
   const [codeWord, setCodeWord] = useState<string>('')
   const [setups, setSetups] = useState<StickerSetup[]>([])
-  // Manual sticker-roll override; null = printer's linked setup or tenant default
+  // Manual sticker-roll override; null = tenant default
   const [setupChoice, setSetupChoice] = useState<string | null>(null)
   const [config, setConfig] = useState<PrintLabelConfig>({
     labelsPerRow: 3,
@@ -44,15 +41,16 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
 
   const { symbol: currencySymbol } = useTenantCurrency()
   const company = useCompanyOptional()
-  const { printers } = usePrinters()
-  // Direct (raw) label printer first; the browser dialog only when none is set up.
-  const [printerId, setPrinterId] = useState<string | null>(null)
-  const labelPrinter =
-    (printerId !== null ? printers.find((p) => p.id === printerId) : null) ||
-    printers.find((p) => isRawLabelPrinter(p)) ||
-    printers.find((printer) => printer.role === 'label') ||
-    null
-  const [guideJob, setGuideJob] = useState<null | { run: () => Promise<boolean>; rows: number; setup: StickerSetup }>(null)
+  // Set synchronously on click: a second click before React re-renders must not start a second job.
+  const printLock = useRef(false)
+  // Same choice as the Print Barcode Labels page: printer can't find the gaps -> one page = label + gap.
+  const noGapSensing = (() => {
+    try {
+      return typeof window !== 'undefined' && localStorage.getItem('sky_label_no_gap_sensing') === '1'
+    } catch {
+      return false
+    }
+  })()
 
   // Fetch templates and label settings on open, reset state on close
   useEffect(() => {
@@ -127,19 +125,29 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const selectedTemplate = templates.find(t => t.id === selectedTemplateId)
   const totalLabels = items.reduce((sum, i) => sum + i.quantity, 0)
 
-  // Sticker-roll setup: manual choice > the printer's linked setup > tenant default.
-  // Drives multi-across roll placement for raw (TSPL/ZPL) and browser printing.
-  const linkedSetupId = labelPrinter?.label?.stickerSetupId || null
+  // Sticker-roll setup: manual choice > tenant default. Drives multi-across roll placement.
   const activeSetup: StickerSetup | null =
     (setupChoice ? setups.find(s => s.id === setupChoice) || null : null) ||
-    (linkedSetupId ? setups.find(s => s.id === linkedSetupId) || null : null) ||
     defaultStickerSetup(setups)
 
   function updateQuantity(index: number, qty: number) {
     setItems(prev => prev.map((item, i) => i === index ? { ...item, quantity: Math.max(1, Math.min(999, qty)) } : item))
   }
 
+  /** One click = Chrome's print preview with every label; exactly one job, never sent twice. */
   async function handlePrint() {
+    if (printLock.current) return
+    printLock.current = true
+    setPrinting(true)
+    try {
+      await runPrint()
+    } finally {
+      printLock.current = false
+      setPrinting(false)
+    }
+  }
+
+  async function runPrint() {
     if (!selectedTemplate) {
       toast.error('Please select a template')
       return
@@ -171,9 +179,8 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       isDefault: false,
     }
 
-    const direct = !!labelPrinter && isRawLabelPrinter(labelPrinter)
     const pf = preflightLabels(template, items, {
-      dpi: direct && labelPrinter ? rawLabelDpi(labelPrinter, effectiveSetup) : effectiveSetup.dpi,
+      dpi: effectiveSetup.dpi,
       labelWidthMm: Number(template.widthMm),
       tenantName: company?.tenantName,
     })
@@ -182,59 +189,18 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       if (!window.confirm(`${pf.errors} barcode problem${pf.errors === 1 ? '' : 's'} - these labels would not scan at the POS:\n\n${lines}\n\nPrint anyway?`)) return
     }
 
-    setPrinting(true)
+    // Continuous roll: each page is one row plus its gap (printer feeds exactly that, no gap sensing)
+    const dialogSetup: StickerSetup = noGapSensing
+      ? { ...effectiveSetup, labelHeightMm: effectiveSetup.labelHeightMm + effectiveSetup.rowGapMm, rowGapMm: 0 }
+      : effectiveSetup
     try {
-      if (labelPrinter && isRawLabelPrinter(labelPrinter)) {
-        try {
-          const result = await printLabelsRaw(labelPrinter, template, items, {
-            currencySymbol,
-            tenantName: company?.tenantName,
-            codeWord,
-            setup: effectiveSetup,
-          })
-          if (result.ok) {
-            toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} to ${labelPrinter.name}`)
-            if (result.warnings.length) toast.warning(result.warnings.slice(0, 2).join('; '))
-            return
-          }
-          toast.error(`${labelPrinter.name}: ${result.error || 'printer not reachable'}. Using the print dialog instead.`)
-        } catch (e) {
-          toast.error(`${labelPrinter.name}: ${e instanceof Error ? e.message : 'print failed'}. Using the print dialog instead.`)
-        }
-        // Seamless fallback to the OS / browser print dialog (same as the barcode page)
-        const fallback = await printViaDialog()
-        if (!fallback) toast.error('Failed to open print dialog')
-        return
-      }
-
-      const success = await printViaDialog()
-      if (!success) {
-        toast.error('Failed to open print dialog')
-      }
+      const ok =
+        config.pageSize === 'Label'
+          ? await printLabelsOnRoll(template, items, dialogSetup, currencySymbol, company?.tenantName, codeWord)
+          : await printLabels(template, items, config, currencySymbol, company?.tenantName, codeWord)
+      if (!ok) toast.error('Chrome did not open the print preview. Wait a few seconds and click Print once.')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to generate labels')
-    } finally {
-      setPrinting(false)
-    }
-
-    async function printViaDialog(): Promise<boolean> {
-      if (config.pageSize === 'Label') {
-        const run = () => printLabelsOnRoll(template!, items, effectiveSetup, currencySymbol, company?.tenantName, codeWord)
-        if (!browserGuideHidden(effectiveSetup)) {
-          // Paper-size checklist first; the dialog opens from the guide.
-          setGuideJob({ run, rows: Math.ceil(totalLabels / Math.max(1, effectiveSetup.columns)), setup: effectiveSetup })
-          return true
-        }
-        return run()
-      }
-      return printLabels(
-        template,
-        items,
-        config,
-        currencySymbol,
-        company?.tenantName,
-        codeWord
-      )
     }
   }
 
@@ -246,14 +212,11 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       size="3xl"
     >
       <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto">
-        <DirectLabelPrinterPanel
-          compact
-          setup={activeSetup}
-          printers={printers}
-          selectedId={labelPrinter && isRawLabelPrinter(labelPrinter) ? labelPrinter.id : ''}
-          onSelect={setPrinterId}
-          basePath={`/c/${company?.tenantSlug || ''}`}
-        />
+        <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
+          Print opens Chrome&apos;s print preview. One time only: install your printer model&apos;s driver and set its paper size to{' '}
+          <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
+          {noGapSensing ? <>, media type <b>Continuous</b></> : null}. In Chrome: More settings → that paper size, Margins None.
+        </div>
         {/* Template selector */}
         <div className="flex items-center gap-4">
           <div className="flex-1">
@@ -306,7 +269,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
                 value={activeSetup?.id || ''}
                 onChange={(e) => setSetupChoice(e.target.value || null)}
                 className="px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 max-w-64"
-                title="Calibrated roll: labels across, gaps and shifts applied to raw and dialog printing"
+                title="Calibrated roll: labels across, gaps and shifts"
               >
                 {setups.map(s => (
                   <option key={s.id} value={s.id}>
@@ -404,12 +367,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       <div className="flex items-center justify-between pt-4 mt-4 border-t">
         <span className="text-sm text-gray-500">
           Total: {totalLabels} label{totalLabels !== 1 ? 's' : ''} for {items.length} item{items.length !== 1 ? 's' : ''}
-          <span className="block text-xs text-gray-400">
-            Prints to:{' '}
-            {labelPrinter && isRawLabelPrinter(labelPrinter)
-              ? `${labelPrinter.name}${labelPrinter.transport === 'agent' && labelPrinter.agentTarget ? ` (${labelPrinter.agentTarget})` : ''}`
-              : 'system print dialog (choose the printer there)'}
-          </span>
+          <span className="block text-xs text-gray-400">Opens Chrome&apos;s print preview (choose the printer there)</span>
         </span>
         <div className="flex gap-2">
           <button
@@ -424,26 +382,10 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
             className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 font-medium"
           >
             <Printer size={16} />
-            {printing ? 'Sending...' : 'Print Labels'}
+            {printing ? 'Opening Chrome print...' : 'Print Labels'}
           </button>
         </div>
       </div>
-      {guideJob && (
-        <BrowserLabelPrintGuide
-          isOpen
-          setup={guideJob.setup}
-          rows={guideJob.rows}
-          onClose={() => setGuideJob(null)}
-          onAlignmentTest={() => {
-            printAlignmentTestDialog(guideJob.setup).then((ok) => !ok && toast.error('Failed to open print dialog'))
-          }}
-          onContinue={() => {
-            const job = guideJob
-            setGuideJob(null)
-            job.run().then((ok) => !ok && toast.error('Failed to open print dialog'))
-          }}
-        />
-      )}
     </Modal>
   )
 }

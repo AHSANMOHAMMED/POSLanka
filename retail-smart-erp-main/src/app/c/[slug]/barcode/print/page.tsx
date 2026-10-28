@@ -5,18 +5,13 @@ import Link from 'next/link'
 import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3, Lock, Ruler, ArrowLeft, Layout, AlertTriangle } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
 import { LabelPreview } from '@/components/labels/LabelPreview'
-import { printLabels, printLabelsOnRoll, printLabelsRaw, isRawLabelPrinter, rawLabelDpi, printAlignmentTestDialog } from '@/lib/labels/label-print'
-import { DirectLabelPrinterPanel } from '@/components/labels/DirectLabelPrinterPanel'
-import { BrowserLabelPrintGuide, browserGuideHidden } from '@/components/labels/BrowserLabelPrintGuide'
+import { printLabels, printLabelsOnRoll } from '@/lib/labels/label-print'
 import { preflightLabels } from '@/lib/print/label/preflight'
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
 import { usePermission } from '@/hooks/usePermission'
 import { defaultStickerSetup, setupsForBranch, stickerRollWidthMm, STICKER_PRESETS, setupFromPreset, type StickerSetup } from '@/lib/labels/sticker-stock'
 import { LABEL_PRESETS } from '@/lib/labels/presets'
-import { usePrinters } from '@/hooks/usePrinter'
-import { LABEL_LANGUAGE_LABELS } from '@/lib/print/printer-profiles'
-import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
@@ -103,34 +98,9 @@ export default function BarcodePrintPage() {
   const { symbol: currencySymbol } = useTenantCurrency()
   const company = useCompanyOptional()
 
-  // Label printers configured on this terminal. '' = browser / OS system print dialog.
-  const { printers } = usePrinters()
-  const labelPrinters = printers.filter((p) => p.role === 'label')
-  const otherPrinters = printers.filter((p) => p.role !== 'label')
-  // null = not chosen this session: a direct (raw) label printer is the default when one is configured,
-  // the browser dialog only when there is none (or the cashier picks it explicitly).
-  const [printerChoice, setPrinterChoice] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('sky_barcode_printer_id') || null
-    }
-    return null
-  })
-  const [showPrinterSettings, setShowPrinterSettings] = useState(false)
   const [printing, setPrinting] = useState(false)
   // Set synchronously on click: a second click before React re-renders must not start a second job.
   const printLock = useRef(false)
-  // Default: Chrome's print dialog with the printer's own driver. A direct printer is used only when picked under Advanced.
-  const chosenPrinterId = printerChoice && printers.some((p) => p.id === printerChoice) ? printerChoice : ''
-  const chosenPrinter = printers.find((p) => p.id === chosenPrinterId) || null
-  const choosePrinter = (id: string) => {
-    setPrinterChoice(id)
-    if (typeof window !== 'undefined') {
-      if (id) localStorage.setItem('sky_barcode_printer_id', id)
-      else localStorage.removeItem('sky_barcode_printer_id')
-    }
-  }
-  // Browser print dialog checklist (paper size), shown before the dialog opens
-  const [guideJob, setGuideJob] = useState<null | { done: (go: boolean) => void; rows: number; setup: StickerSetup; continuous: boolean }>(null)
   // Printer can't find the gaps (FEED runs through many stickers, e.g. a fixed centre sensor under the gap of a
   // multi-across roll): print as a continuous roll, one page = label height + row gap, so no gap sensing is needed.
   const [noGapSensing, setNoGapSensing] = useState(() => {
@@ -149,9 +119,6 @@ export default function BarcodePrintPage() {
       /* private mode */
     }
   }
-  // Test print from the checklist: one at a time (each click would otherwise queue another job)
-  const testLock = useRef(false)
-
   useEffect(() => {
     if (typeof window !== 'undefined') {
       // Auto-jump to HTTPS if accessing via HTTP on production host
@@ -187,10 +154,9 @@ export default function BarcodePrintPage() {
     return list
   }, [setups])
 
-  const linkedSetup = availableSetups.find((s) => s.id === chosenPrinter?.label.stickerSetupId) || null
   const fallbackSetup = defaultStickerSetup(availableSetups)
-  // A locked setup linked to the printer (or a locked default) cannot be switched by cashiers
-  const forcedSetup = !isAdmin ? (linkedSetup?.locked ? linkedSetup : !linkedSetup && fallbackSetup?.locked ? fallbackSetup : null) : null
+  // A locked default setup cannot be switched by cashiers
+  const forcedSetup = !isAdmin && fallbackSetup?.locked ? fallbackSetup : null
   const [setupChoice, setSetupChoice] = useState<string | null>(() => {
     if (typeof window !== 'undefined') {
       const savedSetupId = localStorage.getItem('sky_barcode_setup_id')
@@ -203,17 +169,7 @@ export default function BarcodePrintPage() {
     return '38x25x2'
   })
   const activeSetup = forcedSetup
-    ?? (setupChoice !== null ? availableSetups.find((s) => s.id === setupChoice) || null : linkedSetup || fallbackSetup || availableSetups[0] || null)
-
-  // Guard the 2-inch-printer trap: warn when the calibrated roll is physically
-  // wider than the chosen label printer's paper (e.g. twin 38x25 on a ZD230).
-  const rollWidthMm = activeSetup ? stickerRollWidthMm(activeSetup) : 0
-  const sizeMismatch = !!(
-    chosenPrinter &&
-    activeSetup &&
-    isRawLabelPrinter(chosenPrinter) &&
-    rollWidthMm > chosenPrinter.label.widthMm + 0.5
-  )
+    ?? (setupChoice !== null ? availableSetups.find((s) => s.id === setupChoice) || null : fallbackSetup || availableSetups[0] || null)
 
   // The template is picked once, on first load. Later refreshes (window focus, e.g. when Chrome's print
   // dialog closes) only update the list, so the label size never changes between prints by itself.
@@ -795,19 +751,19 @@ export default function BarcodePrintPage() {
   }, [selectedTemplate, visibleFields])
 
   /** One print job per click: exactly the listed quantities, in list order, never sent twice. */
-  async function handlePrint(forceBrowserPrint = false) {
+  async function handlePrint() {
     if (printLock.current) return
     printLock.current = true
     setPrinting(true)
     try {
-      await runPrint(forceBrowserPrint)
+      await runPrint()
     } finally {
       printLock.current = false
       setPrinting(false)
     }
   }
 
-  async function runPrint(forceBrowserPrint: boolean) {
+  async function runPrint() {
     const templateToPrint = activeTemplate || selectedTemplate
     if (!templateToPrint) {
       toast.error('Please select a template')
@@ -842,11 +798,10 @@ export default function BarcodePrintPage() {
     }
 
     const printViaRoll = config.pageSize === 'Label'
-    const direct = !forceBrowserPrint && isRawLabelPrinter(chosenPrinter)
 
     // Pre-print barcode check: never send an unscannable / unfindable barcode silently.
     const pf = preflightLabels(templateToPrint, items, {
-      dpi: direct && chosenPrinter ? rawLabelDpi(chosenPrinter, effectiveSetup) : effectiveSetup.dpi,
+      dpi: effectiveSetup.dpi,
       labelWidthMm: Number(templateToPrint.widthMm),
       tenantName: company?.tenantName,
     })
@@ -867,54 +822,11 @@ export default function BarcodePrintPage() {
       printViaRoll
         ? printLabelsOnRoll(templateToPrint, items, dialogSetup, currencySymbol, company?.tenantName, codeWord)
         : printLabels(templateToPrint, items, config, currencySymbol, company?.tenantName, codeWord)
-    // Browser dialog: show the paper-size checklist first (unless dismissed for this size).
-    // The checklist is awaited inside the print lock, so the job runs once and the button stays busy meanwhile.
-    const viaDialog = async () => {
-      if (printViaRoll && !browserGuideHidden(dialogSetup)) {
-        const go = await new Promise<boolean>((done) =>
-          setGuideJob({ done, rows: Math.ceil(totalLabels / Math.max(1, dialogSetup.columns)), setup: dialogSetup, continuous: noGapSensing })
-        )
-        setGuideJob(null)
-        if (!go) return
-      }
-      if (!(await dialogPrint())) {
-        toast.error('Chrome did not open the print dialog. Wait a few seconds and click Print once. If labels are stuck in the printer queue, clear the queue first.')
-      }
-    }
-
-    if (direct && chosenPrinter) {
-      let error: string
-      try {
-        const res = await printLabelsRaw(chosenPrinter, templateToPrint, items, {
-          currencySymbol,
-          tenantName: company?.tenantName,
-          codeWord,
-          setup: effectiveSetup,
-        })
-        if (res.ok) {
-          const rows = Math.ceil(totalLabels / Math.max(1, effectiveSetup.columns))
-          toast.success(`Sent ${totalLabels} label${totalLabels !== 1 ? 's' : ''} (${rows} row${rows !== 1 ? 's' : ''}) to ${chosenPrinter.name}`)
-          if (res.warnings.length) toast.warning(res.warnings.slice(0, 2).join('; '))
-          return
-        }
-        error = res.error || 'printer not reachable'
-      } catch (e) {
-        error = e instanceof Error ? e.message : 'print failed'
-      }
-      // Never reprint on our own: the printer may already have printed some or all labels before the error.
-      toast.error(`${chosenPrinter.name}: ${error}`)
-      if (
-        window.confirm(
-          `Printing to ${chosenPrinter.name} failed:\n${error}\n\nSome labels may already have printed - check the printer first.\n\nPrint all ${totalLabels} label${totalLabels !== 1 ? 's' : ''} again through the print dialog?`
-        )
-      ) {
-        await viaDialog()
-      }
-      return
-    }
-
+    // One click = Chrome's print preview with every page; the user prints from there.
     try {
-      await viaDialog()
+      if (!(await dialogPrint())) {
+        toast.error('Chrome did not open the print preview. Wait a few seconds and click Print once.')
+      }
     } catch {
       toast.error('Failed to generate labels')
     }
@@ -924,13 +836,12 @@ export default function BarcodePrintPage() {
   const preflight = useMemo(() => {
     const t = activeTemplate || selectedTemplate
     if (!t || items.length === 0) return null
-    const raw = isRawLabelPrinter(chosenPrinter)
     return preflightLabels(t, items, {
-      dpi: raw && chosenPrinter ? rawLabelDpi(chosenPrinter, activeSetup) : activeSetup?.dpi === 300 ? 300 : 203,
+      dpi: activeSetup?.dpi === 300 ? 300 : 203,
       labelWidthMm: Number(t.widthMm),
       tenantName: company?.tenantName,
     })
-  }, [activeTemplate, selectedTemplate, items, chosenPrinter, activeSetup, company?.tenantName])
+  }, [activeTemplate, selectedTemplate, items, activeSetup, company?.tenantName])
 
   return (
     <div className="space-y-4">
@@ -958,12 +869,12 @@ export default function BarcodePrintPage() {
             Label Templates
           </Link>
           <button
-            onClick={() => handlePrint(false)}
+            onClick={() => handlePrint()}
             disabled={!selectedTemplate || items.length === 0 || printing}
             className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 font-medium shadow-sm transition-colors"
           >
             <Printer size={16} />
-            {printing ? 'Printing...' : chosenPrinter && isRawLabelPrinter(chosenPrinter) ? `Print to ${chosenPrinter.name}` : 'Print Labels'}
+            {printing ? 'Opening Chrome print...' : 'Print Labels'}
           </button>
         </div>
       </div>
@@ -1111,65 +1022,13 @@ export default function BarcodePrintPage() {
 
         {/* Right: Template & Preview */}
         <div className="space-y-3">
-          {/* Advanced: print without the dialog (print helper / USB). Closed unless already in use. */}
-          <details open={!!chosenPrinterId} className="bg-white rounded-lg border p-3 text-sm">
-            <summary className="cursor-pointer text-xs font-medium text-gray-600">Advanced: print without the Chrome dialog (optional)</summary>
-            <div className="mt-3 space-y-3">
-              <DirectLabelPrinterPanel
-                setup={activeSetup}
-                printers={printers}
-                selectedId={chosenPrinterId}
-                onSelect={choosePrinter}
-                basePath={`/c/${company?.tenantSlug || ''}`}
-              />
-              <select
-                value={chosenPrinterId}
-                onChange={(e) => choosePrinter(e.target.value)}
-                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm font-medium bg-white"
-              >
-                <option value="">Chrome print dialog (recommended)</option>
-                {labelPrinters.length > 0 && (
-                  <optgroup label="Direct label printers (no dialog)">
-                    {labelPrinters.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({LABEL_LANGUAGE_LABELS[p.label.language] || p.label.language.toUpperCase()}, {p.label.dpi} dpi)
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {otherPrinters.length > 0 && (
-                  <optgroup label="Other Connected Printers">
-                    {otherPrinters.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.role.toUpperCase()} · {p.transport.toUpperCase()})
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-              <button
-                type="button"
-                onClick={() => setShowPrinterSettings(true)}
-                className="text-xs text-blue-600 hover:underline flex items-center gap-1 font-medium"
-              >
-                <Sliders size={12} />
-                Manage printers
-              </button>
-            </div>
-          </details>
           {/* Template selector */}
           <div className="bg-white rounded-lg border p-4 space-y-3">
-            {!chosenPrinterId ? (
-              <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
-                Prints through Chrome. One time only: install the driver for your printer model (from the maker&apos;s website) and set its paper size to{' '}
-                <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
-                {noGapSensing ? <>, media type <b>Continuous</b></> : null}.
-              </div>
-            ) : (
-              <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
-                Printing directly to <b>{chosenPrinter?.name}</b> (no dialog). To use Chrome instead, pick &quot;Chrome print dialog&quot; under Advanced.
-              </div>
-            )}
+            <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
+              Print opens Chrome&apos;s print preview. One time only: install your printer model&apos;s driver and set its paper size to{' '}
+              <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
+              {noGapSensing ? <>, media type <b>Continuous</b></> : null}. In Chrome: More settings → that paper size, Margins None.
+            </div>
             {/* Quick Roll Type Selector: 1 Across, 2 Across (Twin), 3 Across */}
             <div className="pt-1">
               <div className="flex items-center justify-between mb-1.5">
@@ -1257,24 +1116,13 @@ export default function BarcodePrintPage() {
                   <span className="text-[10px] block opacity-80">Triple · 105mm</span>
                 </button>
               </div>
-              {sizeMismatch && (
-                <div className="mt-1.5 p-2 bg-amber-50 border border-amber-300 rounded flex items-start gap-2 text-xs text-amber-800">
-                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                  <span>
-                    <b>{rollWidthMm} mm</b> roll won&apos;t print fully on <b>{chosenPrinter!.name}</b> (its paper is only <b>{chosenPrinter!.label.widthMm} mm</b> wide — a {chosenPrinter!.label.widthMm <= 58 ? '2-inch' : chosenPrinter!.label.widthMm <= 80 ? '3-inch' : '4-inch'} printer).
-                    The right sticker column would be clipped. Pick a 1-across setup, or use a printer that matches this roll.
-                  </span>
-                </div>
-              )}
-              {!chosenPrinterId && (
-                <label className="mt-2 flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
-                  <input type="checkbox" className="mt-0.5" checked={noGapSensing} onChange={(e) => toggleNoGapSensing(e.target.checked)} />
-                  <span>
-                    My printer can&apos;t find the gaps (pressing FEED runs through many stickers). Print as a continuous roll:{' '}
-                    {activeSetup ? `${activeSetup.labelHeightMm + activeSetup.rowGapMm} mm` : 'label + gap'} per row.
-                  </span>
-                </label>
-              )}
+              <label className="mt-2 flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                <input type="checkbox" className="mt-0.5" checked={noGapSensing} onChange={(e) => toggleNoGapSensing(e.target.checked)} />
+                <span>
+                  My printer can&apos;t find the gaps (pressing FEED runs through many stickers). Print as a continuous roll:{' '}
+                  {activeSetup ? `${activeSetup.labelHeightMm + activeSetup.rowGapMm} mm` : 'label + gap'} per row.
+                </span>
+              </label>
             </div>
 
             <div>
@@ -1381,7 +1229,7 @@ export default function BarcodePrintPage() {
                 <option value="Letter">Letter (Sheet)</option>
               </select>
             </div>
-            {config.pageSize !== 'Label' && !isRawLabelPrinter(chosenPrinter) && (
+            {config.pageSize !== 'Label' && (
               <div>
                 <label className="text-sm font-medium text-gray-700 mb-1 block">Gap (mm)</label>
                 <input
@@ -1890,7 +1738,7 @@ export default function BarcodePrintPage() {
                 )}
 
                 <div className="flex items-center justify-between text-xs text-gray-500 pt-1">
-                  <span>Target: <strong className="text-gray-700">{chosenPrinter ? chosenPrinter.name : 'Chrome print dialog'}</strong></span>
+                  <span>Target: <strong className="text-gray-700">Chrome print preview</strong></span>
                   <button
                     type="button"
                     onClick={() => setShowFullPreview(true)}
@@ -1985,26 +1833,6 @@ export default function BarcodePrintPage() {
         </div>
       )}
 
-      <PrinterSettingsModal isOpen={showPrinterSettings} onClose={() => setShowPrinterSettings(false)} initialRole="label" />
-      {guideJob && (
-        <BrowserLabelPrintGuide
-          isOpen
-          setup={guideJob.setup}
-          rows={guideJob.rows}
-          continuous={guideJob.continuous}
-          onClose={() => guideJob.done(false)}
-          onAlignmentTest={async () => {
-            if (testLock.current) return
-            testLock.current = true
-            try {
-              if (!(await printAlignmentTestDialog(guideJob.setup))) toast.error('Chrome did not open the print dialog. Wait a few seconds and try once more.')
-            } finally {
-              testLock.current = false
-            }
-          }}
-          onContinue={() => guideJob.done(true)}
-        />
-      )}
     </div>
   )
 }

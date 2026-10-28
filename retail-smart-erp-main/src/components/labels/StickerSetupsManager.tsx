@@ -12,10 +12,9 @@ import { FormInput, FormField, FormSelect, FormCheckbox } from '@/components/ui/
 import { toast } from '@/components/ui/toast'
 import { usePermission } from '@/hooks/usePermission'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
-import { usePrinters } from '@/hooks/usePrinter'
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { labelAlignmentTemplate } from '@/lib/print/label'
-import { printLabelsRaw, isRawLabelPrinter } from '@/lib/labels/label-print'
+import { printAlignmentTestDialog } from '@/lib/labels/label-print'
 import {
   STICKER_PRESETS,
   newStickerSetup,
@@ -33,13 +32,10 @@ export function StickerSetupsManager() {
   const isAdmin = usePermission('manageSettings')
   const canCalibrate = usePermission('manageInventory') || isAdmin
   const { setups, loading, save } = useStickerSetups()
-  const { printers } = usePrinters()
-  const labelPrinters = printers.filter((p) => p.role === 'label' || isRawLabelPrinter(p))
   const [draft, setDraft] = useState<StickerSetup[] | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
-  const [testPrinterId, setTestPrinterId] = useState('')
   const [trueSize, setTrueSize] = useState(false)
 
   const list = draft ?? setups
@@ -89,24 +85,17 @@ export function StickerSetupsManager() {
     }
   }
 
+  // Alignment pattern through Chrome's print preview (same path as label printing)
   const testPrint = async () => {
-    const printer = labelPrinters.find((p) => p.id === testPrinterId) || labelPrinters[0]
-    if (!selected || !alignTemplate) return
-    if (!printer) {
-      toast.error('Add a USB / Bluetooth / print-agent label printer first (Manage printers on the print page)')
-      return
-    }
-    const res = await printLabelsRaw(printer, alignTemplate, [{ item: null, quantity: selected.columns * 2 }], { setup: selected })
-    if (res.warnings.length) toast.warning(res.warnings.slice(0, 3).join('; '))
-    if (res.ok) toast.success(`Alignment pattern sent to ${printer.name}`)
-    else toast.error(res.error || 'Test print failed')
+    if (!selected) return
+    if (!(await printAlignmentTestDialog(selected))) toast.error('Chrome did not open the print preview. Wait a few seconds and try once more.')
   }
 
   const num = (v: string) => (v === '' ? 0 : Number(v))
 
   return (
     <SectionCard
-      title="Sticker stock & printer setup"
+      title="Sticker roll setup"
       icon={<Ruler size={16} />}
       actions={
         canCalibrate ? (
@@ -287,14 +276,6 @@ export function StickerSetupsManager() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <FormSelect value={testPrinterId} onChange={(e) => setTestPrinterId(e.target.value)} selectSize="sm" className="w-auto" aria-label="Test printer">
-                  {labelPrinters.length === 0 && <option value="">No raw label printer on this PC</option>}
-                  {labelPrinters.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </FormSelect>
                 <button
                   type="button"
                   onClick={testPrint}
