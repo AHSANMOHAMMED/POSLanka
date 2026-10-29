@@ -8,7 +8,7 @@ import {
 } from 'lucide-react'
 import { Modal } from '@/components/ui/modal'
 import { toast } from '@/components/ui/toast'
-import { getEntityConfig, getImportableEntities, getImportFields } from '@/lib/import-export/entity-config'
+import { getEntityConfig, getImportableEntities, getImportFields, isStockColumnKey } from '@/lib/import-export/entity-config'
 import { useDataChange } from '@/hooks/useWebSocket'
 
 interface ImportWizardProps {
@@ -122,7 +122,8 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
   const [entity, setEntity] = useState(defaultEntity || '')
   const [mode, setMode] = useState<ImportMode>('insert')
   const [matchBy, setMatchBy] = useState<string[]>([])
-  const [stockMode, setStockMode] = useState<StockMode>('none')
+  // null = automatic: "set" when the mapped file has stock quantities, otherwise "none"; a hand choice sticks
+  const [stockModeChoice, setStockMode] = useState<StockMode | null>(null)
   const [recentJobs, setRecentJobs] = useState<JobSummary[]>([])
   const [file, setFile] = useState<File | null>(null)
   const [previewData, setPreviewData] = useState<PreviewData | null>(null)
@@ -134,6 +135,8 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
   // Column mapping state
   const [headerData, setHeaderData] = useState<ParseHeadersResult | null>(null)
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({})
+  const fileHasStock = entity === 'items' && Object.values(columnMapping).some((k) => k === 'openingStock' || isStockColumnKey(k))
+  const stockMode: StockMode = stockModeChoice ?? (fileHasStock ? 'set' : 'none')
 
   // Background job state
   const [jobId, setJobId] = useState<string | null>(null)
@@ -307,7 +310,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
     setStep('select')
     setEntity(defaultEntity || '')
     setMode('insert')
-    setStockMode('none')
+    setStockMode(null)
     setFile(null)
     setPreviewData(null)
     setImportResult(null)
@@ -622,6 +625,15 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
         {entity === 'items' && (
           <div className="space-y-2">
             <div className="text-xs text-gray-500 dark:text-gray-400">{STOCK_HELP}</div>
+            {mode !== 'insert' && fileHasStock && (
+              <div className={`p-2.5 rounded border text-xs ${stockMode === 'none' ? 'bg-amber-50 border-amber-300 text-amber-800 dark:bg-amber-900/20 dark:text-amber-300' : 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:text-green-300'}`}>
+                {stockMode === 'none'
+                  ? 'Your file has stock quantities, but they will be IGNORED for items that already exist. Choose "Set stock" below to update them.'
+                  : stockMode === 'set'
+                    ? 'Existing items: stock becomes the quantity in the file (saved with stock history). New items get it as opening stock.'
+                    : 'Existing items: the file quantity is added to the current stock (saved with stock history). New items get it as opening stock.'}
+              </div>
+            )}
             {mode !== 'insert' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Stock for existing items</label>
@@ -630,7 +642,7 @@ export function ImportWizard({ isOpen, onClose, defaultEntity, onComplete }: Imp
                   onChange={(e) => setStockMode(e.target.value as StockMode)}
                   className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
                 >
-                  <option value="none">Ignore stock columns (default)</option>
+                  <option value="none">Ignore stock columns</option>
                   <option value="set">Set stock to the file quantity</option>
                   <option value="add">Add the file quantity to current stock</option>
                 </select>

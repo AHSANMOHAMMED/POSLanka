@@ -68,6 +68,7 @@ import {
 import { formatBusinessId } from '@/lib/tenant/business-id-format'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
 import { FEATURE_DEFS, FEATURE_GROUPS, featureAppliesTo } from '@/lib/features/flags'
+import { VendorImportCard } from './VendorImportCard'
 import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
 
 /* ------------------------------------------------------------------ types */
@@ -202,6 +203,12 @@ export default function VendorDetailPage() {
   const [creatingCashier, setCreatingCashier] = useState(false)
   const [credResult, setCredResult] = useState<{ title: string; email: string; password: string } | null>(null)
   const canManage = useAdminCan('vendors.manage')
+  // Stock tab reloads its list after a file import
+  const [stockKey, setStockKey] = useState(0)
+  const onImported = useCallback((text: string) => {
+    setFlash({ tone: text.startsWith('Import finished') ? 'success' : 'warning', text })
+    setStockKey((k) => k + 1)
+  }, [])
   const canBill = useAdminCan('billing')
   const canImpersonate = useAdminCan('vendors.impersonate')
 
@@ -689,7 +696,12 @@ export default function VendorDetailPage() {
       )}
 
       {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={v.businessType} branches={v.branches.filter((b) => b.isActive)} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
-      {tab === 'stock' && canImpersonate && <StockTab vendorId={v.id} onSaved={(text) => setFlash({ tone: 'success', text })} />}
+      {tab === 'stock' && canImpersonate && (
+        <div className="space-y-5">
+          <StockTab key={stockKey} vendorId={v.id} onSaved={(text) => setFlash({ tone: 'success', text })} />
+          {canManage && <VendorImportCard vendorId={v.id} onImported={onImported} />}
+        </div>
+      )}
       {tab === 'billing' && <BillingTab data={data} />}
       {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} businessType={v.businessType} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
       {tab === 'activity' && <ActivityTab activity={data.activity} />}

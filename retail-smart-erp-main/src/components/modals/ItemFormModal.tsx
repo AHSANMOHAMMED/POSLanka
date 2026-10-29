@@ -197,6 +197,9 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     productType: 'stockable' as ProductType,
     trackBatches: isPharmacy, // pharmacy stock is batch & expiry tracked
     trackSerialNumbers: false,
+    // New item only: opening stock + reorder level in the default branch (POST /api/items books it through the stock ledger)
+    openingStock: '',
+    minStock: '',
     // Auto parts fields
     oemPartNumber: '',
     alternatePartNumbers: '',
@@ -359,6 +362,8 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           productType: (editItem.productType || (editItem.trackStock ? 'stockable' : 'service')) as ProductType,
           trackBatches: editItem.trackBatches || false,
           trackSerialNumbers: editItem.trackSerialNumbers || false,
+          openingStock: '',
+          minStock: '',
           oemPartNumber: editItem.oemPartNumber || '',
           alternatePartNumbers: editItem.alternatePartNumbers?.join(', ') || '',
           brand: editItem.brand || '',
@@ -440,6 +445,8 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       productType: 'stockable' as ProductType,
       trackBatches: isPharmacy,
       trackSerialNumbers: false,
+      openingStock: '',
+      minStock: '',
       oemPartNumber: '',
       alternatePartNumbers: '',
       brand: '',
@@ -638,6 +645,12 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           productType: formData.productType,
           trackBatches: formData.trackBatches,
           trackSerialNumbers: formData.trackSerialNumbers,
+          openingStock: undefined,
+          minStock: undefined,
+          // Opening stock only when creating a plain stock item (batch / serial stock comes in with its batch or serials)
+          ...(!editItem && formData.productType === 'stockable' && !formData.trackBatches && !formData.trackSerialNumbers
+            ? { currentStock: parseFloat(formData.openingStock) || 0, minStock: parseFloat(formData.minStock) || 0 }
+            : {}),
           oemPartNumber: formData.oemPartNumber || null,
           alternatePartNumbers: formData.alternatePartNumbers
             ? formData.alternatePartNumbers.split(',').map(s => s.trim()).filter(Boolean)
@@ -1064,6 +1077,47 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                     </span>
                   </label>
                 </div>
+
+                {!editItem && formData.productType === 'stockable' && (
+                  <div className="pt-4 border-t dark:border-gray-700">
+                    {formData.trackBatches || formData.trackSerialNumbers ? (
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Stock of a batch / serial-tracked item is added with its batch or serial numbers (Stock intake or a purchase).
+                      </p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <FormLabel>Opening stock</FormLabel>
+                          <FormInput
+                            type="number"
+                            min={0}
+                            step="any"
+                            inputMode="decimal"
+                            value={formData.openingStock}
+                            onChange={(e) => setFormData({ ...formData, openingStock: e.target.value })}
+                            placeholder="0"
+                          />
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            Quantity in hand now, saved to your default branch with stock history ({formData.unit || 'pcs'}).
+                          </p>
+                        </div>
+                        <div>
+                          <FormLabel>Low stock alert at</FormLabel>
+                          <FormInput
+                            type="number"
+                            min={0}
+                            step="any"
+                            inputMode="decimal"
+                            value={formData.minStock}
+                            onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
+                            placeholder="0"
+                          />
+                          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">Optional: warn when stock falls to this level.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Image Upload */}
                 <div className="pt-4 border-t dark:border-gray-700">

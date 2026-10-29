@@ -19,6 +19,7 @@ import { closeAllPools } from '@/lib/db'
 import { POST as createVendor } from '@/app/api/sys-control/vendors/route'
 import { GET as listStock, POST as adjustStock } from '@/app/api/sys-control/vendors/[id]/stock/route'
 import { PATCH as patchRow } from '@/app/api/sys-control/vendors/[id]/data/[table]/[rowId]/route'
+import { GET as importJob, POST as importFile } from '@/app/api/sys-control/vendors/[id]/import/route'
 
 type J = Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -174,6 +175,52 @@ async function main() {
       const ok = await json(await patchRow(req('PATCH', `/api/sys-control/vendors/${vendorId}/data/warehouse_stock/${row}`, { values: { min_stock: 3 } }),
         { params: Promise.resolve({ id: vendorId, table: 'warehouse_stock', rowId: row }) }))
       check('other warehouse_stock columns still editable (min_stock)', ok.status === 200, ok)
+    })
+
+    await step('import file: new product + prices + stock', async () => {
+      const csv = [
+        'Barcode,Name,Category,Cost Price,Selling Price,Opening Stock',
+        `L9A${tag},Blue Shirt ${tag},,150,320,40`,
+        `L9N${tag},New Cap ${tag},Caps,200,450,30`,
+        `,Broken row ${tag},,,abc,1`,
+      ].join('\n')
+      const form = (mode: string, stockMode: string) => {
+        const fd = new FormData()
+        fd.append('file', new File([csv], 'products.csv', { type: 'text/csv' }))
+        fd.append('entity', 'items')
+        fd.append('mode', mode)
+        fd.append('stockMode', stockMode)
+        fd.append('skipErrors', 'true')
+        return fd
+      }
+      const freq = (url: string, fd: FormData) => {
+        const addr = `10.39.200.${ip++ % 250}`
+        setTestHeader('x-forwarded-for', addr)
+        return new NextRequest(`http://localhost${url}`, { method: 'POST', body: fd, headers: { 'x-forwarded-for': addr } })
+      }
+      support.use()
+      const denied = await importFile(freq(`/api/sys-control/vendors/${vendorId}/import?step=preview`, form('upsert', 'set')), ctx(vendorId))
+      check('support role cannot import → 403', denied.status === 403, denied.status)
+      owner.use()
+      const pv = await json(await importFile(freq(`/api/sys-control/vendors/${vendorId}/import?step=preview`, form('upsert', 'set')), ctx(vendorId)))
+      check('preview: 1 new, 1 update, 1 error', pv.status === 200 && pv.body.actions?.insert === 1 && pv.body.actions?.update === 1 && pv.body.actions?.error === 1, pv.body.actions ?? pv.body)
+      const ex = await json(await importFile(freq(`/api/sys-control/vendors/${vendorId}/import?step=execute`, form('upsert', 'set')), ctx(vendorId)))
+      check('execute → job started', ex.status === 200 && typeof ex.body.jobId === 'string', ex.body)
+      let view: J = {}
+      for (let i = 0; i < 60; i++) {
+        view = (await json(await importJob(new NextRequest(`http://localhost/api/sys-control/vendors/${vendorId}/import?jobId=${ex.body.jobId}`), ctx(vendorId)))).body
+        if (['done', 'error', 'cancelled', 'interrupted'].includes(view.status)) break
+        await new Promise((r) => setTimeout(r, 500))
+      }
+      check('job done: 1 inserted, 1 updated', view.status === 'done' && view.inserted === 1 && view.updated === 1, view)
+      const a = (await pg.query(`SELECT cost_price, selling_price FROM items WHERE id = $1`, [A])).rows[0]
+      check('existing product: prices updated', Number(a.cost_price) === 150 && Number(a.selling_price) === 320, a)
+      check('existing product: stock set to the file (12 → 40)', await stockOf(A) === 40, await stockOf(A))
+      const n = (await pg.query(`SELECT i.id, i.selling_price, ws.current_stock FROM items i LEFT JOIN warehouse_stock ws ON ws.item_id = i.id WHERE i.tenant_id = $1 AND i.barcode = $2`, [vendorId, `L9N${tag}`])).rows[0]
+      check('new product created with opening stock 30', !!n && Number(n.selling_price) === 450 && Number(n.current_stock) === 30, n)
+      const mv = (await pg.query(`SELECT count(*)::int AS n FROM stock_movements WHERE tenant_id = $1 AND reference_type = 'import'`, [vendorId])).rows[0].n
+      check('both stock changes recorded in stock history', mv === 2, mv)
+      check('import audited on the vendor', (await pg.query(`SELECT 1 FROM admin_audit_logs WHERE super_admin_id = $1 AND resource = 'vendor_import' AND resource_id = $2`, [owner.id, vendorId])).rowCount === 1)
     })
   } finally {
     if (!process.env.KEEP_TEST_DATA) await cleanup(pg, tenantIds, adminIds).catch((e) => console.error('cleanup:', e.message))
