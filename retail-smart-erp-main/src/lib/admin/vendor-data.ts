@@ -77,6 +77,11 @@ const READ_ONLY_REASON: Record<string, string> = {
   messaging_credit_ledger: 'Written by messaging top-ups.',
 }
 
+/** Columns kept by the app's own writers: stock counts change through the vendor's Stock tab (movement + GL) */
+const LOCKED_COLUMNS: Record<string, ReadonlySet<string>> = {
+  warehouse_stock: new Set(['current_stock', 'reserved_stock']),
+}
+
 const SECRET_RE = /(_hash$|^password$|token|secret|api_key$|^otp|_otp$|private_key)/i
 const SYSTEM_COLUMNS = new Set(['id', 'tenant_id', 'created_at', 'updated_at', 'is_super_admin'])
 /** business_profile columns that must go through vendor actions (lifecycle side effects) */
@@ -188,6 +193,7 @@ function columnInfo(def: TableDef): ColumnInfo[] {
   return Array.from(def.columns.entries()).map(([name, { column }]) => {
     const secret = SECRET_RE.test(name)
     const readOnly = secret || (def.isProfile ? PROFILE_LOCKED.has(name) : SYSTEM_COLUMNS.has(name)) || column.columnType === 'PgSerial'
+      || !!LOCKED_COLUMNS[def.info.name]?.has(name)
     return {
       name,
       kind: kindOf(column),

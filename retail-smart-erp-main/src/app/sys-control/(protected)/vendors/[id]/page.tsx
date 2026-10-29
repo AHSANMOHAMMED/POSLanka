@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import {
   Archive,
+  Boxes,
   CalendarPlus,
   CreditCard,
   Database,
@@ -15,6 +16,7 @@ import {
   PauseCircle,
   PlayCircle,
   RefreshCw,
+  Search,
   Store,
   Trash2,
   UserPlus,
@@ -66,6 +68,7 @@ import {
 import { formatBusinessId } from '@/lib/tenant/business-id-format'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
 import { FEATURE_DEFS, FEATURE_GROUPS, featureAppliesTo } from '@/lib/features/flags'
+import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
 
 /* ------------------------------------------------------------------ types */
 
@@ -145,7 +148,7 @@ interface Detail {
 interface Totals { netSales: number; receipts: number; avgBasket: number }
 interface Analytics { totals: { today: Totals; '7d': Totals; '30d': Totals } }
 
-type Tab = 'overview' | 'staff' | 'billing' | 'features' | 'activity'
+type Tab = 'overview' | 'staff' | 'stock' | 'billing' | 'features' | 'activity'
 type Dialog = null | 'suspend' | 'reactivate' | 'extend' | 'plan' | 'password' | 'welcome' | 'archive' | 'impersonate'
 
 const ROLE_LABEL: Record<string, string> = {
@@ -178,6 +181,7 @@ function activityText(a: Detail['activity'][number]): string {
   if (a.resource === 'impersonate') return 'Opened the vendor app as its owner'
   if (a.resource === 'tenant' && a.action === 'create') return 'Created the vendor'
   if (a.resource === 'tenant_feature_flags') return 'Changed feature switches'
+  if (a.resource === 'vendor_stock') return `Changed stock counts of ${d.count} item${d.count === 1 ? '' : 's'}${d.warehouse ? ` in ${d.warehouse}` : ''}${d.note ? ` — ${d.note}` : ''}`
   if (a.resource === 'payment') return a.action === 'approve' ? 'Approved a bank transfer' : 'Rejected a bank transfer'
   if (a.resource === 'subscription') return a.action === 'extend' ? 'Changed the subscription period' : 'Updated the subscription'
   return `${a.action} ${a.resource.replace(/_/g, ' ')}`
@@ -402,6 +406,7 @@ export default function VendorDetailPage() {
         options={[
           { value: 'overview', label: 'Overview' },
           { value: 'staff', label: `Staff ${data.staff.length}` },
+          ...(canImpersonate ? [{ value: 'stock' as const, label: 'Stock' }] : []),
           { value: 'billing', label: 'Billing' },
           { value: 'features', label: 'Features' },
           { value: 'activity', label: 'Activity' },
@@ -684,6 +689,7 @@ export default function VendorDetailPage() {
       )}
 
       {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={v.businessType} branches={v.branches.filter((b) => b.isActive)} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
+      {tab === 'stock' && canImpersonate && <StockTab vendorId={v.id} onSaved={(text) => setFlash({ tone: 'success', text })} />}
       {tab === 'billing' && <BillingTab data={data} />}
       {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} businessType={v.businessType} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
       {tab === 'activity' && <ActivityTab activity={data.activity} />}
@@ -991,6 +997,188 @@ function FeaturesTab({ vendorId, flags, businessType, onSaved }: { vendorId: str
           </section>
         )}
       </div>
+    </AdminCard>
+  )
+}
+
+interface StockRow { itemId: string; name: string; sku: string | null; barcode: string | null; unit: string | null; costPrice: number; stock: number; reserved: number }
+interface StockList { branches: Array<{ id: string; name: string; code: string | null; isDefault: boolean }>; warehouseId: string | null; rows: StockRow[]; total: number; page: number; pageSize: number }
+
+function StockTab({ vendorId, onSaved }: { vendorId: string; onSaved: (text: string) => void }) {
+  const canEdit = useAdminCan('vendors.manage')
+  const [list, setList] = useState<StockList | null>(null)
+  const [warehouseId, setWarehouseId] = useState('')
+  const [search, setSearch] = useState('')
+  const [q, setQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  // itemId → new count typed in (kept across pages and searches until saved)
+  const [draft, setDraft] = useState<Record<string, { value: string; name: string; before: number }>>({})
+  const [reasonCode, setReasonCode] = useState<AdjustmentReasonCode>('count_correction')
+  const [note, setNote] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const params = new URLSearchParams({ page: String(page) })
+      if (warehouseId) params.set('warehouseId', warehouseId)
+      if (q) params.set('q', q)
+      const res = await adminFetch<StockList>(`/api/sys-control/vendors/${vendorId}/stock?${params}`)
+      setList(res)
+      if (res.warehouseId && res.warehouseId !== warehouseId) setWarehouseId(res.warehouseId)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load stock')
+    } finally {
+      setLoading(false)
+    }
+  }, [vendorId, warehouseId, q, page])
+
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    const t = setTimeout(() => { setQ(search.trim()); setPage(1) }, 350)
+    return () => clearTimeout(t)
+  }, [search])
+
+  const changes = Object.entries(draft)
+    .map(([itemId, d]) => ({ itemId, ...d, qty: Number(d.value) }))
+    .filter((d) => d.value.trim() !== '' && Number.isFinite(d.qty) && d.qty >= 0 && d.qty !== d.before)
+  const invalid = Object.values(draft).some((d) => d.value.trim() !== '' && !(Number(d.value) >= 0))
+
+  function changeBranch(id: string) {
+    if (changes.length > 0 && !confirm('Changed counts for this branch are not saved yet. Discard them?')) return
+    setDraft({})
+    setWarehouseId(id)
+    setPage(1)
+  }
+
+  async function save() {
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const res = await adminFetch<{ adjusted: number; warnings: string[] }>(`/api/sys-control/vendors/${vendorId}/stock`, {
+        method: 'POST',
+        json: { warehouseId, reasonCode, note, adjustments: changes.map((c) => ({ itemId: c.itemId, newQuantity: c.qty })) },
+      })
+      setDraft({})
+      setNote('')
+      onSaved(`Stock updated for ${res.adjusted} item${res.adjusted === 1 ? '' : 's'}. The vendor sees each change in Stock movements.${res.warnings.length ? ` Note: ${res.warnings.join('; ')}` : ''}`)
+      await load()
+    } catch (e) {
+      setSaveError(e instanceof Error ? e.message : 'Could not save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const columns: AdminColumn<StockRow>[] = [
+    {
+      key: 'item', header: 'Item', primary: true,
+      cell: (r) => (
+        <div className="min-w-0">
+          <div className="font-medium text-adm-fg">{r.name}</div>
+          <div className="adm-num text-[12px] text-adm-subtle">{[r.sku, r.barcode].filter(Boolean).join(' · ') || '—'}</div>
+        </div>
+      ),
+    },
+    { key: 'stock', header: 'In stock', align: 'right', cell: (r) => <span className="adm-num">{fmtNumber(r.stock)} {r.unit || ''}</span> },
+    { key: 'reserved', header: 'Reserved', align: 'right', hideBelow: 'md', cell: (r) => <span className="adm-num text-adm-muted">{r.reserved ? fmtNumber(r.reserved) : '—'}</span> },
+    {
+      key: 'new', header: 'New count', align: 'right',
+      cell: (r) => {
+        const d = draft[r.itemId]
+        const value = d?.value ?? ''
+        const qty = Number(value)
+        const delta = value.trim() !== '' && qty >= 0 ? qty - r.stock : 0
+        return (
+          <div className="flex items-center justify-end gap-2">
+            {delta !== 0 && <Badge tone={delta > 0 ? 'success' : 'danger'}>{delta > 0 ? '+' : ''}{fmtNumber(delta)}</Badge>}
+            <Input
+              size="sm"
+              type="number"
+              min={0}
+              step="any"
+              inputMode="decimal"
+              aria-label={`New count for ${r.name}`}
+              className="w-24 text-right"
+              placeholder={String(r.stock)}
+              value={value}
+              disabled={!canEdit}
+              invalid={value.trim() !== '' && !(qty >= 0)}
+              onChange={(e) => setDraft((x) => ({ ...x, [r.itemId]: { value: e.target.value, name: r.name, before: r.stock } }))}
+            />
+          </div>
+        )
+      },
+    },
+  ]
+
+  const pages = list ? Math.max(1, Math.ceil(list.total / list.pageSize)) : 1
+
+  if (list && list.branches.length === 0) {
+    return <AdminCard title="Stock"><EmptyState icon={Boxes} title="This vendor has no active branch" compact /></AdminCard>
+  }
+
+  return (
+    <AdminCard
+      title="Stock"
+      description="Counts per branch for stock-tracked items. Type the real count and save: each change is saved like the vendor’s own stock adjustment (stock movement with your reason, accounting entry) and logged here under Activity."
+      flush
+      footer={canEdit ? (
+        <div className="space-y-3">
+          {saveError && <Alert tone="danger">{saveError}</Alert>}
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Reason" htmlFor="stk-reason" className="w-44">
+              <Select id="stk-reason" size="sm" value={reasonCode} onChange={(e) => setReasonCode(e.target.value as AdjustmentReasonCode)}>
+                {ADJUSTMENT_REASON_CODES.map((c) => <option key={c} value={c}>{ADJUSTMENT_REASON_LABELS[c]}</option>)}
+              </Select>
+            </Field>
+            <Field label="Note" htmlFor="stk-note" className="min-w-[200px] flex-1">
+              <Input id="stk-note" size="sm" value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Owner asked to correct counts after stock check" />
+            </Field>
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setDraft({})} disabled={Object.keys(draft).length === 0 || saving}>Clear</Button>
+              <Button variant="primary" size="sm" onClick={save} loading={saving} disabled={changes.length === 0 || invalid || note.trim().length < 3}>
+                Save {changes.length > 0 ? `${changes.length} change${changes.length === 1 ? '' : 's'}` : 'changes'}
+              </Button>
+            </div>
+          </div>
+          {changes.length > 0 && note.trim().length < 3 && <p className="text-[12.5px] text-adm-subtle">Add a note saying why the stock is changed.</p>}
+        </div>
+      ) : (
+        <span className="text-[13px] text-adm-subtle">Only owners can change stock.</span>
+      )}
+    >
+      <div className="flex flex-wrap items-center gap-3 border-b border-adm-border px-4 py-3 sm:px-5">
+        <Select size="sm" aria-label="Branch" className="w-56" value={warehouseId} onChange={(e) => changeBranch(e.target.value)}>
+          {(list?.branches ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}{b.code ? ` (${b.code})` : ''}</option>)}
+        </Select>
+        <Input size="sm" leftIcon={Search} wrapperClassName="min-w-[200px] flex-1" placeholder="Search name, SKU or barcode" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search items" />
+        {list && <span className="text-[13px] text-adm-muted">{fmtNumber(list.total)} item{list.total === 1 ? '' : 's'}</span>}
+      </div>
+      {error ? (
+        <div className="p-4"><Alert tone="danger" action={<Button size="sm" variant="ghost" icon={RefreshCw} onClick={load}>Retry</Button>}>{error}</Alert></div>
+      ) : (
+        <AdminTable
+          columns={columns}
+          rows={list?.rows ?? []}
+          rowKey={(r) => r.itemId}
+          loading={loading && !list}
+          minWidth={560}
+          empty={<EmptyState icon={Boxes} title={q ? 'No items match' : 'No stock-tracked items'} compact />}
+        />
+      )}
+      {pages > 1 && (
+        <div className="flex items-center justify-end gap-2 border-t border-adm-border px-4 py-2.5 text-[13px] sm:px-5">
+          <span className="mr-auto text-adm-muted">Page {page} of {pages}</span>
+          <Button size="sm" variant="ghost" disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)}>Previous</Button>
+          <Button size="sm" variant="ghost" disabled={page >= pages || loading} onClick={() => setPage((p) => p + 1)}>Next</Button>
+        </div>
+      )}
     </AdminCard>
   )
 }
