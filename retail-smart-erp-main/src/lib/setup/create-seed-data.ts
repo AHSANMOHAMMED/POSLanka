@@ -1,4 +1,5 @@
 // Atomically creates seed data for a new company during setup wizard
+import { ensureBankLedger } from '@/lib/accounting/bank-ledger'
 import { eq, and, sql } from 'drizzle-orm'
 import {
   tenants,
@@ -947,16 +948,9 @@ async function seedModesOfPayment(
     ),
     columns: { id: true },
   })
-  const bankGroup = await tx.query.chartOfAccounts.findFirst({
-    where: and(
-      eq(chartOfAccounts.tenantId, tenantId),
-      eq(chartOfAccounts.accountNumber, '1120')
-    ),
-    columns: { id: true },
-  })
-
   const cashAccountId = cashAccount?.id || null
-  const bankAccountId = bankGroup?.id || null
+  // a ledger under "Bank Accounts" (never the group: the GL refuses postings to groups)
+  const bankAccountId = await ensureBankLedger(tx, tenantId)
 
   // Delete any existing modes for this tenant to avoid duplicate errors on retry
   await tx.delete(modesOfPayment).where(eq(modesOfPayment.tenantId, tenantId))

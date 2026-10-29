@@ -1,3 +1,4 @@
+import { ensureBankLedger } from '@/lib/accounting/bank-ledger'
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
@@ -108,7 +109,8 @@ export async function POST(_request: NextRequest) {
 
       // Map modes to default accounts where possible
       const cashAccountId = accountNumberToId.get('1110') || null // Cash account
-      const bankAccountId = accountNumberToId.get('1120') || null // Bank Accounts group (individual bank COA entries are created when bank accounts are added)
+      // A ledger under "Bank Accounts" (#1120): the GL refuses postings to the group itself
+      const bankAccountId = await ensureBankLedger(db, tenantId)
 
       for (const mode of defaultModes) {
         await db.insert(modesOfPayment).values({

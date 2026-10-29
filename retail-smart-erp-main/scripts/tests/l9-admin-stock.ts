@@ -104,6 +104,14 @@ async function main() {
     await pg.query(`INSERT INTO warehouse_stock (tenant_id, warehouse_id, item_id, current_stock) VALUES ($1, $2, $3, 5)`, [vendorId, wh, A])
     const stockOf = async (itemId: string) => Number((await pg.query(`SELECT current_stock FROM warehouse_stock WHERE item_id = $1 AND warehouse_id = $2`, [itemId, wh])).rows[0]?.current_stock ?? 0)
 
+    await step('new shop: payment modes post to a ledger, not the Bank Accounts group', async () => {
+      const r = (await pg.query(
+        `SELECT m.method_key, c.is_group FROM modes_of_payment m JOIN chart_of_accounts c ON c.id = m.default_account_id WHERE m.tenant_id = $1`, [vendorId])).rows
+      const bank = (await pg.query(`SELECT c.is_group FROM accounting_settings s JOIN chart_of_accounts c ON c.id = s.default_bank_account_id WHERE s.tenant_id = $1`, [vendorId])).rows[0]
+      check('card / transfer / cheque modes linked to a ledger account', r.length >= 4 && r.every((x) => x.is_group === false), r)
+      check('default bank account is a ledger', !bank || bank.is_group === false, bank)
+    })
+
     await step('no admin session → 401', async () => {
       setTestCookie('admin_session', null)
       const a = await listStock(req('GET', `/api/sys-control/vendors/${vendorId}/stock`), ctx(vendorId))
