@@ -116,6 +116,7 @@ jobs:
           npx tsx scripts/tests/l8-driver-image.ts
           npx tsx scripts/tests/l10-printer-setup-script.ts
           npx tsx scripts/tests/l12-receipt-pdf.ts
+          npx tsx scripts/tests/l13-split-tenders.ts
 
       - name: Staff accounts
         run: npx tsx scripts/tests/w1-staff.ts

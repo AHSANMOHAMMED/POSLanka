@@ -66,6 +66,7 @@ import type {
   CartBatchOption,
   ChequeFormValue,
   CartSizeSpec,
+  ExtraTender,
 } from '@/components/pos/types'
 import { SizeEntryDialog, sizeLineName, foldSizeLine, type SizeEntryTarget } from '@/components/pos/SizeEntryDialog'
 import { featureAppliesTo } from '@/lib/features/flags'
@@ -96,6 +97,7 @@ import { sanitizeScan, codesMatch } from '@/lib/inventory/barcode-parse'
 import type { PaperSize } from '@/lib/print/types'
 import { useCurrency } from '@/hooks/useCurrency'
 import { roundCurrency } from '@/lib/utils/currency'
+import { settleTenders } from '@/lib/pos/tenders'
 import { calculateItemTax, aggregateTaxBreakdown, type ResolvedTaxTemplate, type TaxBreakdownItem } from '@/lib/utils/tax-template'
 import { POS_ITEMS_LIMIT } from '@/components/pos/types'
 import { usePOSBusinessConfig } from '@/hooks/usePOSBusinessConfig'
@@ -216,9 +218,8 @@ export default function POSPage() {
   const [creditAmount, setCreditAmount] = useState('')
   const [customerCredit, setCustomerCredit] = useState(0)
   const [processing, setProcessing] = useState(false)
-  const [splitEnabled, setSplitEnabled] = useState(false)
-  const [splitSecondMethod, setSplitSecondMethod] = useState('card')
-  const [splitSecondAmount, setSplitSecondAmount] = useState('')
+  // Split payment: more payment lines after the first (paymentMethod + amountPaid)
+  const [extraTenders, setExtraTenders] = useState<ExtraTender[]>([])
   // K1: cheque taken at the till (tender or second split)
   const emptyCheque = (): ChequeFormValue => ({ chequeNo: '', bankName: '', branchName: '', chequeDate: new Date().toLocaleDateString('en-CA') })
   const [chequeDetails, setChequeDetails] = useState<ChequeFormValue>(emptyCheque)
@@ -3166,17 +3167,23 @@ export default function POSPage() {
     const effectiveCashCardPaid = paymentMethod === 'credit' ? 0 : (paymentMethod === 'cash' ? cashCardPaid : Math.min(cashCardPaid, remainingAfterCredit))
 
     const saleTotal = Math.max(0, total - loyaltyRedeemValue + tip)
-    const secondAmt = splitEnabled ? (parseFloat(splitSecondAmount) || 0) : 0
-    const firstAmt = splitEnabled
-      ? Math.max(0, saleTotal - creditUsed - secondAmt)
-      : effectiveCashCardPaid
-    const paymentSplits =
-      splitEnabled && secondAmt > 0
-        ? [
-            { method: paymentMethod, amount: firstAmt },
-            { method: splitSecondMethod, amount: secondAmt },
-          ].filter((s) => s.amount > 0)
-        : undefined
+    // Split payment: every line its own amount; cash over the rest is change (taken off the cash line)
+    const multiTender = !hp && extraTenders.length > 0
+    const settled = multiTender
+      ? settleTenders(saleTotal - creditUsed, [
+          { method: paymentMethod, amount: amountVal },
+          ...extraTenders.map((t) => ({ method: t.method, amount: parseFloat(t.amount) || 0 })),
+        ])
+      : null
+    if (settled?.error) {
+      toast.error(settled.error)
+      return
+    }
+    if (settled && settled.onAccount > 0 && !selectedCustomer) {
+      toast.error('Select a customer to leave part of the bill on credit')
+      return
+    }
+    const paymentSplits = settled && settled.splits.length > 0 ? settled.splits : undefined
 
     // Hire purchase: [down payment, balance on account] (no down payment → a plain credit sale)
     const hpDown = hp ? roundCurrency(amountVal) : 0
@@ -3218,7 +3225,7 @@ export default function POSPage() {
       tax,
       taxBreakdown: saleTaxBreakdown.length > 0 ? saleTaxBreakdown : undefined,
       total: saleTotal,
-      amountPaid: hp ? hpDown : splitEnabled ? firstAmt + secondAmt : effectiveCashCardPaid,
+      amountPaid: hp ? hpDown : settled ? roundCurrency(settled.received + settled.onAccount) : effectiveCashCardPaid,
       creditAmount: creditUsed,
       addOverpaymentToCredit: false,
       loyaltyPointsRedeemed: loyaltyRedeemPoints > 0 ? loyaltyRedeemPoints : undefined,
@@ -3246,8 +3253,7 @@ export default function POSPage() {
         setShowPayment(false)
         setAmountPaid('')
         setCreditAmount('')
-        setSplitEnabled(false)
-        setSplitSecondAmount('')
+        setExtraTenders([])
         setChequeDetails(emptyCheque())
         // H4: the offline receipt number (OFF-…) identifies the sale until it syncs
         setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
@@ -3301,8 +3307,7 @@ export default function POSPage() {
         setShowPayment(false)
         setAmountPaid('')
         setCreditAmount('')
-        setSplitEnabled(false)
-        setSplitSecondAmount('')
+        setExtraTenders([])
         setChequeDetails(emptyCheque())
         fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
         setLastSale({
@@ -3346,8 +3351,7 @@ export default function POSPage() {
         setShowPayment(false)
         setAmountPaid('')
         setCreditAmount('')
-        setSplitEnabled(false)
-        setSplitSecondAmount('')
+        setExtraTenders([])
         setChequeDetails(emptyCheque())
         setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
         rememberOfflineReceipt(queued.offlineRef, salePayload as Record<string, unknown>)
@@ -3669,12 +3673,8 @@ export default function POSPage() {
         setHirePurchase={hirePurchaseAvailable ? setHirePurchase : undefined}
         onCompleteSale={completeSale}
         isReturnMode={isReturnMode}
-        splitEnabled={splitEnabled}
-        setSplitEnabled={setSplitEnabled}
-        splitSecondMethod={splitSecondMethod}
-        setSplitSecondMethod={setSplitSecondMethod}
-        splitSecondAmount={splitSecondAmount}
-        setSplitSecondAmount={setSplitSecondAmount}
+        extraTenders={extraTenders}
+        setExtraTenders={setExtraTenders}
         total={exchangeFrom ? Math.max(0, total - exchangeFrom.credit) : total}
         loyaltyRedeemValue={loyaltyRedeemValue}
         selectedCustomer={selectedCustomer}

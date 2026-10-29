@@ -209,6 +209,12 @@ export interface SaleForReturn {
   refundableTotal?: number
 }
 
+/** Split payment: one more payment line after the first (amount as typed) */
+export interface ExtraTender {
+  method: string
+  amount: string
+}
+
 /** K1: cheque taken at the POS (sent as `cheque` with the sale) */
 export interface ChequeFormValue {
   chequeNo: string
