@@ -114,6 +114,7 @@ jobs:
           npx tsx scripts/tests/w7-mobile-receipt.ts
           npx tsx scripts/tests/l7-print-agent-install.ts
           npx tsx scripts/tests/l8-driver-image.ts
+          npx tsx scripts/tests/l10-printer-setup-script.ts
 
       - name: Staff accounts
         run: npx tsx scripts/tests/w1-staff.ts
@@ -177,7 +178,7 @@ jobs:
         run: |
           npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/i2-roles.ts
           npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/i5-nonfunctional.ts
-      - name: Super-admin console (vendors, staff, vendor data, platform, roles, coupons, refunds, push)
+      - name: Super-admin console (vendors, staff, vendor data, vendor stock, platform, roles, coupons, refunds, push)
         env:
           NEXTAUTH_SECRET: i3-test-secret
           PAYHERE_MERCHANT_ID: '1211111'
@@ -189,6 +190,7 @@ jobs:
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/k2-recycle-bin.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/k3-messaging.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i6-finish.ts
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l9-admin-stock.ts
 
   build:
     name: Production build

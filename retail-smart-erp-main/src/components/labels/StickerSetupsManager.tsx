@@ -6,7 +6,7 @@
  * the setup so cashiers print with it as is.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { Lock, Unlock, Trash2, Save, Loader2, Crosshair, Ruler, Star } from 'lucide-react'
+import { Lock, Unlock, Trash2, Save, Loader2, Crosshair, Ruler, Star, Terminal, Copy } from 'lucide-react'
 import { SectionCard } from '@/components/ui/section-card'
 import { FormInput, FormField, FormSelect, FormCheckbox } from '@/components/ui/form-elements'
 import { toast } from '@/components/ui/toast'
@@ -15,6 +15,7 @@ import { useStickerSetups } from '@/hooks/useStickerSetups'
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { labelAlignmentTemplate } from '@/lib/print/label'
 import { printAlignmentTestDialog } from '@/lib/labels/label-print'
+import { cupsSetupScript, setupPaperMm, windowsSetupScript, type MediaMode } from '@/lib/labels/printer-setup-script'
 import {
   STICKER_PRESETS,
   newStickerSetup,
@@ -37,6 +38,8 @@ export function StickerSetupsManager() {
   const [saving, setSaving] = useState(false)
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [trueSize, setTrueSize] = useState(false)
+  const [mediaMode, setMediaMode] = useState<MediaMode>('gap')
+  const [shell, setShell] = useState<'windows' | 'cups'>('windows')
 
   const list = draft ?? setups
   const dirty = draft !== null
@@ -92,6 +95,16 @@ export function StickerSetupsManager() {
   }
 
   const num = (v: string) => (v === '' ? 0 : Number(v))
+
+  const setupScript = selected ? (shell === 'windows' ? windowsSetupScript(selected, mediaMode) : cupsSetupScript(selected, mediaMode)) : ''
+  const copyScript = async () => {
+    try {
+      await navigator.clipboard.writeText(setupScript)
+      toast.success('Command copied. Paste it into ' + (shell === 'windows' ? 'PowerShell' : 'Terminal') + ' and press Enter.')
+    } catch {
+      toast.error('Could not copy. Select the text in the box and copy it with Ctrl+C.')
+    }
+  }
 
   return (
     <SectionCard
@@ -301,6 +314,55 @@ export function StickerSetupsManager() {
                   </button>
                 )}
                 {dirty && <span className="text-xs text-amber-600">Unsaved changes</span>}
+              </div>
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-gray-700 dark:text-gray-200 inline-flex items-center gap-1.5">
+                    <Terminal size={13} /> Printer setup command (Zebra / ZPL printers)
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    <FormSelect aria-label="Computer" value={shell} onChange={(e) => setShell(e.target.value === 'cups' ? 'cups' : 'windows')} selectSize="sm">
+                      <option value="windows">Windows (PowerShell)</option>
+                      <option value="cups">Mac / Linux (Terminal)</option>
+                    </FormSelect>
+                    <FormSelect aria-label="Paper sensing" value={mediaMode} onChange={(e) => setMediaMode(e.target.value === 'continuous' ? 'continuous' : 'gap')} selectSize="sm">
+                      <option value="gap">1. Gap sensing (try first)</option>
+                      <option value="continuous">2. Continuous (if gaps are not found)</option>
+                    </FormSelect>
+                  </div>
+                </div>
+                <ol className="text-[12px] text-gray-600 dark:text-gray-400 list-decimal pl-4 space-y-0.5">
+                  <li>Copy the command, open {shell === 'windows' ? 'PowerShell (Start → type powershell → Enter)' : 'Terminal'}, paste it and press Enter.</li>
+                  <li>
+                    It adds the paper size {setupPaperMm(selected, mediaMode).widthMm} x {setupPaperMm(selected, mediaMode).heightMm} mm, saves the
+                    settings in the printer{mediaMode === 'gap' ? ', calibrates' : ''} and prints 2 rows of numbered boxes.
+                  </li>
+                  {mediaMode === 'gap' ? (
+                    <li>
+                      Boxes inside the stickers → done: on the print page leave &quot;My printer can&apos;t find the gaps&quot; <b>unticked</b>; every row lines
+                      up by itself. Printer feeds many stickers or blinks red → choose <b>2. Continuous</b> and run that command instead.
+                    </li>
+                  ) : (
+                    <li>
+                      On the print page tick &quot;My printer can&apos;t find the gaps&quot; with gap {selected.rowGapMm} mm. Line the paper gap up with the tear
+                      edge once; power on and lid close no longer move the paper.
+                    </li>
+                  )}
+                </ol>
+                <textarea
+                  readOnly
+                  value={setupScript}
+                  aria-label="Printer setup command"
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="w-full h-28 font-mono text-[11px] rounded border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-2"
+                />
+                <button
+                  type="button"
+                  onClick={copyScript}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded bg-teal-600 hover:bg-teal-700 text-white font-semibold"
+                >
+                  <Copy size={13} /> Copy command
+                </button>
               </div>
               <p className="text-[11px] text-gray-500 dark:text-gray-400">
                 Tip: the pattern prints a border 0.5 mm inside each sticker and a centre cross. If the border is cut

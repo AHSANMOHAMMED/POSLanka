@@ -1074,7 +1074,10 @@ export default function BarcodePrintPage() {
             <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
               Print opens Chrome&apos;s print preview. One time only: install your printer model&apos;s driver and set its paper size to{' '}
               <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? rowGapOverride ?? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
-              {noGapSensing ? <>, media type <b>Continuous</b></> : null}. In Chrome: More settings → that paper size, Margins None.
+              {noGapSensing ? <>, media type <b>Continuous</b></> : null}. In Chrome: More settings → that paper size, Margins None.{' '}
+              <Link href={`/c/${company?.tenantSlug || ''}/barcode/settings`} className="font-semibold underline">
+                Printer setup command
+              </Link>
             </div>
             {/* Quick Roll Type Selector: 1 Across, 2 Across (Twin), 3 Across */}
             <div className="pt-1">
