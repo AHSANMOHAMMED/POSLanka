@@ -22,6 +22,8 @@ import {
   type ReceiptItemSeparator,
   type ReceiptQrContent,
   type ReceiptSettings,
+  type ReceiptFont,
+  type ReceiptTextWeight,
 } from '@/lib/print/receipt-settings'
 import { buildReceiptModel, SAMPLE_RECEIPT_SALE, type ReceiptModel } from '@/lib/print/receipt-model'
 import { renderReceiptHtml } from '@/lib/print/receipt-html'
@@ -44,10 +46,10 @@ interface BusinessForm {
 const EMPTY_BUSINESS: BusinessForm = { name: '', legalName: '', address: '', phone: '', email: '', website: '', taxId: '', brn: '' }
 
 const INVOICE_CODE_LABELS: Record<InvoiceCodeType, string> = {
-  both: 'Barcode (Code 128) + QR code',
-  barcode: 'Barcode (Code 128) only',
-  qr: 'QR code only',
-  none: 'None',
+  none: 'Nothing',
+  barcode: 'Barcode',
+  qr: 'QR code',
+  both: 'Barcode + QR',
 }
 
 const TOGGLES: Array<{ key: keyof ReceiptSettings; label: string }> = [
@@ -385,16 +387,60 @@ export default function ReceiptSettingsPage() {
                   placeholder="e.g. Exchanges within 7 days with this receipt. No cash refunds."
                 />
               </FormField>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Appearance</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormField label="Font" hint="Clear is easiest to read on thermal paper">
+                    <FormSelect value={settings.fontFamily} onChange={(e) => set('fontFamily', e.target.value as ReceiptFont)}>
+                      <option value="sans">Clear (Arial)</option>
+                      <option value="mono">Classic till receipt (Courier)</option>
+                      <option value="narrow">Narrow (more text per line)</option>
+                    </FormSelect>
+                  </FormField>
+                  <FormField label="Text darkness" hint="Faint or blurry print? Choose Dark or Extra dark">
+                    <FormSelect value={settings.textWeight} onChange={(e) => set('textWeight', e.target.value as ReceiptTextWeight)}>
+                      <option value="normal">Normal</option>
+                      <option value="dark">Dark (recommended)</option>
+                      <option value="extra">Extra dark</option>
+                    </FormSelect>
+                  </FormField>
+                  <FormField label="Text colour" hint="Screen, PDF and colour printers; thermal printers print black">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="color"
+                        aria-label="Text colour"
+                        value={settings.textColor}
+                        onChange={(e) => set('textColor', e.target.value.toLowerCase())}
+                        className="h-9 w-14 rounded border border-gray-300 dark:border-gray-600 bg-white"
+                      />
+                      <span className="font-mono text-xs text-gray-500">{settings.textColor}</span>
+                      {settings.textColor !== '#000000' && (
+                        <button type="button" className="text-xs text-blue-600 hover:underline" onClick={() => set('textColor', '#000000')}>
+                          Black
+                        </button>
+                      )}
+                    </div>
+                  </FormField>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Code at the bottom of the receipt</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-label="Code at the bottom of the receipt">
+                  {(['none', 'barcode', 'qr', 'both'] as InvoiceCodeType[]).filter((c) => INVOICE_CODE_TYPES.includes(c)).map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      role="radio"
+                      aria-checked={settings.invoiceCode === c}
+                      onClick={() => set('invoiceCode', c)}
+                      className={`px-3 py-2 rounded border text-sm text-left ${settings.invoiceCode === c ? 'border-blue-500 bg-blue-50 text-blue-800 font-semibold dark:bg-blue-900/30 dark:text-blue-200' : 'border-gray-300 hover:bg-gray-50 dark:border-gray-600 dark:hover:bg-gray-800'}`}
+                    >
+                      {INVOICE_CODE_LABELS[c]}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <FormField label="Invoice number code">
-                  <FormSelect value={settings.invoiceCode} onChange={(e) => set('invoiceCode', e.target.value as InvoiceCodeType)}>
-                    {INVOICE_CODE_TYPES.map((c) => (
-                      <option key={c} value={c}>
-                        {INVOICE_CODE_LABELS[c]}
-                      </option>
-                    ))}
-                  </FormSelect>
-                </FormField>
                 <FormField label="QR code carries" hint="The barcode always carries the invoice number">
                   <FormSelect
                     value={settings.qrContent}
@@ -416,6 +462,7 @@ export default function ReceiptSettingsPage() {
                   <FormSelect value={settings.itemLayout} onChange={(e) => set('itemLayout', e.target.value as ReceiptItemLayout)}>
                     <option value="two_line">Name, then qty x price = total</option>
                     <option value="one_line">One line per item</option>
+                    <option value="table">Table with borders (Item | Qty | Price | Total)</option>
                   </FormSelect>
                 </FormField>
                 <FormField label="Between items">
@@ -430,6 +477,45 @@ export default function ReceiptSettingsPage() {
                 The barcode encodes the invoice number so returns can be looked up by scanning the receipt. With the
                 verification link, keep the barcode on (Barcode + QR) so returns can still be scanned.
               </p>
+            </fieldset>
+          </SectionCard>
+
+          <SectionCard title="Coupon for offers" icon={<Receipt size={16} />}>
+            <fieldset disabled={!canEdit} className="space-y-3">
+              <FormCheckbox
+                label="Print a tear-off coupon on receipts"
+                checked={settings.couponEnabled}
+                onChange={(e) => set('couponEnabled', e.target.checked)}
+              />
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                For lucky draws and offers: the receipt gets a cut-off part with the invoice number, date, amount and the customer&apos;s
+                name, phone and address. If the cashier picked a customer, their details are printed in; otherwise the customer fills in the
+                blank lines. Cashiers just bill as usual.
+              </p>
+              {settings.couponEnabled && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FormField label="Coupon title">
+                    <FormInput value={settings.couponTitle} maxLength={40} onChange={(e) => set('couponTitle', e.target.value)} placeholder="LUCKY DRAW COUPON" />
+                  </FormField>
+                  <FormField label="Only for bills of at least" hint="0 = every bill">
+                    <FormInput
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={settings.couponMinTotal}
+                      onChange={(e) => set('couponMinTotal', Math.max(0, Number(e.target.value) || 0))}
+                    />
+                  </FormField>
+                  <FormField label="Offer text" hint={`${settings.couponText.length}/200`} className="sm:col-span-2">
+                    <FormTextarea
+                      value={settings.couponText}
+                      rows={2}
+                      onChange={(e) => set('couponText', e.target.value.slice(0, 200))}
+                      placeholder="e.g. Drop this coupon in the box. Draw on 31 December - win a Rs 10,000 voucher!"
+                    />
+                  </FormField>
+                </div>
+              )}
             </fieldset>
           </SectionCard>
 

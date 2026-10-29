@@ -97,7 +97,7 @@ export async function receiptTests(check: Check) {
   // HTML: same options
   const h = renderReceiptHtmlSync(model({ itemSeparator: 'solid', fontSize: 'small', itemLayout: 'one_line', showItemBarcode: true, logoAlign: 'left' }), 80, { logoSrc: 'https://cdn/x.png' })
   check(h.includes(`font-size:${RECEIPT_FONT_PX[80].small}px`), 'html: small font px')
-  check((h.match(/border-top:1px solid #000;margin:3px 0/g) || []).length === 2, 'html: solid separators between items')
+  check((h.match(/border-top:1px solid currentColor;margin:3px 0/g) || []).length === 2, 'html: solid separators between items')
   check(h.includes('grid-template-columns') && h.includes('>Qty<'), 'html: one-line 80mm grid with header')
   check(h.includes('9300605000957'), 'html: item barcode')
   check(h.includes('margin:0 auto 4px 0'), 'html: logo left')
@@ -106,6 +106,35 @@ export async function receiptTests(check: Check) {
   check(h58.includes('2 x Basmathi Rice 5kg') && !h58.includes('grid-template-columns'), 'html 58mm one-line: qty x name row')
   const hDefault = renderReceiptHtmlSync(model(), 58)
   check(hDefault.includes(`font-size:${RECEIPT_FONT_PX[58].normal}px`) && hDefault.includes('font-weight:600">Basmathi Rice 5kg'), 'html default two-line look')
+
+  // Appearance: clear dark font by default, options apply
+  check(DEFAULT_RECEIPT_SETTINGS.fontFamily === 'sans' && DEFAULT_RECEIPT_SETTINGS.textWeight === 'dark' && DEFAULT_RECEIPT_SETTINGS.textColor === '#000000', 'defaults: clear font, dark text, black')
+  check(hDefault.includes("font-family:Arial") && hDefault.includes('font-weight:700'), 'html default: Arial, bold body')
+  const hMono = renderReceiptHtmlSync(model({ fontFamily: 'mono', textWeight: 'normal', textColor: '#1a237e' }), 80)
+  check(hMono.includes("font-family:'Courier New'") && hMono.includes('font-weight:400') && hMono.includes('color:#1a237e'), 'html: font / weight / colour options')
+  check(renderReceiptHtmlSync(model({ textWeight: 'extra' }), 80).includes('-webkit-text-stroke'), 'html: extra dark')
+  check(resolveReceiptSettings({ textColor: 'red' }).textColor === '#000000', 'invalid colour dropped')
+  const hTable = renderReceiptHtmlSync(model({ itemLayout: 'table' }), 80)
+  check(hTable.includes('<table') && (hTable.match(/<tr>/g) || []).length === 4 && hTable.includes('>Price<') && hTable.includes('border:1px solid #000000'), 'html table: header + 3 bordered rows, 4 columns')
+  const hTable58 = renderReceiptHtmlSync(model({ itemLayout: 'table' }), 58)
+  check(hTable58.includes('<table') && !hTable58.includes('>Price<') && hTable58.includes('2 x '), 'html table 58mm: 3 columns, qty x price under the name')
+  const tdec = decodeEscPosPreview(buildReceiptEscPosFromModel(model({ itemLayout: 'table' }), { paperWidth: 80 }))
+  check(tdec.some((l) => /Item\s+Qty\s+Price\s+Total/.test(l.text)) && tdec.filter((l) => l.kind === 'image' && l.height === 2).length === 2, 'escpos table: columns + rules between items')
+  const darkBytes = buildReceiptEscPosFromModel(model(), { paperWidth: 80 })
+  check(idx(darkBytes, [0x1b, 0x45, 1]) >= 0 && idx(darkBytes, [0x1b, 0x47, 1]) === -1, 'escpos dark: emphasized on, no double-strike')
+  check(idx(buildReceiptEscPosFromModel(model({ textWeight: 'extra' }), { paperWidth: 80 }), [0x1b, 0x47, 1]) >= 0, 'escpos extra: double-strike')
+
+  // Coupon
+  check(model({ couponEnabled: false }).coupon === null, 'coupon off by default')
+  const cm = model({ couponEnabled: true, couponTitle: 'LUCKY DRAW', couponText: 'Win a TV' })
+  check(!!cm.coupon && cm.coupon.invoiceNo === 'INV-000123' && cm.coupon.title === 'LUCKY DRAW', 'coupon on: invoice + title')
+  check(model({ couponEnabled: true, couponMinTotal: 1_000_000 }).coupon === null, 'coupon: under the minimum bill → none')
+  const ch = renderReceiptHtmlSync(cm, 80)
+  check(ch.includes('cut here') && ch.includes('LUCKY DRAW') && ch.includes('Win a TV') && ch.includes('Name:') && ch.includes('Address:'), 'html coupon: cut line, title, text, fields')
+  const cdec = decodeEscPosPreview(buildReceiptEscPosFromModel(cm, { paperWidth: 58 }))
+  check(cdec.some((l) => l.text.includes('cut here')) && cdec.some((l) => l.text === 'LUCKY DRAW') && cdec.some((l) => /^(Name|Phone): /.test(l.text)), 'escpos coupon: cut line, title, fields')
+  const named = buildReceiptModel({ sale: { ...sale, customerName: 'Nimal Perera', customerPhone: '0771234567', customer: { name: 'Nimal Perera', phone: '0771234567', address: '12 Main St, Kandy' } }, tenant, settings: { ...DEFAULT_RECEIPT_SETTINGS, couponEnabled: true } })
+  check(named.coupon?.name === 'Nimal Perera' && named.coupon?.phone === '0771234567' && named.coupon?.address === '12 Main St, Kandy', 'coupon pre-fills the picked customer')
 
   // Mobile receipts follow the same settings
   const input: ReceiptInput = {

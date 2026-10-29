@@ -17,8 +17,8 @@ export type InvoiceCodeType = (typeof INVOICE_CODE_TYPES)[number]
 /** Receipt text size scale (HTML px per paper width; ESC/POS: small = font B, large = double height). */
 export const RECEIPT_FONT_SIZES = ['small', 'normal', 'large'] as const
 export type ReceiptFontSize = (typeof RECEIPT_FONT_SIZES)[number]
-/** two_line: name, then "qty x price ... total" (default). one_line: one row per item. */
-export const RECEIPT_ITEM_LAYOUTS = ['two_line', 'one_line'] as const
+/** two_line: name, then "qty x price ... total" (default). one_line: one row per item. table: bordered Item | Qty | Price | Total grid. */
+export const RECEIPT_ITEM_LAYOUTS = ['two_line', 'one_line', 'table'] as const
 export type ReceiptItemLayout = (typeof RECEIPT_ITEM_LAYOUTS)[number]
 export const RECEIPT_ITEM_SEPARATORS = ['none', 'dashed', 'solid'] as const
 export type ReceiptItemSeparator = (typeof RECEIPT_ITEM_SEPARATORS)[number]
@@ -27,6 +27,12 @@ export const RECEIPT_QR_CONTENTS = ['invoice_no', 'verify_url'] as const
 export type ReceiptQrContent = (typeof RECEIPT_QR_CONTENTS)[number]
 export const RECEIPT_ALIGNS = ['center', 'left', 'right'] as const
 export type ReceiptAlign = (typeof RECEIPT_ALIGNS)[number]
+/** HTML receipt font: sans = clear (Arial), mono = classic till receipt (Courier), narrow = condensed (more per line). */
+export const RECEIPT_FONTS = ['sans', 'mono', 'narrow'] as const
+export type ReceiptFont = (typeof RECEIPT_FONTS)[number]
+/** Text darkness: thermal drivers print thin grey strokes faint / blurry, so the default is dark (bold). */
+export const RECEIPT_TEXT_WEIGHTS = ['normal', 'dark', 'extra'] as const
+export type ReceiptTextWeight = (typeof RECEIPT_TEXT_WEIGHTS)[number]
 
 const line = z.string().trim().max(120)
 
@@ -58,6 +64,16 @@ export const receiptSettingsSchema = z.object({
   itemSeparator: z.enum(RECEIPT_ITEM_SEPARATORS),
   qrContent: z.enum(RECEIPT_QR_CONTENTS),
   showPoweredBy: z.boolean(),
+  fontFamily: z.enum(RECEIPT_FONTS),
+  textWeight: z.enum(RECEIPT_TEXT_WEIGHTS),
+  /** Text colour on screen / PDF / colour printers (thermal printers print black). */
+  textColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+  /** Tear-off coupon for offers / lucky draws: invoice, date, amount + customer name / phone / address. */
+  couponEnabled: z.boolean(),
+  couponTitle: z.string().trim().max(40),
+  couponText: z.string().trim().max(200),
+  /** Print the coupon only when the bill total is at least this (0 = every bill). */
+  couponMinTotal: z.coerce.number().min(0).max(100_000_000),
 })
 
 export type ReceiptSettings = z.infer<typeof receiptSettingsSchema>
@@ -92,6 +108,13 @@ export const DEFAULT_RECEIPT_SETTINGS: ReceiptSettings = {
   itemSeparator: 'none',
   qrContent: 'invoice_no',
   showPoweredBy: true,
+  fontFamily: 'sans',
+  textWeight: 'dark',
+  textColor: '#000000',
+  couponEnabled: false,
+  couponTitle: 'LUCKY DRAW COUPON',
+  couponText: '',
+  couponMinTotal: 0,
 }
 
 /** Small footer line printed when `showPoweredBy` is on. */

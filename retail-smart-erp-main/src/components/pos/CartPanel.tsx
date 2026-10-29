@@ -1,6 +1,7 @@
 'use client'
 
-import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText } from 'lucide-react'
+import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText, MessageCircle } from 'lucide-react'
+import { normalizePhoneForWhatsApp } from '@/lib/whatsapp'
 import { CreatableSelect } from '@/components/ui/creatable-select'
 import { FormInput } from '@/components/ui/form-elements'
 import { OrderTypeSelector } from './OrderTypeSelector'
@@ -212,7 +213,7 @@ export function CartPanel({
             </div>
             <div className="flex-1 min-w-0" id={POS_CUSTOMER_PICKER_ID}>
               <CreatableSelect
-                options={customers.map(c => ({ value: c.id, label: c.name }))}
+                options={customers.map(c => ({ value: c.id, label: c.phone ? `${c.name} · ${c.phone}` : c.name }))}
                 value={selectedCustomer?.id || ''}
                 onChange={(value) => onCustomerChange(customers.find(c => c.id === value) || null)}
                 onCreateNew={(name) => onCreateCustomer(name)}
@@ -222,6 +223,26 @@ export function CartPanel({
             </div>
             <Kbd title="Select / add customer">Alt+C</Kbd>
           </div>
+          {selectedCustomer?.phone && (
+            <div className="flex items-center gap-2 pl-10 text-xs">
+              <a
+                href={`tel:${selectedCustomer.phone.replace(/\s+/g, '')}`}
+                className="font-mono text-gray-600 hover:text-gray-900 dark:text-gray-300"
+                title="Call the customer"
+              >
+                {selectedCustomer.phone}
+              </a>
+              <a
+                href={`https://wa.me/${normalizePhoneForWhatsApp(selectedCustomer.phone)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100 font-semibold"
+                title="Open this customer's WhatsApp chat"
+              >
+                <MessageCircle size={12} /> WhatsApp
+              </a>
+            </div>
+          )}
 
           {config.showVehicleSelector && (
             <div className="flex items-center gap-2">

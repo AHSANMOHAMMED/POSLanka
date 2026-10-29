@@ -4,9 +4,9 @@ import { CheckCircle, Printer, Truck } from 'lucide-react'
 import { useTerminology } from '@/hooks/useTerminology'
 import { useCurrency } from '@/hooks/useCurrency'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { buildWhatsAppShareUrl } from '@/lib/whatsapp'
 import { useFeatureFlag } from '@/hooks/useFeatureFlag'
 import { SendReceiptButtons, useMessagingAvailability } from './SendReceiptButtons'
+import { BillShareButtons } from './BillShareButtons'
 import { Kbd } from './Kbd'
 
 interface SaleSuccessModalProps {
@@ -43,24 +43,6 @@ export function SaleSuccessModal({
   useEscapeKey(!!lastSale, onDismiss, onDismiss)
 
   if (!lastSale) return null
-
-  // Free fallback: opens WhatsApp on this device with the bill text (no messaging plan needed)
-  const handleWhatsAppShare = (targetPhone: string) => {
-    const textLines = [
-      `🧾 *${shopName}*`,
-      `${lastSale.isReturn ? 'Return' : 'Sale'} Receipt: *${lastSale.invoiceNo}*`,
-      lastSale.customerName ? `Customer: ${lastSale.customerName}` : null,
-      `Total: *${currencyCode} ${lastSale.total.toFixed(2)}*`,
-      `Date: ${new Date().toLocaleDateString()}`,
-      `Thank you for your business!`,
-    ].filter(Boolean).join('\n')
-
-    const url = buildWhatsAppShareUrl({
-      phone: targetPhone || undefined,
-      text: textLines,
-    })
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -121,14 +103,13 @@ export function SaleSuccessModal({
             </button>
           )}
 
-          {/* SMS / WhatsApp through the messaging plan; free WhatsApp share link otherwise */}
-          {lastSaleId && (messaging.sms || messaging.whatsapp || whatsappOn) && (
-            <SendReceiptButtons
-              saleId={lastSaleId}
-              defaultPhone={lastSale.customerPhone}
-              availability={messaging}
-              onShareWhatsApp={whatsappOn ? handleWhatsAppShare : undefined}
-            />
+          {/* SMS / WhatsApp sent by the server (messaging plan) */}
+          {lastSaleId && (messaging.sms || messaging.whatsapp) && (
+            <SendReceiptButtons saleId={lastSaleId} defaultPhone={lastSale.customerPhone} availability={messaging} />
+          )}
+          {/* WhatsApp chat of the customer with the bill PDF link, and the PDF itself */}
+          {lastSaleId && (
+            <BillShareButtons saleId={lastSaleId} shopName={shopName} phone={lastSale.customerPhone} showWhatsApp={whatsappOn} />
           )}
 
           <button

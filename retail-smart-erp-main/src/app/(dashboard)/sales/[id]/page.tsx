@@ -22,6 +22,7 @@ import { type LineUnitFields } from '@/hooks/useItemUnitOptions'
 import { unitAllowsFraction } from '@/lib/units/conversions'
 import { DocumentCommentsAndActivity } from '@/components/ui/document-comments'
 import { PrintA4Button } from '@/components/print/PrintA4Button'
+import { BillShareButtons } from '@/components/pos/BillShareButtons'
 import { loadSaleDocument, TEMPLATE_DOC_TYPES } from '@/lib/print/invoice-document'
 
 const paymentMethodLabels: Record<string, string> = {
@@ -72,7 +73,7 @@ interface SaleData {
   isReturn: boolean
   createdAt: string
   updatedAt: string
-  customer: { id: string; name: string; balance?: string } | null
+  customer: { id: string; name: string; balance?: string; phone?: string | null } | null
   user: { fullName: string } | null
   items: SaleItemData[]
   payments: PaymentData[]
@@ -912,6 +913,8 @@ export default function SalesInvoiceDetailPage() {
             loadDocument={() => loadSaleDocument(sale.id)}
             label={sale.isReturn ? 'Print credit note' : 'Print A4 invoice'}
           />
+          {/* Customer's WhatsApp chat with the receipt PDF link, or the PDF itself */}
+          <BillShareButtons compact saleId={sale.id} phone={sale.customer?.phone ?? null} />
           {isVoid && (
             <span className="text-sm text-gray-500">This invoice is voided and read-only.</span>
           )}

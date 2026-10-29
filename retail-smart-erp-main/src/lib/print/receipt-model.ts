@@ -18,6 +18,8 @@ import {
   type ReceiptFontSize,
   type ReceiptItemLayout,
   type ReceiptItemSeparator,
+  type ReceiptFont,
+  type ReceiptTextWeight,
   type ReceiptSettings,
 } from './receipt-settings'
 import { buildInvoiceVerifyUrl } from './invoice-verify'
@@ -132,6 +134,18 @@ export interface ReceiptAmountRow {
   negative?: boolean
 }
 
+/** Tear-off coupon printed under the receipt (offers / lucky draw). */
+export interface ReceiptCoupon {
+  title: string
+  text: string | null
+  invoiceNo: string
+  date: string
+  amount: number
+  name: string | null
+  phone: string | null
+  address: string | null
+}
+
 export interface ReceiptModel {
   business: {
     name: string
@@ -160,6 +174,11 @@ export interface ReceiptModel {
   showItemBarcode: boolean
   itemLayout: ReceiptItemLayout
   itemSeparator: ReceiptItemSeparator
+  fontFamily: ReceiptFont
+  textWeight: ReceiptTextWeight
+  textColor: string
+  /** Tear-off offer coupon (null = not printed on this bill). Customer fields are null when unknown (blank lines). */
+  coupon: ReceiptCoupon | null
   /** Small last line ("Powered by skyERPOS") or null. */
   poweredBy: string | null
   decimals: number
@@ -423,6 +442,22 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
     showItemBarcode: s.showItemBarcode,
     itemLayout: s.itemLayout,
     itemSeparator: s.itemSeparator,
+    fontFamily: s.fontFamily,
+    textWeight: s.textWeight,
+    textColor: s.textColor,
+    coupon:
+      s.couponEnabled && !sale.isReturn && total >= (s.couponMinTotal || 0)
+        ? {
+            title: clean(s.couponTitle) || 'COUPON',
+            text: clean(s.couponText) || null,
+            invoiceNo: sale.invoiceNo,
+            date: dateText,
+            amount: total,
+            name: custName || null,
+            phone: custPhone || null,
+            address: customerAddress(sale.customer) || null,
+          }
+        : null,
     poweredBy: s.showPoweredBy ? POWERED_BY_LINE : null,
     decimals: args.decimals ?? 2,
     invoiceNo: sale.invoiceNo,

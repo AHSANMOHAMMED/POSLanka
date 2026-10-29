@@ -1,9 +1,9 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Search, Printer, MessageCircle, RotateCcw, Clock, ArrowRight, Loader2 } from 'lucide-react'
+import { X, Search, Printer, MessageCircle, RotateCcw, Clock, Loader2 } from 'lucide-react'
 import { useCurrency } from '@/hooks/useCurrency'
-import { buildWhatsAppShareUrl } from '@/lib/whatsapp'
+import { BillShareButtons } from './BillShareButtons'
 import { useFeatureFlag } from '@/hooks/useFeatureFlag'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { SendReceiptButtons, useMessagingAvailability } from './SendReceiptButtons'
@@ -43,7 +43,6 @@ export function RecentSalesModal({
   const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [sharingSaleId, setSharingSaleId] = useState<string | null>(null)
-  const [manualPhone, setManualPhone] = useState('')
 
   useEscapeKey(isOpen, onClose)
 
@@ -68,7 +67,7 @@ export function RecentSalesModal({
           paymentMethod: String(s.paymentMethod || 'cash'),
           createdAt: String(s.createdAt || new Date().toISOString()),
           customerName: s.customerName ? String(s.customerName) : null,
-          customerPhone: s.customerPhone ? String(s.customerPhone) : null,
+          customerPhone: s.customerPhone ? String(s.customerPhone) : (s.customer as { phone?: string } | null)?.phone ? String((s.customer as { phone?: string }).phone) : null,
           isReturn: Boolean(s.isReturn),
         }))
         setSales(mapped)
@@ -86,27 +85,6 @@ export function RecentSalesModal({
   }, [isOpen, search])
 
   if (!isOpen) return null
-
-  const handleShareWhatsApp = (sale: PastSale, customPhoneInput?: string) => {
-    const phone = (customPhoneInput || sale.customerPhone || '').trim()
-    const textLines = [
-      `🧾 *${shopName}*`,
-      `${sale.isReturn ? 'Return' : 'Sale'} Receipt: *${sale.invoiceNo}*`,
-      sale.customerName ? `Customer: ${sale.customerName}` : null,
-      `Total: *${currencyCode} ${sale.total.toFixed(2)}*`,
-      `Payment: ${sale.paymentMethod.toUpperCase()}`,
-      `Date: ${new Date(sale.createdAt).toLocaleString()}`,
-      `Thank you for shopping with us!`,
-    ].filter(Boolean).join('\n')
-
-    const url = buildWhatsAppShareUrl({
-      phone: phone || undefined,
-      text: textLines,
-    })
-    window.open(url, '_blank', 'noopener,noreferrer')
-    setSharingSaleId(null)
-    setManualPhone('')
-  }
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -209,22 +187,8 @@ export function RecentSalesModal({
                       </button>
                     )}
 
-                    {/* WhatsApp share link (feature switch, no messaging plan) */}
-                    {!hasPlan && whatsappOn && <button
-                      type="button"
-                      onClick={() => {
-                        if (!sale.customerPhone) {
-                          setSharingSaleId(sale.id)
-                        } else {
-                          handleShareWhatsApp(sale)
-                        }
-                      }}
-                      className="px-2.5 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                      title="Share bill via WhatsApp"
-                    >
-                      <MessageCircle size={14} />
-                      <span>WhatsApp</span>
-                    </button>}
+                    {/* Customer's WhatsApp chat with the bill PDF link, and the PDF */}
+                    <BillShareButtons compact saleId={sale.id} shopName={shopName} phone={sale.customerPhone} showWhatsApp={whatsappOn} />
 
                     {/* Return */}
                     {onReturnSale && !sale.isReturn && (
@@ -247,38 +211,10 @@ export function RecentSalesModal({
                       saleId={sale.id}
                       defaultPhone={sale.customerPhone}
                       availability={messaging}
-                      onShareWhatsApp={whatsappOn ? (phone) => handleShareWhatsApp(sale, phone) : undefined}
                     />
                   </div>
                 )}
 
-                {/* Inline WhatsApp phone prompter if needed */}
-                {!hasPlan && sharingSaleId === sale.id && (
-                  <div className="w-full sm:col-span-2 pt-2 flex items-center gap-2 border-t border-gray-100 dark:border-gray-700">
-                    <input
-                      type="tel"
-                      placeholder="WhatsApp phone number (e.g. 0771234567)..."
-                      value={manualPhone}
-                      onChange={(e) => setManualPhone(e.target.value)}
-                      className="flex-1 text-xs px-3 py-1.5 border border-emerald-300 dark:border-emerald-700 rounded-lg dark:bg-gray-700 dark:text-white font-mono"
-                      autoFocus
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleShareWhatsApp(sale, manualPhone)}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold flex items-center gap-1"
-                    >
-                      Send <ArrowRight size={12} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setSharingSaleId(null); setManualPhone('') }}
-                      className="px-2 py-1.5 text-gray-400 hover:text-gray-600 text-xs"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
               </div>
             ))
           )}

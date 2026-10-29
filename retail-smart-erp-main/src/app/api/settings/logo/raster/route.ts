@@ -4,7 +4,7 @@ import { withTenant } from '@/lib/db'
 import { tenants } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
-import { getFromR2, keyFromUrl } from '@/lib/files'
+import { loadLogoBytes } from '@/lib/files/logo-bytes'
 import { rasterizeLogo, type LogoRaster } from '@/lib/print/logo-raster'
 
 /**
@@ -20,29 +20,6 @@ import { rasterizeLogo, type LogoRaster } from '@/lib/print/logo-raster'
 const cache = new Map<string, { at: number; value: LogoRaster }>()
 const CACHE_TTL = 60 * 60_000
 const CACHE_MAX = 200
-
-async function loadLogoBytes(logoUrl: string): Promise<Buffer | null> {
-  const key = keyFromUrl(logoUrl)
-  if (key) {
-    const obj = await getFromR2(key)
-    if (obj) return obj.buffer
-  }
-  // Fallback: the stored URL is an absolute http(s) URL (set only by our own upload route).
-  if (/^https?:\/\//i.test(logoUrl)) {
-    const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), 8000)
-    try {
-      const res = await fetch(logoUrl, { signal: ctrl.signal })
-      if (!res.ok) return null
-      const ab = await res.arrayBuffer()
-      if (ab.byteLength > 5 * 1024 * 1024) return null
-      return Buffer.from(ab)
-    } finally {
-      clearTimeout(t)
-    }
-  }
-  return null
-}
 
 export async function GET(request: NextRequest) {
   try {
