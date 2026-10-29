@@ -4,7 +4,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Printer, Minus, Plus } from 'lucide-react'
 import { Modal } from '@/components/ui/modal'
 import { LabelPreview } from './LabelPreview'
-import { printLabels, printLabelsOnRoll } from '@/lib/labels/label-print'
+import { printLabels, printLabelsOnRoll, printLabelsRaw } from '@/lib/labels/label-print'
+import { useDirectZebra } from '@/hooks/useDirectZebra'
 import { preflightLabels } from '@/lib/print/label/preflight'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
@@ -29,6 +30,8 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const [items, setItems] = useState<ItemWithQty[]>([])
   const [loading, setLoading] = useState(false)
   const [printing, setPrinting] = useState(false)
+  // Same per-PC choice as the Print Barcode Labels page: Chrome preview or Direct to Zebra
+  const direct = useDirectZebra()
   const [codeWord, setCodeWord] = useState<string>('')
   const [setups, setSetups] = useState<StickerSetup[]>([])
   // Manual sticker-roll override; null = tenant default
@@ -212,6 +215,20 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
     const dialogSetup: StickerSetup = noGapSensing
       ? { ...shifted, labelHeightMm: shifted.labelHeightMm + (rowGapOverride ?? shifted.rowGapMm), rowGapMm: 0 }
       : shifted
+    if (direct.mode === 'direct' && config.pageSize === 'Label') {
+      if (!direct.profile) {
+        toast.error(direct.state === 'checking' ? 'Still looking for the print helper. Try again in a moment.' : 'Direct to Zebra is not ready on this PC. Open Barcode → Print Labels to set it up, or choose Chrome print preview there.')
+        return
+      }
+      try {
+        const res = await printLabelsRaw(direct.profile, template, items, { currencySymbol, tenantName: company?.tenantName, codeWord, setup: shifted })
+        if (res.ok) toast.success(`Sent ${totalLabels} label${totalLabels === 1 ? '' : 's'} to ${direct.profile.name}`)
+        else toast.error(`${direct.profile.name}: ${res.error || 'print failed'}. Check the printer before printing again.`)
+      } catch (e) {
+        toast.error(`${direct.profile.name}: ${e instanceof Error ? e.message : 'print failed'}. Check the printer before printing again.`)
+      }
+      return
+    }
     try {
       const ok =
         config.pageSize === 'Label'
@@ -386,7 +403,9 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       <div className="flex items-center justify-between pt-4 mt-4 border-t">
         <span className="text-sm text-gray-500">
           Total: {totalLabels} label{totalLabels !== 1 ? 's' : ''} for {items.length} item{items.length !== 1 ? 's' : ''}
-          <span className="block text-xs text-gray-400">Opens Chrome&apos;s print preview (choose the printer there)</span>
+          <span className="block text-xs text-gray-400">
+            {direct.mode === 'direct' ? `Sends straight to ${direct.printer || 'the Zebra'} (Direct to Zebra)` : 'Opens Chrome\u2019s print preview (choose the printer there)'}
+          </span>
         </span>
         <div className="flex gap-2">
           <button

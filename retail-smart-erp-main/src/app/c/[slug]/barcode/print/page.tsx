@@ -5,7 +5,9 @@ import Link from 'next/link'
 import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3, Lock, Ruler, ArrowLeft, Layout, AlertTriangle } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
 import { LabelPreview } from '@/components/labels/LabelPreview'
-import { printLabels, printLabelsOnRoll } from '@/lib/labels/label-print'
+import { printLabels, printLabelsOnRoll, printLabelsRaw, printAlignmentTestRaw } from '@/lib/labels/label-print'
+import { useDirectZebra } from '@/hooks/useDirectZebra'
+import { PrintAgentInstallCommands } from '@/components/print/PrintAgentInstallCommands'
 import { preflightLabels } from '@/lib/print/label/preflight'
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
@@ -99,6 +101,8 @@ export default function BarcodePrintPage() {
   const company = useCompanyOptional()
 
   const [printing, setPrinting] = useState(false)
+  // Chrome print preview (default) or straight to the Zebra through the print helper (per PC)
+  const direct = useDirectZebra()
   // Set synchronously on click: a second click before React re-renders must not start a second job.
   const printLock = useRef(false)
   // Printer can't find the gaps (FEED runs through many stickers, e.g. a fixed centre sensor under the gap of a
@@ -865,6 +869,27 @@ export default function BarcodePrintPage() {
     const dialogSetup: StickerSetup = noGapSensing
       ? { ...shifted, labelHeightMm: shifted.labelHeightMm + (rowGapOverride ?? shifted.rowGapMm), rowGapMm: 0 }
       : shifted
+    // Direct to Zebra: ZPL straight to the printer (gap sensing before every row), no driver / preview.
+    if (direct.mode === 'direct' && printViaRoll) {
+      if (!direct.profile) {
+        toast.error(direct.state === 'missing' ? 'The print helper is not running on this PC. Install or start it (see "Direct to Zebra"), or switch to Chrome print preview.' : 'Choose the printer under "Direct to Zebra" first.')
+        return
+      }
+      try {
+        const res = await printLabelsRaw(direct.profile, templateToPrint, items, { currencySymbol, tenantName: company?.tenantName, codeWord, setup: shifted })
+        if (res.ok) {
+          toast.success(`Sent ${totalLabels} label${totalLabels === 1 ? '' : 's'} to ${direct.profile.name}`)
+          if (res.warnings.length) toast.warning(res.warnings.slice(0, 2).join('; '))
+        } else {
+          // never reprint on our own: some labels may already be out
+          toast.error(`${direct.profile.name}: ${res.error || 'print failed'}. Check the printer before printing again.`)
+        }
+      } catch (e) {
+        toast.error(`${direct.profile.name}: ${e instanceof Error ? e.message : 'print failed'}. Check the printer before printing again.`)
+      }
+      return
+    }
+
     const dialogPrint = () =>
       printViaRoll
         ? printLabelsOnRoll(templateToPrint, items, dialogSetup, currencySymbol, company?.tenantName, codeWord)
@@ -921,7 +946,7 @@ export default function BarcodePrintPage() {
             className="flex items-center gap-1.5 px-4 py-2 text-sm text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 font-medium shadow-sm transition-colors"
           >
             <Printer size={16} />
-            {printing ? 'Opening Chrome print...' : 'Print Labels'}
+            {printing ? (direct.mode === 'direct' ? 'Sending to printer...' : 'Opening Chrome print...') : 'Print Labels'}
           </button>
         </div>
       </div>
@@ -1071,6 +1096,70 @@ export default function BarcodePrintPage() {
         <div className="space-y-3">
           {/* Template selector */}
           <div className="bg-white rounded-lg border p-4 space-y-3">
+            <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 rounded-lg text-xs" role="radiogroup" aria-label="How to print">
+              {([['chrome', 'Chrome print preview', 'Any printer, via its driver'], ['direct', 'Direct to Zebra', 'Exact, no preview (print helper)']] as const).map(([m, title, sub]) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={direct.mode === m}
+                  onClick={() => direct.setMode(m)}
+                  className={`px-2 py-1.5 rounded-md text-left transition-all ${direct.mode === m ? 'bg-white text-blue-700 font-semibold shadow-xs border border-blue-400' : 'text-gray-600 hover:bg-gray-200/50'}`}
+                >
+                  <span className="block">{title}</span>
+                  <span className="block text-[10px] font-normal opacity-80">{sub}</span>
+                </button>
+              ))}
+            </div>
+            {direct.mode === 'direct' ? (
+              <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-900 space-y-2">
+                {direct.state === 'checking' || direct.state === 'idle' ? (
+                  <div>Looking for the skyERPOS print helper on this PC…</div>
+                ) : direct.state === 'missing' ? (
+                  <>
+                    <div>
+                      <b>One time on this PC:</b> install the skyERPOS print helper, then click <b>Check again</b>. It sends the labels straight to
+                      the Zebra (no Windows driver settings, no Chrome preview).
+                    </div>
+                    <PrintAgentInstallCommands downloadBase={`/c/${company?.tenantSlug || ''}`} />
+                    <button type="button" onClick={() => direct.check()} className="px-2 py-1 rounded border border-blue-300 bg-white hover:bg-blue-100 font-medium">
+                      Check again
+                    </button>
+                  </>
+                ) : direct.targets.length === 0 ? (
+                  <div>
+                    The print helper is running but sees no installed printer. Install the Zebra driver, then{' '}
+                    <button type="button" onClick={() => direct.check()} className="underline font-semibold">check again</button>.
+                  </div>
+                ) : (
+                  <>
+                    <label className="flex items-center gap-2">
+                      <span className="shrink-0">Printer:</span>
+                      <select value={direct.printer} onChange={(e) => direct.setPrinter(e.target.value)} className="flex-1 min-w-0 border rounded px-1.5 py-1 bg-white text-gray-900">
+                        {direct.targets.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+                      </select>
+                    </label>
+                    <div>
+                      Print sends the labels straight to this printer. It finds the gap before every row, so no paper size, gap or
+                      &quot;can&apos;t find the gaps&quot; setting is needed. Use <b>Move print</b> only for a small shift.
+                    </div>
+                    {activeSetup && direct.profile && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const res = await printAlignmentTestRaw(direct.profile!, { ...activeSetup, offsetYMm: activeSetup.offsetYMm + offsetOverride })
+                          if (res.ok) toast.success('Test sent: boxes 1 2 / 3 4 should sit inside the stickers')
+                          else toast.error(res.error || 'Test print failed')
+                        }}
+                        className="px-2 py-1 rounded border border-blue-300 bg-white hover:bg-blue-100 font-medium"
+                      >
+                        Print test (1 2 / 3 4)
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
             <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
               Print opens Chrome&apos;s print preview. One time only: install your printer model&apos;s driver and set its paper size to{' '}
               <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? rowGapOverride ?? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
@@ -1079,6 +1168,7 @@ export default function BarcodePrintPage() {
                 Printer setup command
               </Link>
             </div>
+            )}
             {/* Quick Roll Type Selector: 1 Across, 2 Across (Twin), 3 Across */}
             <div className="pt-1">
               <div className="flex items-center justify-between mb-1.5">
@@ -1166,6 +1256,7 @@ export default function BarcodePrintPage() {
                   <span className="text-[10px] block opacity-80">Triple · 105mm</span>
                 </button>
               </div>
+              {direct.mode === 'chrome' && (
               <label className="mt-2 flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
                 <input type="checkbox" className="mt-0.5" checked={noGapSensing} onChange={(e) => toggleNoGapSensing(e.target.checked)} />
                 <span>
@@ -1173,7 +1264,8 @@ export default function BarcodePrintPage() {
                   {activeSetup ? `${activeSetup.labelHeightMm + (rowGapOverride ?? activeSetup.rowGapMm)} mm` : 'label + gap'} per row.
                 </span>
               </label>
-              {noGapSensing && activeSetup && (
+              )}
+              {direct.mode === 'chrome' && noGapSensing && activeSetup && (
                 <div className="mt-1.5 ml-5 text-xs text-gray-700">
                   <div className="flex items-center gap-2">
                     <span>Gap between rows:</span>
