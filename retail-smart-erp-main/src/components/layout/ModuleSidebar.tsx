@@ -1,11 +1,12 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 import { useSidebar } from './Sidebar'
+import { useTheme } from '@/components/providers/ThemeProvider'
 import { getModuleFromPathname, getModuleSidebar, isDetailPage } from '@/lib/navigation/module-sidebar'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { useEffectivePermissions } from '@/hooks/useEffectivePermissions'
@@ -15,6 +16,8 @@ import { isHrefAllowedByFeatures, isModuleAllowedByFeatures } from '@/lib/featur
 import { ICON_MAP } from '@/components/workspace/icon-map'
 import { ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, X } from 'lucide-react'
 
+const noopSubscribe = () => () => {}
+
 interface ModuleSidebarProps {
   companySlug: string
 }
@@ -23,7 +26,12 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
   const pathname = usePathname()
   const { data: session } = useSession()
   const company = useCompanyOptional()
-  const { mobileOpen, setMobileOpen, collapsed, setCollapsed } = useSidebar()
+  const { mobileOpen, setMobileOpen, collapsed: userCollapsed, setCollapsed } = useSidebar()
+  // Appearance: hidden = drawer opened with ☰ (any screen size), icons = rail only, open = docked
+  // (visibility per mode is CSS on html[data-sidebar], set before paint, so server and client markup match)
+  const { sidebarMode } = useTheme()
+  const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false)
+  const collapsed = mounted && sidebarMode === 'icons' ? true : userCollapsed
   // Accordion: user toggles per `${module}:${section}`; untouched sections follow the route
   const [sectionOverrides, setSectionOverrides] = useState<Record<string, boolean>>({})
   const { isModuleEnabled } = useModuleAccess()
@@ -171,7 +179,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
     <button
       type="button"
       onClick={() => setCollapsed(!collapsed)}
-      className={`flex items-center gap-2 text-xs py-2 transition-colors ${collapsed ? 'justify-center px-0' : 'px-4'}`}
+      className={`ms-collapse-toggle flex items-center gap-2 text-xs py-2 transition-colors ${collapsed ? 'justify-center px-0' : 'px-4'}`}
       style={{ color: 'var(--sidebar-text-muted)', borderTop: '1px solid var(--sidebar-border)' }}
       title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
       aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -186,7 +194,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
       {/* Mobile overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          className="ms-overlay fixed inset-0 bg-black/50 z-40 md:hidden"
           style={{ top: '48px' }}
           onClick={() => setMobileOpen(false)}
           aria-hidden="true"
@@ -195,7 +203,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
 
       {/* Mobile sidebar (slides in below navbar) */}
       <aside
-        className={`fixed left-0 bottom-0 z-50 w-[220px] flex flex-col text-sm transform transition-transform duration-200 ease-in-out md:hidden ${
+        className={`ms-drawer fixed left-0 bottom-0 z-50 w-[240px] flex flex-col text-sm transform transition-transform duration-200 ease-in-out shadow-2xl md:hidden ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={{
@@ -217,9 +225,9 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
         {sidebarContent}
       </aside>
 
-      {/* Desktop sidebar (below navbar, sticky) */}
+      {/* Desktop sidebar (below navbar, sticky); hidden by CSS when the menu is a ☰ drawer */}
       <aside
-        className={`hidden md:flex flex-col text-sm shrink-0 transition-[width] duration-150 ${collapsed ? 'w-[56px]' : 'w-[220px]'}`}
+        className={`ms-desktop hidden md:flex flex-col text-sm shrink-0 transition-[width] duration-150 ${collapsed ? 'w-[56px]' : 'w-[220px]'}`}
         style={{
           position: 'sticky',
           top: '48px',

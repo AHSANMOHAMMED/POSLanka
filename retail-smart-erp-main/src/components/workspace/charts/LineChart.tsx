@@ -1,8 +1,9 @@
 'use client'
 
 import React, { useId, useMemo, useState } from 'react'
+import { usePaletteColor } from './usePaletteColor'
 
-const GRADIENTS: Record<string, [string, string]> = {
+const BASE_GRADIENTS: Record<string, [string, string]> = {
   blue: ['#60a5fa', '#2563eb'],
   green: ['#4ade80', '#16a34a'],
   emerald: ['#34d399', '#059669'],
@@ -15,7 +16,7 @@ const GRADIENTS: Record<string, [string, string]> = {
   slate: ['#94a3b8', '#475569'],
 }
 
-const DEFAULT_SERIES_GRADIENTS: Array<[string, string]> = [
+const BASE_SERIES_GRADIENTS: Array<[string, string]> = [
   ['#60a5fa', '#2563eb'],
   ['#34d399', '#059669'],
   ['#fbbf24', '#d97706'],
@@ -63,6 +64,10 @@ function buildSmoothPath(points: Array<{ x: number; y: number }>): string {
 }
 
 export default function LineChart({ labels, datasets, height = 300, color = 'blue' }: ChartProps) {
+  // Series 1 / "blue" follow the palette (Settings → Appearance)
+  const pal = usePaletteColor()
+  const GRADIENTS: Record<string, [string, string]> = { ...BASE_GRADIENTS, blue: [pal.light, pal.primary] }
+  const DEFAULT_SERIES_GRADIENTS: Array<[string, string]> = [[pal.light, pal.primary], ...BASE_SERIES_GRADIENTS.slice(1)]
   const chartId = useId().replace(/:/g, '')
   const [hoveredPoint, setHoveredPoint] = useState<{ datasetIndex: number; pointIndex: number } | null>(null)
 

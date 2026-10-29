@@ -1,8 +1,9 @@
 'use client'
 
 import React, { useMemo, useState } from 'react'
+import { usePaletteColor } from './usePaletteColor'
 
-const DEFAULT_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4', '#f97316', '#ec4899']
+const BASE_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#06b6d4', '#f97316', '#ec4899']
 
 interface ChartProps {
   labels: string[]
@@ -48,6 +49,9 @@ function describeArc(cx: number, cy: number, r: number, startAngle: number, endA
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export default function PieChart({ labels, datasets, height = 300, color = 'blue' }: ChartProps) {
+  // First slice follows the palette (Settings → Appearance)
+  const pal = usePaletteColor()
+  const DEFAULT_COLORS = useMemo(() => [pal.primary, ...BASE_COLORS.slice(1)], [pal.primary])
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
 
   const dataset = datasets[0]
@@ -80,7 +84,7 @@ export default function PieChart({ labels, datasets, height = 300, color = 'blue
     })
 
     return result
-  }, [dataset, labels])
+  }, [dataset, labels, DEFAULT_COLORS])
 
   if (!labels.length || !datasets.length || segments.length === 0) {
     const svgSize = 200

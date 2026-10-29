@@ -32,9 +32,9 @@ export function NumberCardBlock({ block, metrics, loading }: NumberCardBlockProp
   return (
     <Link
       href={href}
-      className={`flex items-center gap-3 px-4 py-3 ${colors.bg} rounded-md hover:opacity-90 transition-all hover:shadow-md text-white min-w-0 w-full`}
+      className={`ui-stat-card flex items-center gap-3 px-4 py-3 ${colors.bg} rounded-md hover:opacity-90 transition-all hover:shadow-md text-white min-w-0 w-full`}
     >
-      <div className={`w-10 h-10 ${colors.light} rounded flex items-center justify-center flex-shrink-0`}>
+      <div className={`ui-stat-icon w-10 h-10 ${colors.light} rounded flex items-center justify-center flex-shrink-0`}>
         {/* eslint-disable-next-line react-hooks/static-components */}
         <Icon className="w-5 h-5 text-white" strokeWidth={1.5} />
       </div>

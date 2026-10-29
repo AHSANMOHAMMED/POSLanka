@@ -216,11 +216,12 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
         <button
           type="button"
           onClick={handleMobileToggle}
-          className="p-1.5 rounded transition-colors md:hidden"
+          className="nav-menu-btn p-1.5 rounded transition-colors md:hidden"
           style={{ color: 'var(--navbar-text-muted)' }}
           onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.1)'}
           onMouseLeave={e => e.currentTarget.style.backgroundColor = 'transparent'}
-          aria-label="Toggle sidebar"
+          aria-label="Menu"
+          title="Menu"
         >
           <Menu size={18} />
         </button>

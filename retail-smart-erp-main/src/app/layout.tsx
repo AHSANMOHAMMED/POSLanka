@@ -80,7 +80,11 @@ const themeScript = `
   try {
     var theme = localStorage.getItem('theme') || 'system';
     var isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.classList.add(isDark ? 'dark' : 'light');
+    var root = document.documentElement;
+    root.classList.add(isDark ? 'dark' : 'light');
+    root.setAttribute('data-theme', localStorage.getItem('theme_palette') || 'default');
+    root.setAttribute('data-ui', localStorage.getItem('ui_style') || 'classic');
+    root.setAttribute('data-sidebar', localStorage.getItem('ui_sidebar') || 'hidden');
   } catch (e) {}
 })();
 `

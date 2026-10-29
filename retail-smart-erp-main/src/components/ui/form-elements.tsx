@@ -27,7 +27,7 @@ const baseInputStyles = `
   border-gray-300 dark:border-gray-600
   text-gray-900 dark:text-white
   placeholder-gray-400 dark:placeholder-gray-500
-  focus:outline-none focus:ring-2 focus:ring-[#0d6efd] focus:border-[#0d6efd]
+  focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-[var(--primary)]
   disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-50 dark:disabled:bg-gray-900
   transition-colors
 `
@@ -204,7 +204,7 @@ export const FormCheckbox = React.forwardRef<HTMLInputElement, FormCheckboxProps
             id={inputId}
             className={cn(
               'h-4 w-4 rounded border-gray-300 dark:border-gray-600',
-              'text-[#0d6efd] focus:ring-[#0d6efd] focus:ring-2',
+              'text-[var(--primary)] focus:ring-[var(--primary)] focus:ring-2',
               'bg-white dark:bg-gray-800',
               'cursor-pointer disabled:cursor-not-allowed disabled:opacity-50',
               className
@@ -254,7 +254,7 @@ export const FormRadio = React.forwardRef<HTMLInputElement, FormRadioProps>(
           id={inputId}
           className={cn(
             'h-4 w-4 border-gray-300 dark:border-gray-600',
-            'text-[#0d6efd] focus:ring-[#0d6efd] focus:ring-2',
+            'text-[var(--primary)] focus:ring-[var(--primary)] focus:ring-2',
             'bg-white dark:bg-gray-800',
             'cursor-pointer disabled:cursor-not-allowed disabled:opacity-50',
             className

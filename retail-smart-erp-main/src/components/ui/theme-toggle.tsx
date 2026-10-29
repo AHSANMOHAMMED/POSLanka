@@ -66,6 +66,9 @@ const paletteOptions: Array<{
     bgPreview: 'bg-[#14050a]',
     description: 'High performance crimson wine',
   },
+  { value: 'teal', label: 'Teal', accentColor: '#0d9488', bgPreview: 'bg-[#041514]', description: 'Fresh calm teal' },
+  { value: 'rose', label: 'Rose', accentColor: '#db2777', bgPreview: 'bg-[#17060f]', description: 'Bright boutique pink' },
+  { value: 'ocean', label: 'Ocean', accentColor: '#0369a1', bgPreview: 'bg-[#03111c]', description: 'Deep ocean blue' },
 ]
 
 interface ThemeToggleProps {
@@ -113,7 +116,7 @@ export function ThemeToggle({ onThemeChange }: ThemeToggleProps) {
         <Palette className="w-3.5 h-3.5 opacity-80" />
         <span
           className="w-2.5 h-2.5 rounded-full border border-white/40 shadow-xs"
-          style={{ backgroundColor: paletteOptions.find((p) => p.value === palette)?.accentColor || '#2563eb' }}
+          style={{ backgroundColor: mounted ? paletteOptions.find((p) => p.value === palette)?.accentColor || '#2563eb' : 'transparent' }}
         />
       </button>
 

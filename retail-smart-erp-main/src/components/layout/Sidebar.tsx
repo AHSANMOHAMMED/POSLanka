@@ -3,6 +3,7 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { usePathname } from 'next/navigation'
 import { useIsMobile, useBreakpoint } from '@/hooks/useResponsive'
+import { useTheme } from '@/components/providers/ThemeProvider'
 
 // ============================================
 // SIDEBAR CONTEXT
@@ -79,13 +80,15 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     setMobileOpen(false)
   }, [pathname])
 
-  // Auto-close sidebar when viewport crosses md breakpoint (matches md:hidden CSS)
+  // Auto-close sidebar when viewport crosses md breakpoint (matches md:hidden CSS); in "hidden" mode
+  // the drawer is the menu on every screen size
+  const { sidebarMode } = useTheme()
   useEffect(() => {
-    if (isDesktop && mobileOpen) {
+    if (isDesktop && mobileOpen && sidebarMode !== 'hidden') {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setMobileOpen(false)
     }
-  }, [isDesktop, mobileOpen])
+  }, [isDesktop, mobileOpen, sidebarMode])
 
   const showSidebar = () => {
     if (isMobile) {

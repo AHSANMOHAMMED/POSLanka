@@ -2726,3 +2726,109 @@ html {
   }
   .glow-card:hover { transform: none; }
 }
+
+/* ======================================================================
+   APPEARANCE ENGINE (Settings → Appearance / UI designer)
+   html[data-theme] = colour palette, html[data-ui] = UI style, both also usable on any element
+   (the designer preview sets them on a box). Tailwind v4 utilities read these variables, so the
+   ~2000 "blue" utilities, radii, shadows, spacing and icon weight follow the choice everywhere.
+   ====================================================================== */
+
+/* Extra palettes */
+[data-theme="teal"] { --primary: #0d9488; --primary-hover: #0f766e; --page-bg: #f0fdfa; --content-bg: #ffffff; }
+[data-theme="teal"].dark, .dark[data-theme="teal"] { --primary: #2dd4bf; --primary-hover: #5eead4; --page-bg: #041514; --content-bg: #0a2523; --sidebar-bg: #031110; --sidebar-border: #134e4a; --sidebar-hover-bg: #0f2f2c; --navbar-bg: #020c0b; --border-color: #134e4a; }
+[data-theme="rose"] { --primary: #db2777; --primary-hover: #be185d; --page-bg: #fdf2f8; --content-bg: #ffffff; }
+[data-theme="rose"].dark, .dark[data-theme="rose"] { --primary: #f472b6; --primary-hover: #f9a8d4; --page-bg: #17060f; --content-bg: #26101c; --sidebar-bg: #12040b; --sidebar-border: #4a1d33; --sidebar-hover-bg: #33142a; --navbar-bg: #0d0308; --border-color: #4a1d33; }
+[data-theme="ocean"] { --primary: #0369a1; --primary-hover: #075985; --page-bg: #f0f9ff; --content-bg: #ffffff; --navbar-bg: #0c4a6e; }
+[data-theme="ocean"].dark, .dark[data-theme="ocean"] { --primary: #38bdf8; --primary-hover: #7dd3fc; --page-bg: #03111c; --content-bg: #0a1f30; --sidebar-bg: #020d16; --sidebar-border: #164e63; --sidebar-hover-bg: #0c2a40; --navbar-bg: #020a12; --border-color: #164e63; }
+
+/* The whole "blue" scale follows the palette's primary colour */
+:root, [data-theme] {
+  --color-blue-50: color-mix(in oklab, var(--primary) 7%, white);
+  --color-blue-100: color-mix(in oklab, var(--primary) 14%, white);
+  --color-blue-200: color-mix(in oklab, var(--primary) 26%, white);
+  --color-blue-300: color-mix(in oklab, var(--primary) 42%, white);
+  --color-blue-400: color-mix(in oklab, var(--primary) 66%, white);
+  --color-blue-500: color-mix(in oklab, var(--primary) 86%, white);
+  --color-blue-600: var(--primary);
+  --color-blue-700: var(--primary-hover);
+  --color-blue-800: color-mix(in oklab, var(--primary) 70%, black);
+  --color-blue-900: color-mix(in oklab, var(--primary) 52%, black);
+  --color-blue-950: color-mix(in oklab, var(--primary) 34%, black);
+  /* Sidebar active item follows the palette too */
+  --sidebar-text-active: var(--primary);
+  --sidebar-active-bg: color-mix(in srgb, var(--primary) 12%, transparent);
+  --sidebar-active-border: var(--primary);
+  /* Chart colours: series 1 = palette, then fixed companions */
+  --chart-1: var(--primary);
+  --chart-1-light: color-mix(in oklab, var(--primary) 60%, white);
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #8b5cf6;
+  --chart-5: #ef4444;
+  --chart-6: #06b6d4;
+  --chart-7: #f97316;
+  --chart-8: #ec4899;
+}
+.dark {
+  --sidebar-active-bg: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+/* ---- UI styles ------------------------------------------------------ */
+/* Classic = Tailwind defaults (no overrides). */
+
+/* Modern: big rounded corners, soft deep shadows, airy spacing, lighter icons */
+[data-ui="modern"] {
+  --radius-sm: 0.4rem; --radius-md: 0.7rem; --radius-lg: 0.95rem; --radius-xl: 1.2rem; --radius-2xl: 1.5rem; --radius-3xl: 2rem;
+  --shadow-xs: 0 1px 2px rgb(15 23 42 / 0.05);
+  --shadow-sm: 0 2px 8px -2px rgb(15 23 42 / 0.10), 0 1px 3px rgb(15 23 42 / 0.06);
+  --shadow-md: 0 8px 24px -6px rgb(15 23 42 / 0.16);
+  --shadow-lg: 0 16px 40px -10px rgb(15 23 42 / 0.22);
+  --spacing: 0.265rem;
+  --ui-icon-stroke: 1.75;
+}
+/* Compact: dense tables and forms for back-office work, square corners, thin shadows */
+[data-ui="compact"] {
+  --radius-sm: 0.125rem; --radius-md: 0.2rem; --radius-lg: 0.25rem; --radius-xl: 0.35rem; --radius-2xl: 0.45rem; --radius-3xl: 0.6rem;
+  --shadow-sm: 0 1px 1px rgb(15 23 42 / 0.06);
+  --shadow-md: 0 2px 4px rgb(15 23 42 / 0.08);
+  --spacing: 0.215rem;
+  --ui-style-scale: 0.95;
+  --ui-icon-stroke: 2;
+}
+/* Big & Easy: large text, big touch targets, bold icons, high contrast (cashiers, new staff) */
+[data-ui="touch"] {
+  --radius-sm: 0.35rem; --radius-md: 0.6rem; --radius-lg: 0.8rem; --radius-xl: 1rem; --radius-2xl: 1.25rem; --radius-3xl: 1.6rem;
+  --spacing: 0.29rem;
+  --ui-style-scale: 1.12;
+  --ui-icon-stroke: 2.4;
+  --text-secondary: #374151;
+}
+[data-ui="touch"] .text-gray-400, [data-ui="touch"] .text-gray-500 { color: #4b5563; }
+.dark[data-ui="touch"] .text-gray-400, .dark[data-ui="touch"] .text-gray-500, [data-ui="touch"] .dark .text-gray-400 { color: #d1d5db; }
+/* Flat: no shadows or gradients, outlined cards, calm colours */
+[data-ui="flat"] {
+  --radius-sm: 0.2rem; --radius-md: 0.3rem; --radius-lg: 0.4rem; --radius-xl: 0.5rem; --radius-2xl: 0.6rem; --radius-3xl: 0.8rem;
+  --shadow-xs: none; --shadow-sm: none; --shadow-md: none; --shadow-lg: none; --shadow-xl: none; --shadow-2xl: none;
+  --ui-icon-stroke: 1.6;
+}
+[data-ui="flat"] [class*="bg-gradient-to"] { background-image: none !important; background-color: var(--primary); }
+[data-ui="flat"] .ui-stat-card { background-image: none !important; background-color: var(--content-bg) !important; color: var(--text-primary) !important; border: 1px solid var(--border-color); border-left: 4px solid var(--primary); }
+[data-ui="flat"] .ui-stat-card * { color: inherit !important; }
+[data-ui="flat"] .ui-stat-card .ui-stat-icon { color: var(--primary) !important; background: color-mix(in srgb, var(--primary) 10%, transparent) !important; }
+[data-ui="modern"] .ui-stat-card { box-shadow: var(--shadow-md); }
+
+/* Icon weight per style (lucide icons) */
+svg.lucide { stroke-width: var(--ui-icon-stroke, 2); }
+
+/* Text size per style, on top of the user's own text size */
+html[data-ui] { font-size: calc(14px * var(--ui-text-scale, 1) * var(--ui-style-scale, 1)); }
+html[data-ui] body { font-size: calc(14px * var(--ui-text-scale, 1) * var(--ui-style-scale, 1)); }
+html.pos-large-text[data-ui], html.pos-large-text[data-ui] body { font-size: calc(15.5px * var(--ui-text-scale, 1) * var(--ui-style-scale, 1)); }
+
+/* Side menu mode (html[data-sidebar], set before paint): hidden = ☰ drawer on every screen size */
+html[data-sidebar="hidden"] .ms-desktop { display: none !important; }
+html[data-sidebar="hidden"] .ms-drawer { display: flex !important; }
+html[data-sidebar="hidden"] .ms-overlay { display: block !important; }
+html[data-sidebar="hidden"] .nav-menu-btn { display: inline-flex !important; }
+html:not([data-sidebar="open"]) .ms-collapse-toggle { display: none !important; }

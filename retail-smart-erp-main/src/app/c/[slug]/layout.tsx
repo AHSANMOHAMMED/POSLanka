@@ -1,4 +1,6 @@
 import { auth } from '@/lib/auth'
+import { ShopAppearanceSync } from '@/components/providers/ShopAppearanceSync'
+import { sanitizeAppearance } from '@/lib/ui/appearance'
 import { onTenantInvalidated } from '@/lib/auth/session-validation-cache'
 import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
@@ -256,6 +258,7 @@ export default async function CompanyLayout({
         <SessionValidator scope="company" tenantSlug={slug}>
           <ActivityTracker scope="company" tenantSlug={slug} />
           <ClientProviders>
+            <ShopAppearanceSync appearance={sanitizeAppearance((tenant.settings as Record<string, unknown> | null)?.appearance)} />
             <SubdomainUrlCleaner />
             <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--page-bg)' }}>
               {/* Navbar: full width, sticky top */}
