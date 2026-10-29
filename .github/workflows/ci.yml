@@ -169,7 +169,7 @@ jobs:
       - name: Attendance & payroll, hire purchase, document units, recurring/projects, shift collections, labels
         run: |
           npx tsx scripts/tests/print-size-pricing.ts
-          for t in l1-attendance l2-installments l3-document-units l4-recurring-projects l5-loose-ends l6-label-roll l6-label-browser-pdf; do
+          for t in l1-attendance l2-installments l3-document-units l4-recurring-projects l5-loose-ends l6-label-roll l6-label-browser-pdf l11-sticker-setups-save; do
             npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
           done
       - name: Platform (offline sync, backup, API keys, dashboard, read permissions)

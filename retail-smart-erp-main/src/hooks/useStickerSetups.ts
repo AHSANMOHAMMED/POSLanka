@@ -48,7 +48,13 @@ export function useStickerSetups(enabled = true) {
         body: JSON.stringify({ stickerSetups: list }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) return data.error || 'Failed to save label setups'
+      if (!res.ok) {
+        // name the field(s) the server refused, e.g. "Validation failed: labelWidthMm …"
+        const details = Array.isArray(data.details)
+          ? data.details.map((d: { field?: string; message?: string }) => `${(d.field || '').replace(/^stickerSetups\.\d+\./, '')} ${d.message || ''}`.trim()).join('; ')
+          : ''
+        return `${data.error || 'Failed to save label setups'}${details ? `: ${details}` : ''}`
+      }
       cache = sanitizeStickerSetups(data.stickerSetups)
       listeners.forEach((fn) => fn(cache!))
       return null

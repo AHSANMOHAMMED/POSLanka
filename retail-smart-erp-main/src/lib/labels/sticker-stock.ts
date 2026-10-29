@@ -51,6 +51,8 @@ export interface StickerSetup {
 }
 
 const num = (min: number, max: number) => z.coerce.number().min(min).max(max)
+// validateBody drops null values before parsing, so the "not set" fields arrive as undefined
+const optNum = (min: number, max: number) => z.preprocess((v) => (v == null || v === '' ? null : v), num(min, max).nullable())
 
 export const stickerSetupSchema = z.object({
   id: z.string().trim().min(1).max(64),
@@ -64,11 +66,11 @@ export const stickerSetupSchema = z.object({
   offsetXMm: num(-20, 20),
   offsetYMm: num(-20, 20),
   dpi: z.union([z.literal(203), z.literal(300)]),
-  language: z.enum(STICKER_LANGUAGES).nullable(),
-  darkness: num(0, 30).nullable(),
-  speed: num(1, 14).nullable(),
+  language: z.enum(STICKER_LANGUAGES).nullish(),
+  darkness: optNum(0, 30),
+  speed: optNum(1, 14),
   direction: z.union([z.literal(0), z.literal(1)]),
-  warehouseId: z.string().uuid().nullable(),
+  warehouseId: z.string().uuid().nullish(),
   locked: z.boolean(),
   lockedBy: z.string().max(120).nullable().optional(),
   lockedAt: z.string().max(40).nullable().optional(),
