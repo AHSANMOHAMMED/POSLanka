@@ -2,6 +2,9 @@
  * L16 — mobile app: split payments match the web POS, and who sees the till. No database.
  *
  *   npx tsx scripts/tests/l16-mobile-pay.ts
+ *
+ * Excluded from the web tsc (tsconfig.json): it imports the app's roles.ts, whose types reach Expo
+ * packages; the mobile tsc checks those files.
  */
 import { settleTenders as web } from '../../src/lib/pos/tenders'
 import { settleTenders as app } from '../../apps/mobile/src/lib/tenders'

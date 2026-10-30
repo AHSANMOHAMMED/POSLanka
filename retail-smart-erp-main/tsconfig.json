@@ -41,6 +41,7 @@
     "apps/**",
     "stress-tests",
     "e2e",
-    ".next"
+    ".next",
+    "scripts/tests/l16-mobile-pay.ts"
   ]
 }
