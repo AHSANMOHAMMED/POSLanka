@@ -50,9 +50,19 @@ export function displayRole(user: Pick<AuthUser, 'role' | 'customRoleName'> | nu
   return user.customRoleName || roleLabel(user.role)
 }
 
+/**
+ * Owner / manager / back-office account: runs the business from the dashboard and does not sell at
+ * the till (cashier accounts sell on a shift). The app hides the Sell tab and the "open a shift"
+ * prompts for them; they can still open the till from More → Sell at the till.
+ */
+export function isBackOffice(user: AuthUser | null | undefined): boolean {
+  if (!user?.role) return false
+  return user.role === 'owner' || hasPermission(user, 'viewReports') || !hasPermission(user, 'createSales')
+}
+
 /** Where a user lands / falls back to: the register for sellers, the hub otherwise. */
 export function homeRoute(user: AuthUser | null | undefined): '/pos' | '/home' {
-  return hasPermission(user, 'createSales') ? '/pos' : '/home'
+  return isBackOffice(user) ? '/home' : '/pos'
 }
 
 export function roleLabel(role: string | undefined | null): string {

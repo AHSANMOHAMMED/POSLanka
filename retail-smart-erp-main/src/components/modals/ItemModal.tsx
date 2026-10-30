@@ -92,7 +92,11 @@ export function ItemModal({
         handleClose()
       } else {
         const data = await res.json()
-        setError(data.error || 'Failed to create item')
+        // "Validation failed" alone does not say what to fix: name the fields
+        const details = Array.isArray(data.details) ? (data.details as Array<{ field?: string; message?: string }>) : []
+        setError(details.length > 0
+          ? details.slice(0, 4).map((d) => `${d.field || 'Field'}: ${d.message || 'invalid'}`).join(' · ')
+          : data.error || 'Failed to create item')
       }
     } catch {
       setError('Failed to create item')

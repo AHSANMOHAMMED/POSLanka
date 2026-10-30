@@ -443,13 +443,15 @@ export async function POST(request: NextRequest) {
       const wantsStockRow = initialStock > 0 || (minStock || 0) > 0 || !!reorderQty || !!binLocation
       let defaultWarehouseId: string | null = null
       if (wantsStockRow) {
-        // K4: a branch-restricted user's opening stock goes to their own (first) branch
+        // K4: a branch-restricted user's opening stock goes to their own (first) branch.
+        // Everyone else: the default branch, else the first active one (a shop whose branches
+        // carry no default flag must not have every opening stock refused)
         const scope = await getBranchScope(session, tx)
         const defaultWarehouse = await tx.query.warehouses.findFirst({
           where: scope
             ? and(inArray(warehouses.id, scope), eq(warehouses.isActive, true))
-            : and(eq(warehouses.isDefault, true), eq(warehouses.isActive, true)),
-          orderBy: (w, { desc }) => [desc(w.isDefault)],
+            : eq(warehouses.isActive, true),
+          orderBy: (w, { asc, desc }) => [desc(w.isDefault), asc(w.createdAt)],
         })
         defaultWarehouseId = defaultWarehouse?.id ?? null
         // Opening stock must land somewhere: never accept a quantity and silently drop it
@@ -540,7 +542,7 @@ export async function POST(request: NextRequest) {
     if (mapped) return mapped
     if (error instanceof Error && error.message === 'NO_DEFAULT_WAREHOUSE') {
       return NextResponse.json({
-        error: 'Opening stock needs an active default warehouse. Set a default warehouse or create the item without opening stock.',
+        error: 'Opening stock needs an active branch (warehouse). Add or reactivate a branch, or create the item without opening stock.',
         code: 'NO_DEFAULT_WAREHOUSE',
       }, { status: 400 })
     }

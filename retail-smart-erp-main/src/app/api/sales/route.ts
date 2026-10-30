@@ -46,6 +46,7 @@ import { priceSaleCart, recordPromotionRedemptions, PromotionExhaustedError, typ
 import { PricingLineError } from '@/lib/pricing/load-context'
 import { ChequeError, chequeAmountFor, insertCheque } from '@/lib/cheques/cheques'
 import { getBranchScope, branchFilter, canAccessBranch, branchDeniedMessage } from '@/lib/auth/branch-access'
+import { baseQtyFor, roundUnitPrice } from '@/lib/units/conversions'
 
 const LIST_ITEM_EXCLUDED_COLUMNS = { description: false, allergens: false, alternatePartNumbers: false } as const
 
@@ -629,7 +630,8 @@ export async function POST(request: NextRequest) {
       if (!item) continue
 
       const pl = pricing.lines[sourceIndex]
-      const unitPrice = roundCurrency(pl.unitPrice)
+      // 4 dp: a unit derived by a factor (0.345 / g); prices in cents are unchanged
+      const unitPrice = roundUnitPrice(pl.unitPrice)
       const quantity = cartItem.quantity
       const manualDiscount = roundCurrency(cartItem.discount || 0)
       const itemDiscount = roundCurrency(manualDiscount + pl.promotionDiscount)
@@ -672,7 +674,7 @@ export async function POST(request: NextRequest) {
         sourceIndex,
         listPrice: roundCurrency(pl.basePrice),
         isWeighable: !!item.isWeighable,
-        resolvedPrice: roundCurrency(pl.resolvedPrice),
+        resolvedPrice: roundUnitPrice(pl.resolvedPrice),
         manualDiscount,
         promotionDiscount: pl.promotionDiscount,
         promotions: pl.promotions.map(({ promotionId, label, amount }) => ({ promotionId, label, amount })),
@@ -680,13 +682,13 @@ export async function POST(request: NextRequest) {
         priceListId: pl.priceListId,
         uom: pl.uom,
         uomFactor: pl.uomFactor,
-        baseQuantity: Math.round(quantity * pl.uomFactor * 1000) / 1000,
+        baseQuantity: baseQtyFor(quantity, pl.uomFactor),
       })
 
       // W6: offline sale sold at a (cached) price that differs from today's catalog price
       if (isOfflineSale) {
-        const catalog = roundCurrency(pl.resolvedPrice)
-        if (compareCurrency(unitPrice, catalog) !== 0) {
+        const catalog = roundUnitPrice(pl.resolvedPrice)
+        if (Math.abs(unitPrice - catalog) > 0.00005) {
           (saleFlags.priceDifferences ||= []).push({ itemId: item.id, name: item.name, sold: unitPrice, catalog })
         }
       }

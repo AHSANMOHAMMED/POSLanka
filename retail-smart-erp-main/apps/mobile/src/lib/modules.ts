@@ -3,7 +3,7 @@
 // rules (src/lib/navigation/module-sidebar.ts); the server still refuses anything not allowed.
 import { Linking } from 'react-native'
 import { getApiBase, type AuthUser } from './api'
-import { hasPermission, ROLE_PERMISSIONS, type Permission } from './roles'
+import { hasPermission, isBackOffice, ROLE_PERMISSIONS, type Permission } from './roles'
 import type { IconName, Tone } from '../components/ui'
 
 /** Permission check that also accepts keys the mobile role table does not list (effective permissions only). */
@@ -36,16 +36,20 @@ export interface AppFeature {
   /** Business feature switch (GET /api/features) that must not be off. */
   flag?: string
   group: 'sell' | 'stock' | 'reports' | 'manage' | 'modules' | 'device'
+  /** 'only' = owner / manager accounts only, 'never' = counter staff only (see isBackOffice) */
+  backOffice?: 'only' | 'never'
 }
 
 export const FEATURES: AppFeature[] = [
   // Selling
-  { key: 'shifts', title: 'Shift', subtitle: 'Open / close, cash in & out', icon: 'time-outline', tone: 'primary', anyOf: ['createSales'], route: '/shifts', group: 'sell' },
+  { key: 'till', title: 'Sell at the till', subtitle: 'Cashier screen (needs a shift)', icon: 'cart-outline', tone: 'primary', anyOf: ['createSales'], route: '/pos', group: 'sell', backOffice: 'only' },
+  { key: 'shifts', title: 'Shift', subtitle: 'Open / close, cash in & out', icon: 'time-outline', tone: 'primary', anyOf: ['createSales'], route: '/shifts', group: 'sell', backOffice: 'never' },
   { key: 'sales', title: 'Sales history', subtitle: 'Receipts & invoices', icon: 'receipt-outline', tone: 'primary', anyOf: ['createSales', 'manageSales', 'viewReports'], route: '/sales', group: 'sell' },
   { key: 'customers', title: 'Customers', subtitle: 'Balances & contacts', icon: 'people-circle-outline', tone: 'primary', anyOf: ['manageCustomers', 'createSales'], route: '/module/customers', group: 'sell' },
   { key: 'money', title: 'Money out', subtitle: 'Expenses & cheques', icon: 'cash-outline', tone: 'warn', anyOf: ['createSales'], route: '/money', group: 'sell' },
 
   // Stock
+  { key: 'item-new', title: 'Add product', subtitle: 'Name only, rest optional', icon: 'add-circle-outline', tone: 'ok', anyOf: ['manageItems'], route: '/item-new', group: 'stock' },
   { key: 'inventory', title: 'Stock ledger', subtitle: 'Stock movements', icon: 'cube-outline', tone: 'primary', anyOf: ['manageInventory'], route: '/inventory', group: 'stock' },
   { key: 'intake', title: 'Stock intake', subtitle: 'Scan goods received', icon: 'download-outline', tone: 'ok', anyOf: ['submitStockIntake'], route: '/intake', group: 'stock' },
   { key: 'labels', title: 'Labels', subtitle: 'Print barcode labels', icon: 'pricetags-outline', tone: 'warn', anyOf: ['manageItems', 'manageInventory', 'submitStockIntake', 'createSales'], route: '/labels', group: 'stock' },
@@ -80,6 +84,8 @@ export function featureVisible(f: AppFeature, user: AuthUser | null | undefined,
   if (!canAny(user, f.anyOf)) return false
   if (f.businessTypes && !f.businessTypes.includes(user.businessType || 'retail')) return false
   if (f.flag && !hasFlag(f.flag)) return false
+  if (f.backOffice === 'only' && !isBackOffice(user)) return false
+  if (f.backOffice === 'never' && isBackOffice(user)) return false
   return true
 }
 

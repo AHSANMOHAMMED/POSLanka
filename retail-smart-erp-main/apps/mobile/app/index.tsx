@@ -2,7 +2,7 @@ import { Redirect } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { ActivityIndicator, View } from 'react-native'
 import { getToken, getUser, loadSavedSettings, refreshPermissions } from '../src/lib/api'
-import { hasPermission } from '../src/lib/roles'
+import { isBackOffice } from '../src/lib/roles'
 import { getAdminToken } from '../src/lib/adminApi'
 import { registerPushToken } from '../src/lib/notifications'
 import { fetchCurrentShift } from '../src/lib/shift'
@@ -37,7 +37,7 @@ export default function Index() {
       if (cancelled) return
       // Owners / managers (and roles that cannot sell) land on the dashboard; counter staff
       // go straight to the register (or open a shift first).
-      if (!hasPermission(user, 'createSales') || hasPermission(user, 'viewReports')) {
+      if (isBackOffice(user)) {
         setTarget('/home')
         return
       }

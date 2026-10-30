@@ -49,6 +49,7 @@ import { EmptyState, IconButton, ScreenHeader } from '../../src/components/ui'
 import { invoiceNoFromScan, loadBusinessInfo, type BusinessInfo } from '../../src/lib/receipt'
 import { AlertsBell } from '../../src/components/AlertsBell'
 import { useKitchenTickets } from '../../src/lib/kitchenPrint'
+import { changeLineUnit, lineBaseQty, lineUnitChoices, normalizeUnit, setLineQuantity, unitOptionsFor } from '../../src/lib/measureUnits'
 import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCartItems, lineTotal, scanToLine } from '../../src/lib/cartMath'
 import { getLocalItem } from '../../src/lib/localdb'
 import { applyCartQuote, offlineCartQuote, quoteKey, quoteRequestLines, taxableLineTotals, type CartQuote } from '../../src/lib/cartPricing'
@@ -159,6 +160,8 @@ export default function PosScreen() {
   const [offlineSalesVisible, setOfflineSalesVisible] = useState(false)
   const [nowTick, setNowTick] = useState(Date.now())
   const scaleConfigRef = useRef<OfflineBundle['scaleBarcode']>(null)
+  /** The items' own units (box = 12 pcs …) from the offline bundle, for the cart's unit chips */
+  const itemUomsRef = useRef<NonNullable<OfflineBundle['pricing']>['itemUoms']>([])
 
   // Cart / sale
   const [cart, setCart] = useState<CartLine[]>([])
@@ -201,6 +204,7 @@ export default function PosScreen() {
   const applyBundle = useCallback((b: OfflineBundle | null) => {
     if (!b) return
     scaleConfigRef.current = b.scaleBarcode || null
+    itemUomsRef.current = b.pricing?.itemUoms || []
     if (b.complete === false) return
     const cfg = taxConfigFromBundle(b)
     if (cfg) setTaxConfig(cfg)
@@ -558,11 +562,45 @@ export default function PosScreen() {
     setDebouncedQuery(q)
   }
 
+  /** Base units (stock unit) of the same item on the other cart lines */
+  function otherBase(line: CartLine): number {
+    const key = line.itemId || line.id
+    return cart.filter((p) => (p.itemId || p.id) === key && p.id !== line.id).reduce((sum, p) => sum + lineBaseQty(p), 0)
+  }
+  /** The item's own units (box = 12 pcs …); standard ones (yd ↔ m, g ↔ kg, ml ↔ L) are added by measureUnits */
+  function uomsFor(line: CartLine) {
+    const key = line.itemId || line.id
+    return (itemUomsRef.current || []).filter((u) => u.itemId === key)
+  }
+  function setQuantity(id: string, q: number) {
+    const line = cart.find((p) => p.id === id)
+    if (!line) return
+    const r = setLineQuantity(line, q, otherBase(line))
+    if (r.ok === false) {
+      Alert.alert('Insufficient Stock', r.error)
+      return
+    }
+    setCart((prev) => prev.map((p) => (p.id === id ? r.line : p)))
+  }
+  function changeUnit(id: string, uom: string) {
+    const line = cart.find((p) => p.id === id)
+    if (!line) return
+    const opt = unitOptionsFor(line.unit, uomsFor(line)).find((o) => normalizeUnit(o.uom) === normalizeUnit(uom))
+    if (!opt) return
+    const r = changeLineUnit(line, opt, otherBase(line))
+    if (r.ok === false) {
+      Alert.alert('Insufficient Stock', r.error)
+      return
+    }
+    setCart((prev) => prev.map((p) => (p.id === id ? r.line : p)))
+  }
+
   function updateQuantity(id: string, delta: number) {
     const line = cart.find((p) => p.id === id)
     if (!line) return
     const newQty = line.quantity + delta
-    if (delta > 0 && line.trackStock !== false && line.availableStock != null && newQty > line.availableStock) {
+    // stock is in the base unit: a box line of 3 holds 3 × factor pieces
+    if (delta > 0 && line.trackStock !== false && line.availableStock != null && otherBase(line) + lineBaseQty({ quantity: newQty, uomFactor: line.uomFactor }) > line.availableStock) {
       Alert.alert('Insufficient Stock', `Only ${line.availableStock} available for ${line.name}.`)
       return
     }
@@ -1094,6 +1132,9 @@ export default function PosScreen() {
         onClose={() => setCartDrawerVisible(false)}
         cart={cart}
         onUpdateQuantity={updateQuantity}
+        onSetQuantity={setQuantity}
+        onChangeUnit={changeUnit}
+        unitChoices={(l) => (l.id.includes('#') ? null : lineUnitChoices(l, uomsFor(l)))}
         onRemoveItem={removeItem}
         onClearCart={clearCart}
         onHoldCart={holdCart}
@@ -1123,6 +1164,7 @@ export default function PosScreen() {
           cartPromotionDiscount={cartPromotionDiscount}
           couponCodes={couponCodes}
           onPriceChanged={(quote) => { applyQuote(quote as CartQuote); setTenderVisible(false) }}
+          onCustomerChange={setCustomer}
           online={queueState.online}
           business={business}
           cashierName={user?.name}

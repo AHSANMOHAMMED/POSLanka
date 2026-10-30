@@ -97,7 +97,13 @@ export async function priceSaleCart(db: TenantDb, tenantId: string, input: SaleP
     if (overridePrice[i] !== null && same(client, overridePrice[i]!)) return { ...l, basePrice: client, priceLocked: true }
     if (c.priceLocked) return { ...l, basePrice: client, priceLocked: true }
     const r = resolved.lines[i]
-    if (same(client, r.unitPrice)) return l
+    if (same(client, r.unitPrice)) {
+      // 0189: a unit price derived by a factor keeps 4 dp (0.345 / g). A client that rounded it to
+      // cents (0.35, an older app) is charged the price it showed, so its total still matches.
+      const raw = Number(c.unitPrice) || 0
+      if (!r.priceListId && Math.abs(raw - client) < 1e-9 && Math.abs(client - r.unitPrice) > 0.00005) return { ...l, basePrice: client }
+      return l
+    }
     if (same(client, l.basePrice) && r.priceListId) staleLines.push(i)
     // manual price change (or stale catalog price): the line is charged at the client's price
     return { ...l, basePrice: client, priceLocked: true }

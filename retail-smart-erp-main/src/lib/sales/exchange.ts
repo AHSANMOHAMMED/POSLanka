@@ -31,6 +31,7 @@ import { createReturnInTx, SaleFlowError, type CreateReturnResult, type ReturnCo
 import { allocateSaleLineBatches, type BatchAllocation } from '@/lib/inventory/batches'
 import { getTenantSalesSettings, type RestockMode } from './return-settings'
 import { localDateString, saleLineWarranty, applySerialWarranty } from './warranty'
+import { baseQtyFor } from '@/lib/units/conversions'
 
 export interface ExchangeCartItem {
   itemId?: string | null
@@ -139,7 +140,7 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
     return {
       item, name: c.name || item.name, qty, unitPrice, discount, total: roundCurrency(unitPrice * qty - discount), serialIds,
       batchId: c.batchId || null, batchNumber: c.batchNumber || null,
-      uom, factor, baseQty: Math.round(qty * factor * 1000) / 1000, listPrice: roundCurrency(listPrice),
+      uom, factor, baseQty: baseQtyFor(qty, factor), listPrice: roundCurrency(listPrice),
     }
   })
   const taxResult = await recalculateDocumentTax(tx, tenantId,

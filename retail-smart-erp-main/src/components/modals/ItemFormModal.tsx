@@ -719,6 +719,15 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
           setError(`${labels[data.field] || data.field}${data.value ? ` "${data.value}"` : ''} is already used by another ${t.item.toLowerCase()}`)
         } else if (data.code === 'STALE_ITEM' || data.code === 'CONFLICT') {
           setError(`This ${t.item.toLowerCase()} was changed by someone else. Close and reopen it to see the latest version.`)
+        } else if (Array.isArray(data.details) && data.details.length > 0) {
+          // "Validation failed" alone does not say what to fix: name the fields
+          const fieldLabels: Record<string, string> = {
+            name: 'Item name', sellingPrice: 'Selling price', costPrice: 'Cost price', currentStock: 'Opening stock',
+            minStock: 'Low stock alert', sku: 'Item code / ID', barcode: 'Barcode', categoryId: t.category,
+          }
+          setError(data.details.slice(0, 4)
+            .map((d: { field?: string; message?: string }) => `${(d.field && fieldLabels[d.field]) || d.field || 'Field'}: ${d.message || 'invalid'}`)
+            .join(' · '))
         } else {
           setError(data.error || `Failed to save ${t.item.toLowerCase()}`)
         }
@@ -802,7 +811,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                     />
                   </div>
                   <div>
-                    <FormLabel required>Item Code / ID</FormLabel>
+                    <FormLabel>Item Code / ID</FormLabel>
                     <FormInput
                       type="text"
                       value={formData.sku || (editItem?.itemCode ?? '')}
@@ -812,7 +821,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                   </div>
                   <div>
                     <div className="flex items-center justify-between">
-                      <FormLabel required>Barcode</FormLabel>
+                      <FormLabel>Barcode</FormLabel>
                       {!editItem && (
                         <button
                           type="button"
@@ -830,8 +839,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                       type="text"
                       value={formData.barcode}
                       onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
-                      placeholder="Scan or enter barcode"
-                      required
+                      placeholder="Scan, enter or leave empty (auto)"
                     />
                   </div>
                 </div>
@@ -841,7 +849,8 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                     <FormLabel required>Purchase / Cost Price</FormLabel>
                     <FormInput
                       type="number"
-                      step="0.01"
+                      step="any"
+                      min="0"
                       value={formData.costPrice}
                       onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
                       placeholder="0.00"
@@ -853,7 +862,8 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                     <FormLabel required>Selling Price</FormLabel>
                     <FormInput
                       type="number"
-                      step="0.01"
+                      step="any"
+                      min="0"
                       value={formData.sellingPrice}
                       onChange={(e) => setFormData({ ...formData, sellingPrice: e.target.value })}
                       placeholder="0.00"
@@ -1197,7 +1207,8 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                   <FormLabel>Cost Price</FormLabel>
                   <FormInput
                     type="number"
-                    step="0.01"
+                    step="any"
+                    min="0"
                     value={formData.costPrice}
                     onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
                     disabled={editItem !== null}
@@ -1207,7 +1218,8 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                   <FormLabel required>Selling Price</FormLabel>
                   <FormInput
                     type="number"
-                    step="0.01"
+                    step="any"
+                    min="0"
                     value={formData.sellingPrice}
                     onChange={(e) => setFormData({ ...formData, sellingPrice: e.target.value })}
                     required

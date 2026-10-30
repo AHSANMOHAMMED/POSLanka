@@ -12,7 +12,7 @@
 import { and, eq, inArray } from 'drizzle-orm'
 import { NextResponse } from 'next/server'
 import { items, itemUoms } from '@/lib/db/schema'
-import { normalizeUnit, standardFactor } from '@/lib/units/conversions'
+import { baseQtyFor, normalizeUnit, standardFactor } from '@/lib/units/conversions'
 
 export interface LineUnitRequest {
   itemId?: string | null
@@ -89,10 +89,9 @@ export function lineUnitErrorResponse(err: unknown): NextResponse | null {
   return null
 }
 
-/** Base units for `qty` of a line in a unit with `factor` (3 dp, like stock quantities). */
+/** Base units for `qty` of a line in a unit with `factor` (4 dp, like stock quantities). */
 export function toBaseQty(qty: number | string, factor: number | string | null | undefined): number {
-  const f = Number(factor) || 1
-  return Math.round(Number(qty) * f * 1000) / 1000
+  return baseQtyFor(qty, factor)
 }
 
 /** Cost of one base unit from a line's unit cost (cost per box / 12 = cost per piece). */

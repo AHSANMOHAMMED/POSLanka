@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import type { DbTx } from './db-types'
+import { roundStockQty, STOCK_QTY_DP } from '@/lib/units/conversions'
 import { stockAlertListener } from '@/lib/notifications/stock-alerts'
 
 /**
@@ -52,7 +53,8 @@ export interface StockChangeResult {
   warehouseStockId: string
 }
 
-const round3 = (n: number) => Math.round(n * 1000) / 1000
+// Stock keeps 4 dp (numeric(14,4) since 0189): 1.5 yd sold from a metre item moves 1.3716 m.
+const roundQty = roundStockQty
 
 function rows<T>(res: unknown): T[] {
   return ((res as { rows?: T[] }).rows) || []
@@ -111,8 +113,8 @@ export async function applyStockChange(tx: DbTx, input: StockChangeInput): Promi
   `))
   if (!locked) throw new Error('ITEM_NOT_FOUND')
 
-  const before = round3(parseFloat(locked.current_stock || '0'))
-  const minStock = round3(parseFloat(locked.min_stock || '0'))
+  const before = roundQty(parseFloat(locked.current_stock || '0'))
+  const minStock = roundQty(parseFloat(locked.min_stock || '0'))
 
   // 3. idempotent replay — checked after the row lock so a concurrent duplicate
   //    waits for the first writer and then sees its movement.
@@ -140,8 +142,8 @@ export async function applyStockChange(tx: DbTx, input: StockChangeInput): Promi
   }
 
   // 4. compute + policy
-  const delta = round3(mode === 'set' ? qty - before : qty)
-  const after = round3(before + delta)
+  const delta = roundQty(mode === 'set' ? qty - before : qty)
+  const after = roundQty(before + delta)
   if (!input.allowNegative && delta < 0 && after < 0 && locked.track_stock) {
     throw new Error(`INSUFFICIENT_STOCK:${locked.item_name} (need: ${Math.abs(delta)}, have: ${before})`)
   }
@@ -157,7 +159,7 @@ export async function applyStockChange(tx: DbTx, input: StockChangeInput): Promi
 
   await tx.execute(sql`
     UPDATE warehouse_stock
-    SET current_stock = ${after.toFixed(3)}::numeric, updated_at = now()
+    SET current_stock = ${after.toFixed(STOCK_QTY_DP)}::numeric, updated_at = now()
     WHERE id = ${locked.id}
   `)
 
@@ -169,8 +171,8 @@ export async function applyStockChange(tx: DbTx, input: StockChangeInput): Promi
       tenant_id, warehouse_id, item_id, type, quantity, qty_change, stock_before, stock_after,
       reference_type, reference_id, notes, created_by, cost_center_id, source, sign_source, idempotency_key
     ) VALUES (
-      ${tenantId}, ${warehouseId}, ${itemId}, ${type}, ${Math.abs(delta).toFixed(3)}::numeric,
-      ${delta.toFixed(3)}::numeric, ${before.toFixed(3)}::numeric, ${after.toFixed(3)}::numeric,
+      ${tenantId}, ${warehouseId}, ${itemId}, ${type}, ${Math.abs(delta).toFixed(STOCK_QTY_DP)}::numeric,
+      ${delta.toFixed(STOCK_QTY_DP)}::numeric, ${before.toFixed(STOCK_QTY_DP)}::numeric, ${after.toFixed(STOCK_QTY_DP)}::numeric,
       ${referenceType}, ${input.referenceId || null}, ${input.notes || null}, ${input.userId || null},
       ${input.costCenterId || null}, ${source}, 'native', ${input.idempotencyKey || null}
     )

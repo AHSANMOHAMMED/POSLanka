@@ -4,6 +4,7 @@
 // the offline bundle's `pricing` block. POST /api/sales re-prices every sale either way.
 import { priceCart, localClock, type PriceListRule, type PromotionRule } from './pricingEngine'
 import { roundCurrency } from './taxMath'
+import { roundUnitPrice } from './measureUnits'
 import type { CartLineLike } from './cartMath'
 import type { OfflinePricingBundle } from './catalogUnits'
 
@@ -29,7 +30,7 @@ export function quoteRequestLines(cart: CartLineLike[]) {
     itemId: c.itemId || c.id,
     quantity: c.quantity,
     uom: c.uom || undefined,
-    unitPrice: roundCurrency(Number(c.sellingPrice) || 0),
+    unitPrice: roundUnitPrice(Number(c.sellingPrice) || 0),
     priceLocked: !!c.priceLocked,
   }))
 }
@@ -49,7 +50,8 @@ export function applyCartQuote<T extends CartLineLike>(cart: T[], quote: CartQuo
   const next = cart.map((c) => {
     const q = byKey.get(c.id)
     if (!q) return c
-    const sellingPrice = c.priceLocked ? c.sellingPrice : String(roundCurrency(q.unitPrice))
+    // 4 dp like sale_items.unit_price (0.345 / g of a 345 / kg item)
+    const sellingPrice = c.priceLocked ? c.sellingPrice : String(roundUnitPrice(q.unitPrice))
     const promotionDiscount = roundCurrency(q.promotionDiscount || 0)
     const labels = q.promotions.map((p) => p.label)
     const priceListName = c.priceLocked ? null : q.priceListName

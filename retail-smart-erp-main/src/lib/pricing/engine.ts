@@ -537,7 +537,9 @@ function applyBundle(p: PromotionRule, label: string, lines: WorkLine[]): number
 export function priceCart(ctx: PricingContext, input: PricingLineInput[]): PricingResult {
   const lines: WorkLine[] = input.map((l, idx) => {
     const qty = num(l.quantity)
-    const base = round2(Math.max(0, num(l.basePrice)))
+    // 4 dp: a unit price derived by a factor (0.345 / g of a 345 / kg item; sale_items.unit_price
+    // is numeric(14,4)). Prices in cents are unchanged.
+    const base = Math.round((Math.max(0, num(l.basePrice)) + Number.EPSILON) * 10000) / 10000
     return {
       idx,
       key: l.key ?? String(idx),

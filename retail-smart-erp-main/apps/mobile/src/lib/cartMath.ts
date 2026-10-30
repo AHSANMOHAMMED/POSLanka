@@ -2,10 +2,11 @@
 // imports, so scripts/tests/gG-mobile.ts can run it with tsx).
 //
 // Mirrors how POST /api/sales validates a sale:
-//   line total  = round2(round2(unitPrice) × quantity − discount)   (discount = promotions, H5)
+//   line total  = round2(round4(unitPrice) × quantity − discount)   (discount = promotions, H5)
 //   subtotal    = Σ line totals (rejected with "Cart total mismatch" when off by > 0.05)
 //   total       = subtotal + exclusive tax (inclusive tax is already inside the prices)
 import { roundCurrency, type CartTaxResult } from './taxMath'
+import { roundUnitPrice } from './measureUnits'
 
 export interface CartLineLike {
   id: string
@@ -29,9 +30,13 @@ export interface CartLineLike {
   catalogPrice?: number
 }
 
-/** One line's value before promotions: round2(round2(unitPrice) × quantity). */
+/**
+ * One line's value before promotions: round2(unitPrice × quantity), the unit price kept to 4 dp
+ * like sale_items.unit_price (0.345 / g of a 345 / kg item: 250 g = 86.25). A price in cents is
+ * unchanged by the 4 dp rounding.
+ */
 export function lineGross(line: Pick<CartLineLike, 'sellingPrice' | 'quantity'>): number {
-  return roundCurrency(roundCurrency(Number(line.sellingPrice) || 0) * line.quantity)
+  return roundCurrency(roundUnitPrice(Number(line.sellingPrice) || 0) * line.quantity)
 }
 
 /** One line's total exactly as the server computes it (net of the line's promotions). */

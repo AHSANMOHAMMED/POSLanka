@@ -912,8 +912,9 @@ export const warehouseStock = pgTable('warehouse_stock', {
   tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
   warehouseId: uuid('warehouse_id').notNull().references(() => warehouses.id),
   itemId: uuid('item_id').notNull().references(() => items.id),
-  currentStock: decimal('current_stock', { precision: 12, scale: 3 }).notNull().default('0'),
-  reservedStock: decimal('reserved_stock', { precision: 12, scale: 3 }).notNull().default('0'),
+  // 0189: 4 dp so 1.5 yd sold from a metre item moves exactly 1.3716 m
+  currentStock: decimal('current_stock', { precision: 14, scale: 4 }).notNull().default('0'),
+  reservedStock: decimal('reserved_stock', { precision: 14, scale: 4 }).notNull().default('0'),
   minStock: decimal('min_stock', { precision: 12, scale: 3 }).notNull().default('0'),
   reorderQty: decimal('reorder_qty', { precision: 12, scale: 3 }),
   // H3 (0159): order-up-to level for reorder suggestions (null = use reorderQty / minStock)
@@ -2104,7 +2105,7 @@ export const stockMovements = pgTable('stock_movements', {
   warehouseId: uuid('warehouse_id').references(() => warehouses.id), // Nullable for migration
   itemId: uuid('item_id').notNull().references(() => items.id),
   type: stockMovementTypeEnum('type').notNull(),
-  quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull(),
+  quantity: decimal('quantity', { precision: 14, scale: 4 }).notNull(),
   referenceType: varchar('reference_type', { length: 50 }),
   referenceId: uuid('reference_id'),
   notes: text('notes'),
@@ -2112,9 +2113,9 @@ export const stockMovements = pgTable('stock_movements', {
   costCenterId: uuid('cost_center_id').references(() => costCenters.id),
   // W2 stock ledger: signed change + running balance (quantity is always >= 0)
   // NOT NULL; every writer goes through applyStockChange (legacy trigger dropped in 0142).
-  qtyChange: decimal('qty_change', { precision: 12, scale: 3 }).notNull(),
-  stockBefore: decimal('stock_before', { precision: 12, scale: 3 }),
-  stockAfter: decimal('stock_after', { precision: 12, scale: 3 }),
+  qtyChange: decimal('qty_change', { precision: 14, scale: 4 }).notNull(),
+  stockBefore: decimal('stock_before', { precision: 14, scale: 4 }),
+  stockAfter: decimal('stock_after', { precision: 14, scale: 4 }),
   signSource: varchar('sign_source', { length: 20 }),
   source: varchar('source', { length: 20 }),
   idempotencyKey: varchar('idempotency_key', { length: 150 }),
@@ -2610,7 +2611,8 @@ export const saleItems = pgTable('sale_items', {
   itemId: uuid('item_id').references(() => items.id),
   itemName: varchar('item_name', { length: 255 }).notNull(),
   quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull(),
-  unitPrice: decimal('unit_price', { precision: 12, scale: 2 }).notNull(),
+  // 0189: 4 dp for a price derived by a unit factor (0.345 / g of a 345 / kg item)
+  unitPrice: decimal('unit_price', { precision: 14, scale: 4 }).notNull(),
   discount: decimal('discount', { precision: 12, scale: 2 }).notNull().default('0'),
   discountType: discountTypeEnum('discount_type'),
   tax: decimal('tax', { precision: 12, scale: 2 }).notNull().default('0'), // DEPRECATED: unused, use taxAmount instead
@@ -4100,8 +4102,8 @@ export const itemBatches = pgTable('item_batches', {
   warehouseId: uuid('warehouse_id').references(() => warehouses.id),
   manufacturingDate: date('manufacturing_date'),
   expiryDate: date('expiry_date'),
-  initialQuantity: decimal('initial_quantity', { precision: 12, scale: 3 }).notNull(),
-  currentQuantity: decimal('current_quantity', { precision: 12, scale: 3 }).notNull(),
+  initialQuantity: decimal('initial_quantity', { precision: 14, scale: 4 }).notNull(),
+  currentQuantity: decimal('current_quantity', { precision: 14, scale: 4 }).notNull(),
   supplierBatchNumber: varchar('supplier_batch_number', { length: 100 }),
   purchaseReceiptId: uuid('purchase_receipt_id').references(() => purchaseReceipts.id),
   supplierId: uuid('supplier_id').references(() => suppliers.id),
@@ -7207,8 +7209,8 @@ export const saleItemBatches = pgTable('sale_item_batches', {
   tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'cascade' }),
   saleItemId: uuid('sale_item_id').notNull().references(() => saleItems.id, { onDelete: 'cascade' }),
   batchId: uuid('batch_id').notNull().references(() => itemBatches.id),
-  quantity: decimal('quantity', { precision: 12, scale: 3 }).notNull(),
-  returnedQuantity: decimal('returned_quantity', { precision: 12, scale: 3 }).notNull().default('0'),
+  quantity: decimal('quantity', { precision: 14, scale: 4 }).notNull(),
+  returnedQuantity: decimal('returned_quantity', { precision: 14, scale: 4 }).notNull().default('0'),
   allocOrder: integer('alloc_order').notNull().default(0),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })

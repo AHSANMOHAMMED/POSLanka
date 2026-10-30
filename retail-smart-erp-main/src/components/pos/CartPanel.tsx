@@ -11,7 +11,7 @@ import { useCurrency } from '@/hooks/useCurrency'
 import type { CartItem, Customer, Vehicle, HeldSale, SaleForReturn, LoyaltyProgram, POSBusinessConfig, RestaurantTable } from './types'
 import { useEffect, useRef } from 'react'
 import { Kbd } from './Kbd'
-import { normalizeUnit, unitAllowsFraction, type UnitOption } from '@/lib/units/conversions'
+import { conversionText, normalizeUnit, unitAllowsFraction, unitShortName, type UnitOption } from '@/lib/units/conversions'
 
 /** DOM id of the focusable cart line list (keyboard: arrows select, digits = quantity, + - Del) */
 export const POS_CART_LIST_ID = 'pos-cart-list'
@@ -337,6 +337,12 @@ export function CartPanel({
                 ? (unitOptions.find(o => normalizeUnit(o.uom) === normalizeUnit(lineUnit))?.uom ?? unitOptions[0].uom)
                 : ''
               const decimalQty = !!item.isWeighable || unitAllowsFraction(lineUnit) || !!item.sizeSpec
+              // A few units (m · yd · ft · cm, kg · g …): one-tap chips under the line; many: a select
+              const unitChips = unitOptions && unitOptions.length <= 7 ? unitOptions : null
+              // "1.5 yd = 1.3716 m": what stock moves when the line is in another unit
+              const conversion = item.uom && !item.isWeighable
+                ? conversionText(item.quantity, item.uom, item.uomFactor, item.unit)
+                : null
               // Print studio size line: the quantity is the billable area, changed through the size dialog
               const sizeEdit = item.sizeSpec && onEditSize && !isReturnMode ? () => onEditSize(item.cartLineId) : null
               return (
@@ -502,7 +508,7 @@ export function CartPanel({
                     >
                       <Plus size={16} />
                     </button>
-                    {unitOptions ? (
+                    {unitOptions && !unitChips ? (
                       <select
                         aria-label={`Unit of ${item.name}`}
                         title="Unit (select the line and press U to change it)"
@@ -512,12 +518,12 @@ export function CartPanel({
                         className="text-[12px] font-semibold max-w-[6.5rem] border border-slate-200 dark:border-gray-600 rounded px-1 py-1 bg-white dark:bg-gray-800 text-slate-700 dark:text-gray-200"
                       >
                         {unitOptions.map(o => (
-                          <option key={o.uom} value={o.uom}>{o.isBase ? o.uom : o.label}</option>
+                          <option key={o.uom} value={o.uom}>{o.isBase ? unitShortName(o.uom) : o.label}</option>
                         ))}
                       </select>
                     ) : (item.uom || item.unit) && (item.uom || item.unit) !== 'pcs' && (
                       <span className="text-[12px] font-semibold text-slate-500 px-1 select-none">
-                        {item.uom || item.unit}
+                        {unitShortName(item.uom || item.unit)}
                       </span>
                     )}
                   </div>
@@ -549,6 +555,38 @@ export function CartPanel({
                     </div>
                   </div>
                 </div>
+
+                {(unitChips || conversion) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1">
+                    {unitChips?.map(o => {
+                      const active = normalizeUnit(o.uom) === normalizeUnit(unitValue)
+                      return (
+                        <button
+                          key={o.uom}
+                          type="button"
+                          aria-pressed={active}
+                          title={o.isBase ? `Sell in ${unitShortName(o.uom)} (stock unit)` : o.label}
+                          onClick={() => {
+                            onSelectLine?.(item.cartLineId)
+                            if (!active) onChangeUnit?.(item.cartLineId, o.uom)
+                          }}
+                          className={`min-w-[2.25rem] h-7 px-2 rounded-full text-[12px] font-semibold border transition-colors ${
+                            active
+                              ? 'theme-btn-primary text-white border-transparent'
+                              : 'bg-white dark:bg-gray-900 border-slate-200 dark:border-gray-600 text-slate-700 dark:text-gray-200 hover:bg-slate-100 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          {unitShortName(o.uom)}
+                        </button>
+                      )
+                    })}
+                    {conversion && (
+                      <span className="ml-1 text-[12px] font-mono text-slate-600 dark:text-gray-300" data-testid="line-unit-conversion">
+                        {conversion}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
               )
             })}

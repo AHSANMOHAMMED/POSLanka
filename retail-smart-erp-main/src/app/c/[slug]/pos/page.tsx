@@ -108,7 +108,7 @@ import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel } from '@/lib/utils/item-display'
 import { usePriceQuote, lineNet } from '@/components/pos/price-quote'
 import { loadPricingBundleCache } from '@/lib/offline/pricing-cache'
-import { unitOptionsFor, unitPriceFor, unitAllowsFraction, normalizeUnit, type UnitOption } from '@/lib/units/conversions'
+import { unitOptionsFor, unitPriceFor, unitAllowsFraction, normalizeUnit, unitShortName, type UnitOption } from '@/lib/units/conversions'
 import { PosActionsPanel, type PosActionTile } from '@/components/pos/PosActionsPanel'
 import { ScannerTestModal } from '@/components/pos/ScannerTestModal'
 import { SaveQuotationModal, type QuotationLineInput } from '@/components/pos/SaveQuotationModal'
@@ -1318,12 +1318,12 @@ export default function POSPage() {
       ? roundCurrency((line.unitPrice * opt.factor) / oldFactor)
       : unitPriceFor(opt, line.isWeighable ? (line.baseUnitPrice ?? info.basePrice) : info.basePrice)
     let baseName = line.name
-    for (const sfx of [line.displayUnit, line.uom]) {
+    for (const sfx of [line.displayUnit, line.uom, line.uom ? unitShortName(line.uom) : undefined]) {
       if (sfx && baseName.endsWith(` (${sfx})`)) baseName = baseName.slice(0, -(sfx.length + 3))
     }
     setCart(prev => prev.map(c => c.cartLineId !== cartLineId ? c : {
       ...c,
-      name: opt.isBase ? baseName : `${baseName} (${opt.uom})`,
+      name: opt.isBase ? baseName : `${baseName} (${unitShortName(opt.uom)})`,
       quantity: qty,
       unitPrice,
       total: roundCurrency(qty * unitPrice),
@@ -2932,7 +2932,7 @@ export default function POSPage() {
           id: c.cartLineId,
           name: c.name,
           quantity: c.isWeighable && c.weight ? c.weight : c.quantity,
-          unit: c.isWeighable ? (c.unit || 'kg') : (c.uom || undefined),
+          unit: c.isWeighable ? (c.unit || 'kg') : (c.uom ? unitShortName(c.uom) : undefined),
           unitPrice: c.isWeighable && c.weight ? (c.baseUnitPrice ?? roundCurrency(c.total / c.weight)) : c.unitPrice,
           total: c.total,
         })),
@@ -3026,6 +3026,8 @@ export default function POSPage() {
         total: roundCurrency(l.unitPrice * l.quantity - (l.discount || 0) - (l.promotionDiscount || 0)),
         discount: roundCurrency((l.discount || 0) + (l.promotionDiscount || 0)),
         uom: l.uom || null,
+        uomFactor: l.uom ? (l.uomFactor || 1) : null,
+        item: { unit: l.unit || null },
         taxAmount: l.taxAmount,
         taxRate: l.taxRate,
         promotions: l.promotionDiscount ? [{ label: (l.promotionLabels || []).join(', ') || 'Promotion', amount: l.promotionDiscount }] : null,

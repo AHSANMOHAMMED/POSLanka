@@ -1261,6 +1261,13 @@
       "when": 1771446433033,
       "tag": "0188_bank_ledger_for_payment_modes",
       "breakpoints": true
+    },
+    {
+      "idx": 189,
+      "version": "7",
+      "when": 1771446434033,
+      "tag": "0189_measure_precision",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import type { DbTx } from './db-types'
+import { roundStockQty, STOCK_QTY_DP } from '@/lib/units/conversions'
 
 /**
  * D1 — batch (lot) allocation for sales, returns and voids.
@@ -49,7 +50,8 @@ export interface AllocateBatchesResult {
   shortfall: number
 }
 
-const round3 = (n: number) => Math.round(n * 1000) / 1000
+// Batch quantities keep 4 dp like stock (numeric(14,4) since 0189)
+const roundQty = roundStockQty
 
 function rows<T>(res: unknown): T[] {
   return ((res as { rows?: T[] }).rows) || []
@@ -78,7 +80,7 @@ export async function resolveBatchNumber(tx: DbTx, tenantId: string, itemId: str
 }
 
 export async function allocateBatchesFEFO(tx: DbTx, input: AllocateBatchesInput): Promise<AllocateBatchesResult> {
-  const qty = round3(Number(input.qty))
+  const qty = roundQty(Number(input.qty))
   if (!(qty > 0)) return { allocations: [], allocated: 0, shortfall: 0 }
   const { tenantId, warehouseId, itemId } = input
   const label = input.itemName || 'item'
@@ -118,8 +120,8 @@ export async function allocateBatchesFEFO(tx: DbTx, input: AllocateBatchesInput)
     if ((p.expired || p.status === 'expired') && !input.allowExpired) {
       throw new Error(`BATCH_EXPIRED:Batch ${p.batch_number} of ${label} expired on ${p.expiry_date}`)
     }
-    const q = round3(Math.min(left, Math.max(0, parseFloat(p.current_quantity))))
-    if (q > 0) { take.set(p.id, q); left = round3(left - q) }
+    const q = roundQty(Math.min(left, Math.max(0, parseFloat(p.current_quantity))))
+    if (q > 0) { take.set(p.id, q); left = roundQty(left - q) }
   }
 
   if (left > 0) {
@@ -137,15 +139,15 @@ export async function allocateBatchesFEFO(tx: DbTx, input: AllocateBatchesInput)
       })
     for (const b of fefo) {
       if (left <= 0) break
-      const q = round3(Math.min(left, parseFloat(b.current_quantity)))
+      const q = roundQty(Math.min(left, parseFloat(b.current_quantity)))
       if (!(q > 0)) continue
       take.set(b.id, q)
-      left = round3(left - q)
+      left = roundQty(left - q)
     }
   }
 
   if (left > 0 && !input.allowShortfall) {
-    throw new Error(`INSUFFICIENT_BATCH_STOCK:${label} (need: ${qty}, in batches: ${round3(qty - left)})`)
+    throw new Error(`INSUFFICIENT_BATCH_STOCK:${label} (need: ${qty}, in batches: ${roundQty(qty - left)})`)
   }
 
   // Apply in the order chosen (preferred first, then FEFO)
@@ -153,15 +155,15 @@ export async function allocateBatchesFEFO(tx: DbTx, input: AllocateBatchesInput)
     const b = locked.find((x) => x.id === id)!
     await tx.execute(sql`
       UPDATE item_batches
-      SET current_quantity = current_quantity - ${q.toFixed(3)}::numeric,
-          status = CASE WHEN current_quantity - ${q.toFixed(3)}::numeric <= 0 AND status = 'active' THEN 'consumed'::batch_status ELSE status END,
+      SET current_quantity = current_quantity - ${q.toFixed(STOCK_QTY_DP)}::numeric,
+          status = CASE WHEN current_quantity - ${q.toFixed(STOCK_QTY_DP)}::numeric <= 0 AND status = 'active' THEN 'consumed'::batch_status ELSE status END,
           updated_at = now()
       WHERE id = ${id}
     `)
     allocations.push({ batchId: id, batchNumber: b.batch_number, expiryDate: b.expiry_date, quantity: q })
   }
 
-  return { allocations, allocated: round3(qty - left), shortfall: round3(left) }
+  return { allocations, allocated: roundQty(qty - left), shortfall: roundQty(left) }
 }
 
 /** Allocate and record the allocations of one sale line (sale_item_batches). */
@@ -174,7 +176,7 @@ export async function allocateSaleLineBatches(
   for (const a of result.allocations) {
     await tx.execute(sql`
       INSERT INTO sale_item_batches (tenant_id, sale_item_id, batch_id, quantity, alloc_order)
-      VALUES (${input.tenantId}, ${input.saleItemId}, ${a.batchId}, ${a.quantity.toFixed(3)}::numeric, ${order++})
+      VALUES (${input.tenantId}, ${input.saleItemId}, ${a.batchId}, ${a.quantity.toFixed(STOCK_QTY_DP)}::numeric, ${order++})
     `)
   }
   return result
@@ -213,7 +215,7 @@ export interface RestoreBatchesResult {
  * shortfalls have no batch allocation for it).
  */
 export async function restoreSaleLineBatches(tx: DbTx, input: RestoreBatchesInput): Promise<RestoreBatchesResult> {
-  let left = round3(Math.abs(Number(input.qty)))
+  let left = roundQty(Math.abs(Number(input.qty)))
   const restored: RestoredBatch[] = []
   if (!(left > 0)) return { restored, unallocated: 0 }
 
@@ -227,13 +229,13 @@ export async function restoreSaleLineBatches(tx: DbTx, input: RestoreBatchesInpu
   let order = 0
   for (const a of allocs) {
     if (left <= 0) break
-    const outstanding = round3(parseFloat(a.quantity) - parseFloat(a.returned_quantity))
-    const q = round3(Math.min(left, outstanding))
+    const outstanding = roundQty(parseFloat(a.quantity) - parseFloat(a.returned_quantity))
+    const q = roundQty(Math.min(left, outstanding))
     if (!(q > 0)) continue
-    left = round3(left - q)
+    left = roundQty(left - q)
 
     await tx.execute(sql`
-      UPDATE sale_item_batches SET returned_quantity = returned_quantity + ${q.toFixed(3)}::numeric WHERE id = ${a.id}
+      UPDATE sale_item_batches SET returned_quantity = returned_quantity + ${q.toFixed(STOCK_QTY_DP)}::numeric WHERE id = ${a.id}
     `)
 
     const put = await putIntoBatch(tx, {
@@ -250,7 +252,7 @@ export async function restoreSaleLineBatches(tx: DbTx, input: RestoreBatchesInpu
     if (input.returnSaleItemId) {
       await tx.execute(sql`
         INSERT INTO sale_item_batches (tenant_id, sale_item_id, batch_id, quantity, alloc_order)
-        VALUES (${input.tenantId}, ${input.returnSaleItemId}, ${toBatchId}, ${q.toFixed(3)}::numeric, ${order++})
+        VALUES (${input.tenantId}, ${input.returnSaleItemId}, ${toBatchId}, ${q.toFixed(STOCK_QTY_DP)}::numeric, ${order++})
       `)
     }
     restored.push({ fromBatchId: src.id, toBatchId, batchNumber: src.batch_number, expiryDate: src.expiry_date, quantity: q })
@@ -280,7 +282,7 @@ export async function putIntoBatch(tx: DbTx, input: PutIntoBatchInput): Promise<
   src: { id: string; batch_number: string; expiry_date: string | null }
   toBatchId: string
 } | null> {
-  const q = round3(Number(input.qty))
+  const q = roundQty(Number(input.qty))
   const [src] = rows<{
     id: string; batch_number: string; expiry_date: string | null; manufacturing_date: string | null; warehouse_id: string | null
     item_id: string; supplier_id: string | null; supplier_batch_number: string | null; purchase_receipt_id: string | null; status: string
@@ -297,7 +299,7 @@ export async function putIntoBatch(tx: DbTx, input: PutIntoBatchInput): Promise<
   if (sameWarehouse && !input.quarantine) {
     await tx.execute(sql`
       UPDATE item_batches
-      SET current_quantity = current_quantity + ${q.toFixed(3)}::numeric,
+      SET current_quantity = current_quantity + ${q.toFixed(STOCK_QTY_DP)}::numeric,
           status = CASE WHEN status = 'consumed' THEN 'active'::batch_status ELSE status END,
           updated_at = now()
       WHERE id = ${src.id}
@@ -320,7 +322,7 @@ export async function putIntoBatch(tx: DbTx, input: PutIntoBatchInput): Promise<
   if (existing) {
     await tx.execute(sql`
       UPDATE item_batches
-      SET current_quantity = current_quantity + ${q.toFixed(3)}::numeric,
+      SET current_quantity = current_quantity + ${q.toFixed(STOCK_QTY_DP)}::numeric,
           status = CASE WHEN status = 'consumed' THEN 'active'::batch_status ELSE status END,
           updated_at = now()
       WHERE id = ${existing.id}
@@ -334,7 +336,7 @@ export async function putIntoBatch(tx: DbTx, input: PutIntoBatchInput): Promise<
     ) VALUES (
       ${input.tenantId}, ${src.item_id}, ${src.batch_number}, ${input.toWarehouseId},
       ${src.manufacturing_date}::date, ${src.expiry_date}::date,
-      ${q.toFixed(3)}::numeric, ${q.toFixed(3)}::numeric, ${src.supplier_batch_number}, ${src.purchase_receipt_id},
+      ${q.toFixed(STOCK_QTY_DP)}::numeric, ${q.toFixed(STOCK_QTY_DP)}::numeric, ${src.supplier_batch_number}, ${src.purchase_receipt_id},
       ${src.supplier_id}, ${targetStatus}::batch_status,
       ${input.notes ?? null}::text
     )

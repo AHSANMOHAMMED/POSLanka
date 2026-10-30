@@ -49,6 +49,7 @@ import { HP_PLAN_EXISTS, planBlockMessage, planOnSale, returnTouchesPlan } from 
 import { getTenantSalesSettings, type RestockMode } from './return-settings'
 import { recalculateDocumentTax } from '@/lib/utils/tax-recalculate'
 import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
+import { baseQtyFor } from '@/lib/units/conversions'
 
 export type SaleRow = typeof sales.$inferSelect
 export type SaleItemRow = typeof saleItems.$inferSelect
@@ -71,6 +72,7 @@ export class SaleFlowError extends Error {
 
 const EPS = 0.005
 const round3 = (n: number) => Math.round(n * 1000) / 1000
+// base (stock) quantities keep 4 dp: 1.5 yd = 1.3716 m
 const num = (v: string | number | null | undefined) => {
   const n = typeof v === 'number' ? v : parseFloat(v ?? '0')
   return Number.isFinite(n) ? n : 0
@@ -624,7 +626,7 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
       warehouseId: stockWarehouseId,
       itemId: p.itemId,
       mode: 'delta',
-      qty: round3(p.qty * p.uomFactor),
+      qty: baseQtyFor(p.qty, p.uomFactor),
       type: 'in',
       referenceType: quarantine ? 'return_quarantine' : 'return',
       referenceId: returnSale.id,
@@ -644,7 +646,7 @@ export async function createReturnInTx(tx: DbTx, ctx: ReturnContext, input: Crea
     const r = await restoreSaleLineBatches(tx, {
       tenantId,
       saleItemId: p.original.id,
-      qty: round3(p.qty * p.uomFactor),
+      qty: baseQtyFor(p.qty, p.uomFactor),
       toWarehouseId: stockWarehouseId,
       quarantine,
       returnSaleItemId: createdLines[i].id,

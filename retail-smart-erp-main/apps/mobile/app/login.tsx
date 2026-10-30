@@ -24,7 +24,7 @@ import {
   formatBusinessId,
   type AuthUser,
 } from '../src/lib/api'
-import { hasPermission } from '../src/lib/roles'
+import { isBackOffice } from '../src/lib/roles'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { syncNow } from '../src/lib/offlineQueue'
 import { uploadAllPending } from '../src/lib/intakeStore'
@@ -185,7 +185,7 @@ export default function LoginScreen() {
 
       // Roles that cannot sell (stock, purchasing, reports, HR...) land on the hub.
       // Owners / managers land on the dashboard too (shift status + quick actions are there).
-      if (!hasPermission(res.data.user, 'createSales') || hasPermission(res.data.user, 'viewReports')) {
+      if (isBackOffice(res.data.user)) {
         router.replace('/home')
         return
       }

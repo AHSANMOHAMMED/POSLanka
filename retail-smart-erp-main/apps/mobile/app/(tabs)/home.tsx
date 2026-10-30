@@ -5,7 +5,7 @@ import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, Image, u
 import { router, useFocusEffect } from 'expo-router'
 import { Ionicons } from '@expo/vector-icons'
 import { formatBusinessId } from '../../src/lib/api'
-import { displayRole, hasPermission } from '../../src/lib/roles'
+import { displayRole, hasPermission, isBackOffice } from '../../src/lib/roles'
 import { THEME, formatLKR, compactLKR } from '../../src/lib/theme'
 import { useHeaderPad } from '../../src/lib/safeArea'
 import { useSessionUser } from '../../src/lib/session'
@@ -35,6 +35,7 @@ interface QuickAction {
 const QUICK_ACTIONS: QuickAction[] = [
   { key: 'sale', label: 'New sale', icon: 'cart', tone: 'primary', anyOf: ['createSales'], go: () => router.navigate('/pos') },
   { key: 'scan', label: 'Scan item', icon: 'barcode', tone: 'ok', anyOf: ['manageItems', 'manageInventory', 'submitStockIntake', 'createSales'], go: () => router.navigate({ pathname: '/items', params: { scan: String(Date.now()) } }) },
+  { key: 'item-new', label: 'Add product', icon: 'add-circle', tone: 'ok', anyOf: ['manageItems'], go: () => router.push('/item-new') },
   { key: 'intake', label: 'Stock intake', icon: 'download', tone: 'warn', anyOf: ['submitStockIntake'], go: () => router.push('/intake') },
   { key: 'labels', label: 'Print labels', icon: 'pricetags', tone: 'primary', anyOf: ['manageItems', 'manageInventory', 'submitStockIntake', 'createSales'], go: () => router.push('/labels') },
 ]
@@ -73,9 +74,10 @@ export default function HomeScreen() {
     setRefreshing(false)
   }
 
-  const sells = hasPermission(user, 'createSales')
+  // Owners / managers do not sell at the till: no "open a shift" card or New sale shortcut for them
+  const sells = hasPermission(user, 'createSales') && !isBackOffice(user)
   const reports = hasPermission(user, 'viewReports')
-  const actions = QUICK_ACTIONS.filter((a) => canAny(user, a.anyOf))
+  const actions = QUICK_ACTIONS.filter((a) => canAny(user, a.anyOf) && (a.key !== 'sale' || sells))
   const kpiWidth = Math.floor((Math.min(width, 900) - 32 - 10) / 2)
   const offline = !!data?.offline || queue?.online === false
 
@@ -118,7 +120,7 @@ export default function HomeScreen() {
         </View>
 
         {/* Shift status */}
-        {sells ? <ShiftCard data={data} loading={loading} /> : null}
+        {sells || data?.shift ? <ShiftCard data={data} loading={loading} /> : null}
 
         {/* KPIs */}
         {loading && !data ? (

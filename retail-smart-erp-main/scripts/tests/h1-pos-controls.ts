@@ -438,6 +438,54 @@ async function main() {
       const cl = await json(await closeShift(req('POST', `/api/pos-opening-entries/${o.body.id}/close`, { actualAmounts: [{ paymentMethod: 'cash', amount: 1000 }] }), ctx(o.body.id)))
       check('supervisor shift closes balanced and its ledger ties out', cl.status === 200 && cl.body.zReport?.ledger?.tiesOut === true, short(cl.body.zReport?.ledger || cl.body))
     })
+
+    // ---------- 12. split payments as the mobile app sends them (cash + card + credit + cheque)
+    await step('mobile split tenders', async () => {
+      const g = await makeTenant(admin, 'split')
+      tenants.push(g.tenantId)
+      const Z = await newItem(admin, g, 'Saree', 1000, 50)
+      const P = randomUUID()
+      await admin.query(`INSERT INTO pos_profiles (id, tenant_id, name, warehouse_id, allow_credit_sale) VALUES ($1,$2,'Till',$3,true)`, [P, g.tenantId, g.wh])
+      for (const [i, m] of ['cash', 'card', 'bank_transfer', 'cheque'].entries()) {
+        await admin.query(`INSERT INTO pos_profile_payment_methods (tenant_id, pos_profile_id, payment_method, sort_order, is_default) VALUES ($1,$2,$3,$4,$5)`, [g.tenantId, P, m, i, i === 0])
+      }
+      await admin.query(`INSERT INTO pos_profile_users (tenant_id, pos_profile_id, user_id, is_default) VALUES ($1,$2,$3,true)`, [g.tenantId, P, g.cashierId])
+      setTestSession(session(g, 'cashier'))
+      const o = await json(await openShift(req('POST', '/api/pos-opening-entries', { posProfileId: P, openingBalances: [{ paymentMethod: 'cash', amount: 500 }] })))
+      check('split tenant: cashier opens the till', o.status === 200, short(o.body))
+      const gSale = async (body: Record<string, unknown>) => json(await postSale(req('POST', '/api/sales', {
+        clientSaleId: randomUUID(), warehouseId: g.wh, posOpeningEntryId: o.body.id, discount: 0, tax: 0, creditAmount: 0, addOverpaymentToCredit: false,
+        cartItems: [{ itemId: Z, name: 'Saree', quantity: 1, unitPrice: 1000 }], subtotal: 1000, total: 1000, ...body,
+      })))
+      const pays = async (saleId: string) => (await admin.query(`SELECT method, amount::float a FROM payments WHERE sale_id=$1 ORDER BY method`, [saleId])).rows as Array<{ method: string; a: number }>
+
+      const a = await gSale({ paymentMethod: 'cash', paymentSplits: [{ method: 'cash', amount: 400 }, { method: 'card', amount: 600 }], amountPaid: 1000 })
+      const ap = a.status === 200 ? await pays(a.body.id) : []
+      check('cash 400 + card 600 → sale with two payments', a.status === 200 && JSON.stringify(ap) === JSON.stringify([{ method: 'cash', a: 400 }, { method: 'card', a: 600 }]), `${short(a.body)} ${JSON.stringify(ap)}`)
+
+      const b = await gSale({
+        customerId: g.customerId, customerName: 'Kamal Silva', paymentMethod: 'card',
+        paymentSplits: [{ method: 'card', amount: 300 }, { method: 'credit', amount: 300 }, { method: 'cheque', amount: 400 }], amountPaid: 1000,
+        cheque: { chequeNo: '000123', bankName: 'Sampath Bank', chequeDate: new Date().toISOString().slice(0, 10), amount: 400, partyName: 'Kamal Silva' },
+      })
+      check('card 300 + credit 300 + cheque 400 → 200', b.status === 200, short(b.body))
+      if (b.status === 200) {
+        const s = (await admin.query(`SELECT paid_amount::float p, total::float t FROM sales WHERE id=$1`, [b.body.id])).rows[0]
+        check('sale keeps 300 on the customer account (paid 700 of 1000)', s.p === 700 && s.t === 1000, JSON.stringify(s))
+        const ch = (await admin.query(`SELECT amount::float a, cheque_no n FROM cheques WHERE tenant_id=$1`, [g.tenantId])).rows
+        check('the 400 cheque is registered', ch.length === 1 && ch[0].a === 400, JSON.stringify(ch))
+      }
+
+      const c = await gSale({ customerId: g.customerId, customerName: 'Kamal Silva', paymentMethod: 'credit', amountPaid: 0 })
+      check('whole bill on credit (app "Credit" tile) → 200', c.status === 200, short(c.body))
+      const d = await gSale({ paymentMethod: 'bank_transfer', paymentSplits: [{ method: 'bank_transfer', amount: 1000, reference: 'QR-77' }], amountPaid: 1000 })
+      check('LankaQR (bank transfer with reference) → 200', d.status === 200, short(d.body))
+      const e = await gSale({ paymentMethod: 'card', amountPaid: 1000 })
+      check('card (app "Card" tile) → 200', e.status === 200, short(e.body))
+      const over = await gSale({ paymentMethod: 'card', paymentSplits: [{ method: 'card', amount: 800 }, { method: 'cheque', amount: 300 }], amountPaid: 1100,
+        cheque: { chequeNo: '9', bankName: 'BOC', chequeDate: new Date().toISOString().slice(0, 10), amount: 300 } })
+      check('card + cheque above the bill → 400 (the app blocks it first)', over.status === 400, short(over.body))
+    })
   } finally {
     if (!process.env.KEEP_TEST_DATA) for (const t of tenants) await cleanup(admin, t)
     await admin.end()

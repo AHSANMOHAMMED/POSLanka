@@ -19,6 +19,7 @@ import { SAFE_USER } from '@/lib/db/safe-columns'
 import { getSaleLineBatches, restoreSaleLineBatches } from '@/lib/inventory/batches'
 import { assertBranchAccess } from '@/lib/auth/branch-access'
 import { planBlockMessage, planOnSale } from '@/lib/installments/sale-guard'
+import { baseQtyFor } from '@/lib/units/conversions'
 
 // GET single sale
 export async function GET(
@@ -232,7 +233,7 @@ export async function PUT(
             // Only restore the quantity that hasn't already been returned — in base units (H5:
             // a line sold in boxes moves quantity × uom_factor pieces)
             const uomFactor = parseFloat(saleItem.uomFactor || '1') || 1
-            const qty = Math.round(Math.max(0, originalQty - alreadyReturned) * uomFactor * 1000) / 1000
+            const qty = baseQtyFor(Math.max(0, originalQty - alreadyReturned), uomFactor)
 
             if (qty > 0) {
               const input = {
@@ -259,7 +260,7 @@ export async function PUT(
             await restoreSaleLineBatches(tx, {
               tenantId: session.user.tenantId,
               saleItemId: saleItem.id,
-              qty: Math.round(parseFloat(saleItem.quantity) * (parseFloat(saleItem.uomFactor || '1') || 1) * 1000) / 1000,
+              qty: baseQtyFor(parseFloat(saleItem.quantity), parseFloat(saleItem.uomFactor || '1') || 1),
               toWarehouseId: sale.warehouseId,
             })
           }
@@ -517,7 +518,7 @@ export async function PUT(
                   await tx.update(warehouseStock)
                     .set({
                       // 0184: quantities are in the line's unit; the reservation is in base units
-                      reservedStock: sql`LEAST(${warehouseStock.reservedStock} + ${Math.round(restoreQty * (Number(saleItem.uomFactor) || 1) * 1000) / 1000}, ${warehouseStock.currentStock})`,
+                      reservedStock: sql`LEAST(${warehouseStock.reservedStock} + ${baseQtyFor(restoreQty, Number(saleItem.uomFactor) || 1)}, ${warehouseStock.currentStock})`,
                       updatedAt: new Date(),
                     })
                     .where(eq(warehouseStock.id, stock.id))

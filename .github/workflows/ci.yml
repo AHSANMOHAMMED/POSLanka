@@ -117,6 +117,7 @@ jobs:
           npx tsx scripts/tests/l10-printer-setup-script.ts
           npx tsx scripts/tests/l12-receipt-pdf.ts
           npx tsx scripts/tests/l13-split-tenders.ts
+          npx tsx scripts/tests/l16-mobile-pay.ts
 
       - name: Staff accounts
         run: npx tsx scripts/tests/w1-staff.ts
@@ -168,10 +169,10 @@ jobs:
           done
       - name: Branch isolation (staff of one branch cannot see or change another)
         run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/k4-branches.ts
-      - name: Attendance & payroll, hire purchase, document units, recurring/projects, shift collections, labels
+      - name: Attendance & payroll, hire purchase, document units, recurring/projects, shift collections, labels, measure units
         run: |
           npx tsx scripts/tests/print-size-pricing.ts
-          for t in l1-attendance l2-installments l3-document-units l4-recurring-projects l5-loose-ends l6-label-roll l6-label-browser-pdf l11-sticker-setups-save; do
+          for t in l1-attendance l2-installments l3-document-units l4-recurring-projects l5-loose-ends l6-label-roll l6-label-browser-pdf l11-sticker-setups-save l15-measure-units; do
             npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
           done
       - name: Platform (offline sync, backup, API keys, dashboard, read permissions)
@@ -193,6 +194,7 @@ jobs:
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/k3-messaging.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i6-finish.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l9-admin-stock.ts
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l14-item-create.ts
 
   build:
     name: Production build

@@ -126,8 +126,8 @@ export default function AdminLiveScreen() {
                     ))}
                   </View>
                   <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                    <Text style={adminStyles.muted}>{hourly[0]?.hour.slice(11, 16)}</Text>
-                    <Text style={adminStyles.muted}>{hourly[hourly.length - 1]?.hour.slice(11, 16)}</Text>
+                    <Text style={adminStyles.muted}>{localHour(hourly[0]?.hour)}</Text>
+                    <Text style={adminStyles.muted}>{localHour(hourly[hourly.length - 1]?.hour)}</Text>
                   </View>
                 </View>
               ) : null}
@@ -191,3 +191,10 @@ const styles = StyleSheet.create({
   rowVendor: { fontSize: 12, fontWeight: '700', color: THEME.colors.primary, marginTop: 2 },
   rowAmount: { fontSize: 14, fontWeight: '900', color: THEME.colors.text, fontFamily: 'monospace' },
 })
+
+/** Server hour buckets are UTC ("2026-10-30T08:00:00"): shown in this phone's time */
+function localHour(hour: string | undefined): string {
+  if (!hour) return ''
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(hour) ? hour : `${hour}Z`)
+  return Number.isNaN(d.getTime()) ? hour.slice(11, 16) : d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+}

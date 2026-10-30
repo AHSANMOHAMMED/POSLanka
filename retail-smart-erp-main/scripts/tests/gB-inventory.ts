@@ -253,12 +253,18 @@ async function main() {
     await step('opening stock needs a default warehouse', async () => {
       await admin.query(`UPDATE warehouses SET is_default=false WHERE tenant_id=$1`, [B.tenantId])
       setTestSession(session(B))
+      // No default flag: the first active branch takes the opening stock
+      const fb = await json(await createItemRoute(req('POST', { name: 'Kothmale butter', sellingPrice: 900, currentStock: 12 })))
+      const fbStock = fb.body.id ? (await admin.query(`SELECT current_stock::float q FROM warehouse_stock WHERE item_id=$1`, [fb.body.id])).rows : []
+      check('no default flag → opening stock 12 goes to the first active branch', fb.status === 200 && fbStock.length === 1 && fbStock[0].q === 12, JSON.stringify({ b: fb.body, fbStock }).slice(0, 300))
+      await admin.query(`UPDATE warehouses SET is_active=false WHERE tenant_id=$1`, [B.tenantId])
       const c = await json(await createItemRoute(req('POST', { name: 'Prima flour 1kg', sellingPrice: 300, currentStock: 50 })))
-      check('opening stock 50 without default warehouse → 400 (not silently dropped)', c.status === 400 && c.body.code === 'NO_DEFAULT_WAREHOUSE', JSON.stringify(c.body))
+      check('opening stock 50 with no active branch → 400 (not silently dropped)', c.status === 400 && c.body.code === 'NO_DEFAULT_WAREHOUSE', JSON.stringify(c.body))
       const n = await admin.query(`SELECT count(*)::int AS n FROM items WHERE tenant_id=$1 AND name='Prima flour 1kg'`, [B.tenantId])
       check('no item created', n.rows[0].n === 0)
       const ok = await json(await createItemRoute(req('POST', { name: 'Prima flour 1kg', sellingPrice: 300 })))
       check('without opening stock → 200', ok.status === 200)
+      await admin.query(`UPDATE warehouses SET is_active=true WHERE tenant_id=$1`, [B.tenantId])
       await admin.query(`UPDATE warehouses SET is_default=true WHERE id=$1`, [B.wh1])
       setTestSession(session(A))
     })

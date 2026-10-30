@@ -4,7 +4,6 @@ import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { tenants } from '@/lib/db/schema'
 import { adminAuthError, adminAudit, validateAdminSession, withRateLimit, STRICT_LIMIT } from '@/lib/admin'
-import { validateBody } from '@/lib/validation'
 import { logError } from '@/lib/ai/error-logger'
 import { DataError, auditCopy, insertRow, listRows } from '@/lib/admin/vendor-data'
 
@@ -13,6 +12,28 @@ const insertSchema = z.object({ values: z.record(z.string(), z.unknown()) })
 
 async function vendorExists(id: string) {
   return !!(await db.query.tenants.findFirst({ where: eq(tenants.id, id), columns: { id: true } }))
+}
+
+/** Parse { values } as sent: nulls and empty strings kept (same error shape as validateBody) */
+async function readValues<T>(request: NextRequest, schema: z.ZodType<T>): Promise<{ success: true; data: T } | { success: false; response: NextResponse }> {
+  let raw: unknown
+  try {
+    // eslint-disable-next-line custom-rules/no-direct-request-json -- null / '' must reach updateRow (clear a field)
+    raw = await request.json()
+  } catch {
+    return { success: false, response: NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 }) }
+  }
+  const r = schema.safeParse(raw)
+  if (!r.success) {
+    return {
+      success: false,
+      response: NextResponse.json({
+        error: 'Validation failed',
+        details: r.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })),
+      }, { status: 400 }),
+    }
+  }
+  return { success: true, data: r.data }
 }
 
 function dataError(err: unknown) {
@@ -60,7 +81,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const p = paramsSchema.safeParse(await params)
     if (!p.success) return NextResponse.json({ error: 'Unknown table' }, { status: 404 })
     if (!(await vendorExists(p.data.id))) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 })
-    const body = await validateBody(request, insertSchema)
+    // Not validateBody: it drops null / '' values, and here they mean "clear this field"
+    const body = await readValues(request, insertSchema)
     if (!body.success) return body.response
     const row = await insertRow(p.data.id, p.data.table, body.data.values)
     await adminAudit.create(session.superAdminId, 'vendor_data', String(row.id ?? p.data.table), {

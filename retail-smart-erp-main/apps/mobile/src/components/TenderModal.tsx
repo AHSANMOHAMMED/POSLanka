@@ -18,13 +18,16 @@ import { adjustLocalStock, nextOfflineRef } from '../lib/localdb'
 import { calculateCartTax, roundCurrency, type TaxConfig } from '../lib/tax'
 import { cartPayable, cartSubtotal, lineTotal } from '../lib/cartMath'
 import { taxableLineTotals } from '../lib/cartPricing'
-import { allowedTenders, type TenderOption as TenderOptionT } from '../lib/tenderRules'
+import { allowedTenders, TENDER_METHOD, type TenderOption as TenderOptionT } from '../lib/tenderRules'
+import { settleTenders } from '../lib/tenders'
+import { lineBaseQty } from '../lib/measureUnits'
+import * as SecureStore from 'expo-secure-store'
 import { shiftCounterName, shiftWarehouseName, type Shift } from '../lib/shift'
 import { getPrinterSettings, isPrintingEnabled, TRANSPORT_LABELS, type PrinterSettings } from '../lib/printer'
 import { receiptFromSale, type BusinessInfo } from '../lib/receipt'
 import type { ReceiptInput } from '../lib/escpos'
 import type { CartLine } from './CartDrawerModal'
-import type { Customer } from './CustomerPickerModal'
+import { CustomerPickerModal, type Customer } from './CustomerPickerModal'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from './SupervisorPinModal'
 import { PrescriptionSheet, type PrescriptionInput, type PrescriptionRequest } from './PrescriptionSheet'
 import { useHeaderPad } from '../lib/safeArea'
@@ -67,6 +70,8 @@ interface TenderModalProps {
   couponCodes?: string[]
   /** H5: the server re-priced the cart (409 PRICE_CHANGED): the POS shows the new prices */
   onPriceChanged?: (quote: unknown) => void
+  /** Customer picked on this screen (for a credit line); the POS keeps it on the cart */
+  onCustomerChange?: (customer: Customer) => void
 }
 
 /** UI tender options mapped onto the server's payment method enum. */
@@ -79,6 +84,21 @@ const TENDER_LABELS: Record<TenderOption, string> = {
   credit: 'CREDIT',
   cheque: 'CHEQUE',
 }
+
+const METHOD_INFO: Record<TenderOption, { emoji: string; title: string; sub: string }> = {
+  cash: { emoji: '💵', title: 'Cash', sub: 'Notes & coins' },
+  card: { emoji: '💳', title: 'Card', sub: 'Visa / Master / LankaPay' },
+  lankaqr: { emoji: '📱', title: 'LankaQR / Transfer', sub: 'Bank transfer with reference' },
+  cheque: { emoji: '🏦', title: 'Cheque', sub: 'Number, bank and date' },
+  credit: { emoji: '🧾', title: 'Credit', sub: 'On the customer account' },
+}
+const METHOD_ORDER: TenderOption[] = ['cash', 'card', 'lankaqr', 'cheque', 'credit']
+
+/** One payment line on the bill (several lines = split payment) */
+interface PayLine { key: number; method: TenderOption; amount: string }
+
+/** Remembered on this phone: the on-screen number pad is shown */
+const NUMPAD_KEY = 'pos_numpad_on'
 
 /** Sri Lankan banks offered as quick picks for a cheque (any name can be typed). */
 const CHEQUE_BANKS = ['Bank of Ceylon', "People's Bank", 'Commercial Bank', 'Hatton National Bank', 'Sampath Bank', 'Seylan Bank', 'NDB Bank', 'DFCC Bank', 'Nations Trust Bank', 'Pan Asia Bank', 'Union Bank', 'National Savings Bank', 'Cargills Bank', 'Amana Bank']
@@ -116,6 +136,7 @@ export function TenderModal({
   cartPromotionDiscount = 0,
   couponCodes,
   onPriceChanged,
+  onCustomerChange,
 }: TenderModalProps) {
   const headerPad = useHeaderPad()
   // Σ of rounded line totals — what POST /api/sales checks the subtotal against.
@@ -149,14 +170,18 @@ export function TenderModal({
   }, [customer, loyaltyPts, loyaltyProgram, grossPayable])
   const netPayable = roundCurrency(Math.max(0, grossPayable - loyaltyRedeemValue))
 
-  const [tender, setTender] = useState<TenderOption>('cash')
-  const [cashTendered, setCashTendered] = useState<string>('')
+  // Payment lines: one line = a plain cash / card / … sale; more lines = split payment
+  const [lines, setLines] = useState<PayLine[]>([{ key: 0, method: 'cash', amount: '' }])
+  const [activeLine, setActiveLine] = useState(0)
+  const lineKey = useRef(1)
   const [reference, setReference] = useState('')
   // K1: the cheque taken (number, bank, branch, date; post-dated allowed)
   const [cheque, setCheque] = useState({ chequeNo: '', bankName: '', branchName: '', chequeDate: localToday() })
   const [autoPrint, setAutoPrint] = useState(false)
   const [printer, setPrinter] = useState<PrinterSettings | null>(null)
   const [busy, setBusy] = useState(false)
+  const [numpadOn, setNumpadOn] = useState(false)
+  const [pickCustomer, setPickCustomer] = useState(false)
   // H1: supervisor approvals for this cart (credit limit override, …), sent with the sale
   const approvalTokensRef = useRef<string[]>([])
   // Feature switches set by the platform (credit sales, loyalty …)
@@ -166,6 +191,15 @@ export function TenderModal({
   const prescriptionRef = useRef<PrescriptionInput | null>(null)
   const [rxRequest, setRxRequest] = useState<PrescriptionRequest | null>(null)
 
+  useEffect(() => {
+    SecureStore.getItemAsync(NUMPAD_KEY).then((v) => setNumpadOn(v === '1')).catch(() => undefined)
+  }, [])
+  function toggleNumpad() {
+    const next = !numpadOn
+    setNumpadOn(next)
+    SecureStore.setItemAsync(NUMPAD_KEY, next ? '1' : '0').catch(() => undefined)
+  }
+
   // Reset the form each time the modal opens for a (possibly new) cart.
   useEffect(() => {
     if (visible) {
@@ -173,8 +207,8 @@ export function TenderModal({
       setApprovalRequest(null)
       prescriptionRef.current = null
       setRxRequest(null)
-      setTender('cash')
-      setCashTendered(netPayable.toFixed(2))
+      setLines([{ key: 0, method: 'cash', amount: netPayable.toFixed(2) }])
+      setActiveLine(0)
       setReference('')
       setCheque({ chequeNo: '', bankName: '', branchName: '', chequeDate: localToday() })
       setLoyaltyPoints('')
@@ -196,9 +230,9 @@ export function TenderModal({
     return () => { cancelled = true }
   }, [visible, customer?.id, features.flags?.loyalty]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep the cash field in sync when loyalty redemption changes the payable amount
+  // One payment line follows the payable amount when loyalty redemption changes it
   useEffect(() => {
-    if (visible && tender === 'cash') setCashTendered(netPayable.toFixed(2))
+    if (visible) setLines((ls) => (ls.length === 1 ? [{ ...ls[0], amount: netPayable.toFixed(2) }] : ls))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [netPayable])
 
@@ -216,16 +250,104 @@ export function TenderModal({
     ]
   }, [netPayable])
 
-  const numericTendered = parseFloat(cashTendered) || 0
-  const changeDue = roundCurrency(numericTendered - netPayable)
+  const settled = settleTenders(netPayable, lines.map((l) => ({ method: TENDER_METHOD[l.method], amount: parseFloat(l.amount) || 0 })))
+  const single = lines.length === 1 ? lines[0] : null
+  const tender: TenderOption = lines[0]?.method || 'cash'
+  const has = (m: TenderOption) => lines.some((l) => l.method === m && (parseFloat(l.amount) || 0) > 0)
+  const changeDue = settled.change
   const chequeDateValid = /^\d{4}-\d{2}-\d{2}$/.test(cheque.chequeDate) && !Number.isNaN(Date.parse(`${cheque.chequeDate}T00:00:00Z`))
   const chequeComplete = !!cheque.chequeNo.trim() && !!cheque.bankName.trim() && chequeDateValid
   const chequeDays = chequeDateValid
     ? Math.round((Date.parse(`${cheque.chequeDate}T00:00:00Z`) - Date.parse(`${localToday()}T00:00:00Z`)) / 86400000)
     : 0
-  const isTenderSufficient = tender === 'cheque' ? chequeComplete : tender !== 'cash' || changeDue >= -0.009
+  const chequeSplit = settled.splits.find((sp) => sp.method === 'cheque')
+  const isTenderSufficient = !settled.error && settled.balance <= 0.009 && (!has('cheque') || chequeComplete) && (!has('credit') || !!customer)
   const tenders = allowedTenders(shift.posProfile)
-  const creditAllowed = !!customer && shift.posProfile?.allowCreditSale !== false && features.has('credit_customer')
+  /** Why a method cannot be used here (null = usable) */
+  function blockedReason(m: TenderOption): string | null {
+    if (m === 'credit') {
+      if (!features.has('credit_customer')) return 'Credit sales are switched off for this business (super admin → vendor → Features).'
+      if (shift.posProfile?.allowCreditSale === false) return `Credit sales are off on the counter "${shiftCounterName(shift) || 'this counter'}". The owner can allow them on the web: Settings → POS Profiles → the counter → Allow credit sale.`
+      return null
+    }
+    if (m === 'cheque' && !features.has('cheques')) return 'Cheques are switched off for this business.'
+    if (!tenders.has(m)) {
+      const name = METHOD_INFO[m].title
+      return `${name} is not switched on for the counter "${shiftCounterName(shift) || 'this counter'}".\n\nThe owner can switch it on in the web app: Settings → POS Profiles → open the counter → Payment methods → tick ${name} → Save. Then close and open the shift again on this phone.`
+    }
+    return null
+  }
+  const visibleMethods = METHOD_ORDER.filter((m) => (m !== 'cheque' || features.has('cheques')) && (m !== 'credit' || features.has('credit_customer')))
+  const usableMethods = visibleMethods.filter((m) => !blockedReason(m))
+
+  function setLine(i: number, patch: Partial<PayLine>) {
+    setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)))
+  }
+  /** What is still owed without line i (for "Rest") */
+  function restFor(i: number): number {
+    const others = lines.reduce((sum, l, idx) => (idx === i ? sum : sum + (parseFloat(l.amount) || 0)), 0)
+    return roundCurrency(Math.max(0, netPayable - others))
+  }
+  function chooseSingle(m: TenderOption) {
+    const why = blockedReason(m)
+    if (why) {
+      Alert.alert(`${METHOD_INFO[m].title} not available`, why)
+      return
+    }
+    if (m === 'credit' && !customer) {
+      Alert.alert('Customer needed', 'A credit sale is billed to a customer. Pick the customer now?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Pick customer', onPress: () => setPickCustomer(true) },
+      ])
+    }
+    setLines([{ key: lines[0]?.key ?? 0, method: m, amount: netPayable.toFixed(2) }])
+    setActiveLine(0)
+  }
+  function addLine() {
+    const used = new Set(lines.map((l) => l.method))
+    const next = usableMethods.find((m) => !used.has(m)) || usableMethods.find((m) => m !== 'cheque' || !used.has('cheque'))
+    if (!next) {
+      Alert.alert('No other payment method', 'Only cash is switched on for this counter. The owner can add card, credit or cheque on the web: Settings → POS Profiles.')
+      return
+    }
+    // The first line keeps what was typed; the new line takes what is still owed
+    const rest = roundCurrency(Math.max(0, netPayable - lines.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0)))
+    setLines((ls) => [...ls, { key: lineKey.current++, method: next, amount: rest > 0 ? rest.toFixed(2) : '' }])
+    setActiveLine(lines.length)
+  }
+  function removeLine(i: number) {
+    setLines((ls) => ls.filter((_, idx) => idx !== i))
+    setActiveLine(0)
+  }
+  function changeLineMethod(i: number, m: TenderOption) {
+    const why = blockedReason(m)
+    if (why) {
+      Alert.alert(`${METHOD_INFO[m].title} not available`, why)
+      return
+    }
+    if (m === 'cheque' && lines.some((l, idx) => idx !== i && l.method === 'cheque')) {
+      Alert.alert('One cheque per bill', 'This bill already has a cheque line.')
+      return
+    }
+    if (m === 'credit' && !customer) setPickCustomer(true)
+    setLine(i, { method: m })
+  }
+  /** On-screen number pad: types into the active line */
+  function padPress(k: string) {
+    const i = Math.min(activeLine, lines.length - 1)
+    const cur = lines[i]?.amount || ''
+    let next = cur
+    if (k === 'C') next = ''
+    else if (k === '⌫') next = cur.slice(0, -1)
+    else if (k === '.') next = cur.includes('.') ? cur : (cur || '0') + '.'
+    else {
+      const dot = cur.indexOf('.')
+      if (dot >= 0 && cur.length - dot > 2) return
+      next = cur === '0' ? k : cur + k
+    }
+    setLine(i, { amount: next })
+  }
+
   if (!visible) return null
 
   function buildPayload(): Record<string, unknown> {
@@ -246,37 +368,34 @@ export function TenderModal({
       taxTemplateId: c.taxTemplateId || undefined,
     }))
 
-    let paymentMethod: 'cash' | 'card' | 'bank_transfer' | 'credit' | 'cheque'
+    let paymentMethod = TENDER_METHOD[tender]
     let amountPaid: number
-    let creditAmount = 0
+    const creditAmount = 0
     let paymentSplits: Array<{ method: string; amount: number; reference?: string }> | undefined
 
-    switch (tender) {
-      case 'cash':
-        paymentMethod = 'cash'
-        amountPaid = roundCurrency(numericTendered)
-        break
-      case 'card':
-        paymentMethod = 'card'
-        amountPaid = netPayable
-        break
-      case 'lankaqr':
-        // LankaQR settles to the bank account -> bank_transfer with the QR reference.
-        paymentMethod = 'bank_transfer'
-        amountPaid = netPayable
-        paymentSplits = [{ method: 'bank_transfer', amount: netPayable, reference: reference.trim() || undefined }]
-        break
-      case 'cheque':
-        // The cheque covers the bill (no change on a cheque); the server registers it in Cheques
-        paymentMethod = 'cheque'
-        amountPaid = netPayable
-        break
-      case 'credit':
-        // Sell on customer credit: nothing received now.
-        paymentMethod = 'credit'
-        amountPaid = 0
-        creditAmount = 0
-        break
+    if (!single) {
+      // Split payment: exact amounts per method (cash over the rest is change, taken off the cash)
+      paymentSplits = settled.splits.map((sp) => (sp.method === 'bank_transfer' && reference.trim() ? { ...sp, reference: reference.trim() } : sp))
+      paymentMethod = paymentSplits[0]?.method || paymentMethod
+      amountPaid = roundCurrency(settled.received + settled.onAccount)
+    } else {
+      switch (tender) {
+        case 'cash':
+          amountPaid = roundCurrency(parseFloat(single.amount) || 0)
+          break
+        case 'lankaqr':
+          // LankaQR settles to the bank account -> bank_transfer with the QR reference.
+          amountPaid = netPayable
+          paymentSplits = [{ method: 'bank_transfer', amount: netPayable, reference: reference.trim() || undefined }]
+          break
+        case 'credit':
+          // Sell on customer credit: nothing received now.
+          amountPaid = 0
+          break
+        default:
+          // Card / cheque cover the bill (no change); the server registers a cheque in Cheques
+          amountPaid = netPayable
+      }
     }
 
     return {
@@ -304,13 +423,13 @@ export function TenderModal({
       promotionDiscount: cartPromotionDiscount > 0 ? cartPromotionDiscount : undefined,
       couponCodes: couponCodes && couponCodes.length ? couponCodes : undefined,
       prescription: prescriptionRef.current || undefined,
-      cheque: tender === 'cheque'
+      cheque: (single ? tender === 'cheque' : !!chequeSplit)
         ? {
             chequeNo: cheque.chequeNo.trim(),
             bankName: cheque.bankName.trim(),
             branchName: cheque.branchName.trim() || undefined,
             chequeDate: cheque.chequeDate,
-            amount: netPayable,
+            amount: single ? netPayable : chequeSplit?.amount ?? 0,
             partyName: customer?.name || undefined,
           }
         : undefined,
@@ -319,13 +438,23 @@ export function TenderModal({
   }
 
   async function handleCompleteSale() {
-    if (!isTenderSufficient) {
-      if (tender === 'cheque') Alert.alert('Cheque Details', 'Enter the cheque number, bank and date (YYYY-MM-DD).')
-      else Alert.alert('Insufficient Tender', 'Tendered cash is less than the net amount payable.')
+    if (settled.error) {
+      Alert.alert('Check the payments', settled.error)
       return
     }
-    if (tender === 'credit' && !customer) {
-      Alert.alert('Customer Required', 'Link a customer before selling on credit.')
+    if (has('credit') && !customer) {
+      Alert.alert('Customer Required', 'Pick the customer the credit is billed to.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Pick customer', onPress: () => setPickCustomer(true) },
+      ])
+      return
+    }
+    if (settled.balance > 0.009) {
+      Alert.alert('Not fully paid', `${formatLKR(settled.balance)} is still owed. Add it to a payment line (tap "Rest"), or add another payment.`)
+      return
+    }
+    if (has('cheque') && !chequeComplete) {
+      Alert.alert('Cheque Details', 'Enter the cheque number, bank and date (YYYY-MM-DD).')
       return
     }
     if (loyaltyPts > 0 && !customer) {
@@ -338,8 +467,8 @@ export function TenderModal({
     }
 
     const payload = buildPayload()
-    const tenderMethod = TENDER_LABELS[tender]
-    const change = tender === 'cash' ? Math.max(0, changeDue) : 0
+    const tenderMethod = single ? TENDER_LABELS[tender] : Array.from(new Set(lines.filter((l) => (parseFloat(l.amount) || 0) > 0).map((l) => TENDER_LABELS[l.method]))).join(' + ')
+    const change = Math.max(0, changeDue)
 
     setBusy(true)
     try {
@@ -347,7 +476,7 @@ export function TenderModal({
       const splits = payload.paymentSplits as Array<{ method: string; amount: number; reference?: string }> | undefined
       const fallbackPayment = splits?.[0] || { method: String(payload.paymentMethod), amount: Number(payload.amountPaid) || netPayable }
       // local stock is in base units (a box line holds quantity × factor pieces)
-      const stockLines = cart.map((c) => ({ itemId: c.itemId || c.id, quantity: Math.round(c.quantity * (c.uomFactor || 1) * 1000) / 1000 }))
+      const stockLines = cart.map((c) => ({ itemId: c.itemId || c.id, quantity: lineBaseQty(c) }))
       // Buyer particulars for TAX INVOICE printing (name, TIN / VAT number, address when known)
       const buyer = customer
         ? {
@@ -362,7 +491,7 @@ export function TenderModal({
         if (!isQueueablePayload(payload)) {
           Alert.alert(
             'No Connection',
-            'Credit, gift card and loyalty sales cannot be saved offline. Reconnect and try again, or switch to cash/card.'
+            'Credit, gift card and loyalty sales cannot be saved offline. Reconnect and try again, or take cash / card only.'
           )
           return
         }
@@ -374,6 +503,7 @@ export function TenderModal({
           {
             invoiceNo: offlineRef,
             total: netPayable,
+            payments: splits?.length ? splits : undefined,
             subtotal,
             taxAmount: tax,
             createdAt: new Date().toISOString(),
@@ -460,29 +590,25 @@ export function TenderModal({
     }
   }
 
-  const methodCards: Array<{ id: TenderOption; emoji: string; title: string; sub: string; disabled?: boolean }> = [
-    { id: 'cash', emoji: '💵', title: 'Cash', sub: 'Physical tender' },
-    { id: 'card', emoji: '💳', title: 'Card POS', sub: tenders.has('card') ? 'Visa / Master / LankaPay' : 'Not enabled on this counter', disabled: !tenders.has('card') },
-    { id: 'lankaqr', emoji: '📱', title: 'LankaQR', sub: tenders.has('lankaqr') ? 'Bank transfer with reference' : 'Not enabled on this counter', disabled: !tenders.has('lankaqr') },
-    // Cheques switched off by the platform: no cheque card at all
-    ...(features.has('cheques') ? [{ id: 'cheque' as TenderOption, emoji: '🏦', title: 'Cheque', sub: tenders.has('cheque') ? 'Number, bank and date' : 'Not enabled on this counter', disabled: !tenders.has('cheque') }] : []),
-    // Credit sales switched off by the platform: no credit card at all
-    ...(features.has('credit_customer') ? [{ id: 'credit' as TenderOption, emoji: '🧾', title: 'Customer Credit', sub: customer ? `Bill to ${customer.name}` : 'Link a customer first', disabled: !creditAllowed }] : []),
-  ]
+  const cashLineIdx = lines.findIndex((l) => l.method === 'cash')
+  const paidShown = roundCurrency(lines.reduce((sum, l) => sum + (parseFloat(l.amount) || 0), 0))
 
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
       <View style={styles.container}>
         <View style={[styles.header, headerPad]}>
-          <Pressable style={styles.backBtn} onPress={onClose} disabled={busy}>
+          <Pressable style={styles.backBtn} onPress={onClose} disabled={busy} accessibilityLabel="Back to the cart">
             <Text style={styles.backBtnText}>←</Text>
           </Pressable>
           <View style={styles.headerTitleCol}>
-            <Text style={styles.headerTitle}>Payment Tender</Text>
+            <Text style={styles.headerTitle}>Payment</Text>
             <Text style={styles.headerSub} numberOfLines={1}>
               {shiftWarehouseName(shift) || 'Branch'} ▸ {shiftCounterName(shift) || 'Counter'}
             </Text>
           </View>
+          <Pressable style={[styles.padToggle, numpadOn && styles.padToggleOn]} onPress={toggleNumpad} accessibilityRole="switch" accessibilityState={{ checked: numpadOn }}>
+            <Text style={[styles.padToggleText, numpadOn && { color: '#FFF' }]}>🔢 Pad</Text>
+          </Pressable>
           <View style={[styles.liveIndicator, !online && styles.liveIndicatorOffline]}>
             <View style={[styles.pulsingDot, !online && { backgroundColor: THEME.colors.error }]} />
             <Text style={[styles.liveText, !online && { color: THEME.colors.error }]}>{online ? 'Ready' : 'Offline'}</Text>
@@ -490,9 +616,22 @@ export function TenderModal({
         </View>
 
         <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+          {/* Total / Paid / Balance (or Change) */}
           <View style={styles.heroBox}>
-            <Text style={styles.heroLabel}>Net Amount Payable</Text>
-            <Text style={styles.heroAmount}>{formatLKR(netPayable)}</Text>
+            <View style={styles.heroTiles}>
+              <View style={styles.heroTile}>
+                <Text style={styles.heroTileLabel}>Total</Text>
+                <Text style={styles.heroTileValue} numberOfLines={1} adjustsFontSizeToFit>{formatLKR(netPayable)}</Text>
+              </View>
+              <View style={styles.heroTile}>
+                <Text style={styles.heroTileLabel}>Paid</Text>
+                <Text style={styles.heroTileValue} numberOfLines={1} adjustsFontSizeToFit>{formatLKR(paidShown)}</Text>
+              </View>
+              <View style={[styles.heroTile, settled.change > 0 ? styles.heroTileOk : settled.balance > 0.009 ? styles.heroTileWarn : styles.heroTileOk]}>
+                <Text style={styles.heroTileLabel}>{settled.change > 0 ? 'Change' : 'Balance'}</Text>
+                <Text style={styles.heroTileValue} numberOfLines={1} adjustsFontSizeToFit>{formatLKR(settled.change > 0 ? settled.change : settled.balance)}</Text>
+              </View>
+            </View>
             <View style={styles.heroMetaRow}>
               <Text style={styles.heroMetaText}>
                 Subtotal {formatLKR(subtotal)}
@@ -500,99 +639,139 @@ export function TenderModal({
               </Text>
               <Text style={styles.heroItemCountBadge}>{cart.reduce((c, i) => c + i.quantity, 0)} Items</Text>
             </View>
-            {customer ? <Text style={styles.heroCustomer}>👤 {customer.name}</Text> : null}
+            <Pressable style={styles.customerRow} onPress={() => setPickCustomer(true)} accessibilityRole="button">
+              <Text style={styles.heroCustomer} numberOfLines={1}>👤 {customer ? `${customer.name}${customer.phone ? ` · ${customer.phone}` : ''}` : 'Walk-in customer'}</Text>
+              <Text style={styles.customerChange}>{customer ? 'Change' : 'Add customer'}</Text>
+            </Pressable>
           </View>
 
           {!online && (
             <View style={styles.offlineBanner}>
               <Text style={styles.offlineBannerText}>
-                No connection. Cash, card and LankaQR sales will be saved on this device and synced automatically.
+                No connection. Cash, card, LankaQR and cheque sales are saved on this device and synced automatically. Credit needs a connection.
               </Text>
             </View>
           )}
 
-          {tender === 'cash' && (
+          {/* One payment: method tiles */}
+          {single ? (
             <View style={styles.section}>
               <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionTitle}>Quick Cash Denominations</Text>
-                <Text style={styles.sectionHint}>Touch to apply</Text>
+                <Text style={styles.sectionTitle}>Pay by</Text>
+                <Text style={styles.sectionHint}>Tap a method</Text>
               </View>
-              <View style={styles.presetsGrid}>
-                {presets.map((preset, idx) => {
-                  const isSelected = Math.abs(numericTendered - preset.value) < 0.01
+              <View style={styles.methodGrid}>
+                {visibleMethods.map((m) => {
+                  const active = single.method === m
+                  const why = blockedReason(m)
+                  const info = METHOD_INFO[m]
+                  const sub = why ? 'Off on this counter · tap for help' : m === 'credit' ? (customer ? `Bill to ${customer.name}` : 'Pick a customer') : info.sub
                   return (
-                    <Pressable key={idx} style={[styles.presetCard, isSelected && styles.presetCardActive]} onPress={() => setCashTendered(preset.value.toFixed(2))}>
-                      <Text style={[styles.presetSub, isSelected && styles.presetSubActive]}>{preset.label}</Text>
-                      <Text style={[styles.presetVal, isSelected && styles.presetValActive]}>{formatLKR(preset.value).replace('LKR ', '')}</Text>
+                    <Pressable key={m} style={[styles.methodCard, active && styles.methodCardActive, !!why && styles.methodCardDisabled]} onPress={() => chooseSingle(m)} accessibilityRole="button" accessibilityState={{ selected: active, disabled: !!why }}>
+                      <View style={styles.methodIconRow}>
+                        <Text style={styles.methodEmoji}>{info.emoji}</Text>
+                        {active && (
+                          <View style={styles.checkCircle}>
+                            <Text style={styles.checkText}>✓</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text style={[styles.methodTitle, active && { color: THEME.colors.primary }]}>{info.title}</Text>
+                      <Text style={styles.methodSub} numberOfLines={2}>{sub}</Text>
                     </Pressable>
                   )
                 })}
               </View>
             </View>
-          )}
+          ) : null}
 
+          {/* Amount(s): one line, or one row per payment (split) */}
           <View style={styles.section}>
             <View style={styles.sectionHeaderRow}>
-              <Text style={styles.sectionTitle}>Payment Instrument</Text>
-              <Text style={styles.lankaPayBadge}>✓ LankaPay Ready</Text>
-            </View>
-            <View style={styles.methodGrid}>
-              {methodCards.map((m) => {
-                const active = tender === m.id
-                return (
-                  <Pressable
-                    key={m.id}
-                    style={[styles.methodCard, active && styles.methodCardActive, m.disabled && styles.methodCardDisabled]}
-                    disabled={m.disabled}
-                    onPress={() => {
-                      setTender(m.id)
-                      if (m.id !== 'cash') setCashTendered(netPayable.toFixed(2))
-                    }}
-                  >
-                    <View style={styles.methodIconRow}>
-                      <Text style={styles.methodEmoji}>{m.emoji}</Text>
-                      {active && (
-                        <View style={styles.checkCircle}>
-                          <Text style={styles.checkText}>✓</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text style={styles.methodTitle}>{m.title}</Text>
-                    <Text style={styles.methodSub} numberOfLines={1}>
-                      {m.sub}
-                    </Text>
-                  </Pressable>
-                )
-              })}
-            </View>
-          </View>
-
-          {tender === 'cash' && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeaderRow}>
-                <Text style={styles.sectionTitle}>Cash Tendered by Customer</Text>
-                <Pressable onPress={() => setCashTendered('')}>
+              <Text style={styles.sectionTitle}>{single ? (single.method === 'cash' ? 'Cash received' : 'Amount') : 'Payments on this bill'}</Text>
+              {single?.method === 'cash' ? (
+                <Pressable onPress={() => setLine(0, { amount: '' })}>
                   <Text style={styles.clearText}>Clear</Text>
                 </Pressable>
-              </View>
-              <View style={styles.tenderInputRow}>
-                <Text style={styles.tenderCurrencyPrefix}>LKR</Text>
-                <TextInput style={styles.tenderInput} keyboardType="decimal-pad" value={cashTendered} onChangeText={setCashTendered} placeholder="0.00" />
-              </View>
-
-              <View style={[styles.changeBox, changeDue < -0.009 ? styles.changeBoxError : styles.changeBoxSuccess]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.changeLabel, changeDue < -0.009 ? styles.changeLabelError : styles.changeLabelSuccess]}>
-                    {changeDue >= -0.009 ? 'Change Due to Customer' : 'Deficit / Short Tender'}
-                  </Text>
-                  <Text style={styles.changeSub}>{changeDue >= -0.009 ? 'Hand back to customer on completion' : 'Collect remaining cash from customer'}</Text>
-                </View>
-                <Text style={[styles.changeAmount, changeDue < -0.009 ? styles.changeAmountError : styles.changeAmountSuccess]}>{formatLKR(Math.abs(changeDue))}</Text>
-              </View>
+              ) : null}
             </View>
-          )}
 
-          {tender === 'lankaqr' && (
+            {lines.map((l, i) => (
+              <View key={l.key} style={[styles.lineRow, !single && activeLine === i && styles.lineRowActive]}>
+                {!single ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }} keyboardShouldPersistTaps="handled">
+                    {visibleMethods.map((m) => (
+                      <Pressable key={m} style={[styles.lineChip, l.method === m && styles.lineChipActive, !!blockedReason(m) && { opacity: 0.45 }]} onPress={() => changeLineMethod(i, m)}>
+                        <Text style={[styles.lineChipText, l.method === m && styles.lineChipTextActive]}>{METHOD_INFO[m].emoji} {METHOD_INFO[m].title}</Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : null}
+                <View style={styles.lineInputRow}>
+                  <View style={[styles.tenderInputRow, { flex: 1 }]}>
+                    <Text style={styles.tenderCurrencyPrefix}>LKR</Text>
+                    <TextInput
+                      style={styles.tenderInput}
+                      keyboardType="decimal-pad"
+                      value={l.amount}
+                      onFocus={() => setActiveLine(i)}
+                      onChangeText={(v) => setLine(i, { amount: v.replace(/[^0-9.]/g, '') })}
+                      placeholder="0.00"
+                      showSoftInputOnFocus={!numpadOn}
+                    />
+                  </View>
+                  {!single ? (
+                    <>
+                      <Pressable style={styles.restBtn} onPress={() => { setLine(i, { amount: restFor(i).toFixed(2) }); setActiveLine(i) }}>
+                        <Text style={styles.restBtnText}>Rest</Text>
+                      </Pressable>
+                      <Pressable style={styles.removeBtn} onPress={() => removeLine(i)} accessibilityLabel="Remove this payment">
+                        <Text style={styles.removeBtnText}>✕</Text>
+                      </Pressable>
+                    </>
+                  ) : null}
+                </View>
+              </View>
+            ))}
+
+            {/* Quick cash notes for the (first) cash line */}
+            {cashLineIdx >= 0 ? (
+              <View style={[styles.presetsGrid, { marginTop: 10 }]}>
+                {presets.map((preset, idx) => {
+                  const target = single ? netPayable : restFor(cashLineIdx)
+                  const value = idx === 0 ? target : preset.value
+                  const isSelected = Math.abs((parseFloat(lines[cashLineIdx].amount) || 0) - value) < 0.01
+                  return (
+                    <Pressable key={idx} style={[styles.presetCard, isSelected && styles.presetCardActive]} onPress={() => { setLine(cashLineIdx, { amount: value.toFixed(2) }); setActiveLine(cashLineIdx) }}>
+                      <Text style={[styles.presetSub, isSelected && styles.presetSubActive]}>{idx === 0 && !single ? 'Rest' : preset.label}</Text>
+                      <Text style={[styles.presetVal, isSelected && styles.presetValActive]}>{formatLKR(value).replace('LKR ', '')}</Text>
+                    </Pressable>
+                  )
+                })}
+              </View>
+            ) : null}
+
+            {numpadOn ? (
+              <View style={styles.pad}>
+                {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '⌫'].map((k) => (
+                  <Pressable key={k} style={({ pressed }) => [styles.padKey, pressed && styles.padKeyPressed]} onPress={() => padPress(k)}>
+                    <Text style={styles.padKeyText}>{k}</Text>
+                  </Pressable>
+                ))}
+                <Pressable style={({ pressed }) => [styles.padKey, styles.padKeyWide, pressed && styles.padKeyPressed]} onPress={() => padPress('C')}>
+                  <Text style={[styles.padKeyText, { color: THEME.colors.error }]}>Clear</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {settled.error ? <Text style={styles.lineError}>{settled.error}</Text> : null}
+
+            <Pressable style={styles.addPayBtn} onPress={addLine} accessibilityRole="button">
+              <Text style={styles.addPayText}>＋ Add payment (split: cash + card + credit …)</Text>
+            </Pressable>
+          </View>
+
+          {has('lankaqr') && (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>LankaQR / Transfer Reference</Text>
               <TextInput
@@ -606,7 +785,7 @@ export function TenderModal({
             </View>
           )}
 
-          {tender === 'cheque' && (
+          {has('cheque') && (
             <View style={styles.section}>
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.sectionTitle}>Cheque Details</Text>
@@ -649,18 +828,24 @@ export function TenderModal({
                 onChangeText={(v) => setCheque((c) => ({ ...c, chequeDate: v.replace(/[^0-9-]/g, '').slice(0, 10) }))}
                 keyboardType="numbers-and-punctuation"
               />
-              <Text style={styles.toggleSub}>The cheque is for the full amount; no change is given. It appears under Money out & cheques until it is deposited and cleared.</Text>
+              <Text style={styles.toggleSub}>No change is given on a cheque. It appears under Money out & cheques until it is deposited and cleared.</Text>
             </View>
           )}
 
-          {tender === 'credit' && customer && (
+          {has('credit') && (
             <View style={[styles.section, { backgroundColor: THEME.colors.secondaryLight }]}>
-              <Text style={[styles.sectionTitle, { color: THEME.colors.onSecondaryContainer }]}>Credit Sale</Text>
-              <Text style={styles.creditText}>
-                {formatLKR(netPayable)} will be added to {customer.name}'s outstanding balance
-                {customer.balance != null ? ` (current ${formatLKR(customer.balance)})` : ''}
-                {customer.creditLimit != null ? `, limit ${formatLKR(customer.creditLimit)}` : ''}.
-              </Text>
+              <Text style={[styles.sectionTitle, { color: THEME.colors.onSecondaryContainer }]}>Credit (on account)</Text>
+              {customer ? (
+                <Text style={styles.creditText}>
+                  {formatLKR(settled.onAccount || (single ? netPayable : 0))} will be added to {customer.name}'s outstanding balance
+                  {customer.balance != null ? ` (current ${formatLKR(customer.balance)})` : ''}
+                  {customer.creditLimit != null ? `, limit ${formatLKR(customer.creditLimit)}` : ''}.
+                </Text>
+              ) : (
+                <Pressable style={styles.pickCustomerBtn} onPress={() => setPickCustomer(true)}>
+                  <Text style={styles.pickCustomerText}>👤 Pick the customer to bill</Text>
+                </Pressable>
+              )}
             </View>
           )}
 
@@ -738,6 +923,14 @@ export function TenderModal({
           }}
         />
       ) : null}
+      <CustomerPickerModal
+        visible={pickCustomer}
+        onClose={() => setPickCustomer(false)}
+        onSelect={(c) => {
+          setPickCustomer(false)
+          onCustomerChange?.(c)
+        }}
+      />
       <SupervisorPinModal
         request={approvalRequest}
         onCancel={() => setApprovalRequest(null)}
@@ -773,7 +966,39 @@ const styles = StyleSheet.create({
   pulsingDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: THEME.colors.tertiary },
   liveText: { fontSize: 10, fontWeight: '700', color: THEME.colors.tertiary },
   scroll: { flex: 1, padding: 16 },
-  heroBox: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: THEME.colors.border, marginBottom: 16 },
+  heroBox: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: THEME.colors.border, marginBottom: 16 },
+  heroTiles: { flexDirection: 'row', gap: 8, alignSelf: 'stretch', marginBottom: 10 },
+  heroTile: { flex: 1, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 8, backgroundColor: THEME.colors.primary, alignItems: 'center' },
+  heroTileOk: { backgroundColor: THEME.colors.tertiary },
+  heroTileWarn: { backgroundColor: THEME.colors.secondary },
+  heroTileLabel: { fontSize: 11, fontWeight: '800', color: 'rgba(255,255,255,0.85)', textTransform: 'uppercase', letterSpacing: 0.5 },
+  heroTileValue: { fontSize: 17, fontWeight: '900', color: '#FFFFFF', marginTop: 2 },
+  customerRow: { marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 10, alignSelf: 'stretch', justifyContent: 'center' },
+  customerChange: { fontSize: 12, fontWeight: '800', color: THEME.colors.primary },
+  padToggle: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: THEME.colors.border, marginRight: 8 },
+  padToggleOn: { backgroundColor: THEME.colors.primary, borderColor: THEME.colors.primary },
+  padToggleText: { fontSize: 12, fontWeight: '800', color: THEME.colors.text },
+  lineRow: { marginBottom: 10, borderRadius: 12, padding: 2 },
+  lineRowActive: { borderWidth: 1.5, borderColor: THEME.colors.primary, padding: 8 },
+  lineInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  lineChip: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, borderWidth: 1, borderColor: THEME.colors.border, backgroundColor: THEME.colors.surfaceContainerLow, marginRight: 6 },
+  lineChipActive: { backgroundColor: THEME.colors.primary, borderColor: THEME.colors.primary },
+  lineChipText: { fontSize: 12, fontWeight: '700', color: THEME.colors.text },
+  lineChipTextActive: { color: '#FFF' },
+  restBtn: { height: 56, paddingHorizontal: 14, borderRadius: 12, backgroundColor: THEME.colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
+  restBtnText: { fontSize: 13, fontWeight: '800', color: THEME.colors.primary },
+  removeBtn: { height: 56, width: 44, borderRadius: 12, backgroundColor: THEME.colors.errorLight, alignItems: 'center', justifyContent: 'center' },
+  removeBtnText: { fontSize: 16, fontWeight: '800', color: THEME.colors.error },
+  lineError: { marginTop: 8, fontSize: 12, fontWeight: '700', color: THEME.colors.error },
+  addPayBtn: { marginTop: 12, minHeight: 48, borderRadius: 12, borderWidth: 1.5, borderStyle: 'dashed', borderColor: THEME.colors.primary, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 },
+  addPayText: { fontSize: 13, fontWeight: '800', color: THEME.colors.primary, textAlign: 'center' },
+  pad: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  padKey: { width: '31.5%', height: 54, borderRadius: 12, backgroundColor: THEME.colors.surfaceContainerLow, borderWidth: 1, borderColor: THEME.colors.border, alignItems: 'center', justifyContent: 'center' },
+  padKeyWide: { width: '100%' },
+  padKeyPressed: { backgroundColor: THEME.colors.primaryLight },
+  padKeyText: { fontSize: 22, fontWeight: '800', color: THEME.colors.text },
+  pickCustomerBtn: { marginTop: 8, minHeight: 44, borderRadius: 10, backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: THEME.colors.secondaryContainer },
+  pickCustomerText: { fontSize: 14, fontWeight: '800', color: THEME.colors.onSecondaryContainer },
   heroLabel: { fontSize: 11, fontWeight: '700', color: THEME.colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5 },
   heroAmount: { fontSize: 32, fontWeight: '800', color: THEME.colors.primary, marginVertical: 4 },
   heroMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'center' },

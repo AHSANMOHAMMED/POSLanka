@@ -22,6 +22,8 @@ interface PaymentDeposit {
   periodMonths?: number
   isWalletDeposit?: boolean
   pendingCompanyId?: string | null
+  pendingCompany?: { name?: string | null } | null
+  tenant?: { name?: string | null } | null
   createdAt: string
   account?: { email?: string; fullName?: string } | null
   subscription?: { status?: string; tenant?: { name?: string; slug?: string } | null } | null
@@ -40,16 +42,32 @@ export default function AdminApprovalsScreen() {
   const { can } = useAdminUser()
   const canReview = can('billing')
 
+  const [count, setCount] = useState(0)
   const load = useCallback(
     async (silent = false) => {
       if (!silent) setLoading(true)
       setError(null)
-      const res = await adminGet<any>(`/api/sys-control/payments?status=${filter}`)
-      if (!res.ok) {
-        setError(res.error)
+      // Every slip in this state (the server pages by 100), not only the first page
+      const all: PaymentDeposit[] = []
+      let failed: string | null = null
+      let total = 0
+      for (let page = 1; page <= 20; page++) {
+        const res = await adminGet<any>(`/api/sys-control/payments?status=${filter}&page=${page}&pageSize=100`)
+        if (!res.ok) {
+          failed = res.error
+          break
+        }
+        const chunk = adminList<PaymentDeposit>(res.data, 'payments')
+        all.push(...chunk)
+        total = Number(res.data?.statusCounts?.[filter] ?? res.data?.pagination?.total ?? all.length) || all.length
+        if (chunk.length < 100 || all.length >= Number(res.data?.pagination?.total ?? 0)) break
+      }
+      if (failed && all.length === 0) {
+        setError(failed)
         setRows([])
       } else {
-        setRows(adminList<PaymentDeposit>(res.data, 'payments'))
+        setRows(all)
+        setCount(Math.max(total, all.length))
       }
       setLoading(false)
       setRefreshing(false)
@@ -89,13 +107,14 @@ export default function AdminApprovalsScreen() {
 
   function describe(p: PaymentDeposit): string {
     if (p.isWalletDeposit) return 'Wallet top-up'
-    if (p.pendingCompanyId) return 'New company activation'
+    if (p.pendingCompanyId) return p.pendingCompany?.name ? `${p.pendingCompany.name} · new company activation` : 'New company activation'
+    if (p.tenant?.name && !p.subscription?.tenant?.name) return `${p.tenant.name} · payment`
     if (p.subscription?.tenant?.name) return `${p.subscription.tenant.name} · renewal ${p.periodMonths || 1} mo`
     return `Subscription · ${p.periodMonths || 1} mo`
   }
 
   return (
-    <AdminShell title="Payment Approvals" subtitle={`${rows.length} ${filter}`} tab="approvals">
+    <AdminShell title="Payment Approvals" subtitle={`${count || rows.length} ${filter}`} tab="approvals">
       <View style={[adminStyles.segment, { paddingHorizontal: 16, paddingTop: 12 }]}>
         {(['pending', 'approved', 'rejected'] as Filter[]).map((f) => (
           <Pressable key={f} style={[adminStyles.segmentBtn, filter === f && adminStyles.segmentBtnActive]} onPress={() => setFilter(f)}>

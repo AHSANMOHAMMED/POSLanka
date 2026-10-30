@@ -9,6 +9,7 @@ import { THEME } from '../../src/lib/theme'
 import { IS_ADMIN_APP } from '../../src/lib/appVariant'
 import { useSessionUser } from '../../src/lib/session'
 import { canAny } from '../../src/lib/modules'
+import { isBackOffice } from '../../src/lib/roles'
 import { subscribe as subscribeQueue } from '../../src/lib/offlineQueue'
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name']
@@ -34,7 +35,8 @@ export default function TabsLayout() {
   if (IS_ADMIN_APP) return <Redirect href="/admin/pulse" />
   if (user === null) return <Redirect href="/login" />
 
-  const canSell = !!user && canAny(user, SELL_PERMS)
+  // Owners / managers run the business from Home; the till (Sell) is for cashier accounts
+  const canSell = !!user && canAny(user, SELL_PERMS) && !isBackOffice(user)
   const canItems = !!user && canAny(user, ITEMS_PERMS)
   const canReports = !!user && canAny(user, REPORT_PERMS)
 

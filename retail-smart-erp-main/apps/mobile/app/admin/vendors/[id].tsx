@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { View, Text, ScrollView, Pressable, Switch, Alert, ActivityIndicator, RefreshControl, StyleSheet } from 'react-native'
+import { View, Text, ScrollView, Pressable, Switch, Alert, ActivityIndicator, RefreshControl, StyleSheet, Modal, TextInput } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
-import { adminGet, adminPut, useAdminUser } from '../../../src/lib/adminApi'
+import { adminGet, adminPost, adminPut, useAdminUser } from '../../../src/lib/adminApi'
 import { THEME, formatLKR } from '../../../src/lib/theme'
 import { ErrorView, InlineNotice, LoadingView } from '../../../src/components/StateViews'
 import { AdminVendorStaff, type AdminStaffRow } from '../../../src/components/admin/AdminVendorStaff'
@@ -29,7 +29,7 @@ interface VendorDetail {
   userCount: number
   subscription?: { status: string; currentPeriodEnd?: string | null; trialEndsAt?: string | null; tier?: { name: string } | null } | null
   branches: Array<{ id: string; name: string; isActive?: boolean }>
-  counters: Array<{ id: string; name: string; isActive?: boolean }>
+  counters: Array<{ id: string; name: string; status?: string | null }>
 }
 
 interface RangeTotals {
@@ -93,32 +93,38 @@ export default function AdminVendorDetailScreen() {
     load()
   }, [load])
 
-  async function toggleLock() {
+  const [suspendOpen, setSuspendOpen] = useState(false)
+  const [suspendReason, setSuspendReason] = useState('')
+
+  // Suspend / reactivate go through the vendor actions (audited with a reason; reactivating also
+  // resumes a billing-locked or archived subscription, like the web console)
+  async function runAction(body: { action: 'suspend'; reason: string } | { action: 'reactivate' }) {
     if (!vendor) return
-    const locking = vendor.status !== 'locked'
-    Alert.alert(
-      locking ? 'Lock Vendor?' : 'Unlock Vendor?',
-      locking
-        ? `${vendor.name} will be locked out of skyERPOS until unlocked. Open shifts cannot continue.`
-        : `${vendor.name} will be set back to active and can trade again.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: locking ? 'Lock' : 'Unlock',
-          style: locking ? 'destructive' : 'default',
-          onPress: async () => {
-            setBusy('lock')
-            const res = await adminPut<{ success: boolean; vendor?: Partial<VendorDetail> }>(`/api/sys-control/vendors/${vendor.id}`, { status: locking ? 'locked' : 'active' })
-            setBusy(null)
-            if (!res.ok) {
-              Alert.alert('Update Failed', res.error)
-              return
-            }
-            setVendor((prev) => (prev ? { ...prev, status: locking ? 'locked' : 'active', lockedAt: locking ? new Date().toISOString() : null, lockedReason: locking ? 'admin_locked' : null } : prev))
-          },
-        },
-      ]
-    )
+    setBusy('lock')
+    const res = await adminPost<{ success: boolean; status?: string; warning?: string; message?: string }>(`/api/sys-control/vendors/${vendor.id}/actions`, body)
+    setBusy(null)
+    if (!res.ok) {
+      Alert.alert('Update Failed', res.error)
+      return
+    }
+    setSuspendOpen(false)
+    setSuspendReason('')
+    const status = res.data?.status || (body.action === 'suspend' ? 'suspended' : 'active')
+    setVendor((prev) => (prev ? { ...prev, status, lockedAt: status === 'active' ? null : new Date().toISOString(), lockedReason: status === 'active' ? null : 'admin_suspended' } : prev))
+    if (res.data?.warning) Alert.alert('Reactivated', res.data.warning)
+    load(true)
+  }
+
+  function toggleLock() {
+    if (!vendor) return
+    if (vendor.status === 'active') {
+      setSuspendOpen(true)
+      return
+    }
+    Alert.alert('Reactivate vendor?', `${vendor.name} (now ${vendor.status}) will be set back to active and can trade again.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Reactivate', onPress: () => runAction({ action: 'reactivate' }) },
+    ])
   }
 
   async function toggleFlag(flag: string, value: boolean) {
@@ -139,7 +145,7 @@ export default function AdminVendorDetailScreen() {
 
   const relevantFeatures = featureDefs.filter((d) => d.applies || showOtherFeatures)
   const featureGroups = Array.from(new Set(relevantFeatures.map((d) => d.group)))
-  const locked = vendor?.status === 'locked'
+  const locked = !!vendor && vendor.status !== 'active'
 
   return (
     <AdminShell title={vendor?.name || 'Vendor'} subtitle={vendor ? `${vendor.slug} • ${businessTypeLabel(vendor.businessType)}` : undefined} tab="vendors" back>
@@ -180,12 +186,12 @@ export default function AdminVendorDetailScreen() {
             ) : null}
             {locked ? (
               <Text style={[adminStyles.muted, { color: THEME.colors.error, marginTop: 4 }]}>
-                Locked {vendor.lockedAt ? timeAgo(vendor.lockedAt) : ''}{vendor.lockedReason ? ` (${vendor.lockedReason})` : ''}
+                {vendor.status.charAt(0).toUpperCase() + vendor.status.slice(1)} {vendor.lockedAt ? timeAgo(vendor.lockedAt) : ''}{vendor.lockedReason ? ` (${vendor.lockedReason})` : ''}
               </Text>
             ) : null}
             {canManage ? (
               <Pressable style={[locked ? adminStyles.primaryBtn : adminStyles.dangerBtn, { marginTop: 12 }, busy === 'lock' && { opacity: 0.6 }]} onPress={toggleLock} disabled={busy === 'lock'}>
-                {busy === 'lock' ? <ActivityIndicator color="#FFF" /> : <Text style={adminStyles.primaryBtnText}>{locked ? '🔓 Unlock vendor' : '🔒 Lock vendor'}</Text>}
+                {busy === 'lock' ? <ActivityIndicator color="#FFF" /> : <Text style={adminStyles.primaryBtnText}>{locked ? '🔓 Reactivate vendor' : '🔒 Suspend vendor'}</Text>}
               </Pressable>
             ) : null}
           </Card>
@@ -308,18 +314,39 @@ export default function AdminVendorDetailScreen() {
               <SectionTitle>POS counters</SectionTitle>
               <Card>
                 {vendor.counters.map((c) => (
-                  <ListRow key={c.id} title={c.name} right={<Pill text={c.isActive === false ? 'inactive' : 'active'} tone={c.isActive === false ? 'muted' : 'ok'} />} />
+                  <ListRow key={c.id} title={c.name} right={<Pill text={c.status || 'active'} tone={statusTone(c.status || 'active')} />} />
                 ))}
               </Card>
             </>
           ) : null}
         </ScrollView>
       )}
+      <Modal visible={suspendOpen} transparent animationType="fade" onRequestClose={() => setSuspendOpen(false)}>
+        <View style={styles.modalBg}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Suspend {vendor?.name}?</Text>
+            <Text style={adminStyles.muted}>Staff cannot sign in (web and app) until reactivated. Data is kept. The reason goes into the audit log.</Text>
+            <TextInput style={styles.modalInput} placeholder="Reason (e.g. unpaid subscription)" placeholderTextColor={THEME.colors.textSubtle} value={suspendReason} onChangeText={setSuspendReason} autoFocus />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+              <Pressable style={[adminStyles.primaryBtn, { flex: 1, backgroundColor: THEME.colors.textMuted }]} onPress={() => setSuspendOpen(false)}>
+                <Text style={adminStyles.primaryBtnText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={[adminStyles.dangerBtn, { flex: 1 }, (suspendReason.trim().length < 3 || busy === 'lock') && { opacity: 0.5 }]} disabled={suspendReason.trim().length < 3 || busy === 'lock'} onPress={() => runAction({ action: 'suspend', reason: suspendReason.trim() })}>
+                {busy === 'lock' ? <ActivityIndicator color="#FFF" /> : <Text style={adminStyles.primaryBtnText}>Suspend</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </AdminShell>
   )
 }
 
 const styles = StyleSheet.create({
+  modalBg: { flex: 1, backgroundColor: 'rgba(15,23,42,0.5)', justifyContent: 'center', padding: 20 },
+  modalCard: { backgroundColor: '#FFFFFF', borderRadius: 16, padding: 18 },
+  modalTitle: { fontSize: 17, fontWeight: '800', color: THEME.colors.text, marginBottom: 6 },
+  modalInput: { marginTop: 12, borderWidth: 1, borderColor: THEME.colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: THEME.colors.text },
   flagRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: THEME.colors.border },
   flagTitle: { fontSize: 13, fontWeight: '700', color: THEME.colors.text },
   groupTitle: { fontSize: 11, fontWeight: '800', color: THEME.colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 },

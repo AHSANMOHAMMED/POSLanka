@@ -4,7 +4,6 @@ import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { tenants } from '@/lib/db/schema'
 import { adminAuthError, adminAudit, validateAdminSession, withRateLimit, STRICT_LIMIT } from '@/lib/admin'
-import { validateBody } from '@/lib/validation'
 import { logError } from '@/lib/ai/error-logger'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { DataError, auditCopy, deleteRow, getRow, updateRow } from '@/lib/admin/vendor-data'
@@ -21,6 +20,28 @@ const PERMISSION_TABLES = new Set(['users', 'custom_roles', 'role_permission_ove
 
 async function vendorExists(id: string) {
   return !!(await db.query.tenants.findFirst({ where: eq(tenants.id, id), columns: { id: true } }))
+}
+
+/** Parse { values } as sent: nulls and empty strings kept (same error shape as validateBody) */
+async function readValues<T>(request: NextRequest, schema: z.ZodType<T>): Promise<{ success: true; data: T } | { success: false; response: NextResponse }> {
+  let raw: unknown
+  try {
+    // eslint-disable-next-line custom-rules/no-direct-request-json -- null / '' must reach updateRow (clear a field)
+    raw = await request.json()
+  } catch {
+    return { success: false, response: NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 }) }
+  }
+  const r = schema.safeParse(raw)
+  if (!r.success) {
+    return {
+      success: false,
+      response: NextResponse.json({
+        error: 'Validation failed',
+        details: r.error.issues.map((i) => ({ field: i.path.join('.'), message: i.message })),
+      }, { status: 400 }),
+    }
+  }
+  return { success: true, data: r.data }
 }
 
 function dataError(err: unknown) {
@@ -57,7 +78,8 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     const p = paramsSchema.safeParse(await params)
     if (!p.success) return NextResponse.json({ error: 'Row not found' }, { status: 404 })
     if (!(await vendorExists(p.data.id))) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 })
-    const body = await validateBody(request, updateSchema)
+    // Not validateBody: it drops null / '' values, and here they mean "clear this field"
+    const body = await readValues(request, updateSchema)
     if (!body.success) return body.response
     const { before, after } = await updateRow(p.data.id, p.data.table, p.data.rowId, body.data.values)
     if (PERMISSION_TABLES.has(p.data.table)) invalidatePermissionCache(p.data.id)

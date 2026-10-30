@@ -11,6 +11,7 @@ import {
 import { Ionicons } from '@expo/vector-icons'
 import { THEME, formatLKR } from '../lib/theme'
 import { cartSubtotal, lineTotal } from '../lib/cartMath'
+import { conversionText, lineAllowsFraction, lineUnitChoices, normalizeUnit, parseLineQuantity, unitShortName, type UnitOption } from '../lib/measureUnits'
 
 export interface CartLine {
   /** Cart line key. Equals the item id except for scale-weighed lines (`<itemId>#<n>`). */
@@ -36,6 +37,8 @@ export interface CartLine {
   promotionLabels?: string[]
   priceListName?: string | null
   catalogPrice?: number
+  /** measures: price of one base unit, kept once the line changed unit (lib/measureUnits) */
+  baseSellingPrice?: number
 }
 
 interface CartDrawerModalProps {
@@ -60,6 +63,48 @@ interface CartDrawerModalProps {
   taxInclusive?: boolean
   /** Amount payable (subtotal + exclusive tax) computed by the parent with the cart maths. */
   totalPayable?: number
+  /**
+   * Measures: type a quantity (1.5) on the line. Without it the line only has the +/- stepper.
+   * The parent checks stock (lib/measureUnits setLineQuantity) and updates the cart.
+   */
+  onSetQuantity?: (id: string, quantity: number) => void
+  /**
+   * Measures: sell the line in another unit (m · yd · ft · cm, kg · g, L · ml …). Chips show only
+   * when this is given. The parent applies lib/measureUnits changeLineUnit.
+   */
+  onChangeUnit?: (id: string, uom: string) => void
+  /** Units a line can be sold in (default: standard units of the line's base unit). */
+  unitChoices?: (line: CartLine) => UnitOption[] | null
+}
+
+function QtyBox({ line, onSetQuantity }: { line: CartLine; onSetQuantity?: (id: string, quantity: number) => void }) {
+  const [text, setText] = React.useState<string | null>(null)
+  const fraction = lineAllowsFraction(line)
+  if (!onSetQuantity) {
+    return (
+      <View style={styles.countBox}>
+        <Text style={styles.countText}>{line.quantity}</Text>
+      </View>
+    )
+  }
+  return (
+    <View style={styles.countBox}>
+      <TextInput
+        value={text ?? String(line.quantity)}
+        onFocus={() => setText(String(line.quantity))}
+        onChangeText={setText}
+        onEndEditing={() => {
+          const q = text == null ? null : parseLineQuantity(text, fraction)
+          setText(null)
+          if (q != null && q !== line.quantity) onSetQuantity(line.id, q)
+        }}
+        keyboardType={fraction ? 'decimal-pad' : 'number-pad'}
+        selectTextOnFocus
+        accessibilityLabel={`Quantity of ${line.name}`}
+        style={[styles.countText, styles.countInput]}
+      />
+    </View>
+  )
 }
 
 export function CartDrawerModal({
@@ -79,6 +124,9 @@ export function CartDrawerModal({
   taxLabel = 'Tax',
   taxInclusive = false,
   totalPayable: totalPayableProp,
+  onSetQuantity,
+  onChangeUnit,
+  unitChoices,
 }: CartDrawerModalProps) {
   if (!visible) return null
 
@@ -120,6 +168,9 @@ export function CartDrawerModal({
               contentContainerStyle={{ paddingBottom: 16 }}
               renderItem={({ item }) => {
                 const itemTotal = lineTotal(item)
+                const units = onChangeUnit ? (unitChoices ? unitChoices(item) : lineUnitChoices(item)) : null
+                const current = normalizeUnit(item.uom || item.unit)
+                const conversion = item.uom ? conversionText(item.quantity, item.uom, item.uomFactor, item.unit) : null
                 return (
                   <Pressable style={styles.cartRow} onLongPress={() => onRemoveItem(item.id)} delayLongPress={400} accessibilityHint="Long-press to remove">
                     <View style={styles.itemInfo}>
@@ -130,13 +181,33 @@ export function CartDrawerModal({
                         {item.barcode ? `Barcode: ${item.barcode}` : item.sku ? `SKU: ${item.sku}` : 'Standard Item'}
                       </Text>
                       <Text style={styles.unitPrice}>
-                        {formatLKR(item.sellingPrice)} {item.uom ? `per ${item.uom}` : 'each'}
+                        {formatLKR(item.sellingPrice)} {item.uom ? `per ${unitShortName(item.uom)}` : units ? `per ${unitShortName(item.unit)}` : 'each'}
                         {item.priceListName ? ` · ${item.priceListName}` : ''}
                       </Text>
                       {!!item.promotionDiscount && item.promotionDiscount > 0 && (
                         <Text style={[styles.unitPrice, { color: '#15803d' }]}>
                           {(item.promotionLabels || []).join(', ')} −{formatLKR(item.promotionDiscount)}
                         </Text>
+                      )}
+                      {conversion && <Text style={styles.conversion}>{conversion}</Text>}
+                      {units && (
+                        <View style={styles.chipRow}>
+                          {units.map((o) => {
+                            const active = normalizeUnit(o.uom) === current
+                            return (
+                              <Pressable
+                                key={o.uom}
+                                onPress={() => { if (!active) onChangeUnit?.(item.id, o.uom) }}
+                                style={[styles.chip, active && styles.chipActive]}
+                                accessibilityRole="button"
+                                accessibilityState={{ selected: active }}
+                                accessibilityLabel={`Sell in ${o.label}`}
+                              >
+                                <Text style={[styles.chipText, active && styles.chipTextActive]}>{unitShortName(o.uom)}</Text>
+                              </Pressable>
+                            )
+                          })}
+                        </View>
                       )}
                     </View>
 
@@ -149,9 +220,7 @@ export function CartDrawerModal({
                         >
                           <Ionicons name="remove" size={20} color={THEME.colors.primary} />
                         </Pressable>
-                        <View style={styles.countBox}>
-                          <Text style={styles.countText}>{item.quantity}</Text>
-                        </View>
+                        <QtyBox line={item} onSetQuantity={onSetQuantity} />
                         <Pressable
                           style={styles.stepBtn}
                           onPress={() => onUpdateQuantity(item.id, 1)}
@@ -244,6 +313,13 @@ export function CartDrawerModal({
 }
 
 const styles = StyleSheet.create({
+  countInput: { minWidth: 44, paddingVertical: 0, textAlign: 'center' },
+  conversion: { marginTop: 2, fontSize: 12, color: '#334155', fontWeight: '600' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  chip: { minWidth: 36, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, borderWidth: 1, borderColor: '#cbd5e1', backgroundColor: '#fff', alignItems: 'center' },
+  chipActive: { backgroundColor: THEME.colors.primary, borderColor: THEME.colors.primary },
+  chipText: { fontSize: 13, fontWeight: '700', color: '#334155' },
+  chipTextActive: { color: '#fff' },
   backdrop: {
     flex: 1,
     backgroundColor: 'rgba(15, 23, 42, 0.65)',

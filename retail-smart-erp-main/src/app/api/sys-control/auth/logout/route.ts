@@ -8,10 +8,12 @@ export async function POST(request: NextRequest) {
     const session = await validateAdminSession({ permission: 'self', allowPendingSetup: true })
 
     if (session) {
-      await destroyAdminSession()
+      // The signed-in session (cookie or the app's bearer token)
+      await destroyAdminSession(session.sessionToken)
     }
 
-    // Redirect to login page after logout
+    // The app (bearer) wants JSON; the web console is redirected to the login page
+    if (request.headers.get('authorization')?.startsWith('Bearer ')) return NextResponse.json({ ok: true })
     return NextResponse.redirect(publicUrl(request, '/sys-control/login'))
   } catch (error) {
     logError('api/sys-control/auth/logout', error)

@@ -25,6 +25,10 @@ export interface ColumnInfo {
   kind: ColumnKind
   required: boolean
   hasDefault: boolean
+  /** Column accepts no value (NULL) */
+  nullable: boolean
+  /** NOT NULL but filled by a database trigger when a new row leaves it empty */
+  autoFilled?: boolean
   /** Hidden and never written (hashes, tokens, keys) */
   secret: boolean
   /** Not editable (id, tenant_id, created/updated timestamps, generated) */
@@ -80,6 +84,11 @@ const READ_ONLY_REASON: Record<string, string> = {
 /** Columns kept by the app's own writers: stock counts change through the vendor's Stock tab (movement + GL) */
 const LOCKED_COLUMNS: Record<string, ReadonlySet<string>> = {
   warehouse_stock: new Set(['current_stock', 'reserved_stock']),
+}
+
+/** NOT NULL columns a BEFORE INSERT trigger fills when left empty (drizzle/triggers: items_fill_item_code) */
+const DB_FILLED_COLUMNS: Record<string, ReadonlySet<string>> = {
+  items: new Set(['item_code']),
 }
 
 const SECRET_RE = /(_hash$|^password$|token|secret|api_key$|^otp|_otp$|private_key)/i
@@ -192,13 +201,16 @@ function columnInfo(def: TableDef): ColumnInfo[] {
   const refs = def.refs
   return Array.from(def.columns.entries()).map(([name, { column }]) => {
     const secret = SECRET_RE.test(name)
+    const autoFilled = !!DB_FILLED_COLUMNS[def.info.name]?.has(name)
     const readOnly = secret || (def.isProfile ? PROFILE_LOCKED.has(name) : SYSTEM_COLUMNS.has(name)) || column.columnType === 'PgSerial'
       || !!LOCKED_COLUMNS[def.info.name]?.has(name)
     return {
       name,
       kind: kindOf(column),
-      required: column.notNull && !column.hasDefault && !readOnly,
+      required: column.notNull && !column.hasDefault && !readOnly && !autoFilled,
       hasDefault: column.hasDefault,
+      nullable: !column.notNull,
+      ...(autoFilled ? { autoFilled } : {}),
       secret,
       readOnly,
       ...(column.enumValues?.length ? { enumValues: [...column.enumValues] } : {}),
@@ -224,12 +236,17 @@ function serialize(def: TableDef, row: Record<string, unknown>): Record<string, 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function coerce(info: ColumnInfo, raw: unknown): unknown {
+function coerce(info: ColumnInfo, raw: unknown, mode: 'insert' | 'update'): unknown {
   if (raw === undefined) return undefined
-  const blank = raw === null || (typeof raw === 'string' && raw.trim() === '' && info.kind !== 'text')
+  const blank = raw === null || (typeof raw === 'string' && raw.trim() === '')
   if (blank) {
-    if (info.required) throw new DataError(`${info.name} is required`, 400, info.name)
-    return null
+    // Empty = no value: NULL where the column allows it (an empty barcode / SKU must not be stored
+    // as '' — that collides with the next empty one on the unique indexes)
+    if (info.nullable) return null
+    // NOT NULL: a new row falls back to the database default (or trigger); otherwise a value is needed
+    if (mode === 'insert' && (info.hasDefault || info.autoFilled)) return undefined
+    if (mode === 'update' && info.kind === 'text' && typeof raw === 'string' && !info.autoFilled) return raw
+    throw new DataError(`${info.name} is required`, 400, info.name)
   }
   const bad = (what: string) => new DataError(`${info.name}: ${what}`, 400, info.name)
   switch (info.kind) {
@@ -286,7 +303,7 @@ function toValues(def: TableDef, input: Record<string, unknown>, mode: 'insert' 
     const info = infos.get(name)
     if (!info) throw new DataError(`Unknown column ${name}`, 400, name)
     if (info.readOnly) continue
-    const v = coerce(info, raw)
+    const v = coerce(info, raw, mode)
     if (v !== undefined) values[def.columns.get(name)!.key] = v
   }
   if (mode === 'insert') {

@@ -162,7 +162,25 @@ export async function validateAdminSession(need: AdminNeed): Promise<AdminSessio
 
   if (found.pending && !options.allowPendingSetup) return null
   if (!adminCan(found.session.role, options.permission)) return null
+  await slideSession(found.session, sessionToken, now)
   return found.session
+}
+
+/** Activity keeps the session alive (15 min idle limit, not 15 min after sign-in); written at most once a minute. */
+async function slideSession(session: AdminSession, sessionToken: string, now: Date): Promise<void> {
+  if (now.getTime() - new Date(session.lastActivityAt).getTime() < 60_000) return
+  await db.update(adminSessions)
+    .set({ lastActivityAt: now, expiresAt: new Date(now.getTime() + SESSION_TIMEOUT_MS) })
+    .where(eq(adminSessions.id, session.id))
+    .catch(() => undefined)
+  if (sessionToken.startsWith('sa_')) return
+  try {
+    // Route handlers can refresh the cookie; Server Components cannot set cookies (ignored there)
+    const isHttps = (process.env.NEXTAUTH_URL?.startsWith('https://') ?? false) || process.env.COOKIE_SECURE === 'true'
+    ;(await cookies()).set(SESSION_COOKIE_NAME, sessionToken, { httpOnly: true, secure: isHttps, sameSite: 'lax', maxAge: SESSION_TIMEOUT_MS / 1000, path: '/' })
+  } catch {
+    /* read-only cookie store */
+  }
 }
 
 /**

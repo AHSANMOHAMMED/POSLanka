@@ -23,6 +23,7 @@ import {
   type ReceiptSettings,
 } from './receipt-settings'
 import { buildInvoiceVerifyUrl } from './invoice-verify'
+import { conversionText, unitShortName } from '@/lib/units/conversions'
 
 type Num = string | number | null | undefined
 
@@ -55,6 +56,8 @@ export interface ReceiptSaleItemSource {
   taxRate?: Num
   /** H5: unit sold (sale_items.uom) and promotions applied (sale_items.promotions; cart = share of a bill promotion) */
   uom?: string | null
+  /** base units per 1 uom (sale_items.uom_factor): prints "1.5 yd = 1.3716 m" under the line */
+  uomFactor?: Num | null
   promotions?: Array<{ label: string; amount: Num; cart?: boolean }> | null
   /** 0179: warranty captured at sale time (sale_items.warranty_months / warranty_until). */
   warrantyMonths?: number | null
@@ -380,7 +383,7 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
       barcode: clean(it.barcode ?? it.item?.barcode) || null,
       qty,
       qtyText: formatQty(qty),
-      unit: it.uom || (it.unit ?? null),
+      unit: it.uom ? unitShortName(it.uom) : (it.unit ?? null),
       unitPrice: num(it.unitPrice),
       total: num(it.total),
       // manual line discount only: the line's promotions print as notes below
@@ -388,6 +391,10 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
       // H5: line promotions print under the line (the bill promotion share prints in the totals)
       notes: [
         ...(args.lineNotes?.[idx] || []),
+        ...(() => {
+          const c = it.uom && it.uomFactor != null ? conversionText(qty, it.uom, num(it.uomFactor), it.item?.unit ?? it.unit ?? null) : null
+          return c ? [c] : []
+        })(),
         ...(s.showWarranty !== false ? warrantyNote(it) : []),
         ...((it.promotions || []).filter((p) => !p.cart && num(p.amount) > 0).map((p) => `${p.label} -${num(p.amount).toFixed(2)}`)),
       ],

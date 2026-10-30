@@ -14,7 +14,7 @@
  */
 import { sql } from 'drizzle-orm'
 import type { TenantDb } from '@/lib/db/tenant-context'
-import { normalizeUnit, standardFactor } from '@/lib/units/conversions'
+import { normalizeUnit, roundUnitPrice, storedStandardFactor } from '@/lib/units/conversions'
 import {
   priceCart, localClock,
   type PricingContext, type PriceListRule, type PromotionRule, type PricingLineInput, type PricingResult, type PromotionType,
@@ -243,14 +243,17 @@ export async function resolvePricingLines(db: TenantDb, tenantId: string, lines:
       const u = uoms.get(`${l.itemId}|${uom}`)
       if (u) {
         factor = Number(u.factor) || 1
-        basePrice = u.selling_price != null ? Number(u.selling_price) : Math.round(base * factor * 100) / 100
+        // base × factor keeps 4 dp (0.345 / g of a 345 / kg item); sale_items.unit_price is numeric(14,4)
+        basePrice = u.selling_price != null ? Number(u.selling_price) : roundUnitPrice(base * factor)
         lineUom = u.uom.toLowerCase()
       } else {
-        // A standard unit of the same measure (g for a kg item, yard for a metre item)
-        const std = standardFactor(uom, item.unit || '')
+        // A standard unit of the same measure (g for a kg item, yard for a metre item). The
+        // factor is rounded as sale_items.uom_factor stores it, so voids / returns move the same
+        // base quantity as the sale.
+        const std = storedStandardFactor(uom, item.unit || '')
         if (std == null) throw new PricingLineError('UOM_NOT_FOUND', l.itemId, l.uom)
         factor = std
-        basePrice = Math.round(base * factor * 100) / 100
+        basePrice = roundUnitPrice(base * factor)
         lineUom = normalizeUnit(uom)
       }
     }

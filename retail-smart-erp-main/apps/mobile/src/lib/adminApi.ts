@@ -90,6 +90,8 @@ export async function clearAdminSession(): Promise<void> {
 }
 
 export async function adminLogout(): Promise<void> {
+  // End the session on the server too (the token would otherwise stay valid until it idles out)
+  await adminApi('/api/sys-control/auth/logout', { method: 'POST' }, { timeoutMs: 5000, skipUnauthorizedHandler: true }).catch(() => undefined)
   await clearAdminSession()
   router.replace('/login')
 }
