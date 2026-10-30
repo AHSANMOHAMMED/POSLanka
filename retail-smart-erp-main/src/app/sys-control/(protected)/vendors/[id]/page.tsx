@@ -69,6 +69,7 @@ import { formatBusinessId } from '@/lib/tenant/business-id-format'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
 import { FEATURE_DEFS, FEATURE_GROUPS, featureAppliesTo } from '@/lib/features/flags'
 import { VendorImportCard } from './VendorImportCard'
+import { VendorBusinessTab } from './VendorBusinessTab'
 import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
 
 /* ------------------------------------------------------------------ types */
@@ -149,7 +150,7 @@ interface Detail {
 interface Totals { netSales: number; receipts: number; avgBasket: number }
 interface Analytics { totals: { today: Totals; '7d': Totals; '30d': Totals } }
 
-type Tab = 'overview' | 'staff' | 'stock' | 'billing' | 'features' | 'activity'
+type Tab = 'overview' | 'business' | 'staff' | 'stock' | 'billing' | 'features' | 'activity'
 type Dialog = null | 'suspend' | 'reactivate' | 'extend' | 'plan' | 'password' | 'welcome' | 'archive' | 'impersonate'
 
 const ROLE_LABEL: Record<string, string> = {
@@ -182,6 +183,11 @@ function activityText(a: Detail['activity'][number]): string {
   if (a.resource === 'impersonate') return 'Opened the vendor app as its owner'
   if (a.resource === 'tenant' && a.action === 'create') return 'Created the vendor'
   if (a.resource === 'tenant_feature_flags') return 'Changed feature switches'
+  if (a.resource === 'vendor_data_export') {
+    if (d.op === 'table_export') return `Exported the ${String(d.table).replace(/_/g, ' ')} table`
+    if (d.op === 'items_export') return `Exported the item report (${d.rows} items)`
+    return Array.isArray(d.groups) ? `Exported data: ${d.groups.join(', ')}` : 'Exported all of the vendor’s data'
+  }
   if (a.resource === 'vendor_stock') return `Changed stock counts of ${d.count} item${d.count === 1 ? '' : 's'}${d.warehouse ? ` in ${d.warehouse}` : ''}${d.note ? ` — ${d.note}` : ''}`
   if (a.resource === 'payment') return a.action === 'approve' ? 'Approved a bank transfer' : 'Rejected a bank transfer'
   if (a.resource === 'subscription') return a.action === 'extend' ? 'Changed the subscription period' : 'Updated the subscription'
@@ -412,6 +418,7 @@ export default function VendorDetailPage() {
         onChange={setTab}
         options={[
           { value: 'overview', label: 'Overview' },
+          ...(canImpersonate ? [{ value: 'business' as const, label: 'Sales, stock & profit' }] : []),
           { value: 'staff', label: `Staff ${data.staff.length}` },
           ...(canImpersonate ? [{ value: 'stock' as const, label: 'Stock' }] : []),
           { value: 'billing', label: 'Billing' },
@@ -695,6 +702,7 @@ export default function VendorDetailPage() {
         </div>
       )}
 
+      {tab === 'business' && canImpersonate && <VendorBusinessTab vendorId={v.id} />}
       {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={v.businessType} branches={v.branches.filter((b) => b.isActive)} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
       {tab === 'stock' && canImpersonate && (
         <div className="space-y-5">

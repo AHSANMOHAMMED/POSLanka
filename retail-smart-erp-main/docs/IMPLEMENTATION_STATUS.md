@@ -224,3 +224,13 @@ Verification: fresh DB 0000–0175, 53 suites / 2,260 checks pass (new k4 branch
 - **Dev setup:** the `poslanka-pg` database container now restarts automatically after a reboot.
 
 Verification: fresh DB 0000–0177, 53 suites / 2,313 checks pass; 15 roles × 204 pages crawled with 0 problems; web + mobile typecheck clean.
+
+## Super-admin vendor reports, table tiles and bulk export (2026-10-30)
+
+- Console navigation is hidden on every screen size until the menu button opens it.
+- Vendor list: stock at cost, sales and gross profit of the last 30 days (`/api/sys-control/vendors/figures`).
+- Vendor → "Sales, stock & profit": sales, cost of goods, gross and ledger net profit, stock value, items, money owed, purchases, expenses, payments and branches for a period, then every item with stock, cost, sales and profit (`src/lib/admin/vendor-business.ts`). Gross profit and stock value come from `ownerDashboard`, net profit from `getProfitAndLoss`, so they match the vendor's own reports.
+- Vendor data opens on icon tiles (`src/lib/admin/vendor-data-icons.ts`); a tile opens that table, each table exports as CSV (vendors.impersonate).
+- Bulk export: one streamed ZIP of CSVs, whole vendor or chosen sections, plus summary and item reports (`src/lib/admin/vendor-export.ts`, vendors.manage, audited, one snapshot). Secret columns are dropped in the query and secret-looking JSON keys masked.
+- Fixed: SMTP and other `*_password` columns and `comm_key` were shown in the data console; they now count as secrets (masked, not writable there).
+- Suite: `scripts/tests/l17-admin-business.ts`.

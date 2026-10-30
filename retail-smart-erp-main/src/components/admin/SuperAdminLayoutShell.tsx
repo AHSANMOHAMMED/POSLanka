@@ -141,12 +141,12 @@ function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellPr
         Skip to content
       </a>
 
-      {/* Drawer backdrop (< lg) */}
-      {drawerOpen && <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setDrawerOpen(false)} aria-hidden />}
+      {/* The navigation stays out of the way until the menu button opens it, on every screen size */}
+      {drawerOpen && <div className="fixed inset-0 z-40 bg-black/50" onClick={() => setDrawerOpen(false)} aria-hidden />}
 
       <Sidebar pathname={pathname} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-      <div className="min-w-0 lg:pl-[248px]">
+      <div className="min-w-0">
         <header className="sticky top-0 z-30 border-b border-adm-border bg-adm-surface/95 backdrop-blur supports-[backdrop-filter]:bg-adm-surface/80">
           <div className="flex h-14 items-center gap-2 px-3 sm:gap-3 sm:px-5 lg:px-6">
             <button
@@ -154,11 +154,11 @@ function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellPr
               onClick={() => setDrawerOpen(true)}
               aria-label="Open navigation"
               aria-expanded={drawerOpen}
-              className="adm-focus flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-adm-muted hover:bg-adm-surface-2 hover:text-adm-fg lg:hidden"
+              className="adm-focus flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-adm-muted hover:bg-adm-surface-2 hover:text-adm-fg"
             >
               <Menu size={20} aria-hidden />
             </button>
-            <Link href="/sys-control" className="flex shrink-0 items-center gap-2 lg:hidden" aria-label="skyERPOS admin home">
+            <Link href="/sys-control" className="flex shrink-0 items-center gap-2" aria-label="skyERPOS admin home">
               <LogoMark size={26} />
               <span className="hidden text-[15px] font-semibold text-adm-fg min-[420px]:inline">Admin</span>
             </Link>
@@ -206,8 +206,10 @@ function Sidebar({ pathname, open, onClose }: { pathname: string; open: boolean;
   return (
     <aside
       aria-label="Admin navigation"
+      // Off screen it must not be reachable by Tab either
+      inert={!open}
       className={cn(
-        'fixed inset-y-0 left-0 z-50 flex w-[272px] max-w-[85vw] flex-col border-r border-adm-sidebar-border bg-adm-sidebar text-adm-sidebar-fg transition-transform duration-200 lg:z-40 lg:w-[248px] lg:translate-x-0',
+        'fixed inset-y-0 left-0 z-50 flex w-[272px] max-w-[85vw] flex-col border-r border-adm-sidebar-border bg-adm-sidebar text-adm-sidebar-fg transition-transform duration-200',
         open ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
       )}
     >
@@ -220,7 +222,7 @@ function Sidebar({ pathname, open, onClose }: { pathname: string; open: boolean;
           type="button"
           onClick={onClose}
           aria-label="Close navigation"
-          className="flex h-8 w-8 items-center justify-center rounded-md text-adm-sidebar-muted hover:bg-white/5 hover:text-white lg:hidden"
+          className="flex h-8 w-8 items-center justify-center rounded-md text-adm-sidebar-muted hover:bg-white/5 hover:text-white"
         >
           <X size={18} aria-hidden />
         </button>

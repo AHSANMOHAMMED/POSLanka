@@ -248,7 +248,14 @@ export default function AdminVendorDetailScreen() {
             </>
           ) : null}
 
-          {/* Every table of this vendor: view, search, add / edit / delete */}
+          {/* Stock value, sales, cost and profit: totals and item by item */}
+          {can('vendors.impersonate') ? (
+            <Pressable style={adminStyles.primaryBtn} onPress={() => router.push({ pathname: '/admin/vendor-business', params: { vendorId: vendor.id, vendorName: vendor.name } })}>
+              <Text style={adminStyles.primaryBtnText}>📊  Sales, stock & profit</Text>
+            </Pressable>
+          ) : null}
+
+          {/* Every table of this vendor: view, search, add / edit / delete, export */}
           {can('vendors.impersonate') ? (
             <Pressable style={adminStyles.ghostBtn} onPress={() => router.push({ pathname: '/admin/vendor-data', params: { vendorId: vendor.id, vendorName: vendor.name } })}>
               <Text style={adminStyles.ghostBtnText}>🗄  All data (items, sales, customers…)</Text>

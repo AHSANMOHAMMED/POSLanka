@@ -17,6 +17,8 @@ import {
   Select,
   buttonClass,
   businessTypeLabel,
+  fmtCompact,
+  fmtLKR,
   statusTone,
   timeAgo,
   BUSINESS_TYPE_LABELS,
@@ -64,6 +66,8 @@ interface ListResponse {
   tiers: Array<{ id: string; displayName: string; isActive: boolean }>
 }
 
+interface VendorFigures { stockAtCost: number; netSales: number; grossProfit: number }
+
 type StatusFilter = 'all' | 'active' | 'suspended' | 'locked' | 'cancelled'
 const PAGE_SIZE = 25
 
@@ -93,6 +97,8 @@ function PlanCell({ v }: { v: VendorRow }) {
 
 export default function VendorsPage() {
   const canCreate = useAdminCan('vendors.manage')
+  const canSeeFigures = useAdminCan('vendors.impersonate')
+  const [figures, setFigures] = useState<Record<string, VendorFigures>>({})
   const [data, setData] = useState<ListResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -147,6 +153,17 @@ export default function VendorsPage() {
 
   useEffect(() => { load() }, [load])
 
+  // Business figures fill in after the list so a slow vendor never holds it up
+  useEffect(() => {
+    const ids = data?.vendors.map((v) => v.id) ?? []
+    if (!canSeeFigures || ids.length === 0) return
+    const ctrl = new AbortController()
+    adminFetch<{ figures: Record<string, VendorFigures> }>(`/api/sys-control/vendors/figures?ids=${ids.join(',')}`, { signal: ctrl.signal })
+      .then((r) => setFigures((f) => ({ ...f, ...r.figures })))
+      .catch(() => undefined)
+    return () => ctrl.abort()
+  }, [data, canSeeFigures])
+
   const counts = data?.statusCounts ?? {}
   const allCount = Object.values(counts).reduce((a, b) => a + b, 0)
   const statusOptions: Array<{ value: StatusFilter; label: string }> = [
@@ -157,6 +174,12 @@ export default function VendorsPage() {
     { value: 'cancelled', label: `Archived ${counts.cancelled ?? 0}` },
   ]
   const filtersActive = !!(debouncedQ || status !== 'all' || businessType || tierId)
+
+  const figureCell = (v: VendorRow, key: keyof VendorFigures) => {
+    const f = figures[v.id]
+    if (!f) return <span className="text-adm-subtle">—</span>
+    return <span className="adm-num" title={fmtLKR(f[key], 2)}>{fmtCompact(f[key])}</span>
+  }
 
   const columns: AdminColumn<VendorRow>[] = [
     {
@@ -207,6 +230,11 @@ export default function VendorsPage() {
         </span>
       ),
     },
+    ...(canSeeFigures ? [
+      { key: 'stock', header: 'Stock at cost', align: 'right' as const, hideBelow: 'md' as const, cell: (v: VendorRow) => figureCell(v, 'stockAtCost') },
+      { key: 'sales', header: 'Sales 30d', align: 'right' as const, hideBelow: 'md' as const, cell: (v: VendorRow) => figureCell(v, 'netSales') },
+      { key: 'profit', header: 'Profit 30d', align: 'right' as const, hideBelow: 'md' as const, cell: (v: VendorRow) => figureCell(v, 'grossProfit') },
+    ] : []),
     { key: 'created', header: 'Created', hideBelow: 'xl', cell: (v) => <span className="text-adm-muted">{fmtDate(v.createdAt)}</span> },
     {
       key: 'activity',

@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { View, Text, FlatList, TextInput, Pressable, ActivityIndicator, StyleSheet } from 'react-native'
 import { router } from 'expo-router'
-import { adminGet } from '../../src/lib/adminApi'
+import { adminGet, useAdminUser } from '../../src/lib/adminApi'
 import { THEME } from '../../src/lib/theme'
 import { ErrorView, LoadingView } from '../../src/components/StateViews'
-import { AdminShell, Pill, adminStyles, businessTypeLabel, statusTone } from '../../src/components/admin/AdminShell'
+import { AdminShell, Pill, adminStyles, businessTypeLabel, compactLKR, statusTone } from '../../src/components/admin/AdminShell'
 
 const PAGE_SIZE = 30
 
@@ -27,6 +27,8 @@ interface VendorRow {
   subscriptionPeriodEnd?: string | null
 }
 
+interface VendorFigures { stockAtCost: number; netSales: number; grossProfit: number }
+
 interface VendorsResponse {
   vendors: VendorRow[]
   pagination: { page: number; pageSize: number; total: number }
@@ -42,6 +44,9 @@ export default function AdminVendorsScreen() {
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const seq = useRef(0)
+  const { can } = useAdminUser()
+  const canSeeFigures = can('vendors.impersonate')
+  const [figures, setFigures] = useState<Record<string, VendorFigures>>({})
 
   useEffect(() => {
     const t = setTimeout(() => setDebounced(query.trim()), 300)
@@ -66,11 +71,16 @@ export default function AdminVendorsScreen() {
         setRows((prev) => (append ? [...prev, ...list] : list))
         setTotal(res.data.pagination?.total ?? list.length)
         setPage(p)
+        // Figures fill in after the list so a slow vendor never holds it up
+        if (canSeeFigures && list.length > 0) {
+          adminGet<{ figures: Record<string, VendorFigures> }>(`/api/sys-control/vendors/figures?ids=${list.map((v) => v.id).join(',')}`)
+            .then((f) => { if (f.ok) setFigures((prev) => ({ ...prev, ...f.data.figures })) })
+        }
       }
       setLoading(false)
       setLoadingMore(false)
     },
-    [debounced]
+    [debounced, canSeeFigures]
   )
 
   useEffect(() => {
@@ -131,6 +141,11 @@ export default function AdminVendorsScreen() {
                 <Text style={adminStyles.muted} numberOfLines={1}>
                   {item.slug} • {businessTypeLabel(item.businessType)} • {item.userCount ?? 0} users
                 </Text>
+                {figures[item.id] ? (
+                  <Text style={styles.figures} numberOfLines={1}>
+                    Stock {compactLKR(figures[item.id].stockAtCost)} • 30d sales {compactLKR(figures[item.id].netSales)} • profit {compactLKR(figures[item.id].grossProfit)}
+                  </Text>
+                ) : null}
                 <View style={{ flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
                   <Pill text={item.status} tone={statusTone(item.status)} />
                   {item.subscriptionStatus ? <Pill text={`sub: ${item.subscriptionStatus}`} tone={statusTone(item.subscriptionStatus)} /> : null}
@@ -162,5 +177,6 @@ const styles = StyleSheet.create({
   avatar: { width: 40, height: 40, borderRadius: 10, backgroundColor: THEME.colors.primaryLight, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: THEME.colors.primary, fontWeight: '900', fontSize: 13 },
   name: { fontSize: 14, fontWeight: '800', color: THEME.colors.text },
+  figures: { fontSize: 11, fontWeight: '700', color: THEME.colors.text, marginTop: 3 },
   chevron: { fontSize: 22, color: THEME.colors.textSubtle, fontWeight: '700' },
 })

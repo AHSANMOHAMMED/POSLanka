@@ -16,7 +16,7 @@
  *  expiring        active batches with stock expiring today … today + 30 (and already expired).
  *  low stock       branch stock at or below its reorder level (warehouse_stock.min_stock > 0).
  */
-import { sql } from 'drizzle-orm'
+import { sql, type SQL } from 'drizzle-orm'
 import { parseCurrency, roundCurrency } from '@/lib/utils/currency'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -27,6 +27,32 @@ function rows<T>(res: unknown): T[] {
 }
 const money = (v: unknown) => roundCurrency(parseCurrency(v as string))
 const qty = (v: unknown) => Math.round((Number(v) || 0) * 1000) / 1000
+
+/**
+ * CTE `l`: one row per sale line of the period with its revenue, cost and base-unit quantity (see
+ * "gross profit" above). Shared with the super-admin vendor reports so both show the same profit.
+ * `filter` adds conditions on `sales`.
+ */
+export function saleProfitLines(tenantId: string, from: string, to: string, filter: SQL = sql``): SQL {
+  return sql`
+    WITH s AS (
+      SELECT id, (total - tax_amount) AS net FROM sales
+      WHERE tenant_id = ${tenantId} AND status <> 'void'
+        AND created_at >= ${from}::timestamp AND created_at <= ${to}::timestamp${filter}
+    ), li AS (
+      SELECT si.sale_id, si.item_id, si.item_name, si.quantity, si.uom_factor, si.total AS line_total,
+             COALESCE(si.unit_cost, 0) AS unit_cost, COALESCE(i.is_gift_card, false) AS gift_card,
+             SUM(si.total) OVER (PARTITION BY si.sale_id) AS sale_lines, s.net
+      FROM sale_items si JOIN s ON s.id = si.sale_id
+      LEFT JOIN items i ON i.id = si.item_id
+      WHERE si.tenant_id = ${tenantId}
+    ), l AS (
+      SELECT sale_id, item_id, item_name, quantity, quantity * uom_factor AS base_qty,
+             CASE WHEN sale_lines <> 0 THEN net * line_total / sale_lines ELSE 0 END AS revenue,
+             quantity * unit_cost AS cost
+      FROM li WHERE NOT gift_card
+    )`
+}
 
 export interface OwnerDashboardInput {
   tenantId: string
@@ -85,25 +111,8 @@ export async function ownerDashboard(tx: Tx, input: OwnerDashboardInput) {
   stock.potentialMargin = roundCurrency(stock.atSellingPrice - stock.atCost)
 
   // ---------------------------------------------------------------- gross profit + top items
-  const lines = sql`
-    WITH s AS (
-      SELECT id, (total - tax_amount) AS net FROM sales
-      WHERE tenant_id = ${tenantId} AND status <> 'void'
-        AND created_at >= ${from}::timestamp AND created_at <= ${to}::timestamp
-        AND (${wh}::uuid IS NULL OR warehouse_id = ${wh}::uuid)${inScope('warehouse_id')}
-    ), li AS (
-      SELECT si.sale_id, si.item_id, si.item_name, si.quantity, si.total AS line_total,
-             COALESCE(si.unit_cost, 0) AS unit_cost, COALESCE(i.is_gift_card, false) AS gift_card,
-             SUM(si.total) OVER (PARTITION BY si.sale_id) AS sale_lines, s.net
-      FROM sale_items si JOIN s ON s.id = si.sale_id
-      LEFT JOIN items i ON i.id = si.item_id
-      WHERE si.tenant_id = ${tenantId}
-    ), l AS (
-      SELECT sale_id, item_id, item_name, quantity,
-             CASE WHEN sale_lines <> 0 THEN net * line_total / sale_lines ELSE 0 END AS revenue,
-             quantity * unit_cost AS cost
-      FROM li WHERE NOT gift_card
-    )`
+  const lines = saleProfitLines(tenantId, from, to, sql`
+        AND (${wh}::uuid IS NULL OR warehouse_id = ${wh}::uuid)${inScope('warehouse_id')}`)
   const [gp] = rows<{ revenue: string; cost: string; sales: number }>(await tx.execute(sql`
     ${lines}
     SELECT COALESCE(SUM(revenue), 0) AS revenue, COALESCE(SUM(cost), 0) AS cost, count(DISTINCT sale_id)::int AS sales FROM l

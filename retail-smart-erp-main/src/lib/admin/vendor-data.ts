@@ -91,7 +91,7 @@ const DB_FILLED_COLUMNS: Record<string, ReadonlySet<string>> = {
   items: new Set(['item_code']),
 }
 
-const SECRET_RE = /(_hash$|^password$|token|secret|api_key$|^otp|_otp$|private_key)/i
+const SECRET_RE = /(_hash$|^(?!must_change_).*password$|token|secret|api_key$|^otp|_otp$|private_key|^comm_key$)/i
 const SYSTEM_COLUMNS = new Set(['id', 'tenant_id', 'created_at', 'updated_at', 'is_super_admin'])
 /** business_profile columns that must go through vendor actions (lifecycle side effects) */
 const PROFILE_LOCKED = new Set(['id', 'business_id', 'slug', 'status', 'plan', 'plan_expires_at', 'locked_at', 'locked_reason',
@@ -440,6 +440,51 @@ export async function countRows(tenantId: string): Promise<Record<string, number
   const out: Record<string, number> = { [PROFILE_TABLE]: 1 }
   for (const r of (res as unknown as { rows: Array<{ t: string; n: number }> }).rows ?? (res as unknown as Array<{ t: string; n: number }>)) out[r.t] = Number(r.n)
   return out
+}
+
+/** Session rows are pure credentials: browsable as a log, never downloaded */
+const EXPORT_EXCLUDED_TABLES = new Set(['account_sessions'])
+
+export interface ExportTable {
+  name: string
+  label: string
+  group: string
+  /** Name in PostgreSQL (business_profile is `tenants`) */
+  dbName: string
+  /** Column holding the vendor's id: tenant_id, or id for the vendor's own row */
+  tenantColumn: string
+  /** Columns written to the file, in schema order */
+  columns: string[]
+  /** Columns removed before the rows leave the database */
+  secretColumns: string[]
+  hasCreatedAt: boolean
+}
+
+/** Every table a vendor's data can be exported from, the same set the console shows */
+export function exportTables(): ExportTable[] {
+  return listVendorTables().filter((t) => !EXPORT_EXCLUDED_TABLES.has(t.name)).map((t) => {
+    const def = getDef(t.name)
+    const names = Array.from(def.columns.keys())
+    return {
+      name: t.name,
+      label: t.label,
+      group: t.group,
+      dbName: getTableConfig(def.table).name,
+      tenantColumn: def.isProfile ? 'id' : 'tenant_id',
+      columns: names.filter((n) => !SECRET_RE.test(n)),
+      secretColumns: names.filter((n) => SECRET_RE.test(n)),
+      hasCreatedAt: def.columns.has('created_at'),
+    }
+  })
+}
+
+/** JSON column values can carry credentials too (settings blobs): same rule, applied to keys */
+export function maskJsonSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(maskJsonSecrets)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, SECRET_RE.test(k) ? '••••••' : maskJsonSecrets(v)]))
+  }
+  return value
 }
 
 /** Copy for the audit log: secrets masked, long values cut */

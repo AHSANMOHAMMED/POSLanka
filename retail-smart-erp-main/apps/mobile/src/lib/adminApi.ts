@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import * as SecureStore from 'expo-secure-store'
 import { router } from 'expo-router'
 import { getApiBase, REQUEST_TIMEOUT_MS, type ApiResult } from './api'
+import { clearAdminDownloads } from './adminDownload'
 
 const ADMIN_TOKEN_KEY = 'poslanka_admin_token'
 const ADMIN_USER_KEY = 'poslanka_admin_user'
@@ -86,7 +87,7 @@ export async function setAdminSession(token: string, admin: AdminUser): Promise<
 
 export async function clearAdminSession(): Promise<void> {
   cachedAdmin = null
-  await Promise.all([SecureStore.deleteItemAsync(ADMIN_TOKEN_KEY), SecureStore.deleteItemAsync(ADMIN_USER_KEY)])
+  await Promise.all([SecureStore.deleteItemAsync(ADMIN_TOKEN_KEY), SecureStore.deleteItemAsync(ADMIN_USER_KEY), clearAdminDownloads()])
 }
 
 export async function adminLogout(): Promise<void> {

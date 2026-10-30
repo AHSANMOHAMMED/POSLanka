@@ -4,16 +4,9 @@ import { validateSearchParams } from '@/lib/validation'
 import { logError } from '@/lib/ai/error-logger'
 import { queryVendors, vendorFilterSchema } from '@/lib/admin/vendor-query'
 import { formatBusinessId } from '@/lib/tenant/business-id'
+import { csvRow, CSV_BOM } from '@/lib/admin/csv'
 
 const MAX_ROWS = 10_000
-
-/** RFC 4180 cell; also neutralises spreadsheet formulas (=, +, -, @ at the start). */
-function cell(v: unknown): string {
-  if (v === null || v === undefined) return ''
-  let s = v instanceof Date ? v.toISOString() : String(v)
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-}
 
 // GET /api/sys-control/vendors/export?q=&status=&businessType=&tierId= — CSV of the filtered directory (audited)
 export async function GET(request: NextRequest) {
@@ -34,13 +27,13 @@ export async function GET(request: NextRequest) {
       'Subscription status', 'Period ends', 'Trial ends', 'Owner name', 'Owner email', 'Business email', 'Phone',
       'Active users', 'Total users', 'Last activity', 'Created',
     ]
-    const lines = [header.map(cell).join(',')]
+    const lines = [csvRow(header)]
     for (const r of rows) {
-      lines.push([
+      lines.push(csvRow([
         formatBusinessId(r.businessId), r.name, r.legalName, r.slug, r.businessType, r.status, r.tierDisplayName,
         r.subscriptionStatus, r.currentPeriodEnd, r.trialEndsAt, r.owner?.name, r.owner?.email, r.email, r.phone,
         r.activeUserCount, r.userCount, r.lastActivityAt, r.createdAt,
-      ].map(cell).join(','))
+      ]))
     }
 
     await logAdminAction({
@@ -51,7 +44,7 @@ export async function GET(request: NextRequest) {
     })
 
     const stamp = new Date().toISOString().slice(0, 10)
-    return new NextResponse('﻿' + lines.join('\r\n') + '\r\n', {
+    return new NextResponse(CSV_BOM + lines.join('\r\n') + '\r\n', {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="poslanka-vendors-${stamp}.csv"`,

@@ -2,7 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { ChevronLeft, ChevronRight, Database, Lock, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Database, Download, LayoutGrid, Lock, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import {
   AdminCard,
   AdminModal,
@@ -10,6 +10,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   ConfirmDialog,
   EmptyState,
   Field,
@@ -19,9 +20,12 @@ import {
   Skeleton,
   Switch,
   Textarea,
+  buttonClass,
+  fmtNumber,
 } from '@/components/admin/kit'
 import { useAdminCan } from '@/components/admin/AdminRoleContext'
 import { adminFetch } from '@/components/admin/console-helpers'
+import { groupIcon, tableIcon } from '@/lib/admin/vendor-data-icons'
 import { formatBusinessId } from '@/lib/tenant/business-id-format'
 import { cn } from '@/lib/utils'
 
@@ -32,6 +36,9 @@ type Row = Record<string, unknown>
 interface RowsResponse { table: Omit<TableInfo, 'rows'>; columns: Column[]; rows: Row[]; total: number; page: number; pageSize: number }
 
 const PAGE_SIZE = 50
+
+/** Shown first: what is opened most */
+const MAIN_TABLES = ['business_profile', 'items', 'warehouse_stock', 'sales', 'sale_items', 'customers', 'suppliers', 'purchases', 'payments', 'expenses', 'users', 'warehouses']
 
 export default function VendorDataPage() {
   return (
@@ -85,8 +92,10 @@ function VendorData() {
   const router = useRouter()
   const sp = useSearchParams()
   const canEdit = useAdminCan('vendors.manage')
+  const canExportAll = canEdit
 
-  const table = sp.get('table') || 'business_profile'
+  // No table chosen: the page shows every table as a tile
+  const table = sp.get('table') || ''
   const q = sp.get('q') || ''
   const page = Math.max(1, Number(sp.get('page')) || 1)
   const filterColumn = sp.get('column') || ''
@@ -104,6 +113,8 @@ function VendorData() {
   const [deleting, setDeleting] = useState<Row | null>(null)
   const [busy, setBusy] = useState(false)
   const [flash, setFlash] = useState<string | null>(null)
+  const [showEmpty, setShowEmpty] = useState(false)
+  const [exporting, setExporting] = useState(sp.get('export') === '1')
 
   const go = useCallback((next: Record<string, string | number | null>) => {
     const p = new URLSearchParams(sp.toString())
@@ -125,6 +136,7 @@ function VendorData() {
   }, [id])
 
   const loadRows = useCallback(async () => {
+    if (!table) { setData(null); setLoading(false); return }
     setLoading(true)
     setError(null)
     try {
@@ -157,7 +169,9 @@ function VendorData() {
   }, [tables, tableFilter])
 
   const current = tables?.find((t) => t.name === table)
+  const open = (name: string) => go({ table: name, page: null, q: null, column: null, value: null, export: null })
   const info = data?.table
+  const TitleIcon = tableIcon(table, current?.group ?? '')
   // Columns shown in the grid: secrets hidden, the rest in schema order
   const gridColumns = (data?.columns ?? []).filter((c) => !c.secret && c.name !== 'tenant_id')
 
@@ -183,20 +197,38 @@ function VendorData() {
       title="Vendor data"
       description={vendor ? `${vendor.name} · ${formatBusinessId(vendor.businessId)} — every table of this business. Changes are checked against the table’s rules and written to the audit log.` : 'Every table of this business.'}
       breadcrumbs={[{ label: 'Vendors', href: '/sys-control/vendors' }, { label: vendor?.name ?? 'Vendor', href: `/sys-control/vendors/${id}` }, { label: 'Data' }]}
-      actions={<Button variant="ghost" icon={RefreshCw} onClick={() => { loadTables(); loadRows() }} loading={loading}>Refresh</Button>}
+      actions={
+        <>
+          <Button variant="ghost" icon={RefreshCw} onClick={() => { loadTables(); loadRows() }} loading={loading}>Refresh</Button>
+          {canExportAll && <Button icon={Download} onClick={() => setExporting(true)}>Export data</Button>}
+        </>
+      }
     >
       {flash && <Alert tone="success" action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash}</Alert>}
       {!canEdit && <Alert tone="info">You can view this vendor’s data. Changing it needs an owner admin.</Alert>}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+      {!table && (
+        <TableTiles
+          tables={tables}
+          error={tablesError}
+          filter={tableFilter}
+          onFilter={setTableFilter}
+          showEmpty={showEmpty}
+          onShowEmpty={setShowEmpty}
+          onOpen={open}
+        />
+      )}
+
+      {table && <div className="grid grid-cols-1 gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
         {/* Table picker */}
         <AdminCard flush className="lg:sticky lg:top-20 lg:self-start">
-          <div className="border-b border-adm-border p-3">
+          <div className="space-y-2 border-b border-adm-border p-3">
+            <Button size="sm" variant="ghost" icon={LayoutGrid} className="w-full justify-start" onClick={() => go({ table: null, page: null, q: null, column: null, value: null })}>All tables</Button>
             <SearchInput size="sm" value={tableFilter} onChange={(e) => setTableFilter(e.target.value)} placeholder="Find a table" aria-label="Find a table" />
           </div>
           {/* Phones: a select; larger screens: the grouped list */}
           <div className="p-3 lg:hidden">
-            <Select size="sm" aria-label="Table" value={table} onChange={(e) => go({ table: e.target.value, page: null, q: null, column: null, value: null })}>
+            <Select size="sm" aria-label="Table" value={table} onChange={(e) => open(e.target.value)}>
               {groups.map(([g, list]) => (
                 <optgroup key={g} label={g}>
                   {list.map((t) => <option key={t.name} value={t.name}>{t.label} ({t.rows})</option>)}
@@ -210,11 +242,13 @@ function VendorData() {
             {groups.map(([g, list]) => (
               <div key={g} className="mb-2">
                 <p className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-adm-subtle">{g}</p>
-                {list.map((t) => (
+                {list.map((t) => {
+                  const Icon = tableIcon(t.name, t.group)
+                  return (
                   <button
                     key={t.name}
                     type="button"
-                    onClick={() => go({ table: t.name, page: null, q: null, column: null, value: null })}
+                    onClick={() => open(t.name)}
                     aria-current={t.name === table ? 'page' : undefined}
                     className={cn(
                       'adm-focus flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-[13px]',
@@ -222,12 +256,14 @@ function VendorData() {
                     )}
                   >
                     <span className="flex min-w-0 items-center gap-1.5 truncate">
-                      {!t.canEdit && <Lock size={11} aria-label="view only" className="shrink-0 text-adm-subtle" />}
+                      <Icon size={14} aria-hidden className="shrink-0" />
                       <span className="truncate">{t.label}</span>
+                      {!t.canEdit && <Lock size={11} aria-label="view only" className="shrink-0 text-adm-subtle" />}
                     </span>
                     <span className="adm-num shrink-0 text-[11.5px] text-adm-subtle">{t.rows}</span>
                   </button>
-                ))}
+                  )
+                })}
               </div>
             ))}
           </nav>
@@ -236,9 +272,16 @@ function VendorData() {
         {/* Rows */}
         <div className="min-w-0 space-y-3">
           <AdminCard
-            title={<span className="flex items-center gap-2"><Database size={16} aria-hidden /> {info?.label ?? current?.label ?? table}</span>}
+            title={<span className="flex items-center gap-2"><TitleIcon size={16} aria-hidden /> {info?.label ?? current?.label ?? table}</span>}
             description={info?.readOnlyReason ?? (data ? `${data.total.toLocaleString()} row${data.total === 1 ? '' : 's'}${q ? ` matching “${q}”` : ''}` : undefined)}
-            actions={canEdit && info?.canCreate ? <Button size="sm" variant="primary" icon={Plus} onClick={() => setEditing({ row: null })}>Add row</Button> : undefined}
+            actions={
+              <>
+                <a href={`/api/sys-control/vendors/${id}/data/${table}/export`} className={buttonClass('secondary', 'sm')} download>
+                  <Download size={14} aria-hidden /> Export CSV
+                </a>
+                {canEdit && info?.canCreate && <Button size="sm" variant="primary" icon={Plus} onClick={() => setEditing({ row: null })}>Add row</Button>}
+              </>
+            }
             flush
           >
             <div className="flex flex-col gap-2 border-b border-adm-border p-3 sm:flex-row sm:items-center">
@@ -311,7 +354,9 @@ function VendorData() {
             )}
           </AdminCard>
         </div>
-      </div>
+      </div>}
+
+      {exporting && canExportAll && <ExportDialog vendorId={id} tables={tables} onClose={() => { setExporting(false); go({ export: null }) }} />}
 
       {editing && data && (
         <RowDialog
@@ -338,6 +383,141 @@ function VendorData() {
         confirmVariant="danger"
       />
     </AdminPage>
+  )
+}
+
+/* ------------------------------------------------------------------ tiles */
+
+function TableTiles({ tables, error, filter, onFilter, showEmpty, onShowEmpty, onOpen }: {
+  tables: TableInfo[] | null
+  error: string | null
+  filter: string
+  onFilter: (v: string) => void
+  showEmpty: boolean
+  onShowEmpty: (v: boolean) => void
+  onOpen: (name: string) => void
+}) {
+  const f = filter.trim().toLowerCase()
+  const visible = (tables ?? []).filter((t) => (showEmpty || t.rows > 0 || f) && (!f || t.label.toLowerCase().includes(f) || t.name.includes(f)))
+  const withData = (tables ?? []).filter((t) => t.rows > 0)
+  const totalRows = withData.reduce((s, t) => s + t.rows, 0)
+  const main = f ? [] : MAIN_TABLES.map((n) => visible.find((t) => t.name === n)).filter((t): t is TableInfo => !!t)
+  const groups = new Map<string, TableInfo[]>()
+  for (const t of visible) {
+    if (main.includes(t)) continue
+    groups.set(t.group, [...(groups.get(t.group) ?? []), t])
+  }
+
+  return (
+    <div className="space-y-5">
+      <AdminCard flush>
+        <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <SearchInput size="sm" wrapperClassName="sm:w-80" value={filter} onChange={(e) => onFilter(e.target.value)} placeholder="Find a table" aria-label="Find a table" />
+          <div className="flex items-center gap-4">
+            {tables && <span className="text-[13px] text-adm-muted">{fmtNumber(withData.length)} tables with {fmtNumber(totalRows)} rows</span>}
+            <Switch checked={showEmpty} onChange={onShowEmpty} label="Show empty tables" />
+          </div>
+        </div>
+      </AdminCard>
+
+      {error && <Alert tone="danger">{error}</Alert>}
+      {!tables && !error && <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">{Array.from({ length: 15 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>}
+      {tables && visible.length === 0 && <EmptyState icon={Database} title="No tables match" compact />}
+
+      {main.length > 0 && <TileSection title="Main tables" icon={LayoutGrid} list={main} onOpen={onOpen} />}
+      {Array.from(groups.entries()).map(([g, list]) => <TileSection key={g} title={g} icon={groupIcon(g)} list={list} onOpen={onOpen} />)}
+    </div>
+  )
+}
+
+function TileSection({ title, icon: Icon, list, onOpen }: { title: string; icon: ReturnType<typeof groupIcon>; list: TableInfo[]; onOpen: (name: string) => void }) {
+  return (
+    <section>
+      <h2 className="mb-2 flex items-center gap-2 text-[13px] font-semibold text-adm-muted">
+        <Icon size={15} aria-hidden /> {title}
+      </h2>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+        {list.map((t) => {
+          const TileIcon = tableIcon(t.name, t.group)
+          return (
+            <button
+              key={t.name}
+              type="button"
+              onClick={() => onOpen(t.name)}
+              className="adm-focus flex min-w-0 flex-col gap-2 rounded-xl border border-adm-border bg-adm-surface p-3 text-left transition-colors hover:border-adm-primary hover:bg-adm-surface-2"
+            >
+              <span className="flex items-center justify-between gap-2">
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-adm-primary-soft text-adm-primary-soft-fg"><TileIcon size={18} aria-hidden /></span>
+                {!t.canEdit && <Lock size={12} aria-label="view only" className="text-adm-subtle" />}
+              </span>
+              <span className="truncate text-[13.5px] font-medium text-adm-fg" title={t.label}>{t.label}</span>
+              <span className="adm-num text-[12.5px] text-adm-subtle">{fmtNumber(t.rows)} row{t.rows === 1 ? '' : 's'}</span>
+            </button>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
+
+/* ------------------------------------------------------------------ bulk export */
+
+function ExportDialog({ vendorId, tables, onClose }: { vendorId: string; tables: TableInfo[] | null; onClose: () => void }) {
+  const sections = useMemo(() => {
+    const out = new Map<string, { tables: number; rows: number }>()
+    for (const t of tables ?? []) {
+      if (t.rows === 0) continue
+      const s = out.get(t.group) ?? { tables: 0, rows: 0 }
+      out.set(t.group, { tables: s.tables + 1, rows: s.rows + t.rows })
+    }
+    return Array.from(out.entries())
+  }, [tables])
+  // Ticked by default: an untouched dialog exports everything
+  const [unticked, setUnticked] = useState<Set<string>>(() => new Set())
+  const chosen = sections.filter(([g]) => !unticked.has(g))
+  const all = chosen.length === sections.length
+  const href = `/api/sys-control/vendors/${vendorId}/export${all ? '' : `?groups=${encodeURIComponent(chosen.map(([g]) => g).join(','))}`}`
+
+  return (
+    <AdminModal
+      open
+      onClose={onClose}
+      title="Export this vendor’s data"
+      description="One ZIP of Excel-ready CSV files: all-time totals, every item with its stock, cost and profit, and each ticked section table by table. Big vendors can take a few minutes."
+      footer={
+        <>
+          <Button onClick={onClose}>Close</Button>
+          {chosen.length > 0 ? (
+            <a href={href} className={buttonClass('primary', 'md')} download>
+              <Download size={16} aria-hidden /> Download ZIP
+            </a>
+          ) : <Button variant="primary" disabled icon={Download}>Download ZIP</Button>}
+        </>
+      }
+    >
+      <div className="mb-3 flex gap-2">
+        <Button size="sm" variant="ghost" onClick={() => setUnticked(new Set())}>Tick all</Button>
+        <Button size="sm" variant="ghost" onClick={() => setUnticked(new Set(sections.map(([g]) => g)))}>Untick all</Button>
+      </div>
+      {!tables && <Skeleton className="h-40" />}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {sections.map(([g, s]) => (
+          <Checkbox
+            key={g}
+            label={g}
+            description={`${fmtNumber(s.tables)} table${s.tables === 1 ? '' : 's'} · ${fmtNumber(s.rows)} row${s.rows === 1 ? '' : 's'}`}
+            checked={!unticked.has(g)}
+            onChange={(e) => setUnticked((u) => {
+              const next = new Set(u)
+              if (e.target.checked) next.delete(g)
+              else next.add(g)
+              return next
+            })}
+          />
+        ))}
+      </div>
+      <p className="mt-3 text-[12.5px] text-adm-subtle">Passwords, PINs, keys and sign-in sessions are never exported, and uploaded files stay in file storage. Each export is written to the audit log.</p>
+    </AdminModal>
   )
 }
 
