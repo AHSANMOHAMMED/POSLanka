@@ -161,7 +161,10 @@ async function main() {
       check('SMS parts: 160 GSM = 1, 161 = 2, 70 Sinhala = 1, 71 = 2',
         smsSegments('a'.repeat(160)) === 1 && smsSegments('a'.repeat(161)) === 2 && smsSegments('අ'.repeat(70)) === 1 && smsSegments('අ'.repeat(71)) === 2)
       const enc = encryptSecret('super-secret-key-1234')
-      check('secret box: encrypted, round-trips, tamper → null', enc.startsWith('enc:v1:') && !enc.includes('super-secret') && decryptSecret(enc) === 'super-secret-key-1234' && decryptSecret(enc.slice(0, -2) + 'AA') === null)
+      // Tamper inside the ciphertext (always a real change: the old "last 2 chars → AA" was a no-op when it already ended in AA)
+      const mid = Math.floor(enc.length / 2)
+      const tampered = enc.slice(0, mid) + (enc[mid] === 'A' ? 'B' : 'A') + enc.slice(mid + 1)
+      check('secret box: encrypted, round-trips, tamper → null', enc.startsWith('enc:v1:') && !enc.includes('super-secret') && decryptSecret(enc) === 'super-secret-key-1234' && decryptSecret(tampered) === null)
       const sid = randomUUID()
       const t = billToken(sid)
       check('bill token: round-trips, short, forged refused', verifyBillToken(t) === sid && t.length < 45 && verifyBillToken(t.slice(0, -1) + (t.endsWith('A') ? 'B' : 'A')) === null && verifyBillToken('x.y') === null)

@@ -357,7 +357,7 @@ async function main() {
     await step('v1 items / stock', async () => {
       const r = await json(await v1Items(req('GET', '/api/v1/items?search=Dhal', undefined, auth(key))))
       const it = r.body.data?.[0]
-      check('items list → item with stock per warehouse', r.status === 200 && it?.id === A && it.stock.length === 2 && Number(it.totalStock) === it.stock.reduce((t: number, w: J) => t + Number(w.currentStock), 0) && it.stock.some((w: J) => w.warehouseId === f.wh2 && w.currentStock === '7.000'), short(r.body))
+      check('items list → item with stock per warehouse', r.status === 200 && it?.id === A && it.stock.length === 2 && Number(it.totalStock) === it.stock.reduce((t: number, w: J) => t + Number(w.currentStock), 0) && it.stock.some((w: J) => w.warehouseId === f.wh2 && Number(w.currentStock) === 7), short(r.body))
       check('items list never exposes cost price', !JSON.stringify(r.body).includes('costPrice') && !JSON.stringify(r.body).includes('310'))
       const all = await json(await v1Items(req('GET', '/api/v1/items?pageSize=100', undefined, auth(key))))
       check('items list only shows this company\'s items', all.status === 200 && !all.body.data.some((i: J) => i.id === G) && all.body.pagination.total === 2, short(all.body.pagination))
@@ -366,7 +366,7 @@ async function main() {
       const other = await json(await v1Item(req('GET', `/api/v1/items/${G}`, undefined, auth(key)), ctx(G)))
       check('item of another company → 404', other.status === 404, short(other.body))
       const st = await json(await v1Stock(req('GET', `/api/v1/stock?warehouseId=${f.wh2}`, undefined, auth(key))))
-      check('stock levels by warehouse', st.status === 200 && st.body.data.length === 1 && st.body.data[0].itemId === A && st.body.data[0].currentStock === '7.000', short(st.body))
+      check('stock levels by warehouse', st.status === 200 && st.body.data.length === 1 && st.body.data[0].itemId === A && Number(st.body.data[0].currentStock) === 7, short(st.body))
     })
 
     await step('v1 customers', async () => {
