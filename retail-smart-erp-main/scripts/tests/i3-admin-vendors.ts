@@ -259,7 +259,8 @@ async function main() {
       check('suspend → 200', s.status === 200, s.body)
       const t = (await pg.query(`SELECT status, deletion_scheduled_at FROM tenants WHERE id = $1`, [vendorId])).rows[0]
       check('tenant suspended, no deletion scheduled', t.status === 'suspended' && t.deletion_scheduled_at === null, t)
-      check('suspended vendor cannot sign in', (await login(businessId, ownerEmail, ownerPassword)) === 401)
+      // Suspended shops get 403 TENANT_LOCKED with a clear reason (not a vague 401).
+      check('suspended vendor cannot sign in', (await login(businessId, ownerEmail, ownerPassword)) === 403)
       const again = await json(await vendorAction(req('POST', `/api/sys-control/vendors/${vendorId}/actions`, { action: 'suspend', reason: 'again' }), ctx(vendorId)))
       check('suspending twice → 400', again.status === 400)
       const r = await json(await vendorAction(req('POST', `/api/sys-control/vendors/${vendorId}/actions`, { action: 'reactivate', reason: 'paid' }), ctx(vendorId)))
@@ -283,7 +284,7 @@ async function main() {
       const past = new Date(Date.now() - 3 * 86_400_000)
       await pg.query(`UPDATE subscriptions SET status = 'locked', trial_ends_at = $2, current_period_end = $2 WHERE id = $1`, [subId, past])
       await pg.query(`UPDATE tenants SET status = 'locked', locked_reason = 'trial_expired', locked_at = now(), deletion_scheduled_at = now() + interval '7 days', plan_expires_at = $2 WHERE id = $1`, [vendorId, past])
-      check('locked trial cannot sign in', (await login(businessId, ownerEmail, ownerPassword)) === 401)
+      check('locked trial cannot sign in', (await login(businessId, ownerEmail, ownerPassword)) === 403)
       const r2 = await json(await vendorAction(req('POST', `/api/sys-control/vendors/${vendorId}/actions`, { action: 'extend', days: 5, reason: 'I3 more time' }), ctx(vendorId)))
       const t2 = (await pg.query(`SELECT t.status, t.deletion_scheduled_at, s.status AS sub_status, s.trial_ends_at FROM tenants t JOIN subscriptions s ON s.tenant_id = t.id WHERE t.id = $1`, [vendorId])).rows[0]
       const fromNow = Math.round((new Date(t2.trial_ends_at).getTime() - Date.now()) / 86_400_000)
