@@ -47,7 +47,8 @@ export async function POST(request: NextRequest) {
     })
     if (!transaction) {
       logError('api/payhere/notify', new Error(`Transaction not found for order ${orderId}`))
-      return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
+      // Same status as a bad signature so order ids are not enumerable.
+      return NextResponse.json({ error: 'Invalid notification' }, { status: 403 })
     }
 
     const status = getPayhereStatusFromCode(statusCode)

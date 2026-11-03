@@ -60,7 +60,9 @@ Create your super admin once, then enable two-factor login in `/sys-control/sett
 SUPER_ADMIN_EMAIL=you@company.lk SUPER_ADMIN_PASSWORD='<min 12 chars>' npm run db:seed-admin
 ```
 
-Verify: `GET /api/health` must report `"tenantIsolation": "app_role"`.
+Verify (from the server): `curl -s http://127.0.0.1:3000/api/health` must report `"tenantIsolation": "app_role"`.
+Production enforces this by default (`withTenant` refuses and health returns 503 when unsafe).
+Emergency only: `ALLOW_UNSAFE_TENANT_BYPASS=true` or `ENFORCE_TENANT_ISOLATION=false`.
 
 ### Step 2: Generate High-Entropy NextAuth Secret
 Never reuse development secrets in production:
@@ -349,7 +351,7 @@ retention job uses 5 min. Queries slower than `SLOW_QUERY_MS` (default 500) are 
 |---|---|---|
 | `GET /api/health/live` | process answers; never touches the DB | liveness probe (restart only when this fails) |
 | `GET /api/health/ready` | 200 when the DB answers `SELECT 1` within 2 s and the instance is not draining; 503 otherwise | readiness / load-balancer health check |
-| `GET /api/health` | backward compatible (status, database, tenantIsolation, storage, version); 503 when the DB is down | Docker `HEALTHCHECK`, uptime monitors |
+| `GET /api/health` | public: status, database, version only; loopback / `HEALTH_DETAIL_TOKEN` still get tenantIsolation + storage; 503 when the DB is down (or when `ENFORCE_TENANT_ISOLATION=true` and RLS is unsafe) | Docker `HEALTHCHECK`, uptime monitors |
 
 On `SIGTERM` the server flips readiness to 503, stops accepting connections, closes WebSockets,
 ends SSE streams, closes idle keep-alive sockets, waits for in-flight requests and closes the DB

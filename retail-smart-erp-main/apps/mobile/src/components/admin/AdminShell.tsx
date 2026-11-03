@@ -27,11 +27,15 @@ interface AdminShellProps {
   tab: AdminTab
   /** Show a back arrow instead of the brand badge (detail screens). */
   back?: boolean
+  /** Keep the bottom tab bar visible on a `back` screen (hub sub-screens opened from More). */
+  tabs?: boolean
+  /** Where the back arrow goes when there is nothing to pop (default: Vendors). */
+  backHref?: string
   right?: React.ReactNode
   children: React.ReactNode
 }
 
-export function AdminShell({ title, subtitle, tab, back, right, children }: AdminShellProps) {
+export function AdminShell({ title, subtitle, tab, back, tabs, backHref, right, children }: AdminShellProps) {
   const headerPad = useHeaderPad()
   const bottomPad = useBottomPad(8)
   const [admin, setAdmin] = useState<AdminUser | null>(null)
@@ -57,7 +61,7 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
     <View style={styles.container}>
       <View style={[styles.header, headerPad]}>
         {back ? (
-          <Pressable style={styles.backBtn} hitSlop={8} accessibilityLabel="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/admin/vendors'))}>
+          <Pressable style={styles.backBtn} hitSlop={8} accessibilityLabel="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace((backHref || '/admin/vendors') as any))}>
             <Ionicons name="arrow-back" size={24} color={THEME.colors.text} />
           </Pressable>
         ) : (
@@ -76,7 +80,7 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
 
       <View style={{ flex: 1 }}>{children}</View>
 
-      {back ? null : (
+      {back && !tabs ? null : (
         <View style={[styles.tabBar, { paddingBottom: bottomPad }]} accessibilityRole="tablist">
           {TABS.map((t) => {
             const active = t.id === tab || pathname === t.href
@@ -87,7 +91,7 @@ export function AdminShell({ title, subtitle, tab, back, right, children }: Admi
                 accessibilityRole="tab"
                 accessibilityState={{ selected: active }}
                 accessibilityLabel={t.label}
-                onPress={() => (active ? undefined : router.replace(t.href as any))}
+                onPress={() => (pathname === t.href ? undefined : router.replace(t.href as any))}
               >
                 {active ? <View style={styles.tabIndicator} /> : null}
                 <Ionicons name={active ? t.icon : t.iconIdle} size={23} color={active ? THEME.colors.primary : THEME.colors.textMuted} />

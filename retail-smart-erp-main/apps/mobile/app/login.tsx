@@ -18,11 +18,15 @@ import {
   DEFAULT_API_URL,
   loadSavedSettings,
   saveSettings,
+  sanitizeApiUrl,
   setToken,
   setUser,
   normalizeBusinessId,
   formatBusinessId,
+  isTenantLockedBody,
+  navigateToAccessBlocked,
   type AuthUser,
+  type TenantLockedPayload,
 } from '../src/lib/api'
 import { isBackOffice } from '../src/lib/roles'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -33,6 +37,7 @@ import { THEME } from '../src/lib/theme'
 import { adminLogin, setAdminSession, type AdminUser } from '../src/lib/adminApi'
 import { registerPushToken } from '../src/lib/notifications'
 import { IS_ADMIN_APP } from '../src/lib/appVariant'
+import { LoginNotices } from '../src/components/LoginNotices'
 
 interface LoginResponse {
   token: string
@@ -116,10 +121,29 @@ export default function LoginScreen() {
 
   async function onLogin() {
     const slug = tenantSlug.trim().toLowerCase()
-    const url = apiUrl.trim()
+    const url = sanitizeApiUrl(apiUrl.trim())
+    if (url !== apiUrl.trim().replace(/\/$/, '')) setApiUrl(url)
     if (!url || !/^https?:\/\//i.test(url)) {
       Alert.alert('Server URL', 'Enter the server address including http:// or https://.')
       return
+    }
+    if (/localhost|127\.0\.0\.1/i.test(apiUrl) && !__DEV__) {
+      Alert.alert('Server URL', 'Localhost cannot be used on a phone. Using the deployed server instead.')
+    }
+    // Release builds: block public cleartext HTTP (LAN private ranges still allowed for shop servers).
+    if (!__DEV__ && /^http:\/\//i.test(url)) {
+      const host = url.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0]
+      const isPrivateLan =
+        /^192\.168\./.test(host) ||
+        /^10\./.test(host) ||
+        /^172\.(1[6-9]|2\d|3[0-1])\./.test(host)
+      if (!isPrivateLan) {
+        Alert.alert(
+          'Use HTTPS',
+          'Release builds require https:// for internet servers. Use a private LAN address (e.g. http://192.168.x.x) only for an on-site shop server.',
+        )
+        return
+      }
     }
     if (adminMode) {
       await onAdminLogin(url)
@@ -158,6 +182,11 @@ export default function LoginScreen() {
       )
 
       if (!res.ok) {
+        // Suspended / locked / archived — full-screen reason, not a vague alert.
+        if (res.status === 403 && isTenantLockedBody(res.data)) {
+          navigateToAccessBlocked(res.data as TenantLockedPayload)
+          return
+        }
         Alert.alert(
           res.status === 0 ? 'Network Error' : 'Login Failed',
           res.status === 401 ? `Invalid credentials or ${useSlug ? 'company slug' : 'Business ID'}.` : res.error
@@ -232,6 +261,10 @@ export default function LoginScreen() {
       <View style={[styles.card, { marginTop: -Math.round(width * 0.2) }]}>
         <Text style={styles.cardTitle}>{title}</Text>
         <Text style={styles.cardSub}>{subtitle}</Text>
+
+        {!IS_ADMIN_APP ? (
+          <LoginNotices slug={useSlug ? tenantSlug : (normalizeBusinessId(businessId) || businessId || tenantSlug)} />
+        ) : null}
 
         {!IS_ADMIN_APP && !useSlug && (
           <>

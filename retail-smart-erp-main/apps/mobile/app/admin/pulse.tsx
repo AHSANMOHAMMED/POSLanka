@@ -46,21 +46,35 @@ export default function AdminPulseScreen() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [healthLine, setHealthLine] = useState<string | null>(null)
+  const [recentAudit, setRecentAudit] = useState<Array<{ id?: string; action?: string; resource?: string; createdAt?: string }>>([])
 
   const load = useCallback(
     async (silent = false) => {
       if (!silent) setLoading(true)
       setError(null)
       setNotice(null)
-      const [statsRes, salesRes] = await Promise.all([
+      const [statsRes, salesRes, healthRes, auditRes] = await Promise.all([
         adminGet<PlatformStats>('/api/sys-control/stats'),
         adminGet<SalesAnalytics>(`/api/sys-control/analytics/sales?range=${range}`),
+        adminGet<any>('/api/sys-control/health'),
+        adminGet<any>('/api/sys-control/audit-logs?days=30&limit=6'),
       ])
       const problems: string[] = []
       if (statsRes.ok) setStats(statsRes.data)
       else problems.push(`Platform stats: ${statsRes.error}`)
       if (salesRes.ok) setSales(salesRes.data)
       else problems.push(`Sales analytics: ${salesRes.error}`)
+      if (healthRes.ok) {
+        const h = healthRes.data || {}
+        setHealthLine([h.status || (h.ok ? 'ok' : 'degraded'), h.tenantIsolation || h.isolation, h.version].filter(Boolean).join(' · '))
+      }
+      if (auditRes.ok) {
+        const list = Array.isArray(auditRes.data)
+          ? auditRes.data
+          : auditRes.data?.logs || auditRes.data?.data || []
+        setRecentAudit(list.slice(0, 6))
+      }
       if (!statsRes.ok && !salesRes.ok) setError(problems.join('\n'))
       else if (problems.length) setNotice(problems.join('\n'))
       setLoading(false)
@@ -97,6 +111,25 @@ export default function AdminPulseScreen() {
           }
         >
           {notice ? <InlineNotice text={notice} tone="warn" /> : null}
+          {healthLine ? (
+            <Card style={{ padding: 12, marginBottom: 8 }}>
+              <Text style={adminStyles.muted}>Health · {healthLine}</Text>
+            </Card>
+          ) : null}
+          {recentAudit.length > 0 ? (
+            <>
+              <SectionTitle>Recent audit</SectionTitle>
+              <Card>
+                {recentAudit.map((a, i) => (
+                  <ListRow
+                    key={String(a.id || i)}
+                    title={`${a.action || '—'} ${a.resource || ''}`}
+                    subtitle={a.createdAt ? new Date(a.createdAt).toLocaleString() : ''}
+                  />
+                ))}
+              </Card>
+            </>
+          ) : null}
 
           <View style={adminStyles.segment}>
             {(['today', '7d', '30d'] as Range[]).map((r) => (

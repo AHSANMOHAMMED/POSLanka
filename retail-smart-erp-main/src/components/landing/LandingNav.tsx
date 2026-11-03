@@ -10,9 +10,9 @@ import { Logo } from '@/components/ui/logo'
 const solutions = [
   { name: 'Retail', description: 'Complete POS for modern stores', href: '/retail', icon: Store, gradient: 'from-blue-500 to-sky-500' },
   { name: 'Restaurant', description: 'Kitchen, tables & orders', href: '/restaurant', icon: UtensilsCrossed, gradient: 'from-orange-500 to-red-500' },
-  { name: 'Supermarket', description: 'High-volume checkout & departments', href: '/supermarket', icon: ShoppingCart, gradient: 'from-emerald-500 to-cyan-500' },
+  { name: 'Supermarket', description: 'High-volume checkout & departments', href: '/supermarket', icon: ShoppingCart, gradient: 'from-[#0050c0] to-[#2563eb]' },
   { name: 'Auto Service', description: 'Work orders & vehicle management', href: '/auto-service', icon: Wrench, gradient: 'from-violet-500 to-pink-500' },
-  { name: 'Vehicle Dealership', description: 'New & used vehicle sales', href: '/dealership', icon: Car, gradient: 'from-cyan-500 to-teal-500' },
+  { name: 'Vehicle Dealership', description: 'New & used vehicle sales', href: '/dealership', icon: Car, gradient: 'from-[#0050c0] to-[#2563eb]' },
 ]
 
 const navLinks = [
@@ -64,7 +64,7 @@ export default function LandingNav() {
     <>
       {/* Announcement Bar */}
       {showAnnouncement && (
-        <div className="fixed top-0 left-0 right-0 z-[51] bg-gradient-to-r from-emerald-600/90 via-emerald-500/90 to-teal-500/90 backdrop-blur-sm">
+        <div className="fixed top-0 left-0 right-0 z-[51] bg-gradient-to-r from-[#0050c0]/90 via-[#2563eb]/90 to-[#3b82f6]/90 backdrop-blur-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-center h-8 relative">
             <a href={`${appBase}/register`} className="text-xs text-white/95 font-medium hover:text-white transition-colors group">
               <span className="hidden sm:inline">Your first company is 100% free forever — no credit card, no expiry</span>
@@ -104,8 +104,8 @@ export default function LandingNav() {
             >
               <button className={`flex items-center gap-1 px-3 py-2 text-sm font-medium rounded transition-colors ${
                 ['/retail', '/restaurant', '/supermarket', '/auto-service', '/dealership'].includes(pathname)
-                  ? 'text-emerald-400'
-                  : 'text-zinc-300 hover:text-emerald-400'
+                  ? 'text-sky-300'
+                  : 'text-zinc-300 hover:text-sky-300'
               }`}>
                 Solutions
                 <ChevronDown size={14} className={`transition-transform ${solutionsOpen ? 'rotate-180' : ''}`} />
@@ -148,14 +148,14 @@ export default function LandingNav() {
                 key={link.href}
                 href={link.href}
                 className={`relative px-3 py-2 text-sm font-medium rounded transition-colors ${
-                  isActive(link.href) ? 'text-emerald-400' : 'text-zinc-300 hover:text-emerald-400'
+                  isActive(link.href) ? 'text-sky-300' : 'text-zinc-300 hover:text-sky-300'
                 }`}
               >
                 {link.name}
                 {isActive(link.href) && (
                   <motion.div
                     layoutId="nav-active"
-                    className="absolute bottom-0 left-3 right-3 h-0.5 bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-full"
+                    className="absolute bottom-0 left-3 right-3 h-0.5 bg-gradient-to-r from-[#0050c0] to-[#2563eb] rounded-full"
                   />
                 )}
               </Link>
@@ -165,15 +165,15 @@ export default function LandingNav() {
           {/* Desktop CTA */}
           <div className="hidden lg:flex items-center gap-3">
             {loggedIn ? (
-              <a href={`${appBase}/account`} className="px-5 py-2 text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 rounded-md transition-all shadow-lg shadow-emerald-600/25">
+              <a href={`${appBase}/account`} className="px-5 py-2 text-sm font-semibold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-md transition-all shadow-lg shadow-[rgba(0,80,192,0.35)]">
                 My Account
               </a>
             ) : (
               <>
-                <a href={`${appBase}/login`} className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-emerald-400 transition-colors">
+                <a href={`${appBase}/login`} className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-sky-300 transition-colors">
                   Log In
                 </a>
-                <a href={`${appBase}/register`} className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 rounded-md transition-all shadow-lg shadow-emerald-600/25 hover:shadow-emerald-600/40">
+                <a href={`${appBase}/register`} className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-md transition-all shadow-lg shadow-[rgba(0,80,192,0.35)] hover:shadow-[rgba(0,80,192,0.5)]">
                   Start Free Forever
                   <ArrowRight size={14} />
                 </a>
@@ -184,7 +184,7 @@ export default function LandingNav() {
           {/* Mobile hamburger */}
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="lg:hidden p-2 text-zinc-300 hover:text-emerald-400 transition-colors"
+            className="lg:hidden p-2 text-zinc-300 hover:text-sky-300 transition-colors"
             aria-label="Toggle menu"
           >
             {mobileOpen ? <X size={24} /> : <Menu size={24} />}
@@ -231,7 +231,7 @@ export default function LandingNav() {
                         key={item.href}
                         href={item.href}
                         className={`flex items-center gap-3 px-3 py-2.5 rounded-md text-sm ${
-                          isActive(item.href) ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-300 hover:bg-white/5'
+                          isActive(item.href) ? 'bg-emerald-500/10 text-sky-300' : 'text-zinc-300 hover:bg-white/5'
                         }`}
                       >
                         <div className={`w-8 h-8 rounded bg-gradient-to-br ${item.gradient} flex items-center justify-center`}>
@@ -252,7 +252,7 @@ export default function LandingNav() {
                         key={link.href}
                         href={link.href}
                         className={`block px-3 py-2.5 rounded-md text-sm font-medium ${
-                          isActive(link.href) ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-300 hover:bg-white/5'
+                          isActive(link.href) ? 'bg-emerald-500/10 text-sky-300' : 'text-zinc-300 hover:bg-white/5'
                         }`}
                       >
                         {link.name}
@@ -264,7 +264,7 @@ export default function LandingNav() {
                 {/* CTA */}
                 <div className="space-y-2 pt-4 border-t border-white/[0.06]">
                   {loggedIn ? (
-                    <a href={`${appBase}/account`} className="block w-full px-4 py-2.5 text-sm font-semibold text-center text-white bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-md">
+                    <a href={`${appBase}/account`} className="block w-full px-4 py-2.5 text-sm font-semibold text-center text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] rounded-md">
                       My Account
                     </a>
                   ) : (
@@ -272,7 +272,7 @@ export default function LandingNav() {
                       <a href={`${appBase}/login`} className="block w-full px-4 py-2.5 text-sm font-medium text-center text-zinc-300 border border-white/10 rounded-md hover:bg-white/5">
                         Log In
                       </a>
-                      <a href={`${appBase}/register`} className="block w-full px-4 py-2.5 text-sm font-semibold text-center text-white bg-gradient-to-r from-emerald-600 to-emerald-500 rounded-md">
+                      <a href={`${appBase}/register`} className="block w-full px-4 py-2.5 text-sm font-semibold text-center text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] rounded-md">
                         Start Free Forever
                       </a>
                     </>

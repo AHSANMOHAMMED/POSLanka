@@ -57,7 +57,7 @@ export async function POST(
 
     const admin = await getAdminFromSession()
     // Single-use: the jti is recorded here and burned by the vendor sign-in (src/lib/auth/impersonation-token.ts)
-    const impersonateToken = await issueImpersonationToken({
+    const issued = await issueImpersonationToken({
       tenantId: tenant.id,
       adminId: session.superAdminId,
       adminEmail: admin?.email || undefined,
@@ -71,10 +71,12 @@ export async function POST(
       reason: reason || null,
     })
 
+    // Prefer opaque jti in the redirect (not the JWT) so access logs / history never store the secret.
+    // Web clients should POST { c, slug } to /api/auth/impersonate; mobile Linking uses redirectUrl.
     return NextResponse.json({
-      impersonateToken,
+      impersonateCode: issued.jti,
       tenantSlug: tenant.slug,
-      redirectUrl: `/api/auth/impersonate?token=${encodeURIComponent(impersonateToken)}&slug=${encodeURIComponent(tenant.slug)}`,
+      redirectUrl: `/api/auth/impersonate?c=${encodeURIComponent(issued.jti)}&slug=${encodeURIComponent(tenant.slug)}`,
     })
   } catch (error) {
     logError('api/sys-control/vendors/[id]/impersonate', error)

@@ -10,6 +10,7 @@ import {
   ALERT_TYPES, ALERT_TYPE_INFO, DEFAULT_ALERT_PREFERENCES, DEFAULT_ALERT_SETTINGS,
   type AlertGroup, type AlertPreferences, type AlertType, type TenantAlertSettings,
 } from '@/lib/notifications/alert-types'
+import { StaffNotifyPanel } from '@/components/notifications'
 
 const GROUPS: AlertGroup[] = ['Stock', 'Sales', 'Approvals', 'System']
 const HOURS = Array.from({ length: 24 }, (_, h) => h)
@@ -133,6 +134,8 @@ export default function AlertSettingsPage() {
           <p className="text-sm text-gray-500">Push notifications on the skyERPOS app and the in-app alert inbox</p>
         </div>
       </div>
+
+      <StaffNotifyPanel />
 
       {/* ---------------- company settings ---------------- */}
       <Card className="p-5 space-y-4">

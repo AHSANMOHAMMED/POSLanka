@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
       ...input,
       kind: 'notification',
       superAdminId: session.superAdminId,
-      baseUrl: process.env.NEXTAUTH_URL || request.nextUrl.origin,
+      baseUrl: (await import('@/lib/http/public-url')).publicAppOrigin(request.nextUrl.origin),
     })
     await adminAudit.create(session.superAdminId, 'broadcast', result.id, {
       op: 'send_notification', title: input.title, channels: input.channels, audience: input.audience, ...result,

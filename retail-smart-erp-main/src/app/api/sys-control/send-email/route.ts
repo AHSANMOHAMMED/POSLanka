@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       ...input,
       kind: 'email',
       superAdminId: session.superAdminId,
-      baseUrl: process.env.NEXTAUTH_URL || request.nextUrl.origin,
+      baseUrl: (await import('@/lib/http/public-url')).publicAppOrigin(request.nextUrl.origin),
     })
     await adminAudit.create(session.superAdminId, 'broadcast', result.id, {
       op: 'send_email', subject: input.title, audience: input.audience, ...result,

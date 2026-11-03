@@ -24,7 +24,7 @@ export interface CouponPurchase {
   accountId: string
   /** pricing tier being bought (applicable_tiers check) */
   tierId: string | null
-  billingCycle: 'monthly' | 'yearly'
+  billingCycle: 'monthly' | 'yearly' | 'lifetime'
   /** price before the discount (LKR) */
   amount: number
   now?: Date
@@ -71,6 +71,9 @@ export async function quoteCoupon(input: CouponPurchase, executor: Executor = db
   }
   if ((coupon.minBillingCycle === 'annual' || coupon.minBillingCycle === 'yearly') && input.billingCycle !== 'yearly') {
     return { ok: false, error: 'This promo code is for yearly billing only' }
+  }
+  if (coupon.minBillingCycle === 'lifetime' && input.billingCycle !== 'lifetime') {
+    return { ok: false, error: 'This promo code is for lifetime billing only' }
   }
 
   if (coupon.maxUsesPerAccount > 0) {

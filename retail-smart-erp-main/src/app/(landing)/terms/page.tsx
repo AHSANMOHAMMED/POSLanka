@@ -43,7 +43,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold text-white mt-8 mb-3">1. Acceptance of Terms</h2>
-            <p>By creating an account or using skyERPOS, you agree to be bound by these Terms of Service and our <a href="/privacy" className="text-emerald-400 hover:text-emerald-300 hover:underline">Privacy Policy</a>. If you do not agree to these terms, do not use our services.</p>
+            <p>By creating an account or using skyERPOS, you agree to be bound by these Terms of Service and our <a href="/privacy" className="text-sky-300 hover:text-emerald-300 hover:underline">Privacy Policy</a>. If you do not agree to these terms, do not use our services.</p>
           </section>
 
           <section>
@@ -213,7 +213,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="text-xl font-semibold text-white mt-8 mb-3">18. Contact</h2>
-            <p>For questions about these terms, please reach out through our <a href="/contact" className="text-emerald-400 hover:text-emerald-300 hover:underline">contact page</a> or email <a href="mailto:support@retailsmarterp.com" className="text-emerald-400 hover:text-emerald-300 hover:underline">support@retailsmarterp.com</a>.</p>
+            <p>For questions about these terms, please reach out through our <a href="/contact" className="text-sky-300 hover:text-emerald-300 hover:underline">contact page</a> or email <a href="mailto:support@retailsmarterp.com" className="text-sky-300 hover:text-emerald-300 hover:underline">support@retailsmarterp.com</a>.</p>
           </section>
         </div>
       </div>

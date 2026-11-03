@@ -68,15 +68,25 @@ export interface LinkButtonProps extends Omit<ComponentProps<typeof Link>, 'clas
   size?: ButtonSize
   icon?: LucideIcon
   iconRight?: LucideIcon
+  fullWidth?: boolean
   className?: string
   children?: ReactNode
 }
 
 /** A next/link styled as a kit button. */
-export function LinkButton({ variant = 'secondary', size = 'md', icon: Icon, iconRight: IconRight, className, children, ...rest }: LinkButtonProps) {
+export function LinkButton({
+  variant = 'secondary',
+  size = 'md',
+  icon: Icon,
+  iconRight: IconRight,
+  fullWidth,
+  className,
+  children,
+  ...rest
+}: LinkButtonProps) {
   const iconSize = size === 'lg' ? 18 : size === 'sm' || size === 'icon-sm' ? 14 : 16
   return (
-    <Link className={buttonClass(variant, size, className)} {...rest}>
+    <Link className={buttonClass(variant, size, cn(fullWidth && 'w-full', className))} {...rest}>
       {Icon ? <Icon size={iconSize} aria-hidden /> : null}
       {children}
       {IconRight ? <IconRight size={iconSize} aria-hidden /> : null}

@@ -129,11 +129,11 @@ export default function DealershipClient() {
             <div>
               <BlurFadeIn>
                 <div className="flex flex-wrap items-center gap-3 mb-6">
-                  <span className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-bold uppercase tracking-widest rounded-full bg-gradient-to-r from-cyan-500/10 to-teal-500/10 text-cyan-400 border border-cyan-500/30">
+                  <span className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-bold uppercase tracking-widest rounded-full bg-gradient-to-r bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)]">
                     <Car className="w-3.5 h-3.5" />
                     Vehicle Dealership Solution
                   </span>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-[rgba(0,80,192,0.35)] text-sky-300">
                     <Check className="w-3.5 h-3.5" />
                     Free Forever
                   </span>
@@ -142,7 +142,7 @@ export default function DealershipClient() {
               <BlurFadeIn delay={0.1}>
                 <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-tight tracking-tight text-white">
                   Your Complete{' '}
-                  <span className="bg-gradient-to-r from-cyan-400 to-teal-400 bg-clip-text text-transparent">
+                  <span className="bg-gradient-to-r from-[#60a5fa] to-[#93c5fd] bg-clip-text text-transparent">
                     Dealership Platform
                   </span>
                 </h1>
@@ -159,7 +159,7 @@ export default function DealershipClient() {
                 <div className="mt-8 flex flex-wrap gap-4">
                   <Link
                     href="/contact"
-                    className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-600 hover:to-teal-600 rounded-md transition-all shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 hover:-translate-y-0.5"
+                    className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-md transition-all shadow-lg shadow-[rgba(0,80,192,0.35)] hover:shadow-[rgba(0,80,192,0.5)] hover:-translate-y-0.5"
                   >
                     Get Started Free
                     <ArrowRight className="w-5 h-5" />
@@ -208,7 +208,7 @@ export default function DealershipClient() {
           <StaggerContainer staggerDelay={0.12} className="grid sm:grid-cols-3 gap-6">
             <StaggerItem>
               <div className="glass-card-v2 p-6 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-cyan-500/20">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mx-auto mb-4 shadow-lg shadow-[rgba(0,80,192,0.25)]">
                   <Car className="w-7 h-7 text-white" />
                 </div>
                 <div className="text-3xl sm:text-4xl font-extrabold text-white">
@@ -224,7 +224,7 @@ export default function DealershipClient() {
             </StaggerItem>
             <StaggerItem>
               <div className="glass-card-v2 p-6 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-cyan-500/20">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mx-auto mb-4 shadow-lg shadow-[rgba(0,80,192,0.25)]">
                   <DollarSign className="w-7 h-7 text-white" />
                 </div>
                 <div className="text-3xl sm:text-4xl font-extrabold text-white">
@@ -240,7 +240,7 @@ export default function DealershipClient() {
             </StaggerItem>
             <StaggerItem>
               <div className="glass-card-v2 p-6 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-cyan-500/20">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mx-auto mb-4 shadow-lg shadow-[rgba(0,80,192,0.25)]">
                   <CalendarCheck className="w-7 h-7 text-white" />
                 </div>
                 <div className="text-3xl sm:text-4xl font-extrabold text-white">
@@ -273,7 +273,7 @@ export default function DealershipClient() {
               'Multi-location inventory support',
             ]}
             mockup={<MockVehicleInventory />}
-            gradient="from-cyan-500 to-teal-500"
+            gradient="from-[#0050c0] to-[#2563eb]"
           />
         </div>
       </section>
@@ -294,7 +294,7 @@ export default function DealershipClient() {
             ]}
             mockup={<MockDealPipeline />}
             reversed
-            gradient="from-cyan-500 to-teal-500"
+            gradient="from-[#0050c0] to-[#2563eb]"
           />
         </div>
       </section>
@@ -314,7 +314,7 @@ export default function DealershipClient() {
               'Customer feedback after test drives',
             ]}
             mockup={<MockTestDrives />}
-            gradient="from-cyan-500 to-teal-500"
+            gradient="from-[#0050c0] to-[#2563eb]"
           />
         </div>
       </section>
@@ -354,7 +354,7 @@ export default function DealershipClient() {
                 description="High-volume checkout, department management, and batch tracking."
                 href="/supermarket"
                 icon={ShoppingCart}
-                gradient="from-emerald-500 to-cyan-500"
+                gradient="from-[#0050c0] to-[#2563eb]"
               />
             </StaggerItem>
             <StaggerItem>
@@ -385,7 +385,7 @@ export default function DealershipClient() {
               <FadeIn key={category.category}>
                 <div>
                   <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-cyan-500 to-teal-500" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-[#0050c0] to-[#2563eb]" />
                     {category.category}
                     {category.aiCategory && <AIBadge size="sm" />}
                   </h3>
@@ -393,7 +393,7 @@ export default function DealershipClient() {
                     {category.items.map((item) => (
                       <StaggerItem key={item}>
                         <div className="flex items-center gap-3 p-3 rounded-md bg-white/5 border border-white/[0.06] hover:border-cyan-500/30 hover:bg-cyan-500/10 transition-colors">
-                          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center flex-shrink-0">
+                          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center flex-shrink-0">
                             <Check className="w-3 h-3 text-white" />
                           </div>
                           <span className="text-sm font-medium text-zinc-300">
@@ -426,7 +426,7 @@ export default function DealershipClient() {
                 icon={Settings}
                 title="Sales Pattern Analysis"
                 description="AI analyzes your sales data to identify trends in customer preferences, seasonal patterns, and optimal pricing strategies."
-                gradient="from-cyan-500 to-teal-500"
+                gradient="from-[#0050c0] to-[#2563eb]"
                 aiPowered
               />
             </StaggerItem>
@@ -435,7 +435,7 @@ export default function DealershipClient() {
                 icon={Users}
                 title="Customer Insights"
                 description="Understand customer buying patterns, follow-up effectiveness, and identify high-value prospects for targeted outreach."
-                gradient="from-cyan-500 to-teal-500"
+                gradient="from-[#0050c0] to-[#2563eb]"
                 aiPowered
               />
             </StaggerItem>
@@ -444,7 +444,7 @@ export default function DealershipClient() {
                 icon={TrendingUp}
                 title="Revenue Optimization"
                 description="Track vehicle profitability, staff performance, and inventory turnover to identify opportunities for maximizing dealership revenue."
-                gradient="from-cyan-500 to-teal-500"
+                gradient="from-[#0050c0] to-[#2563eb]"
                 aiPowered
               />
             </StaggerItem>

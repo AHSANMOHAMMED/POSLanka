@@ -38,7 +38,7 @@ interface KitchenCartLike {
   quantity: number
 }
 
-export function useKitchenTickets(opts: { enabled: boolean; orderKey: string | null; server?: string | null }) {
+export function useKitchenTickets(opts: { enabled: boolean; orderKey: string | null; server?: string | null; orderType?: string | null; table?: string | null; tableArea?: string | null }) {
   const state = useRef<{ key: string | null; sent: KitchenSentMap }>({ key: null, sent: {} })
 
   const send = useCallback(
@@ -60,6 +60,9 @@ export function useKitchenTickets(opts: { enabled: boolean; orderKey: string | n
       const result = await printKitchenTicketMobile({
         orderNo: (key || 'ORDER').slice(0, 8).toUpperCase(),
         server: opts.server || null,
+        orderType: opts.orderType || null,
+        table: opts.table || null,
+        tableArea: opts.tableArea || null,
         time: new Date(),
         items: kitchenPlanTicketItems(plan),
       })
@@ -69,7 +72,7 @@ export function useKitchenTickets(opts: { enabled: boolean; orderKey: string | n
       }
       return result
     },
-    [opts.enabled, opts.orderKey, opts.server]
+    [opts.enabled, opts.orderKey, opts.server, opts.orderType, opts.table, opts.tableArea]
   )
 
   return { enabled: opts.enabled, send }

@@ -18,6 +18,7 @@ import * as Crypto from 'expo-crypto'
 import * as Haptics from 'expo-haptics'
 import { Ionicons } from '@expo/vector-icons'
 import { apiGet, apiPost, asList, getUser, qs, refreshPermissions, type AuthUser } from '../../src/lib/api'
+import { roundCurrency } from '../../src/lib/taxMath'
 import { hasPermission } from '../../src/lib/roles'
 import { loadShiftOfflineAware, shiftCounterName, shiftWarehouseName, type Shift } from '../../src/lib/shift'
 import { calculateCartTax, EMPTY_TAX_CONFIG, loadTaxConfig, taxConfigFromBundle, type TaxConfig } from '../../src/lib/tax'
@@ -50,11 +51,17 @@ import { invoiceNoFromScan, loadBusinessInfo, type BusinessInfo } from '../../sr
 import { AlertsBell } from '../../src/components/AlertsBell'
 import { useKitchenTickets } from '../../src/lib/kitchenPrint'
 import { changeLineUnit, lineBaseQty, lineUnitChoices, normalizeUnit, setLineQuantity, unitOptionsFor } from '../../src/lib/measureUnits'
-import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCartItems, lineTotal, scanToLine } from '../../src/lib/cartMath'
+import { cartFromHeld, cartPayable, cartSubtotal as computeCartSubtotal, heldCartItems, lineGross, lineTotal, manualDiscountAmount, scanToLine, type ManualDiscountType } from '../../src/lib/cartMath'
 import { getLocalItem } from '../../src/lib/localdb'
 import { applyCartQuote, offlineCartQuote, quoteKey, quoteRequestLines, taxableLineTotals, type CartQuote } from '../../src/lib/cartPricing'
 import { useHeaderPad } from '../../src/lib/safeArea'
 import { useFeatureFlags } from '../../src/lib/features'
+import { DiscountModal, type DiscountInput } from '../../src/components/DiscountModal'
+import { PriceCheckModal } from '../../src/components/PriceCheckModal'
+import { QuoteFromCartModal } from '../../src/components/QuoteFromCartModal'
+import { RestaurantOrderSheet, restaurantLabel, type RestaurantContext } from '../../src/components/RestaurantOrderSheet'
+import { SerialPickerModal, VariantPickerModal } from '../../src/components/ItemOptionPickers'
+import { SupervisorPinModal, type SupervisorApprovalRequest } from '../../src/components/SupervisorPinModal'
 
 /** Search wording of the newer business types (same terminology as the web POS, src/lib/terminology.ts) */
 const SEARCH_PLACEHOLDER_BY_TYPE: Record<string, string> = {
@@ -79,6 +86,10 @@ interface Item {
   taxTemplateId?: string | null
   currentStock?: string | number | null
   availableStock?: string | number | null
+  /** Serial / IMEI tracked: the cashier picks the unit(s) before adding */
+  trackSerialNumbers?: boolean
+  /** Sold by size / colour: the cashier picks the variant before adding */
+  hasVariants?: boolean
 }
 
 interface Category {
@@ -129,9 +140,11 @@ export default function PosScreen() {
   const headerPad = useHeaderPad(4)
   const { width: screenW, height: screenH } = useWindowDimensions()
   const gridCols = screenW >= 900 ? 4 : screenW >= 600 ? 3 : 2
+  const compactHeader = screenW < 420
   /** Cart lines area: about three lines on a phone, never more than a third of the screen. */
   const cartListMax = Math.min(Math.round(screenH * 0.3), 3 * 60 + 20)
   const [user, setUser] = useState<AuthUser | null>(null)
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false)
 
   // Shift gate
   const [shift, setShift] = useState<Shift | null>(null)
@@ -182,6 +195,18 @@ export default function PosScreen() {
   // Modals
   const [scannerVisible, setScannerVisible] = useState(false)
   const [cartDrawerVisible, setCartDrawerVisible] = useState(false)
+  // Manual discounts: bill-level (type + value, amount follows the cart) and supervisor approvals
+  const [billDiscount, setBillDiscount] = useState<{ type: ManualDiscountType; value: number; reason?: string } | null>(null)
+  const [discountTarget, setDiscountTarget] = useState<{ lineId?: string } | null>(null)
+  const [discountTokens, setDiscountTokens] = useState<string[]>([])
+  const [discountApproval, setDiscountApproval] = useState<SupervisorApprovalRequest | null>(null)
+  const pendingDiscountRef = useRef<(() => void) | null>(null)
+  const [priceCheckVisible, setPriceCheckVisible] = useState(false)
+  const [quoteVisible, setQuoteVisible] = useState(false)
+  const [restaurantVisible, setRestaurantVisible] = useState(false)
+  const [restaurant, setRestaurant] = useState<RestaurantContext | null>(null)
+  const [serialPickItem, setSerialPickItem] = useState<Item | null>(null)
+  const [variantPickItem, setVariantPickItem] = useState<Item | null>(null)
   const [tenderVisible, setTenderVisible] = useState(false)
   const [customerPickerVisible, setCustomerPickerVisible] = useState(false)
   const [heldVisible, setHeldVisible] = useState(false)
@@ -272,7 +297,7 @@ export default function PosScreen() {
     else if (cart.length === 0 && clientSaleId) setClientSaleId(null)
   }, [cart.length, clientSaleId])
   // Restaurants: kitchen tickets (KOT) for this cart on the kitchen-role printer.
-  const kitchen = useKitchenTickets({ enabled: user?.businessType === 'restaurant', orderKey: clientSaleId, server: user?.name })
+  const kitchen = useKitchenTickets({ enabled: user?.businessType === 'restaurant', orderKey: clientSaleId, server: user?.name, orderType: restaurant?.orderType, table: restaurant?.table, tableArea: restaurant?.tableArea })
 
   // ------------------------------------------------------------------ catalog
   useEffect(() => {
@@ -415,12 +440,36 @@ export default function PosScreen() {
    * barcodes) and `opts.weighed` marks a scale line: weighed lines of the same
    * item merge only when their unit price matches, otherwise a new line is added.
    */
-  function addToCart(item: Item, qty = 1, opts: { unitPrice?: number; weighed?: boolean; noMerge?: boolean; uom?: string | null; uomFactor?: number; priceLocked?: boolean; priceBarcode?: string } = {}) {
+  function addToCart(
+    item: Item,
+    qty = 1,
+    opts: {
+      unitPrice?: number
+      weighed?: boolean
+      noMerge?: boolean
+      uom?: string | null
+      uomFactor?: number
+      priceLocked?: boolean
+      priceBarcode?: string
+      serialNumberIds?: string[]
+      serialLabels?: string[]
+      variantLabel?: string
+      skipOptionPick?: boolean
+    } = {}
+  ) {
     if (!shift) {
       Alert.alert('No Open Shift', 'Open a shift before selling.')
       return
     }
     if (!(qty > 0)) return
+    if (!opts.skipOptionPick && (item as any).trackSerialNumbers && !opts.serialNumberIds?.length) {
+      setSerialPickItem(item)
+      return
+    }
+    if (!opts.skipOptionPick && (item as any).hasVariants && !opts.variantLabel) {
+      setVariantPickItem(item)
+      return
+    }
     const available = stockOf(item)
     const price = opts.unitPrice !== undefined && opts.unitPrice !== null && !isNaN(Number(opts.unitPrice)) ? String(opts.unitPrice) : String(item.sellingPrice)
     const sameItem = cart.filter((p) => (p.itemId || p.id) === item.id)
@@ -463,6 +512,10 @@ export default function PosScreen() {
           ...(uom ? { uom, uomFactor: factor } : {}),
           ...(opts.priceLocked || opts.weighed ? { priceLocked: true } : {}),
           ...(opts.priceBarcode ? { priceBarcode: opts.priceBarcode } : {}),
+          ...(opts.serialNumberIds?.length
+            ? { serialNumberIds: opts.serialNumberIds, serialLabels: opts.serialLabels, quantity: opts.serialNumberIds.length }
+            : {}),
+          ...(opts.variantLabel ? { variantLabel: opts.variantLabel } : {}),
         },
       ])
     }
@@ -535,8 +588,7 @@ export default function PosScreen() {
       const d = res.data
       // A product with sizes / colours is sold by its variant: list them instead of adding the parent
       if ((d as { hasVariants?: boolean }).hasVariants) {
-        setQuery(d.name)
-        Alert.alert('Choose the size / colour', `${d.name} comes in several sizes or colours. Tap the one the customer is buying.`)
+        setVariantPickItem(d as Item)
         return
       }
       const isUnitCode = (d.scan as { matchedBy?: string } | null | undefined)?.matchedBy === 'item_barcode' || (d.scan as { matchedBy?: string } | null | undefined)?.matchedBy === 'uom_barcode'
@@ -575,6 +627,10 @@ export default function PosScreen() {
   function setQuantity(id: string, q: number) {
     const line = cart.find((p) => p.id === id)
     if (!line) return
+    if (line.serialNumberIds?.length) {
+      Alert.alert('Serial-numbered item', 'The quantity follows the serial numbers picked. Remove the line and pick the serials again to change it.')
+      return
+    }
     const r = setLineQuantity(line, q, otherBase(line))
     if (r.ok === false) {
       Alert.alert('Insufficient Stock', r.error)
@@ -585,6 +641,7 @@ export default function PosScreen() {
   function changeUnit(id: string, uom: string) {
     const line = cart.find((p) => p.id === id)
     if (!line) return
+    if (line.serialNumberIds?.length) return
     const opt = unitOptionsFor(line.unit, uomsFor(line)).find((o) => normalizeUnit(o.uom) === normalizeUnit(uom))
     if (!opt) return
     const r = changeLineUnit(line, opt, otherBase(line))
@@ -598,6 +655,11 @@ export default function PosScreen() {
   function updateQuantity(id: string, delta: number) {
     const line = cart.find((p) => p.id === id)
     if (!line) return
+    if (line.serialNumberIds?.length) {
+      if (delta < 0) removeItem(id)
+      else Alert.alert('Serial-numbered item', 'Tap the product again to pick more serial numbers.')
+      return
+    }
     const newQty = line.quantity + delta
     // stock is in the base unit: a box line of 3 holds 3 × factor pieces
     if (delta > 0 && line.trackStock !== false && line.availableStock != null && otherBase(line) + lineBaseQty({ quantity: newQty, uomFactor: line.uomFactor }) > line.availableStock) {
@@ -656,6 +718,9 @@ export default function PosScreen() {
     setCart([])
     setCouponCode('')
     setCustomer(null)
+    setBillDiscount(null)
+    setDiscountTokens([])
+    setRestaurant(null)
   }
 
   async function holdCart() {
@@ -668,7 +733,7 @@ export default function PosScreen() {
         subtotal: cartSubtotal,
         warehouseId: shift.warehouseId,
         customerId: customer?.id,
-        customerName: customer?.name,
+        customerName: customer?.name || (restaurant ? restaurantLabel(restaurant) : undefined),
       })
       if (!res.ok) {
         Alert.alert('Could Not Hold Ticket', res.error)
@@ -677,6 +742,9 @@ export default function PosScreen() {
       setCart([])
       setCouponCode('')
       setCustomer(null)
+      setBillDiscount(null)
+      setDiscountTokens([])
+      setRestaurant(null)
       setCartDrawerVisible(false)
       triggerToast(`Held as ${res.data?.holdNumber || 'ticket'}`)
     } finally {
@@ -735,16 +803,161 @@ export default function PosScreen() {
   // ------------------------------------------------------------------ totals
   const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0)
   const cartSubtotal = computeCartSubtotal(cart)
+  // Manual bill discount: its amount follows the cart (percent of the subtotal after promotions)
+  const billDiscountBase = roundCurrency(Math.max(0, cartSubtotal - cartPromotionDiscount))
+  const billDiscountAmount = billDiscount ? manualDiscountAmount(billDiscountBase, billDiscount.type, billDiscount.value) : 0
   const cartTax = useMemo(() => {
-    const taxable = taxableLineTotals(cart.map((l) => lineTotal(l)), cartPromotionDiscount)
+    const taxable = taxableLineTotals(cart.map((l) => lineTotal(l)), cartPromotionDiscount + billDiscountAmount)
     return calculateCartTax(
       cart.map((l, i) => ({ lineTotal: taxable[i], taxTemplateId: l.taxTemplateId })),
       taxConfig,
       customer?.taxExempt === true
     )
-  }, [cart, taxConfig, customer, cartPromotionDiscount])
-  const cartTotalPayable = cartPayable(Math.round((cartSubtotal - cartPromotionDiscount) * 100) / 100, cartTax)
+  }, [cart, taxConfig, customer, cartPromotionDiscount, billDiscountAmount])
+  const cartTotalPayable = cartPayable(roundCurrency(cartSubtotal - cartPromotionDiscount - billDiscountAmount), cartTax)
   const taxLabel = cartTax.breakdown.length === 1 ? cartTax.breakdown[0].taxName : 'Tax'
+
+  // ------------------------------------------------------------------ manual discounts
+  const discountLine = discountTarget?.lineId ? cart.find((c) => c.id === discountTarget.lineId) : undefined
+  const discountBase = discountTarget?.lineId
+    ? discountLine ? roundCurrency(Math.max(0, lineGross(discountLine) - (discountLine.promotionDiscount || 0))) : 0
+    : billDiscountBase
+  const discountInitial: { type: ManualDiscountType; value: number; reason?: string } | null = discountTarget?.lineId
+    ? discountLine?.manualDiscount ? { type: 'fixed', value: discountLine.manualDiscount } : null
+    : billDiscount
+
+  function openDiscount(lineId?: string) {
+    if (!shift || cart.length === 0) return
+    setCartDrawerVisible(false)
+    setDiscountTarget({ lineId })
+  }
+
+  function manualDiscountTotal(lines: CartLine[], bill: number): number {
+    return roundCurrency(lines.reduce((sum, l) => sum + (l.manualDiscount || 0), 0) + bill)
+  }
+
+  /** Counter rule (POS profile): discounts off, or above its limit, need a supervisor unless the seller is one. */
+  function discountNeedsApproval(lines: CartLine[], bill: number): boolean {
+    if (hasPermission(user, 'manageSales')) return false
+    const prof = shift?.posProfile
+    if (!prof) return false
+    const manual = manualDiscountTotal(lines, bill)
+    if (manual <= 0.004) return false
+    if (prof.allowDiscountChange === false) return true
+    const gross = lines.reduce((sum, l) => sum + lineGross(l), 0)
+    const max = parseFloat(String(prof.maxDiscountPercent ?? '100'))
+    const pct = gross > 0 ? (manual / gross) * 100 : 0
+    return Number.isFinite(max) && pct > max + 0.0001
+  }
+
+  function applyDiscount(d: DiscountInput) {
+    const target = discountTarget
+    setDiscountTarget(null)
+    let nextLines = cart
+    let nextBill = billDiscountAmount
+    let commit: () => void
+    if (target?.lineId) {
+      const line = cart.find((c) => c.id === target.lineId)
+      if (!line) return
+      const amount = manualDiscountAmount(roundCurrency(Math.max(0, lineGross(line) - (line.promotionDiscount || 0))), d.type, d.value)
+      nextLines = cart.map((c) => (c.id === line.id ? { ...c, manualDiscount: amount } : c))
+      commit = () => setCart((prev) => prev.map((c) => (c.id === line.id ? { ...c, manualDiscount: amount } : c)))
+    } else {
+      nextBill = manualDiscountAmount(billDiscountBase, d.type, d.value)
+      commit = () => setBillDiscount({ type: d.type, value: d.value, reason: d.reason || undefined })
+    }
+    if (discountNeedsApproval(nextLines, nextBill)) {
+      if (!queueState.online || shiftOffline) {
+        Alert.alert('Supervisor approval needed', 'This discount is above what this counter allows. The supervisor PIN is checked online — reconnect, or ask a manager to sell it.')
+        return
+      }
+      const total = manualDiscountTotal(nextLines, nextBill)
+      pendingDiscountRef.current = commit
+      setDiscountApproval({
+        scopes: ['discount'],
+        message: `Discount of ${formatLKR(total)} on this sale needs a supervisor. Ask them to enter their PIN.`,
+        amount: total,
+        posOpeningEntryId: shift?.id,
+      })
+      return
+    }
+    commit()
+  }
+
+  function removeDiscount() {
+    if (discountTarget?.lineId) {
+      const id = discountTarget.lineId
+      setCart((prev) => prev.map((c) => (c.id === id ? { ...c, manualDiscount: 0 } : c)))
+    } else {
+      setBillDiscount(null)
+    }
+    setDiscountTarget(null)
+  }
+
+  // A line discount never exceeds what is left of the line (quantity reduced, promotion applied)
+  useEffect(() => {
+    if (!cart.some((l) => l.manualDiscount)) return
+    let changed = false
+    const next = cart.map((l) => {
+      if (!l.manualDiscount) return l
+      const max = roundCurrency(Math.max(0, lineGross(l) - (l.promotionDiscount || 0)))
+      if (l.manualDiscount > max + 0.004) {
+        changed = true
+        return { ...l, manualDiscount: max }
+      }
+      return l
+    })
+    if (changed) setCart(next)
+  }, [cart])
+
+  // Empty cart: forget the bill discount and its approvals
+  useEffect(() => {
+    if (cart.length === 0) {
+      setBillDiscount(null)
+      setDiscountTokens([])
+      setRestaurant(null)
+    }
+  }, [cart.length])
+
+  // ------------------------------------------------------------------ quotation from the cart
+  async function saveQuotation(input: { validUntil: string; notes: string }): Promise<boolean> {
+    if (!queueState.online || shiftOffline) {
+      Alert.alert('Offline', 'Quotations are saved on the server. Reconnect and try again.')
+      return false
+    }
+    const items = cart.map((l, i) => ({
+      itemId: l.itemId || l.id.split('#')[0],
+      itemName: l.name,
+      quantity: l.quantity,
+      unitPrice: roundCurrency(Number(l.sellingPrice) || 0),
+      discount: roundCurrency((l.promotionDiscount || 0) + (l.manualDiscount || 0)),
+      taxRate: cartTax.perLine[i]?.effectiveRate || undefined,
+      uom: l.uom || undefined,
+      uomFactor: l.uom ? l.uomFactor || 1 : undefined,
+    }))
+    const lineDiscounts = items.reduce((sum, it) => sum + it.discount, 0)
+    const res = await apiPost<{ id: string; quotationNo?: string }>('/api/quotations', {
+      customerId: customer?.id || undefined,
+      customerName: customer?.name || undefined,
+      customerPhone: customer?.phone || undefined,
+      customerEmail: customer?.email || undefined,
+      notes: input.notes || undefined,
+      validUntil: input.validUntil,
+      // the bill-level discount + cart promotions on top of the line discounts
+      discount: roundCurrency(lineDiscounts + billDiscountAmount + cartPromotionDiscount),
+      items,
+    })
+    if (!res.ok) {
+      Alert.alert('Could Not Save Quotation', res.status === 403 ? 'Quotations are switched off for this business or your role.' : res.error)
+      return false
+    }
+    setQuoteVisible(false)
+    Alert.alert('Quotation saved', `${res.data?.quotationNo || 'The quotation'} was created${customer ? ` for ${customer.name}` : ''}. You can send or print it from Quotations.`, [
+      { text: 'Keep cart', style: 'cancel' },
+      { text: 'Clear cart', style: 'destructive', onPress: () => clearCart() },
+    ])
+    return true
+  }
 
   function handleSyncPress() {
     setOfflineSalesVisible(true)
@@ -788,20 +1001,62 @@ export default function PosScreen() {
             {shiftWarehouseName(shift) || user?.tenantName || 'skyERPOS'} ▸ {shiftCounterName(shift) || 'No shift'}
           </Text>
         </View>
-        <IconButton name="pause-circle-outline" label="Held tickets" onPress={() => setHeldVisible(true)} />
-        {canReturn ? (
-          <IconButton
-            name="return-down-back-outline"
-            label="Return"
-            onPress={() => {
-              setQuery('')
-              setReturnQuery('INV-')
-            }}
-          />
-        ) : null}
-        <IconButton name="time-outline" label="Shift" onPress={() => router.push('/shifts')} />
+        {!compactHeader ? (
+          <>
+            <IconButton name="pricetag-outline" label="Price check" onPress={() => setPriceCheckVisible(true)} />
+            <IconButton name="pause-circle-outline" label="Held tickets" onPress={() => setHeldVisible(true)} />
+            {canReturn ? (
+              <IconButton
+                name="return-down-back-outline"
+                label="Return"
+                onPress={() => {
+                  setQuery('')
+                  setReturnQuery('INV-')
+                }}
+              />
+            ) : null}
+            <IconButton name="time-outline" label="Shift" onPress={() => router.push('/shifts')} />
+          </>
+        ) : (
+          <IconButton name="ellipsis-horizontal" label="More actions" onPress={() => setMoreMenuOpen(true)} />
+        )}
         <AlertsBell compact />
       </View>
+
+      {moreMenuOpen ? (
+        <View style={styles.moreMenu} accessibilityViewIsModal>
+          <Pressable style={styles.moreMenuItem} onPress={() => { setMoreMenuOpen(false); setPriceCheckVisible(true) }} accessibilityRole="button" accessibilityLabel="Price check">
+            <Ionicons name="pricetag-outline" size={18} color={THEME.colors.text} />
+            <Text style={styles.moreMenuText}>Price check</Text>
+          </Pressable>
+          <Pressable style={styles.moreMenuItem} onPress={() => { setMoreMenuOpen(false); setHeldVisible(true) }} accessibilityRole="button" accessibilityLabel="Held tickets">
+            <Ionicons name="pause-circle-outline" size={18} color={THEME.colors.text} />
+            <Text style={styles.moreMenuText}>Held tickets</Text>
+          </Pressable>
+          {canReturn ? (
+            <Pressable
+              style={styles.moreMenuItem}
+              onPress={() => {
+                setMoreMenuOpen(false)
+                setQuery('')
+                setReturnQuery('INV-')
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Return"
+            >
+              <Ionicons name="return-down-back-outline" size={18} color={THEME.colors.text} />
+              <Text style={styles.moreMenuText}>Return</Text>
+            </Pressable>
+          ) : null}
+          <Pressable style={styles.moreMenuItem} onPress={() => { setMoreMenuOpen(false); router.push('/shifts') }} accessibilityRole="button" accessibilityLabel="Shift">
+            <Ionicons name="time-outline" size={18} color={THEME.colors.text} />
+            <Text style={styles.moreMenuText}>Shift</Text>
+          </Pressable>
+          <Pressable style={styles.moreMenuItem} onPress={() => setMoreMenuOpen(false)} accessibilityRole="button" accessibilityLabel="Close">
+            <Text style={[styles.moreMenuText, { color: THEME.colors.textMuted }]}>Close</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       {/* W6: offline mode + pending sync + catalog freshness */}
       {queueState.pending + queueState.rejected > 0 ? (
@@ -920,6 +1175,17 @@ export default function PosScreen() {
               <Ionicons name="add-circle" size={24} color={THEME.colors.primary} />
             )}
           </Pressable>
+
+          {/* Restaurant: order type + table (printed on the kitchen ticket) */}
+          {user?.businessType === 'restaurant' ? (
+            <Pressable style={styles.restaurantStrip} onPress={() => setRestaurantVisible(true)} accessibilityRole="button" accessibilityLabel="Set order type and table">
+              <Ionicons name="restaurant-outline" size={18} color={restaurant ? THEME.colors.primary : THEME.colors.textMuted} />
+              <Text style={[styles.restaurantText, restaurant && { color: THEME.colors.text, fontWeight: '800' }]} numberOfLines={1}>
+                {restaurant ? restaurantLabel(restaurant) : 'Order type & table (tap to set)'}
+              </Text>
+              <Ionicons name="chevron-forward" size={16} color={THEME.colors.textSubtle} />
+            </Pressable>
+          ) : null}
 
           {/* Catalog freshness */}
           <Pressable style={styles.catalogBar} onPress={() => setOfflineSalesVisible(true)}>
@@ -1071,6 +1337,9 @@ export default function PosScreen() {
                           {formatLKR(line.sellingPrice)}
                           {line.uom ? ` / ${line.uom}` : ''}
                           {line.promotionDiscount ? ` · −${formatLKR(line.promotionDiscount)}` : ''}
+                          {line.manualDiscount ? ` · disc −${formatLKR(line.manualDiscount)}` : ''}
+                          {line.variantLabel ? ` · ${line.variantLabel}` : ''}
+                          {line.serialLabels?.length ? ` · S/N ${line.serialLabels.join(', ')}` : ''}
                           {'  '}= {formatLKR(lineTotal(line))}
                         </Text>
                       </View>
@@ -1088,6 +1357,31 @@ export default function PosScreen() {
                   <Text style={styles.cartHint}>Long-press a line to remove it</Text>
                 </ScrollView>
               ) : null}
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.toolChips} style={{ flexGrow: 0 }}>
+                <Pressable style={[styles.toolChip, billDiscountAmount > 0 && styles.toolChipOn]} onPress={() => openDiscount()} accessibilityRole="button" accessibilityLabel="Bill discount">
+                  <Ionicons name="pricetags-outline" size={15} color={billDiscountAmount > 0 ? '#FFF' : THEME.colors.primary} />
+                  <Text style={[styles.toolChipText, billDiscountAmount > 0 && { color: '#FFF' }]}>
+                    {billDiscountAmount > 0 ? `Discount −${formatLKR(billDiscountAmount)}` : 'Discount'}
+                  </Text>
+                </Pressable>
+                {features.has('quotation') && hasPermission(user, 'createSales') ? (
+                  <Pressable style={styles.toolChip} onPress={() => setQuoteVisible(true)} accessibilityRole="button" accessibilityLabel="Save the cart as a quotation">
+                    <Ionicons name="document-text-outline" size={15} color={THEME.colors.primary} />
+                    <Text style={styles.toolChipText}>Quote</Text>
+                  </Pressable>
+                ) : null}
+                {user?.businessType === 'restaurant' ? (
+                  <Pressable style={[styles.toolChip, !!restaurant && styles.toolChipOn]} onPress={() => setRestaurantVisible(true)} accessibilityRole="button" accessibilityLabel="Order type and table">
+                    <Ionicons name="restaurant-outline" size={15} color={restaurant ? '#FFF' : THEME.colors.primary} />
+                    <Text style={[styles.toolChipText, !!restaurant && { color: '#FFF' }]}>{restaurant ? restaurantLabel(restaurant) : 'Table'}</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable style={styles.toolChip} onPress={() => setPriceCheckVisible(true)} accessibilityRole="button" accessibilityLabel="Price check">
+                  <Ionicons name="pricetag-outline" size={15} color={THEME.colors.primary} />
+                  <Text style={styles.toolChipText}>Price check</Text>
+                </Pressable>
+              </ScrollView>
 
               <View style={styles.cartActionRow}>
                 <Pressable style={styles.iconActionBtn} onPress={holdCart} disabled={holdBusy} accessibilityLabel="Hold cart">
@@ -1150,7 +1444,95 @@ export default function PosScreen() {
         cartPromotions={cartPromotions}
         taxLabel={taxLabel}
         taxInclusive={cartTax.hasInclusiveTax}
+        onDiscount={(lineId) => openDiscount(lineId)}
+        cartDiscount={billDiscountAmount > 0 ? { amount: billDiscountAmount, label: billDiscount?.type === 'percentage' ? `${billDiscount.value}%` : 'LKR' } : null}
+        onClearCartDiscount={() => setBillDiscount(null)}
       />
+
+      <SerialPickerModal
+        item={serialPickItem}
+        excludeIds={cart.flatMap((l) => l.serialNumberIds || [])}
+        onSkip={() => {
+          const it = serialPickItem
+          setSerialPickItem(null)
+          if (it) addToCart(it, 1, { skipOptionPick: true })
+        }}
+        warehouseId={shift?.warehouseId}
+        onClose={() => setSerialPickItem(null)}
+        onPick={(serials) => {
+          const item = serialPickItem
+          setSerialPickItem(null)
+          if (!item || !serials.length) return
+          addToCart(item, serials.length, {
+            skipOptionPick: true,
+            serialNumberIds: serials.map((s) => s.id),
+            serialLabels: serials.map((s) => s.serialNumber),
+            noMerge: true,
+          })
+        }}
+      />
+      <VariantPickerModal
+        item={variantPickItem}
+        warehouseId={shift?.warehouseId}
+        onClose={() => setVariantPickItem(null)}
+        onPick={(v) => {
+          const parent = variantPickItem
+          setVariantPickItem(null)
+          if (!parent) return
+          addToCart(
+            {
+              ...parent,
+              id: v.id,
+              name: v.name || parent.name,
+              sku: v.sku ?? parent.sku,
+              barcode: v.barcode ?? parent.barcode,
+              sellingPrice: v.sellingPrice || parent.sellingPrice,
+              unit: v.unit ?? parent.unit,
+              taxTemplateId: v.taxTemplateId ?? parent.taxTemplateId,
+              trackStock: v.trackStock ?? parent.trackStock,
+              availableStock: v.availableStock,
+            } as Item,
+            1,
+            { skipOptionPick: true, variantLabel: v.label }
+          )
+        }}
+      />
+
+      <DiscountModal
+        visible={!!discountTarget}
+        title={discountTarget?.lineId ? `Discount on ${cart.find((c) => c.id === discountTarget.lineId)?.name || 'line'}` : 'Bill discount'}
+        base={discountBase}
+        maxPercent={shift?.posProfile?.maxDiscountPercent != null ? Number(shift.posProfile.maxDiscountPercent) : null}
+        initial={discountInitial}
+        onClose={() => setDiscountTarget(null)}
+        onRemove={discountInitial ? removeDiscount : undefined}
+        onApply={applyDiscount}
+      />
+
+      <SupervisorPinModal
+        request={discountApproval}
+        onCancel={() => { pendingDiscountRef.current = null; setDiscountApproval(null) }}
+        onApproved={(token) => {
+          setDiscountTokens((t) => [...t, token])
+          setDiscountApproval(null)
+          const run = pendingDiscountRef.current
+          pendingDiscountRef.current = null
+          run?.()
+        }}
+      />
+
+      <PriceCheckModal visible={priceCheckVisible} onClose={() => setPriceCheckVisible(false)} warehouseId={warehouseId} localReady={localReady} scaleConfig={scaleConfigRef.current} />
+
+      <QuoteFromCartModal
+        visible={quoteVisible}
+        total={cartTotalPayable}
+        lineCount={cart.length}
+        customerName={customer?.name}
+        onClose={() => setQuoteVisible(false)}
+        onSubmit={saveQuotation}
+      />
+
+      <RestaurantOrderSheet visible={restaurantVisible} warehouseId={warehouseId} value={restaurant} onClose={() => setRestaurantVisible(false)} onChange={setRestaurant} />
 
       {shift && clientSaleId && (
         <TenderModal
@@ -1164,6 +1546,8 @@ export default function PosScreen() {
           cartPromotionDiscount={cartPromotionDiscount}
           couponCodes={couponCodes}
           onPriceChanged={(quote) => { applyQuote(quote as CartQuote); setTenderVisible(false) }}
+          cartDiscount={billDiscountAmount > 0 && billDiscount ? { amount: billDiscountAmount, type: billDiscount.type, reason: billDiscount.reason } : null}
+          approvalTokens={discountTokens}
           onCustomerChange={setCustomer}
           online={queueState.online}
           business={business}
@@ -1175,6 +1559,9 @@ export default function PosScreen() {
             setCart([])
             setCouponCode('')
             setCustomer(null)
+            setBillDiscount(null)
+            setDiscountTokens([])
+            setRestaurant(null)
             setSaleResult(data)
             // stock shown in the grid reflects the sale (local catalog was adjusted)
             if (localReady) fetchItems(1, false)
@@ -1212,6 +1599,24 @@ export default function PosScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: THEME.colors.background },
+  moreMenu: {
+    position: 'absolute',
+    top: 56,
+    right: 12,
+    zIndex: 40,
+    backgroundColor: THEME.colors.card,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: THEME.colors.border,
+    paddingVertical: 6,
+    minWidth: 180,
+    shadowColor: '#000',
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  moreMenuItem: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 12 },
+  moreMenuText: { fontSize: 14, fontWeight: '700', color: THEME.colors.text },
   header: {
     backgroundColor: '#FFFFFF',
     flexDirection: 'row',
@@ -1235,6 +1640,12 @@ const styles = StyleSheet.create({
   syncBarText: { flex: 1, fontSize: 13, fontWeight: '700', color: THEME.colors.onSecondaryContainer },
   offlineModeBanner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: THEME.colors.secondaryLight, paddingHorizontal: 16, paddingVertical: 6 },
   offlineModeText: { color: THEME.colors.onSecondaryContainer, fontSize: 12, fontWeight: '700' },
+  restaurantStrip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, minHeight: 40, backgroundColor: '#FFFFFF', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: THEME.colors.border },
+  restaurantText: { flex: 1, fontSize: 13, fontWeight: '600', color: THEME.colors.textMuted },
+  toolChips: { gap: 8, paddingVertical: 6, paddingRight: 8 },
+  toolChip: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 36, paddingHorizontal: 12, borderRadius: 18, backgroundColor: THEME.colors.primaryLight },
+  toolChipOn: { backgroundColor: THEME.colors.primary },
+  toolChipText: { fontSize: 12, fontWeight: '800', color: THEME.colors.primary },
   catalogBar: { paddingHorizontal: 16, paddingVertical: 3, backgroundColor: THEME.colors.surfaceContainerLow },
   catalogBarText: { color: THEME.colors.textSubtle, fontSize: 10, textAlign: 'center' },
   gateWrap: { flex: 1, justifyContent: 'center', padding: 24 },

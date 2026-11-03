@@ -1,11 +1,12 @@
 // More tab: every feature the role / business type allows as an icon grid (native screens, or
 // the web page in the browser where the app has none), plus text size, device info and sign out.
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { View, Text, StyleSheet, ScrollView, Pressable, Alert, useWindowDimensions } from 'react-native'
 import { router } from 'expo-router'
 import Constants from 'expo-constants'
 import { Ionicons } from '@expo/vector-icons'
 import { formatBusinessId, getApiBase, logout } from '../../src/lib/api'
+import { getAppLocale, LOCALE_OPTIONS, setAppLocale, type AppLocale } from '../../src/lib/locale'
 import { displayRole } from '../../src/lib/roles'
 import { THEME } from '../../src/lib/theme'
 import { useSessionUser } from '../../src/lib/session'
@@ -99,6 +100,7 @@ export default function MoreTab() {
         })}
 
         <SectionHeader title="Settings" />
+        <LanguageRow />
         <TextSizeRow />
         <Card style={[uiStyles.listCard, { marginTop: 10 }]}>
           <ListItem icon="globe-outline" iconTone="muted" title="Server" subtitle={getApiBase()} />
@@ -107,6 +109,38 @@ export default function MoreTab() {
         </Card>
       </ScrollView>
     </View>
+  )
+}
+
+/** Preferred language for SA notices / alerts (EN · සිංහල · தமிழ்). */
+function LanguageRow() {
+  const [locale, setLocale] = useState<AppLocale>('en')
+  useEffect(() => {
+    getAppLocale().then(setLocale).catch(() => undefined)
+  }, [])
+  return (
+    <Card style={[styles.sizeCard, { marginBottom: 10 }]}>
+      <Ionicons name="language-outline" size={20} color={THEME.colors.primary} />
+      <View style={styles.sizeRow} accessibilityRole="radiogroup">
+        {LOCALE_OPTIONS.map((opt) => (
+          <Pressable
+            key={opt.value}
+            onPress={() => {
+              setLocale(opt.value)
+              void setAppLocale(opt.value)
+            }}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: locale === opt.value }}
+            accessibilityLabel={opt.label}
+            style={[styles.sizeBtn, locale === opt.value && styles.sizeBtnActive]}
+          >
+            <Text allowFontScaling={false} style={[styles.langBtnText, locale === opt.value && styles.sizeBtnTextActive]} numberOfLines={1}>
+              {opt.value.toUpperCase()}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+    </Card>
   )
 }
 
@@ -154,5 +188,6 @@ const styles = StyleSheet.create({
   sizeBtnActive: { backgroundColor: THEME.colors.primary },
   sizeBtnText: { fontWeight: '700', color: THEME.colors.text },
   sizeBtnTextActive: { color: THEME.colors.onPrimary },
+  langBtnText: { fontWeight: '700', fontSize: 12, color: THEME.colors.text },
   sizePct: { fontSize: 12, color: THEME.colors.textMuted, minWidth: 36, textAlign: 'right' },
 })

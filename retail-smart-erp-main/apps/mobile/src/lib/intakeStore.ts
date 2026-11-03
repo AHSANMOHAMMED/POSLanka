@@ -7,7 +7,7 @@
 import * as FileSystem from 'expo-file-system'
 import * as Crypto from 'expo-crypto'
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo'
-import { apiPost, isNetworkError } from './api'
+import { apiPost, getUser, isNetworkError } from './api'
 import { isTransientStatus } from './httpStatus'
 
 export type IntakeMode = 'receive' | 'count'
@@ -29,6 +29,8 @@ export interface LocalIntakeLine {
 
 export interface LocalIntakeBatch {
   clientBatchId: string
+  /** Bound at create time so a shared device cannot upload Tenant A's scans after Tenant B signs in. */
+  tenantSlug?: string | null
   /** server id once the batch exists on the server */
   serverId?: string | null
   batchNo?: string | null
@@ -129,8 +131,10 @@ export async function getLocalBatch(clientBatchId: string): Promise<LocalIntakeB
 
 export async function createLocalBatch(input: { warehouseId: string; warehouseName?: string | null; notes?: string | null }): Promise<LocalIntakeBatch> {
   const list = await load()
+  const tenantSlug = (await getUser())?.tenantSlug || null
   const batch: LocalIntakeBatch = {
     clientBatchId: newId(),
+    tenantSlug,
     warehouseId: input.warehouseId,
     warehouseName: input.warehouseName || null,
     notes: input.notes || null,
@@ -147,8 +151,10 @@ export async function adoptServerBatch(server: { id: string; batchNo: string; wa
   const list = await load()
   const existing = list.find((b) => b.serverId === server.id || (server.clientBatchId && b.clientBatchId === server.clientBatchId))
   if (existing) return existing
+  const tenantSlug = (await getUser())?.tenantSlug || null
   const batch: LocalIntakeBatch = {
     clientBatchId: server.clientBatchId || newId(),
+    tenantSlug,
     serverId: server.id,
     batchNo: server.batchNo,
     warehouseId: server.warehouseId,
@@ -229,6 +235,15 @@ export function uploadBatch(clientBatchId: string): Promise<UploadOutcome> {
 async function runUploadBatch(clientBatchId: string): Promise<UploadOutcome> {
   const b = await getLocalBatch(clientBatchId)
   if (!b) return { ok: false, offline: false, error: 'Batch not found on this device' }
+
+  const sessionSlug = (await getUser())?.tenantSlug || null
+  // Legacy batches (no tenantSlug) adopt the current session once; mismatched tenants stay local.
+  if (!b.tenantSlug && sessionSlug) {
+    b.tenantSlug = sessionSlug
+    await persist()
+  } else if (b.tenantSlug && sessionSlug && b.tenantSlug !== sessionSlug) {
+    return { ok: false, offline: false, error: 'This intake belongs to another company on this device — sign in as that company to upload it' }
+  }
 
   if (!b.serverId) {
     const res = await apiPost<{ id: string; batchNo: string }>('/api/stock-intake', {
@@ -335,10 +350,12 @@ export async function uploadAllPending(): Promise<void> {
   uploading = true
   notify()
   try {
+    const sessionSlug = (await getUser())?.tenantSlug || null
     const list = await load()
     for (const b of [...list]) {
       if (b.rejected) continue
       if (b.serverId && b.lines.every((l) => l.rejected)) continue
+      if (b.tenantSlug && sessionSlug && b.tenantSlug !== sessionSlug) continue
       const r = await uploadBatch(b.clientBatchId)
       if (!r.ok && r.offline) break
     }

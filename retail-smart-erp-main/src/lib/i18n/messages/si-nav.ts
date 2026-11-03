@@ -32,4 +32,8 @@ export const siMessages = {
     loading: 'පූරණය වෙමින්…',
     error: 'දෝෂයක් ඇතිවිය',
   },
+  login: {
+    notices: 'දැනුම්දීම්',
+    dismiss: 'වසන්න',
+  },
 } as const

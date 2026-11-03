@@ -26,7 +26,7 @@ export default function FAQAccordion({ items }: FAQAccordionProps) {
             <div
               key={i}
               className={`rounded-2xl overflow-hidden bg-white/5 border transition-all duration-300 ${
-                isOpen ? 'border-emerald-500/30 shadow-lg shadow-emerald-500/5' : 'border-white/10'
+                isOpen ? 'border-[rgba(0,80,192,0.35)] shadow-lg shadow-[rgba(0,80,192,0.08)]' : 'border-white/10'
               }`}
             >
               <button
@@ -37,7 +37,7 @@ export default function FAQAccordion({ items }: FAQAccordionProps) {
                 aria-controls={`faq-answer-${i}`}
               >
                 <div className="flex items-center gap-3 pr-4">
-                  {isOpen && <div className="w-1 h-6 rounded-full bg-gradient-to-b from-emerald-600 to-emerald-500 flex-shrink-0" />}
+                  {isOpen && <div className="w-1 h-6 rounded-full bg-gradient-to-b from-[#0050c0] to-[#2563eb] flex-shrink-0" />}
                   <span className="text-sm sm:text-base font-semibold text-white">{item.question}</span>
                 </div>
                 <div className={`w-7 h-7 rounded flex items-center justify-center flex-shrink-0 transition-colors ${

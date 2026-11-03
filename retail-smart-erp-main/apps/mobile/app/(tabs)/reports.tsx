@@ -13,6 +13,7 @@ import { useFeatureFlags } from '../../src/lib/features'
 import { openWeb, visibleFeatures } from '../../src/lib/modules'
 import { paymentMethodLabel } from '../../src/lib/shift'
 import { Banner, Card, KpiCard, ListItem, ScreenHeader, SectionHeader, Skeleton, uiStyles } from '../../src/components/ui'
+import { EmptyView, ErrorView } from '../../src/components/StateViews'
 
 type Period = 'today' | 'week' | 'month'
 const PERIOD_LABEL: Record<Period, string> = { today: 'Today', week: 'This week', month: 'This month' }
@@ -42,6 +43,7 @@ export default function ReportsTab() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [offline, setOffline] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const loadedAt = useRef(0)
   const reports = hasPermission(user, 'viewReports')
 
@@ -53,8 +55,11 @@ export default function ReportsTab() {
     loadedAt.current = Date.now()
     const [s, o] = await Promise.all([apiGet<Stats>('/api/sales/dashboard-stats'), apiGet<Owner>('/api/dashboard/owner?topItems=5')])
     if (s.ok) setStats(s.data)
+    else setStats(null)
     if (o.ok) setOwner(o.data)
-    setOffline(isNetworkError(s))
+    else setOwner(null)
+    setOffline(isNetworkError(s) || isNetworkError(o))
+    setLoadError(!s.ok && !o.ok ? (s.error || o.error || 'Could not load reports') : null)
     setLoading(false)
   }, [reports])
 
@@ -73,6 +78,12 @@ export default function ReportsTab() {
     <View style={uiStyles.screen}>
       <ScreenHeader title="Reports" subtitle={user?.tenantName} back={false} />
       {offline ? <Banner text="Offline — figures could not be refreshed" /> : null}
+      {!loading && loadError ? (
+        <ErrorView message={loadError} onRetry={() => { setLoading(true); void load() }} />
+      ) : null}
+      {!loading && !loadError && !stats && !owner && reports ? (
+        <EmptyView icon="📊" title="No report figures yet" subtitle="Pull to refresh, or open the full reports on the web." />
+      ) : null}
       <ScrollView
         contentContainerStyle={[uiStyles.content, { paddingBottom: 28 }]}
         refreshControl={

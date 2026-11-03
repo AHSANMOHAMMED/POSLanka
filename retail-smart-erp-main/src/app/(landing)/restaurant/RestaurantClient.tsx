@@ -140,7 +140,7 @@ export default function RestaurantClient() {
                     icon={<UtensilsCrossed className="w-4 h-4 text-orange-600" />}
                     className="bg-gradient-to-r from-orange-500/10 to-red-500/10 text-orange-400 border-orange-500/30 !mb-0"
                   />
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-[rgba(0,80,192,0.35)] text-sky-300">
                     <Check className="w-3.5 h-3.5" />
                     Free Forever
                   </span>
@@ -349,7 +349,7 @@ export default function RestaurantClient() {
                 href="/supermarket"
                 icon={ShoppingCart}
                 mockup={<MockDashboard />}
-                gradient="from-emerald-500 to-cyan-500"
+                gradient="from-[#0050c0] to-[#2563eb]"
               />
             </StaggerItem>
             <StaggerItem>
@@ -368,7 +368,7 @@ export default function RestaurantClient() {
                 description="New & used vehicle sales, trade-ins, test drives, and inventory management."
                 href="/dealership"
                 icon={Car}
-                gradient="from-cyan-500 to-teal-500"
+                gradient="from-[#0050c0] to-[#2563eb]"
               />
             </StaggerItem>
           </StaggerContainer>

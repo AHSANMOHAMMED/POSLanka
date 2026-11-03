@@ -89,14 +89,19 @@ export function renewalStartDate(
 /**
  * Calculate next period dates based on billing cycle
  */
+export type BillingCycle = 'monthly' | 'yearly' | 'lifetime'
+
 export function getNextPeriodDates(
   startDate: Date,
-  billingCycle: 'monthly' | 'yearly'
+  billingCycle: BillingCycle
 ): { periodStart: Date; periodEnd: Date } {
   const periodStart = new Date(startDate)
   const periodEnd = new Date(startDate)
 
-  if (billingCycle === 'yearly') {
+  if (billingCycle === 'lifetime') {
+    // Sentinel used elsewhere for never-expiring plans (see subscription-state NEVER_EXPIRES).
+    periodEnd.setTime(Date.parse('2099-12-31T00:00:00.000Z'))
+  } else if (billingCycle === 'yearly') {
     periodEnd.setFullYear(periodEnd.getFullYear() + 1)
   } else {
     periodEnd.setMonth(periodEnd.getMonth() + 1)

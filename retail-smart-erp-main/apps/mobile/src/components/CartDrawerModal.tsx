@@ -39,6 +39,13 @@ export interface CartLine {
   catalogPrice?: number
   /** measures: price of one base unit, kept once the line changed unit (lib/measureUnits) */
   baseSellingPrice?: number
+  /** Manual line discount (LKR amount) typed by the cashier */
+  manualDiscount?: number
+  /** Serial-tracked line: the serial picked (quantity is 1) */
+  serialNumberIds?: string[]
+  serialLabels?: string[]
+  /** Size / colour of a variant line */
+  variantLabel?: string
 }
 
 interface CartDrawerModalProps {
@@ -75,6 +82,11 @@ interface CartDrawerModalProps {
   onChangeUnit?: (id: string, uom: string) => void
   /** Units a line can be sold in (default: standard units of the line's base unit). */
   unitChoices?: (line: CartLine) => UnitOption[] | null
+  /** Manual discount: open the discount sheet (for a line, or the whole bill when no id) */
+  onDiscount?: (lineId?: string) => void
+  /** Manual bill discount already applied (LKR amount, label such as "10%") */
+  cartDiscount?: { amount: number; label: string } | null
+  onClearCartDiscount?: () => void
 }
 
 function QtyBox({ line, onSetQuantity }: { line: CartLine; onSetQuantity?: (id: string, quantity: number) => void }) {
@@ -127,6 +139,9 @@ export function CartDrawerModal({
   onSetQuantity,
   onChangeUnit,
   unitChoices,
+  onDiscount,
+  cartDiscount,
+  onClearCartDiscount,
 }: CartDrawerModalProps) {
   if (!visible) return null
 
@@ -189,6 +204,18 @@ export function CartDrawerModal({
                           {(item.promotionLabels || []).join(', ')} −{formatLKR(item.promotionDiscount)}
                         </Text>
                       )}
+                      {item.variantLabel ? <Text style={styles.conversion}>{item.variantLabel}</Text> : null}
+                      {item.serialLabels?.length ? <Text style={styles.conversion}>S/N {item.serialLabels.join(', ')}</Text> : null}
+                      {!!item.manualDiscount && item.manualDiscount > 0 && (
+                        <Text style={[styles.unitPrice, { color: THEME.colors.secondary }]}>Discount −{formatLKR(item.manualDiscount)}</Text>
+                      )}
+                      {onDiscount ? (
+                        <Pressable onPress={() => onDiscount(item.id)} hitSlop={6} accessibilityLabel={`Discount on ${item.name}`}>
+                          <Text style={[styles.unitPrice, { color: THEME.colors.primary, fontWeight: '800' }]}>
+                            {item.manualDiscount ? 'Change discount' : '% Line discount'}
+                          </Text>
+                        </Pressable>
+                      ) : null}
                       {conversion && <Text style={styles.conversion}>{conversion}</Text>}
                       {units && (
                         <View style={styles.chipRow}>
@@ -258,6 +285,21 @@ export function CartDrawerModal({
                   <Text style={[styles.summaryVal, { color: '#15803d' }]}>−{formatLKR(p.amount)}</Text>
                 </View>
               ))}
+              {cartDiscount && cartDiscount.amount > 0 ? (
+                <View style={styles.summaryRow}>
+                  <Text style={[styles.summaryLabel, { color: THEME.colors.secondary }]}>Discount ({cartDiscount.label})</Text>
+                  <Pressable onPress={onClearCartDiscount} disabled={!onClearCartDiscount} accessibilityLabel="Remove bill discount">
+                    <Text style={[styles.summaryVal, { color: THEME.colors.secondary }]}>−{formatLKR(cartDiscount.amount)}{onClearCartDiscount ? '  ✕' : ''}</Text>
+                  </Pressable>
+                </View>
+              ) : onDiscount ? (
+                <View style={styles.summaryRow}>
+                  <Text style={styles.summaryLabel}>Discount</Text>
+                  <Pressable onPress={() => onDiscount()} hitSlop={6} accessibilityLabel="Add a discount to the bill">
+                    <Text style={[styles.summaryVal, { color: THEME.colors.primary }]}>+ Add discount</Text>
+                  </Pressable>
+                </View>
+              ) : null}
               {onCouponChange && (
                 <View style={styles.summaryRow}>
                   <Text style={styles.summaryLabel}>Coupon</Text>

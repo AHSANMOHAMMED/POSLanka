@@ -590,7 +590,7 @@ export function HeroBadge({ text, icon, className = '' }: HeroBadgeProps) {
       whileInView={{ opacity: 1, y: 0, scale: 1 }}
       viewport={{ once: true }}
       transition={{ duration: 0.5, ease: 'easeOut' }}
-      className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-gradient-to-r from-emerald-500/20 to-amber-500/20 text-emerald-400 border border-emerald-500/30 shadow-sm ${className}`}
+      className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-gradient-to-r from-[#0050c0]/20 to-amber-500/20 text-sky-300 border border-[rgba(0,80,192,0.35)] shadow-sm ${className}`}
     >
       {icon}
       {text}

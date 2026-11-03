@@ -31,6 +31,7 @@ export async function PUT(
       displayName,
       priceMonthly,
       priceYearly,
+      priceLifetime,
       currency,
       maxUsers,
       maxSalesMonthly,
@@ -54,6 +55,7 @@ export async function PUT(
     if (displayName !== undefined) updateData.displayName = displayName
     if (priceMonthly !== undefined) updateData.priceMonthly = priceMonthly != null ? String(priceMonthly) : null
     if (priceYearly !== undefined) updateData.priceYearly = priceYearly != null ? String(priceYearly) : null
+    if (priceLifetime !== undefined) updateData.priceLifetime = priceLifetime != null ? String(priceLifetime) : null
     if (currency !== undefined) updateData.currency = currency
     if (maxUsers !== undefined) updateData.maxUsers = maxUsers
     if (maxSalesMonthly !== undefined) updateData.maxSalesMonthly = maxSalesMonthly
@@ -65,7 +67,8 @@ export async function PUT(
 
     const priceChanged =
       (priceMonthly !== undefined && Number(priceMonthly) !== Number(existing.priceMonthly)) ||
-      (priceYearly !== undefined && Number(priceYearly) !== Number(existing.priceYearly))
+      (priceYearly !== undefined && Number(priceYearly) !== Number(existing.priceYearly)) ||
+      (priceLifetime !== undefined && Number(priceLifetime ?? 0) !== Number(existing.priceLifetime ?? 0))
 
     const { tier, grandfatheredCount } = await db.transaction(async (tx) => {
       let grandfathered = 0

@@ -16,7 +16,7 @@ import { apiGet, apiPost, isNetworkError } from '../lib/api'
 import { enqueueSale, isQueueablePayload } from '../lib/offlineQueue'
 import { adjustLocalStock, nextOfflineRef } from '../lib/localdb'
 import { calculateCartTax, roundCurrency, type TaxConfig } from '../lib/tax'
-import { cartPayable, cartSubtotal, lineTotal } from '../lib/cartMath'
+import { cartPayable, cartSubtotal, lineTotal, type ManualDiscountType } from '../lib/cartMath'
 import { taxableLineTotals } from '../lib/cartPricing'
 import { allowedTenders, TENDER_METHOD, type TenderOption as TenderOptionT } from '../lib/tenderRules'
 import { settleTenders } from '../lib/tenders'
@@ -28,6 +28,7 @@ import { receiptFromSale, type BusinessInfo } from '../lib/receipt'
 import type { ReceiptInput } from '../lib/escpos'
 import type { CartLine } from './CartDrawerModal'
 import { CustomerPickerModal, type Customer } from './CustomerPickerModal'
+import { BarcodeScannerModal } from './BarcodeScannerModal'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from './SupervisorPinModal'
 import { PrescriptionSheet, type PrescriptionInput, type PrescriptionRequest } from './PrescriptionSheet'
 import { useHeaderPad } from '../lib/safeArea'
@@ -72,6 +73,10 @@ interface TenderModalProps {
   onPriceChanged?: (quote: unknown) => void
   /** Customer picked on this screen (for a credit line); the POS keeps it on the cart */
   onCustomerChange?: (customer: Customer) => void
+  /** Manual bill discount (amount in LKR, how it was typed, reason) — sent as sale.discount */
+  cartDiscount?: { amount: number; type: ManualDiscountType; reason?: string } | null
+  /** Supervisor approval tokens already obtained for this cart (discount over the counter limit) */
+  approvalTokens?: string[]
 }
 
 /** UI tender options mapped onto the server's payment method enum. */
@@ -83,6 +88,7 @@ const TENDER_LABELS: Record<TenderOption, string> = {
   lankaqr: 'LANKAQR',
   credit: 'CREDIT',
   cheque: 'CHEQUE',
+  gift_card: 'GIFT CARD',
 }
 
 const METHOD_INFO: Record<TenderOption, { emoji: string; title: string; sub: string }> = {
@@ -91,8 +97,12 @@ const METHOD_INFO: Record<TenderOption, { emoji: string; title: string; sub: str
   lankaqr: { emoji: '📱', title: 'LankaQR / Transfer', sub: 'Bank transfer with reference' },
   cheque: { emoji: '🏦', title: 'Cheque', sub: 'Number, bank and date' },
   credit: { emoji: '🧾', title: 'Credit', sub: 'On the customer account' },
+  gift_card: { emoji: '🎁', title: 'Gift card', sub: 'Pay from a card balance' },
 }
-const METHOD_ORDER: TenderOption[] = ['cash', 'card', 'lankaqr', 'cheque', 'credit']
+const METHOD_ORDER: TenderOption[] = ['cash', 'card', 'lankaqr', 'gift_card', 'cheque', 'credit']
+
+/** A gift card looked up on this screen (GET /api/gift-cards/lookup) */
+interface GiftCardInfo { id: string; cardNumber: string; balance: number; status: string; customerName?: string | null }
 
 /** One payment line on the bill (several lines = split payment) */
 interface PayLine { key: number; method: TenderOption; amount: string }
@@ -137,23 +147,26 @@ export function TenderModal({
   couponCodes,
   onPriceChanged,
   onCustomerChange,
+  cartDiscount,
+  approvalTokens,
 }: TenderModalProps) {
   const headerPad = useHeaderPad()
   // Σ of rounded line totals — what POST /api/sales checks the subtotal against.
   const subtotal = useMemo(() => cartSubtotal(cart), [cart])
   // tax is charged on what the customer pays: lines net of their share of the cart promotions
+  const cartDiscountAmount = roundCurrency(Math.max(0, cartDiscount?.amount || 0))
   const taxResult = useMemo(() => {
-    const taxable = taxableLineTotals(cart.map((l) => lineTotal(l)), cartPromotionDiscount)
+    const taxable = taxableLineTotals(cart.map((l) => lineTotal(l)), cartPromotionDiscount + cartDiscountAmount)
     return calculateCartTax(
       cart.map((l, i) => ({ lineTotal: taxable[i], taxTemplateId: l.taxTemplateId })),
       taxConfig,
       customer?.taxExempt === true
     )
-  }, [cart, taxConfig, customer, cartPromotionDiscount])
+  }, [cart, taxConfig, customer, cartPromotionDiscount, cartDiscountAmount])
   const tax = taxResult.tax
   // subtotal + exclusive tax: a cart mixing inclusive and exclusive templates still pays the
   // exclusive part (inclusive tax is already inside the prices).
-  const grossPayable = cartPayable(roundCurrency(subtotal - cartPromotionDiscount), taxResult)
+  const grossPayable = cartPayable(roundCurrency(Math.max(0, subtotal - cartPromotionDiscount - cartDiscountAmount)), taxResult)
 
   // Loyalty program (conversion factor + tier redeem rate), same maths as the web POS
   type LoyaltyProgram = { conversionFactor?: string | number | null; tiers?: { tier: string; redeemRate?: string | number | null; isActive?: boolean }[] }
@@ -187,6 +200,12 @@ export function TenderModal({
   // Feature switches set by the platform (credit sales, loyalty …)
   const features = useFeatureFlags()
   const [approvalRequest, setApprovalRequest] = useState<SupervisorApprovalRequest | null>(null)
+  // Gift card tender: the card looked up (one card per bill)
+  const [giftNumber, setGiftNumber] = useState('')
+  const [giftCard, setGiftCard] = useState<GiftCardInfo | null>(null)
+  const [giftBusy, setGiftBusy] = useState(false)
+  const [giftError, setGiftError] = useState<string | null>(null)
+  const [giftScan, setGiftScan] = useState(false)
   // Pharmacy: prescription for prescription / controlled medicines (asked for when the server says so)
   const prescriptionRef = useRef<PrescriptionInput | null>(null)
   const [rxRequest, setRxRequest] = useState<PrescriptionRequest | null>(null)
@@ -203,8 +222,11 @@ export function TenderModal({
   // Reset the form each time the modal opens for a (possibly new) cart.
   useEffect(() => {
     if (visible) {
-      approvalTokensRef.current = []
+      approvalTokensRef.current = approvalTokens ? [...approvalTokens] : []
       setApprovalRequest(null)
+      setGiftNumber('')
+      setGiftCard(null)
+      setGiftError(null)
       prescriptionRef.current = null
       setRxRequest(null)
       setLines([{ key: 0, method: 'cash', amount: netPayable.toFixed(2) }])
@@ -261,7 +283,9 @@ export function TenderModal({
     ? Math.round((Date.parse(`${cheque.chequeDate}T00:00:00Z`) - Date.parse(`${localToday()}T00:00:00Z`)) / 86400000)
     : 0
   const chequeSplit = settled.splits.find((sp) => sp.method === 'cheque')
-  const isTenderSufficient = !settled.error && settled.balance <= 0.009 && (!has('cheque') || chequeComplete) && (!has('credit') || !!customer)
+  const giftSplitAmount = roundCurrency(settled.splits.filter((sp) => sp.method === 'gift_card').reduce((sum, sp) => sum + sp.amount, 0))
+  const giftOk = giftSplitAmount <= 0 || (!!giftCard && giftCard.status === 'active' && giftSplitAmount <= giftCard.balance + 0.004)
+  const isTenderSufficient = !settled.error && settled.balance <= 0.009 && (!has('cheque') || chequeComplete) && (!has('credit') || !!customer) && giftOk
   const tenders = allowedTenders(shift.posProfile)
   /** Why a method cannot be used here (null = usable) */
   function blockedReason(m: TenderOption): string | null {
@@ -277,8 +301,38 @@ export function TenderModal({
     }
     return null
   }
-  const visibleMethods = METHOD_ORDER.filter((m) => (m !== 'cheque' || features.has('cheques')) && (m !== 'credit' || features.has('credit_customer')))
+  const visibleMethods = METHOD_ORDER.filter((m) => (m !== 'cheque' || features.has('cheques')) && (m !== 'credit' || features.has('credit_customer')) && (m !== 'gift_card' || features.has('gift_cards')))
   const usableMethods = visibleMethods.filter((m) => !blockedReason(m))
+
+  async function lookupGiftCard(code?: string) {
+    const num = (code ?? giftNumber).trim()
+    if (!num) {
+      setGiftError('Enter or scan the gift card number')
+      return
+    }
+    setGiftBusy(true)
+    setGiftError(null)
+    const res = await apiGet<{ id: string; cardNumber: string; currentBalance: string | number; status: string; customerName?: string | null }>(`/api/gift-cards/lookup?cardNumber=${encodeURIComponent(num)}`)
+    setGiftBusy(false)
+    if (!res.ok || !res.data) {
+      setGiftCard(null)
+      setGiftError(res.status === 404 ? 'Gift card not found' : res.status === 0 ? 'A gift card needs a connection to check the balance.' : res.error)
+      return
+    }
+    const info: GiftCardInfo = { id: res.data.id, cardNumber: res.data.cardNumber, balance: roundCurrency(Number(res.data.currentBalance) || 0), status: res.data.status, customerName: res.data.customerName }
+    setGiftCard(info)
+    setGiftNumber(info.cardNumber)
+    if (info.status !== 'active') {
+      setGiftError(`This card is ${info.status}.`)
+      return
+    }
+    // One payment line: take what the card can cover (the rest goes on another payment line)
+    setLines((ls) => {
+      const gi = ls.findIndex((l) => l.method === 'gift_card')
+      if (gi < 0 || ls.length !== 1) return ls
+      return ls.map((l, idx) => (idx === gi ? { ...l, amount: Math.min(info.balance, netPayable).toFixed(2) } : l))
+    })
+  }
 
   function setLine(i: number, patch: Partial<PayLine>) {
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)))
@@ -357,8 +411,10 @@ export function TenderModal({
       sku: c.sku || undefined,
       quantity: c.quantity,
       unitPrice: roundCurrency(Number(c.sellingPrice)),
-      discount: 0,
-      // H5: unit sold and fixed prices (the server adds the promotions itself)
+      // manual line discount; the server adds the promotions itself
+      discount: roundCurrency(c.manualDiscount || 0),
+      serialNumberIds: c.serialNumberIds?.length ? c.serialNumberIds : undefined,
+      // H5: unit sold and fixed prices
       uom: c.uom || undefined,
       priceLocked: c.priceLocked || undefined,
       barcode: c.priceBarcode || undefined,
@@ -388,9 +444,17 @@ export function TenderModal({
           amountPaid = netPayable
           paymentSplits = [{ method: 'bank_transfer', amount: netPayable, reference: reference.trim() || undefined }]
           break
+        case 'gift_card':
+          // The card covers the bill (checked against its balance); the server draws it down
+          amountPaid = netPayable
+          paymentSplits = [{ method: 'gift_card', amount: netPayable }]
+          break
         case 'credit':
           // Sell on customer credit: nothing received now.
           amountPaid = 0
+          break
+        case 'gift_card':
+          amountPaid = netPayable
           break
         default:
           // Card / cheque cover the bill (no change); the server registers a cheque in Cheques
@@ -404,7 +468,10 @@ export function TenderModal({
       paymentMethod,
       paymentSplits,
       subtotal,
-      discount: 0,
+      discount: cartDiscountAmount,
+      discountType: cartDiscountAmount > 0 ? cartDiscount?.type : undefined,
+      discountReason: cartDiscountAmount > 0 && cartDiscount?.reason ? cartDiscount.reason : undefined,
+      giftCardId: giftSplitAmount > 0 && giftCard ? giftCard.id : undefined,
       tax,
       // Always sent (W6): the server then validates the device's template maths instead of
       // recomputing, and an offline sale computed from cached templates is never rejected for rounding.
@@ -635,6 +702,7 @@ export function TenderModal({
             <View style={styles.heroMetaRow}>
               <Text style={styles.heroMetaText}>
                 Subtotal {formatLKR(subtotal)}
+                {cartDiscountAmount > 0 ? ` • Discount −${formatLKR(cartDiscountAmount)}` : ''}
                 {tax > 0 ? ` • Tax ${formatLKR(tax)}${taxResult.hasInclusiveTax ? ' (incl.)' : ''}` : taxConfig.unavailable ? ' • Tax per server' : ' • No tax'}
               </Text>
               <Text style={styles.heroItemCountBadge}>{cart.reduce((c, i) => c + i.quantity, 0)} Items</Text>
@@ -770,6 +838,43 @@ export function TenderModal({
               <Text style={styles.addPayText}>＋ Add payment (split: cash + card + credit …)</Text>
             </Pressable>
           </View>
+
+          {lines.some((l) => l.method === 'gift_card') && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeaderRow}>
+                <Text style={styles.sectionTitle}>🎁 Gift card</Text>
+                {giftCard ? <Text style={styles.sectionHint}>Balance {formatLKR(giftCard.balance)}</Text> : null}
+              </View>
+              <View style={styles.lineInputRow}>
+                <TextInput
+                  style={[styles.phoneInput, { flex: 1, marginTop: 0 }]}
+                  placeholder="Card number"
+                  placeholderTextColor={THEME.colors.textSubtle}
+                  value={giftNumber}
+                  onChangeText={(v) => { setGiftNumber(v); if (giftCard) setGiftCard(null) }}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  onSubmitEditing={() => void lookupGiftCard()}
+                  returnKeyType="search"
+                />
+                <Pressable style={styles.restBtn} onPress={() => setGiftScan(true)} accessibilityLabel="Scan gift card">
+                  <Text style={styles.restBtnText}>Scan</Text>
+                </Pressable>
+                <Pressable style={[styles.restBtn, { backgroundColor: THEME.colors.primary }]} onPress={() => void lookupGiftCard()} disabled={giftBusy} accessibilityLabel="Check gift card balance">
+                  {giftBusy ? <ActivityIndicator color="#FFF" /> : <Text style={[styles.restBtnText, { color: '#FFF' }]}>Check</Text>}
+                </Pressable>
+              </View>
+              {giftError ? <Text style={styles.lineError}>{giftError}</Text> : null}
+              {giftCard && giftCard.status === 'active' ? (
+                <Text style={[styles.toggleSub, { fontWeight: '700', color: giftSplitAmount > giftCard.balance + 0.004 ? THEME.colors.error : THEME.colors.tertiary }]}>
+                  {giftCard.cardNumber}{giftCard.customerName ? ` · ${giftCard.customerName}` : ''} — {formatLKR(giftCard.balance)} available
+                  {giftSplitAmount > giftCard.balance + 0.004 ? `. The card only holds ${formatLKR(giftCard.balance)}: lower this line and add another payment for the rest.` : ''}
+                </Text>
+              ) : (
+                <Text style={styles.toggleSub}>Scan or type the card number, then tap Check. Gift card sales need a connection. One card per bill.</Text>
+              )}
+            </View>
+          )}
 
           {has('lankaqr') && (
             <View style={styles.section}>
@@ -929,6 +1034,16 @@ export function TenderModal({
         onSelect={(c) => {
           setPickCustomer(false)
           onCustomerChange?.(c)
+        }}
+      />
+      <BarcodeScannerModal
+        visible={giftScan}
+        onClose={() => setGiftScan(false)}
+        title="Scan gift card"
+        onBarcodeScanned={(code) => {
+          setGiftScan(false)
+          setGiftNumber(code)
+          void lookupGiftCard(code)
         }}
       />
       <SupervisorPinModal

@@ -18,9 +18,15 @@ export const PAID_GRACE_DAYS = 3
 
 type Tx = Pick<typeof db, 'update' | 'query'>
 
-export function isFreeTier(tier: { priceMonthly: string | null; priceYearly: string | null } | null | undefined): boolean {
+export function isFreeTier(
+  tier: { priceMonthly: string | null; priceYearly: string | null; priceLifetime?: string | null } | null | undefined
+): boolean {
   if (!tier) return false
-  return Number(tier.priceMonthly ?? 0) === 0 && Number(tier.priceYearly ?? 0) === 0
+  return (
+    Number(tier.priceMonthly ?? 0) === 0 &&
+    Number(tier.priceYearly ?? 0) === 0 &&
+    Number(tier.priceLifetime ?? 0) === 0
+  )
 }
 
 export interface SubscriptionTiming {

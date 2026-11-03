@@ -56,7 +56,7 @@ export default function LandingFooter() {
   return (
     <footer className="footer-gradient text-gray-300">
       {/* Gradient separator */}
-      <div className="h-px bg-gradient-to-r from-transparent via-emerald-500/30 to-transparent" />
+      <div className="h-px bg-gradient-to-r from-transparent via-[rgba(0,80,192,0.35)] to-transparent" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-20">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-10 lg:gap-8">

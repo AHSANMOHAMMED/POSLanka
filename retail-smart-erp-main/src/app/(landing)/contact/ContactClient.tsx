@@ -27,7 +27,7 @@ const defaultContactInfo = {
 
 const trustItems = [
   { icon: Sparkles, label: 'AI-Powered Platform', gradient: 'from-violet-500 to-purple-500' },
-  { icon: Shield, label: 'Advanced Security', gradient: 'from-emerald-500 to-teal-500' },
+  { icon: Shield, label: 'Advanced Security', gradient: 'from-[#0050c0] to-[#2563eb]' },
   { icon: Users, label: 'Unlimited Users', gradient: 'from-blue-500 to-sky-500' },
   { icon: Send, label: 'Free Forever', gradient: 'from-amber-500 to-orange-500' },
 ]
@@ -58,8 +58,8 @@ export default function ContactClient() {
     const phoneDigits = contactData.phone.replace(/[^0-9]/g, '')
     return [
       { icon: Mail, label: 'Email', value: contactData.email, href: `mailto:${contactData.email}`, gradient: 'from-blue-500 to-sky-500' },
-      { icon: Phone, label: 'Phone', value: contactData.phone, href: `tel:+${phoneDigits}`, gradient: 'from-emerald-500 to-teal-500' },
-      { icon: MessageCircle, label: 'WhatsApp', value: contactData.whatsapp, href: `https://wa.me/${whatsappDigits}`, gradient: 'from-green-500 to-emerald-500' },
+      { icon: Phone, label: 'Phone', value: contactData.phone, href: `tel:+${phoneDigits}`, gradient: 'from-[#0050c0] to-[#2563eb]' },
+      { icon: MessageCircle, label: 'WhatsApp', value: contactData.whatsapp, href: `https://wa.me/${whatsappDigits}`, gradient: 'from-[#0050c0] to-[#2563eb]' },
       { icon: MapPin, label: 'Address', value: contactData.address, href: null, gradient: 'from-amber-500 to-orange-500' },
       { icon: Building2, label: 'Company', value: contactData.companyName, href: null, gradient: 'from-violet-500 to-purple-500' },
       { icon: Clock, label: 'Business Hours', value: contactData.businessHours, href: null, gradient: 'from-pink-500 to-rose-500' },
@@ -83,7 +83,7 @@ export default function ContactClient() {
           </BlurFadeIn>
           <BlurFadeIn delay={0.2}>
             <p className="mt-6 text-lg sm:text-xl text-zinc-400 leading-relaxed max-w-2xl mx-auto">
-              Have questions about skyERPOS? We&apos;d love to hear from you. Our team is ready to help you get started — your first company is <span className="text-emerald-400 font-semibold">free forever</span>.
+              Have questions about skyERPOS? We&apos;d love to hear from you. Our team is ready to help you get started — your first company is <span className="text-sky-300 font-semibold">free forever</span>.
             </p>
           </BlurFadeIn>
         </div>
@@ -124,7 +124,7 @@ export default function ContactClient() {
                           </div>
                           <div>
                             <p className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{info.label}</p>
-                            <p className="mt-1 text-sm font-medium text-white group-hover:text-emerald-400 transition-colors">
+                            <p className="mt-1 text-sm font-medium text-white group-hover:text-sky-300 transition-colors">
                               {info.value}
                             </p>
                           </div>

@@ -67,9 +67,22 @@ export const audienceSchema = z.object({
 
 export type Audience = z.infer<typeof audienceSchema>
 
+const localeText = z.object({
+  title: z.string().trim().max(200).optional().default(''),
+  body: z.string().trim().max(5000).optional().default(''),
+}).optional()
+
 export const broadcastInputSchema = z.object({
   title: z.string().trim().min(3, 'Enter a title of at least 3 characters').max(200),
   body: z.string().trim().min(5, 'Enter a message of at least 5 characters').max(5000),
+  /** Optional Sinhala / Tamil (and explicit EN) copies. Title/body above are the default (English). */
+  translations: z.object({
+    en: localeText,
+    si: localeText,
+    ta: localeText,
+  }).optional(),
+  /** Show this message on vendor login screens until it ages out. */
+  showOnLogin: z.boolean().optional().default(false),
   link: z.string().trim().max(500).optional()
     .refine((v) => !v || /^\/(?!\/)/.test(v) || /^https:\/\/[^\s]+$/.test(v), 'Use a path such as /account/billing or an https:// address'),
   category: z.enum(BROADCAST_CATEGORIES).default('info'),
@@ -289,6 +302,18 @@ export async function sendBroadcast(input: BroadcastInput & { kind: 'notificatio
       : emailTargets(vendors, recipients)
   if (emailList.length > MAX_EMAILS) throw new BroadcastError(`${emailList.length} email addresses match; the limit per send is ${MAX_EMAILS}.`)
 
+  const translations = {
+    en: { title: input.title, body: input.body, ...(input.translations?.en || {}) },
+    si: input.translations?.si || undefined,
+    ta: input.translations?.ta || undefined,
+  }
+  const audiencePayload: Record<string, unknown> = {
+    ...input.audience,
+    ...(unknownBusinessIds.length ? { unknownBusinessIds } : {}),
+    showOnLogin: !!input.showOnLogin,
+    translations,
+  }
+
   const [broadcast] = await db.insert(platformBroadcasts).values({
     kind: input.kind,
     superAdminId: input.superAdminId,
@@ -297,7 +322,7 @@ export async function sendBroadcast(input: BroadcastInput & { kind: 'notificatio
     link: input.link || null,
     category: input.category,
     channels,
-    audience: { ...input.audience, ...(unknownBusinessIds.length ? { unknownBusinessIds } : {}) },
+    audience: audiencePayload,
     recipientScope: input.recipientScope,
     pushScope: channels.includes('push') ? input.pushScope : null,
     status: 'sending',
@@ -310,7 +335,13 @@ export async function sendBroadcast(input: BroadcastInput & { kind: 'notificatio
     v[key]++
     perVendor.set(tenantId, v)
   }
-  const data = { broadcastId: broadcast.id, category: input.category, ...(input.link ? { link: input.link } : {}) }
+  const data = {
+    broadcastId: broadcast.id,
+    category: input.category,
+    ...(input.link ? { link: input.link } : {}),
+    translations,
+    showOnLogin: !!input.showOnLogin,
+  }
 
   // 1. vendor app inbox
   let inAppCount = 0
@@ -385,7 +416,7 @@ export async function sendBroadcast(input: BroadcastInput & { kind: 'notificatio
         title: input.title.slice(0, 200),
         body: input.body.length > 300 ? `${input.body.slice(0, 297)}…` : input.body,
         data: { type: 'platform_announcement', ...data },
-        channelId: 'default',
+        channelId: 'poslanka-default',
       })
       : []
     for (const t of tickets) {

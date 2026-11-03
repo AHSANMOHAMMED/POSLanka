@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { SendMessageModal } from '@/components/notifications'
+import { SendMessageModal, StaffNotifyPanel } from '@/components/notifications'
 
 interface UsageStats {
   sms: {
@@ -95,6 +95,8 @@ export default function NotificationsPage() {
         <h1 className="text-2xl font-semibold text-gray-900">Notification Center</h1>
         <p className="text-gray-500 mt-1">Configure SMS and email notifications for your business</p>
       </div>
+
+      <StaffNotifyPanel />
 
       <Link href={`${basePath}/settings/notifications/messaging`} className="block">
         <Card className="p-4 hover:border-emerald-500 transition-colors cursor-pointer flex items-center justify-between gap-3">

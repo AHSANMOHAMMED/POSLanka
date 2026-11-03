@@ -76,6 +76,8 @@ const nextConfig: NextConfig = {
       "https://api.resend.com",
       "https://www.payhere.lk",
       "https://sandbox.payhere.lk",
+      "https://api.webxpay.com",
+      "https://sandboxapi.webxpay.com",
       "https://generativelanguage.googleapis.com",
       "https://api.deepseek.com",
       "https://*.cloudflareinsights.com",
@@ -165,7 +167,7 @@ const nextConfig: NextConfig = {
               `frame-src ${frameDomains}`,
               "frame-ancestors 'self'",
               "base-uri 'self'",
-              "form-action 'self' https://www.payhere.lk https://sandbox.payhere.lk",
+              "form-action 'self' https://www.payhere.lk https://sandbox.payhere.lk https://api.webxpay.com https://sandboxapi.webxpay.com",
             ].join('; ')
           }
         ]

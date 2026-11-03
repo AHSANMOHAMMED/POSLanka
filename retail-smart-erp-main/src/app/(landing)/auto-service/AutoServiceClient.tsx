@@ -133,7 +133,7 @@ export default function AutoServiceClient() {
                     <Wrench className="w-3.5 h-3.5" />
                     Auto Service Solution
                   </span>
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-[rgba(0,80,192,0.35)] text-sky-300">
                     <Check className="w-3.5 h-3.5" />
                     Free Forever
                   </span>
@@ -355,7 +355,7 @@ export default function AutoServiceClient() {
                 description="High-volume checkout, department management, and batch tracking."
                 href="/supermarket"
                 icon={ShoppingCart}
-                gradient="from-emerald-500 to-cyan-500"
+                gradient="from-[#0050c0] to-[#2563eb]"
               />
             </StaggerItem>
             <StaggerItem>
@@ -364,7 +364,7 @@ export default function AutoServiceClient() {
                 description="New & used vehicle sales, trade-ins, test drives, and inventory."
                 href="/dealership"
                 icon={Car}
-                gradient="from-cyan-500 to-teal-500"
+                gradient="from-[#0050c0] to-[#2563eb]"
               />
             </StaggerItem>
           </StaggerContainer>

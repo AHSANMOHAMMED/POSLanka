@@ -15,7 +15,7 @@ interface FeatureShowcaseProps {
   gradient?: string
 }
 
-function FeatureList({ features, gradient = 'from-emerald-500 to-emerald-600' }: { features: string[]; gradient?: string }) {
+function FeatureList({ features, gradient = 'from-[#0050c0] to-[#2563eb]' }: { features: string[]; gradient?: string }) {
   const ref = useRef<HTMLUListElement>(null)
   const isInView = useInView(ref, { once: true, margin: '-40px' })
 
@@ -46,7 +46,7 @@ export default function FeatureShowcase({
   image,
   mockup,
   reversed = false,
-  gradient = 'from-emerald-500 to-emerald-600',
+  gradient = 'from-[#0050c0] to-[#2563eb]',
 }: FeatureShowcaseProps) {
   const ImageBlock = mockup ? (
     <BrowserMockup url="app.retailsmarterp.com">

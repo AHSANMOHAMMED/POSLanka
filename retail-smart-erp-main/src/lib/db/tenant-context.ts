@@ -45,6 +45,7 @@ export async function withTenant<T>(
   tenantId: string,
   callback: (db: TenantDb) => Promise<T>
 ): Promise<T> {
+  await assertTenantIsolationForQuery()
   const client = await getPool().connect()
   let clientError: Error | undefined
 
@@ -111,6 +112,7 @@ export async function withTenantTransaction<T>(
   tenantId: string,
   callback: (db: TenantDb, client: PoolClient) => Promise<T>
 ): Promise<T> {
+  await assertTenantIsolationForQuery()
   const client = await getPool().connect()
   let clientError: Error | undefined
 
@@ -241,4 +243,33 @@ export async function checkTenantIsolation(): Promise<TenantIsolationMode> {
     console.error('[SECURITY] DATABASE_APP_ROLE is not set and the database user is a superuser: row-level security is BYPASSED and tenants are not isolated. Set DATABASE_APP_ROLE=app_user.')
   }
   return mode
+}
+
+/**
+ * Production defaults to enforcing tenant isolation. Escape hatches (live emergencies only):
+ *   ALLOW_UNSAFE_TENANT_BYPASS=true  — never enforce
+ *   ENFORCE_TENANT_ISOLATION=false   — opt out of the production default
+ *   ENFORCE_TENANT_ISOLATION=true    — enforce even in development
+ * Never process.exit — health/ready returns 503 and withTenant refuses instead.
+ */
+export function shouldEnforceTenantIsolation(): boolean {
+  if (process.env.ALLOW_UNSAFE_TENANT_BYPASS === 'true') return false
+  if (process.env.ENFORCE_TENANT_ISOLATION === 'true') return true
+  if (process.env.ENFORCE_TENANT_ISOLATION === 'false') return false
+  return process.env.NODE_ENV === 'production'
+}
+
+export async function isTenantIsolationUnsafe(): Promise<boolean> {
+  return (await checkTenantIsolation()) === 'UNSAFE_SUPERUSER_NO_ROLE'
+}
+
+/** Called from withTenant*: refuse the query when production would otherwise bypass RLS. */
+async function assertTenantIsolationForQuery(): Promise<void> {
+  if (!shouldEnforceTenantIsolation()) return
+  if (getAppRole()) return
+  if (await isTenantIsolationUnsafe()) {
+    throw new Error(
+      'Tenant isolation misconfigured: DATABASE_APP_ROLE is required in production. Set DATABASE_APP_ROLE=app_user (or ALLOW_UNSAFE_TENANT_BYPASS=true only for emergency recovery).',
+    )
+  }
 }

@@ -10,6 +10,7 @@ import type { LabelItemData, LabelTemplate, LabelShape } from '@/lib/labels/type
 import { renderLabelHtml } from '@/lib/labels/label-renderer'
 import { packLabelRows } from '@/lib/print/label/common'
 import { stickerRollWidthMm, type StickerSetup } from '@/lib/labels/sticker-stock'
+import { sanitizeHtml } from '@/lib/utils/sanitize-html'
 
 const PX_PER_MM = 96 / 25.4
 
@@ -86,13 +87,14 @@ export function StickerRollPreview({
     ;(async () => {
       const next = new Map<string, string>()
         for (const [key, item] of uniqueItems) {
-          next.set(key, await renderLabelHtml({
+          const raw = await renderLabelHtml({
             widthMm: template.widthMm,
             heightMm: template.heightMm,
             elements: template.elements,
             labelShape: template.labelShape,
             cornerRadius: template.cornerRadius,
-          }, item, currencySymbol, tenantName, codeWord))
+          }, item, currencySymbol, tenantName, codeWord)
+          next.set(key, sanitizeHtml(raw))
         }
       if (!cancelled) setHtmlByItem(next)
     })()

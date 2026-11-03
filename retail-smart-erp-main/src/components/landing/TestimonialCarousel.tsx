@@ -34,7 +34,7 @@ const testimonials = [
     business: 'All Business Types',
     avatar: 'IN',
     image: '',
-    gradient: 'from-emerald-500 to-cyan-500',
+    gradient: 'from-[#0050c0] to-[#2563eb]',
     rating: 5,
   },
   {
@@ -120,7 +120,7 @@ export default function TestimonialCarousel() {
               <button
                 key={i}
                 onClick={() => setCurrent(i)}
-                className={`h-2 rounded-full transition-all duration-300 ${i === current ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 w-8' : 'bg-zinc-700 w-2'}`}
+                className={`h-2 rounded-full transition-all duration-300 ${i === current ? 'bg-gradient-to-r from-[#0050c0] to-[#2563eb] w-8' : 'bg-zinc-700 w-2'}`}
               />
             ))}
           </div>

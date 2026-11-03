@@ -121,7 +121,7 @@ export function MockVehicleInventory() {
       <div className="grid grid-cols-4 gap-2 mb-2.5">
         {[
           { label: 'Total Stock', value: '48', color: 'text-gray-900' },
-          { label: 'Available', value: '31', color: 'text-green-600' },
+          { label: 'Available', value: '31', color: 'text-[#0050c0]' },
           { label: 'Reserved', value: '8', color: 'text-blue-600' },
           { label: 'In Prep', value: '9', color: 'text-amber-600' },
         ].map((stat) => (

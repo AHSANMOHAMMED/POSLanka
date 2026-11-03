@@ -48,7 +48,7 @@ export default function CookieConsent() {
                   <p className="text-sm text-zinc-400 leading-relaxed">
                     This website uses cookies to enhance your browsing experience and analyze site traffic.
                     By continuing to use this site, you agree to our use of cookies.{' '}
-                    <a href="/privacy" className="text-emerald-400 hover:underline font-medium">Privacy Policy</a>
+                    <a href="/privacy" className="text-sky-300 hover:underline font-medium">Privacy Policy</a>
                   </p>
                 </div>
               </div>
@@ -57,7 +57,7 @@ export default function CookieConsent() {
               <div className="mt-5">
                 <button
                   onClick={handleAccept}
-                  className="px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 rounded-md transition-all shadow-lg shadow-emerald-600/25 hover:shadow-emerald-600/40"
+                  className="px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-md transition-all shadow-lg shadow-[rgba(0,80,192,0.35)] hover:shadow-[rgba(0,80,192,0.5)]"
                 >
                   Got it
                 </button>

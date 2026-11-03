@@ -53,46 +53,78 @@ function SaveBar({ savedAt, dirty, saving, onSave, onReset, message }: {
 
 /* ------------------------------------------------------------------ announcement */
 
-interface Announcement { enabled: boolean; message: string; type: 'info' | 'warning' | 'error' }
+interface Announcement {
+  enabled: boolean
+  message: string
+  messages?: { en?: string; si?: string; ta?: string }
+  type: 'info' | 'warning' | 'error' | 'maintenance'
+  showOnLogin?: boolean
+}
 
 const BANNER_TONE: Record<Announcement['type'], string> = {
   info: 'bg-adm-info-soft text-adm-info',
   warning: 'bg-adm-warning-soft text-adm-warning',
   error: 'bg-adm-danger-soft text-adm-danger',
+  maintenance: 'bg-adm-surface-3 text-adm-fg',
 }
 
 export function AnnouncementForm({ initial, savedAt, onSaved }: FormProps<Announcement>) {
-  const f = useSetting('system_announcement', initial, savedAt, onSaved)
+  const f = useSetting('system_announcement', {
+    ...initial,
+    messages: {
+      en: initial.messages?.en || initial.message || '',
+      si: initial.messages?.si || '',
+      ta: initial.messages?.ta || '',
+    },
+    showOnLogin: initial.showOnLogin !== false,
+  }, savedAt, onSaved)
   const v = f.value
+  const messages = v.messages || { en: v.message || '', si: '', ta: '' }
+  const setMsg = (locale: 'en' | 'si' | 'ta', text: string) => {
+    const next = { ...messages, [locale]: text }
+    f.patch(locale === 'en' ? { messages: next, message: text } : { messages: next })
+  }
+  const preview = (messages.en || v.message || '').trim()
   return (
     <AdminCard
       title="Announcement banner"
-      description="A short message shown at the top of the vendor app for every signed-in user, e.g. planned maintenance."
+      description="Shown at the top of the vendor app and on login screens. Provide English plus optional Sinhala and Tamil."
       icon={<Megaphone size={17} />}
       footer={<SaveBar savedAt={savedAt} dirty={f.dirty} saving={f.saving} onSave={() => f.save()} onReset={f.reset} message={f.message} />}
     >
       <div className="space-y-4">
         <Switch checked={v.enabled} onChange={(c) => f.set('enabled', c)} label="Show the banner" description="Turn off to hide it without losing the text." />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-[200px_minmax(0,1fr)]">
-          <Field label="Style" htmlFor="ann-type">
-            <Select id="ann-type" value={v.type} onChange={(e) => f.set('type', e.target.value as Announcement['type'])}>
-              <option value="info">Information</option>
-              <option value="warning">Warning</option>
-              <option value="error">Urgent</option>
-            </Select>
-          </Field>
-          <Field label="Message" htmlFor="ann-msg" required={v.enabled} error={f.errors.message} hint={`${v.message.length}/300`}>
-            <Textarea id="ann-msg" rows={3} maxLength={300} value={v.message} invalid={!!f.errors.message} onChange={(e) => f.set('message', e.target.value)} />
-          </Field>
-        </div>
+        <Switch
+          checked={v.showOnLogin !== false}
+          onChange={(c) => f.set('showOnLogin', c)}
+          label="Show on login"
+          description="Vendors see this notice on the company sign-in page before they log in."
+        />
+        <Field label="Style" htmlFor="ann-type">
+          <Select id="ann-type" value={v.type} onChange={(e) => f.set('type', e.target.value as Announcement['type'])} className="sm:w-56">
+            <option value="info">Information (top banner)</option>
+            <option value="warning">Warning (top banner)</option>
+            <option value="error">Urgent (full-screen gate)</option>
+            <option value="maintenance">Maintenance (full-screen gate)</option>
+          </Select>
+        </Field>
+        <Field label="English" htmlFor="ann-msg-en" required={v.enabled} error={f.errors.message} hint={`${(messages.en || '').length}/300`}>
+          <Textarea id="ann-msg-en" rows={3} maxLength={300} value={messages.en || ''} invalid={!!f.errors.message} onChange={(e) => setMsg('en', e.target.value)} />
+        </Field>
+        <Field label="සිංහල (Sinhala)" htmlFor="ann-msg-si" hint={`${(messages.si || '').length}/300 · optional; falls back to English`}>
+          <Textarea id="ann-msg-si" rows={3} maxLength={300} value={messages.si || ''} onChange={(e) => setMsg('si', e.target.value)} />
+        </Field>
+        <Field label="தமிழ் (Tamil)" htmlFor="ann-msg-ta" hint={`${(messages.ta || '').length}/300 · optional; falls back to English`}>
+          <Textarea id="ann-msg-ta" rows={3} maxLength={300} value={messages.ta || ''} onChange={(e) => setMsg('ta', e.target.value)} />
+        </Field>
         <div className="space-y-1.5">
-          <p className="text-[12.5px] font-medium text-adm-muted">Preview</p>
-          {v.message.trim() ? (
+          <p className="text-[12.5px] font-medium text-adm-muted">Preview (English)</p>
+          {preview ? (
             <div className={cn('rounded-lg px-3.5 py-2.5 text-[13.5px] font-medium', BANNER_TONE[v.type], !v.enabled && 'opacity-50')}>
-              {v.message.trim()}
+              {preview}
             </div>
           ) : <p className="text-[13px] text-adm-subtle">Nothing to show.</p>}
-          {!v.enabled && v.message.trim() && <p className="text-[12.5px] text-adm-subtle">Hidden — turn the banner on to show it.</p>}
+          {!v.enabled && preview && <p className="text-[12.5px] text-adm-subtle">Hidden — turn the banner on to show it.</p>}
         </div>
       </div>
     </AdminCard>

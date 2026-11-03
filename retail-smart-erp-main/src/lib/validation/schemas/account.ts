@@ -44,7 +44,7 @@ export const createCompanySchema = z.object({
   dateFormat: z.string().min(1, 'Date format is required').max(50),
   timeFormat: z.string().min(1, 'Time format is required').max(50),
   tierId: uuidSchema.optional(),
-  billingCycle: z.enum(['monthly', 'yearly']).optional(),
+  billingCycle: z.enum(['monthly', 'yearly', 'lifetime']).optional(),
   aiEnabled: z.boolean().optional(),
 })
 
@@ -71,7 +71,7 @@ export const createPendingCompanySchema = z.object({
   dateFormat: z.string().min(1, 'Date format is required').max(50),
   timeFormat: z.string().min(1, 'Time format is required').max(50),
   tierId: uuidSchema,
-  billingCycle: z.enum(['monthly', 'yearly']).optional(),
+  billingCycle: z.enum(['monthly', 'yearly', 'lifetime']).optional(),
 })
 
 // DELETE /api/account/pending-companies
@@ -145,7 +145,7 @@ export const updateSubscriptionSchema = z.object({
 // POST /api/account/subscriptions/[tenantId]/upgrade
 export const upgradeSubscriptionSchema = z.object({
   newTierId: uuidSchema,
-  billingCycle: z.enum(['monthly', 'yearly']).default('monthly'),
+  billingCycle: z.enum(['monthly', 'yearly', 'lifetime']).default('monthly'),
   action: z.enum(['preview', 'execute']).default('preview'),
   /** Promo code applied to the amount due (preview shows the discount) */
   couponCode: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().trim().max(50).optional()),

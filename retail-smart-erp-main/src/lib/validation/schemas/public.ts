@@ -56,7 +56,7 @@ export const payhereCheckoutSchema = z.object({
   subscriptionId: z.string().uuid().optional(),
   pendingCompanyId: z.string().uuid().optional(),
   tierId: uuidSchema,
-  billingCycle: z.enum(['monthly', 'yearly']).default('monthly'),
+  billingCycle: z.enum(['monthly', 'yearly', 'lifetime']).default('monthly'),
   newTierId: z.string().uuid().optional(),
   walletCreditApplied: z.coerce.number().min(0).optional(),
   amount: z.coerce.number().positive().optional(),

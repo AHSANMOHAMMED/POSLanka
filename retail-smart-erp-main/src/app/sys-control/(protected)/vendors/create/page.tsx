@@ -34,6 +34,7 @@ interface Tier {
   displayName: string
   priceMonthly: string | null
   priceYearly: string | null
+  priceLifetime: string | null
   maxUsers: number | null
   maxSalesMonthly: number | null
   maxDatabaseBytes: number | null
@@ -112,7 +113,7 @@ function CreateVendorForm() {
 
   // Plan & owner
   const [tierId, setTierId] = useState('')
-  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly')
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly' | 'lifetime'>('monthly')
   const [ownerName, setOwnerName] = useState('')
   const [ownerEmail, setOwnerEmail] = useState('')
   const [access, setAccess] = useState<'password' | 'invite'>('password')
@@ -450,11 +451,17 @@ function CreateVendorForm() {
                       ariaLabel="Billing cycle"
                       value={billingCycle}
                       onChange={setBillingCycle}
-                      options={[{ value: 'monthly', label: 'Monthly' }, { value: 'yearly', label: 'Yearly' }]}
+                      options={[
+                        { value: 'monthly', label: 'Monthly' },
+                        { value: 'yearly', label: 'Yearly' },
+                        { value: 'lifetime', label: 'Lifetime' },
+                      ]}
                       size="sm"
                     />
                     <p className="text-[13px] text-adm-muted">
-                      The first {billingCycle === 'yearly' ? 'year' : 'month'} starts today at no charge. After that the owner renews from their account (PayHere or bank transfer).
+                      {billingCycle === 'lifetime'
+                        ? 'Lifetime plans never expire after activation. The complimentary start period still applies when creating from this console.'
+                        : `The first ${billingCycle === 'yearly' ? 'year' : 'month'} starts today at no charge. After that the owner renews from their account (PayHere or bank transfer).`}
                     </p>
                   </div>
                 )}
@@ -516,7 +523,9 @@ function CreateVendorForm() {
             <KeyValueList
               items={[
                 { label: 'Plan', value: tier ? `${tier.displayName}${paid ? ` · ${billingCycle}` : ''}` : '—' },
-                { label: 'Price', value: tier ? (paid ? fmtLKR(Number(billingCycle === 'yearly' ? tier.priceYearly : tier.priceMonthly)) : 'Free') : '—' },
+                { label: 'Price', value: tier ? (paid ? fmtLKR(Number(
+                  billingCycle === 'lifetime' ? tier.priceLifetime : billingCycle === 'yearly' ? tier.priceYearly : tier.priceMonthly
+                )) : 'Free') : '—' },
                 { label: 'Owner', value: ownerName || name },
                 { label: 'Owner email', value: ownerEmail || email || 'Generated login' },
                 { label: 'Owner access', value: access === 'invite' ? 'Email invitation' : ownerPassword ? 'Password set now' : 'Password generated on create' },

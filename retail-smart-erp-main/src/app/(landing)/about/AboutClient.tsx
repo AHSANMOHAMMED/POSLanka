@@ -24,7 +24,7 @@ import { MockDashboard } from '@/components/landing/mockups/MockDashboard'
 const values = [
   { icon: Lightbulb, title: 'Innovation', description: 'AI-powered features that push the boundaries of what business software can do.', gradient: 'from-amber-500 to-orange-500' },
   { icon: Heart, title: 'Customer First', description: 'Every feature is built with our customers\' success in mind. Your growth is our mission.', gradient: 'from-pink-500 to-rose-500' },
-  { icon: Shield, title: 'Trust & Security', description: 'Complete data isolation, encrypted connections, and regular backups protect your data.', gradient: 'from-emerald-500 to-teal-500' },
+  { icon: Shield, title: 'Trust & Security', description: 'Complete data isolation, encrypted connections, and regular backups protect your data.', gradient: 'from-[#0050c0] to-[#2563eb]' },
   { icon: Zap, title: 'Simplicity', description: 'Powerful doesn\'t mean complicated. Intuitive design for every business type.', gradient: 'from-blue-500 to-sky-500' },
 ]
 
@@ -49,7 +49,7 @@ const techStack = [
 
 const platformHighlights = [
   { icon: Users, value: 'Unlimited', label: 'Users per plan', gradient: 'from-blue-500 to-violet-500' },
-  { icon: Globe, value: '4', label: 'Business types', gradient: 'from-emerald-500 to-teal-500' },
+  { icon: Globe, value: '4', label: 'Business types', gradient: 'from-[#0050c0] to-[#2563eb]' },
   { icon: Lock, value: 'Full', label: 'Data isolation', gradient: 'from-amber-500 to-orange-500' },
   { icon: BarChart3, value: 'AI', label: 'Powered analytics', gradient: 'from-pink-500 to-rose-500' },
   { icon: Rocket, value: 'Real-time', label: 'Live sync', gradient: 'from-violet-500 to-purple-500' },
@@ -123,7 +123,7 @@ export default function AboutClient() {
                     Today, our platform supports four distinct business types with specialized modules, database-level data isolation, real-time collaboration, and AI-assisted analytics that help you make smarter decisions.
                   </p>
                   <p>
-                    Making enterprise tools truly accessible means more than just building great software — it means removing financial barriers. That&apos;s why your first company on skyERPOS is <span className="text-emerald-400 font-semibold">completely free, forever</span>. No trial period, no credit card required, no feature restrictions.
+                    Making enterprise tools truly accessible means more than just building great software — it means removing financial barriers. That&apos;s why your first company on skyERPOS is <span className="text-sky-300 font-semibold">completely free, forever</span>. No trial period, no credit card required, no feature restrictions.
                   </p>
                 </div>
               </div>

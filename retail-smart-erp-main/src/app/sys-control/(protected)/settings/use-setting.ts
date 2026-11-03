@@ -51,6 +51,16 @@ export function useSetting<T extends object>(key: string, initial: T, savedAt: s
     })
   }, [])
 
+  const patch = useCallback((partial: Partial<T>) => {
+    setValue((prev) => ({ ...prev, ...partial }))
+    setMessage(null)
+    setErrors((e) => {
+      const next = { ...e }
+      for (const k of Object.keys(partial)) delete next[k]
+      return next
+    })
+  }, [])
+
   const save = useCallback(async (override?: T) => {
     const body = override ?? value
     setSaving(true)
@@ -91,5 +101,5 @@ export function useSetting<T extends object>(key: string, initial: T, savedAt: s
     setMessage(null)
   }, [baseline])
 
-  return { value, setValue, set, save, saving, dirty, errors, message, reset }
+  return { value, setValue, set, patch, save, saving, dirty, errors, message, reset }
 }

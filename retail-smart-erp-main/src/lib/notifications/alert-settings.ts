@@ -107,6 +107,10 @@ export function toPreferences(row: PreferenceRow | null | undefined): AlertPrefe
 }
 
 export function wantsType(prefs: AlertPreferences, type: AlertType): boolean {
+  // Colleague messages always reach the inbox (and push when enabled); mute still applies if set.
+  if (type === 'staff_announcement') {
+    return !prefs.mutedTypes.includes(type)
+  }
   if (prefs.mutedTypes.includes(type)) return false
   return prefs.enabledTypes === null || prefs.enabledTypes.includes(type)
 }

@@ -110,9 +110,11 @@ async function main() {
       const { GET: live } = await import('@/app/api/health/live/route')
       const { GET: ready } = await import('@/app/api/health/ready/route')
       const { setShuttingDown } = await import('@/lib/observability/metrics')
+      // Loopback host unlocks the detailed health payload (tenantIsolation / storage).
+      const detailReq = () => new NextRequest('http://127.0.0.1/api/health', { headers: { host: '127.0.0.1' } })
       const r1 = await json(await ready())
       check('ready: 200 with database ok', r1.status === 200 && r1.body.status === 'ready' && r1.body.database === 'ok', r1.body)
-      const h1 = await json(await health())
+      const h1 = await json(await health(detailReq()))
       check('/api/health stays backward compatible (status, database, tenantIsolation, version)',
         h1.status === 200 && h1.body.status === 'ok' && h1.body.database === 'ok' && typeof h1.body.tenantIsolation === 'string' && typeof h1.body.version === 'string', h1.body)
 
@@ -123,7 +125,7 @@ async function main() {
         const r2 = await json(await ready())
         check('ready: 503 + database error when the DB is down', r2.status === 503 && r2.body.database === 'error' && r2.body.status === 'not_ready', r2.body)
         check('ready: DB error text is not leaked publicly', !JSON.stringify(r2.body).includes('ECONNREFUSED'), r2.body)
-        const h2 = await json(await health())
+        const h2 = await json(await health(detailReq()))
         check('/api/health: 503 degraded when the DB is down', h2.status === 503 && h2.body.database === 'error' && h2.body.status === 'degraded', h2.body)
         const l2 = await json(live())
         check('live: 200 even when the DB is down (no restart loop)', l2.status === 200 && l2.body.status === 'ok', l2.body)

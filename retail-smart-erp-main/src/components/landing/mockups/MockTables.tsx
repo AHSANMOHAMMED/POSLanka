@@ -125,7 +125,7 @@ export function MockTables() {
       {/* Stats bar */}
       <div className="mt-2 bg-white rounded border border-gray-200 p-2 shadow-sm flex items-center justify-center gap-6">
         <div className="text-center">
-          <div className="font-bold text-green-600 text-[12px]">4</div>
+          <div className="font-bold text-[#0050c0] text-[12px]">4</div>
           <div className="text-gray-500">Available</div>
         </div>
         <div className="w-px h-5 bg-gray-200" />

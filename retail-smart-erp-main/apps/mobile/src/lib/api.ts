@@ -22,8 +22,29 @@ const BUSINESS_ID_KEY = 'poslanka_business_id'
 // Server the app talks to until the user changes it on the sign-in screen. Set per build with
 // EXPO_PUBLIC_API_URL (eas.json profiles, scripts/build-apk.sh). Expo inlines EXPO_PUBLIC_* only
 // for this exact `process.env.NAME` form — with `?.` the release APK silently fell back to localhost.
-export const DEFAULT_API_URL = (process.env.EXPO_PUBLIC_API_URL || 'https://168-144-216-104.sslip.io').replace(/\/$/, '')
+export const PRODUCTION_ORIGIN = 'https://168-144-216-104.sslip.io'
+export const DEFAULT_API_URL = (process.env.EXPO_PUBLIC_API_URL || PRODUCTION_ORIGIN).replace(/\/$/, '')
+export const DEFAULT_WEB_URL = (process.env.EXPO_PUBLIC_WEB_URL || process.env.EXPO_PUBLIC_API_URL || PRODUCTION_ORIGIN).replace(
+  /\/$/,
+  ''
+)
 export const REQUEST_TIMEOUT_MS = 15_000
+
+function isLoopbackOrLocalhost(url: string): boolean {
+  try {
+    const h = new URL(url).hostname.toLowerCase()
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1'
+  } catch {
+    return /localhost|127\.0\.0\.1/i.test(url)
+  }
+}
+
+/** Normalize a typed/saved server URL; rewrite localhost to the deployed sslip host. */
+export function sanitizeApiUrl(url: string | null | undefined): string {
+  const raw = (url || DEFAULT_API_URL).trim().replace(/\/$/, '')
+  if (!raw || isLoopbackOrLocalhost(raw)) return DEFAULT_API_URL
+  return raw
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -72,11 +93,21 @@ export function isNetworkError(result: ApiResult<unknown>): boolean {
 let apiBase = DEFAULT_API_URL
 
 export function setApiBase(url: string) {
-  apiBase = (url || DEFAULT_API_URL).trim().replace(/\/$/, '')
+  apiBase = sanitizeApiUrl(url)
 }
 
 export function getApiBase() {
   return apiBase
+}
+
+/**
+ * Origin for Linking.openURL (Admin More, openWeb, impersonate).
+ * Same deploy host as the API on sslip; never uses a localhost saved API base.
+ */
+export function getPublicWebBase() {
+  const fromApi = sanitizeApiUrl(apiBase)
+  if (isLoopbackOrLocalhost(fromApi)) return DEFAULT_WEB_URL
+  return fromApi
 }
 
 export interface SavedSettings {
@@ -93,12 +124,16 @@ export async function loadSavedSettings(): Promise<SavedSettings> {
     SecureStore.getItemAsync(TENANT_SLUG_KEY),
     SecureStore.getItemAsync(BUSINESS_ID_KEY),
   ])
-  if (savedUrl) setApiBase(savedUrl)
-  return { apiUrl: savedUrl || apiBase, tenantSlug: savedSlug || '', businessId: savedBusinessId || '' }
+  const migrated = sanitizeApiUrl(savedUrl)
+  if (savedUrl && migrated !== savedUrl.replace(/\/$/, '')) {
+    await SecureStore.setItemAsync(API_BASE_KEY, migrated)
+  }
+  setApiBase(migrated)
+  return { apiUrl: migrated, tenantSlug: savedSlug || '', businessId: savedBusinessId || '' }
 }
 
 export async function saveSettings(settings: SavedSettings) {
-  setApiBase(settings.apiUrl)
+  setApiBase(sanitizeApiUrl(settings.apiUrl))
   const writes: Promise<void>[] = [
     SecureStore.setItemAsync(API_BASE_KEY, getApiBase()),
     SecureStore.setItemAsync(TENANT_SLUG_KEY, settings.tenantSlug || ''),
@@ -195,8 +230,8 @@ export async function clearSession() {
   ])
 }
 
-// Hooks run before the session is cleared on an explicit sign-out (e.g. push
-// token de-registration). Not run on the automatic 401 logout.
+// Hooks run before the session is cleared on sign-out or 401 (e.g. push
+// token de-registration).
 const beforeLogoutHooks = new Set<() => Promise<void> | void>()
 
 export function onBeforeLogout(fn: () => Promise<void> | void): () => void {
@@ -206,7 +241,7 @@ export function onBeforeLogout(fn: () => Promise<void> | void): () => void {
   }
 }
 
-export async function logout() {
+async function runBeforeLogoutHooks() {
   for (const hook of Array.from(beforeLogoutHooks)) {
     try {
       await hook()
@@ -214,24 +249,136 @@ export async function logout() {
       // never block sign-out
     }
   }
+}
+
+export async function logout() {
+  await runBeforeLogoutHooks()
   await clearSession()
   router.replace('/login')
 }
 
 // ---------------------------------------------------------------------------
-// Shared 401 handler — clears the session and navigates to /login exactly once
+// Shared 401 / TENANT_LOCKED handling — clears the session and navigates exactly once
 // even if several requests fail at the same time.
 // ---------------------------------------------------------------------------
 let unauthorizedInFlight = false
+
+export type TenantLockedPayload = {
+  code?: string
+  status?: string
+  lockedReason?: string | null
+  title?: string
+  description?: string
+  error?: string
+  tenantName?: string
+  tenantSlug?: string
+}
+
+/** True when the server says this company is suspended / locked / archived. */
+export function isTenantLockedBody(body: unknown): body is TenantLockedPayload {
+  return Boolean(
+    body &&
+      typeof body === 'object' &&
+      (body as TenantLockedPayload).code === 'TENANT_LOCKED',
+  )
+}
+
+/** Navigate to the full-screen lock gate with server copy (or local fallbacks). */
+export function navigateToAccessBlocked(payload: TenantLockedPayload = {}) {
+  router.replace({
+    pathname: '/access-blocked',
+    params: {
+      status: payload.status || '',
+      lockedReason: payload.lockedReason || '',
+      title: payload.title || '',
+      description: payload.description || '',
+      error: payload.error || '',
+      tenantName: payload.tenantName || '',
+    },
+  })
+}
+
+/**
+ * After a 401, ask /api/auth/mobile-access whether the JWT is still valid but the
+ * company was suspended mid-session. That endpoint verifies the token itself and
+ * returns 403 TENANT_LOCKED with the perfect message — otherwise we treat it as a
+ * normal expired session.
+ */
+async function probeTenantAccessAfterUnauthorized(): Promise<TenantLockedPayload | null> {
+  try {
+    const token = await SecureStore.getItemAsync(TOKEN_KEY)
+    if (!token) return null
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 8_000)
+    try {
+      const res = await fetch(`${apiBase}/api/auth/mobile-access`, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        signal: controller.signal,
+      })
+      const text = await res.text().catch(() => '')
+      let body: unknown = null
+      if (text) {
+        try {
+          body = JSON.parse(text)
+        } catch {
+          body = null
+        }
+      }
+      if (res.status === 403 && isTenantLockedBody(body)) return body
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    // offline / timeout — fall through to normal login
+  }
+  return null
+}
 
 export async function handleUnauthorized() {
   if (unauthorizedInFlight) return
   unauthorizedInFlight = true
   try {
+    const locked = await probeTenantAccessAfterUnauthorized()
+    await runBeforeLogoutHooks()
     await clearSession()
-  } finally {
+    if (locked) {
+      navigateToAccessBlocked(locked)
+      return
+    }
     router.replace('/login')
+  } catch {
+    router.replace('/login')
+  } finally {
+    // allow a later 401 after the user signs in again
+    setTimeout(() => {
+      unauthorizedInFlight = false
+    }, 1500)
   }
+}
+
+/** Cold-start / resume probe used by index.tsx. */
+export async function checkMobileAccess(): Promise<
+  | { ok: true }
+  | { ok: false; locked: true; payload: TenantLockedPayload }
+  | { ok: false; locked: false; unauthorized: true }
+  | { ok: false; locked: false; offline: true }
+> {
+  const res = await api<TenantLockedPayload>(
+    '/api/auth/mobile-access',
+    { method: 'GET' },
+    { skipUnauthorizedHandler: true, timeoutMs: 8_000 },
+  )
+  if (res.ok) return { ok: true }
+  if (res.status === 403 && isTenantLockedBody(res.data)) {
+    return { ok: false, locked: true, payload: res.data }
+  }
+  // Network / timeout — keep the local session so LAN-offline shops still open.
+  if (res.status === 0) return { ok: false, locked: false, offline: true }
+  return { ok: false, locked: false, unauthorized: true }
 }
 
 // ---------------------------------------------------------------------------
@@ -309,11 +456,35 @@ export async function api<T = any>(
     return { ok: true, status: res.status, data: body as T, error: null }
   }
 
+  // Mid-session suspend / lock / archive — same gate as login / cold start.
+  if (
+    res.status === 403 &&
+    isTenantLockedBody(body) &&
+    !options.skipUnauthorizedHandler
+  ) {
+    void (async () => {
+      if (unauthorizedInFlight) return
+      unauthorizedInFlight = true
+      try {
+        await runBeforeLogoutHooks()
+        await clearSession()
+        navigateToAccessBlocked(body)
+      } finally {
+        setTimeout(() => {
+          unauthorizedInFlight = false
+        }, 1500)
+      }
+    })()
+  }
+
   const message =
     (body && typeof body.error === 'string' && body.error) ||
     (body && typeof body.message === 'string' && body.message) ||
     (body && Array.isArray(body.details) && body.details.map((d: any) => d.message || d).join(', ')) ||
     (res.status === 401 ? 'Session expired. Please sign in again.' : '') ||
+    (res.status === 403 && isTenantLockedBody(body)
+      ? `${body.title || 'Access restricted'}. ${body.description || ''}`.trim()
+      : '') ||
     (res.status === 403 ? 'You do not have permission to do this.' : '') ||
     `Request failed (${res.status})`
 
@@ -325,6 +496,12 @@ export const apiGet = <T = any>(path: string, options?: ApiFetchOptions) =>
 
 export const apiPost = <T = any>(path: string, body?: unknown, options?: ApiFetchOptions) =>
   api<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) }, options)
+
+export const apiPut = <T = any>(path: string, body?: unknown, options?: ApiFetchOptions) =>
+  api<T>(path, { method: 'PUT', body: body === undefined ? undefined : JSON.stringify(body) }, options)
+
+export const apiPatch = <T = any>(path: string, body?: unknown, options?: ApiFetchOptions) =>
+  api<T>(path, { method: 'PATCH', body: body === undefined ? undefined : JSON.stringify(body) }, options)
 
 export const apiDelete = <T = any>(path: string, options?: ApiFetchOptions) =>
   api<T>(path, { method: 'DELETE' }, options)

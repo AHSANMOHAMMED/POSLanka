@@ -149,7 +149,7 @@ const faqItems = [
 ]
 
 const highlights = [
-  { icon: Gift, label: 'Free Forever', description: 'First company is 100% free. No trial, no expiry.', gradient: 'from-emerald-500 to-teal-500' },
+  { icon: Gift, label: 'Free Forever', description: 'First company is 100% free. No trial, no expiry.', gradient: 'from-[#0050c0] to-[#2563eb]' },
   { icon: Sparkles, label: 'AI-Powered Analytics', description: 'AI chat assistant and smart warnings built in.', gradient: 'from-violet-500 to-purple-500' },
   { icon: Users, label: 'Unlimited Users', description: 'No per-user fees on any plan.', gradient: 'from-blue-500 to-sky-500' },
   { icon: Shield, label: 'Advanced Security', description: 'Complete data isolation and encryption.', gradient: 'from-stone-600 to-stone-700' },
@@ -307,7 +307,7 @@ export default function PricingClient() {
                 }`}
               >
                 Annual
-                <span className="inline-flex items-center px-2 py-0.5 text-xs font-bold rounded-full bg-emerald-500/10 text-emerald-400">
+                <span className="inline-flex items-center px-2 py-0.5 text-xs font-bold rounded-full bg-emerald-500/10 text-sky-300">
                   Save 20%
                 </span>
               </button>

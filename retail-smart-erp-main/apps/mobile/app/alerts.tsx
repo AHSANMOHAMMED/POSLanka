@@ -9,12 +9,15 @@ import {
 } from 'react-native'
 import { router } from 'expo-router'
 import { api, apiGet, apiPost, getApiBase } from '../src/lib/api'
+import { getAppLocale, pickLocalizedPair, type AppLocale } from '../src/lib/locale'
 import { openNotificationTarget } from '../src/lib/notifications'
 import { THEME } from '../src/lib/theme'
 import { LoadingView, EmptyView, ErrorView } from '../src/components/StateViews'
 import { useHeaderPad } from '../src/lib/safeArea'
 import { goBack } from '../src/lib/nav'
 import { ScreenHeader, IconButton, Badge } from '../src/components/ui'
+import { useSessionUser } from '../src/lib/session'
+import { hasPermission } from '../src/lib/roles'
 
 interface InboxItem {
   id: string
@@ -55,7 +58,7 @@ const ICONS: Record<string, string> = {
   low_stock: '📉', out_of_stock: '⛔', expiring_stock: '⏳', stock_digest: '📦', large_refund: '💸', sale_void: '🚫',
   manual_return: '↩', shift_variance: '🧮', offline_sale_rejected: '📴', offline_price_difference: '🏷️',
   intake_sync_errors: '⚠️', intake_awaiting_approval: '📥', requisition_submitted: '📝', advance_requested: '💰',
-  subscription_expiring: '📅', import_finished: '✅', platform_announcement: '📣',
+  subscription_expiring: '📅', import_finished: '✅', platform_announcement: '📣', staff_announcement: '📢',
 }
 
 /** Link attached to a platform announcement: https URLs as-is, site paths on the server. */
@@ -68,6 +71,8 @@ function broadcastUrl(data: Record<string, unknown> | null): string | null {
 
 export default function AlertsScreen() {
   const headerPad = useHeaderPad()
+  const { user } = useSessionUser()
+  const canNotifyStaff = hasPermission(user, 'manageUsers')
   const [tab, setTab] = useState<'inbox' | 'settings'>('inbox')
   const [items, setItems] = useState<InboxItem[]>([])
   const [unread, setUnread] = useState(0)
@@ -78,15 +83,21 @@ export default function AlertsScreen() {
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async (nextPage = 1) => {
+    const locale: AppLocale = await getAppLocale()
     const res = await apiGet<{ data: InboxItem[]; unreadCount: number; pagination: { totalPages: number } }>(
-      `/api/notifications?page=${nextPage}&pageSize=${PAGE_SIZE}`,
+      `/api/notifications?page=${nextPage}&pageSize=${PAGE_SIZE}&locale=${locale}`,
     )
     if (!res.ok || !res.data) {
       setError(res.error || 'Could not load alerts')
       return
     }
     setError(null)
-    const list = res.data.data || []
+    const list = (res.data.data || []).map((item) => {
+      const translations = item.data?.translations as Partial<Record<AppLocale, { title?: string; body?: string }>> | undefined
+      if (!translations) return item
+      const localized = pickLocalizedPair(translations, locale, { title: item.title, body: item.body || '' })
+      return { ...item, title: localized.title, body: localized.body }
+    })
     setItems((prev) => (nextPage === 1 ? list : [...prev, ...list.filter((i) => !prev.some((p) => p.id === i.id))]))
     setUnread(res.data.unreadCount || 0)
     setPage(nextPage)
@@ -131,12 +142,28 @@ export default function AlertsScreen() {
       <ScreenHeader
         title="Alerts"
         subtitle={unread > 0 ? `${unread} unread` : 'All caught up'}
-        right={tab === 'inbox' && unread > 0 ? <IconButton name="checkmark-done-outline" label="Mark all read" color={THEME.colors.primary} onPress={() => markRead({ all: true })} /> : undefined}
+        right={
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            {canNotifyStaff ? (
+              <IconButton name="megaphone-outline" label="Notify staff" color={THEME.colors.primary} onPress={() => router.push('/notify-staff')} />
+            ) : null}
+            {tab === 'inbox' && unread > 0 ? (
+              <IconButton name="checkmark-done-outline" label="Mark all read" color={THEME.colors.primary} onPress={() => markRead({ all: true })} />
+            ) : null}
+          </View>
+        }
       />
 
-      <View style={styles.tabs}>
+      <View style={styles.tabs} accessibilityRole="tablist">
         {(['inbox', 'settings'] as const).map((t) => (
-          <Pressable key={t} style={[styles.tab, tab === t && styles.tabActive]} onPress={() => setTab(t)}>
+          <Pressable
+            key={t}
+            style={[styles.tab, tab === t && styles.tabActive]}
+            onPress={() => setTab(t)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab === t }}
+            accessibilityLabel={t === 'inbox' ? 'Inbox' : 'My alerts'}
+          >
             <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t === 'inbox' ? 'Inbox' : 'My alerts'}</Text>
           </Pressable>
         ))}
@@ -154,11 +181,17 @@ export default function AlertsScreen() {
           keyExtractor={(i) => i.id}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           contentContainerStyle={items.length === 0 ? { flex: 1 } : { padding: THEME.spacing.lg, paddingBottom: 40 }}
-          ListEmptyComponent={<EmptyView icon="🔔" title="No alerts yet" subtitle="Low stock, refunds, approvals and reminders appear here." />}
+          ListEmptyComponent={<EmptyView icon="🔔" title="No alerts yet" subtitle="Stock, refunds, approvals, staff messages and reminders appear here." />}
           onEndReachedThreshold={0.4}
           onEndReached={() => { if (hasMore) void load(page + 1) }}
           renderItem={({ item }) => (
-            <Pressable style={[styles.card, !item.readAt && styles.cardUnread]} onPress={() => openItem(item)}>
+            <Pressable
+              style={[styles.card, !item.readAt && styles.cardUnread]}
+              onPress={() => openItem(item)}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.title}${item.readAt ? '' : ', unread'}`}
+              accessibilityHint={item.body || undefined}
+            >
               <Text style={styles.icon}>{ICONS[item.type] || '🔔'}</Text>
               <View style={{ flex: 1 }}>
                 <Text style={styles.cardTitle}>{item.title}</Text>
@@ -166,7 +199,7 @@ export default function AlertsScreen() {
                 {broadcastUrl(item.data) ? <Text style={styles.cardLink}>Open link ↗</Text> : null}
                 <Text style={styles.cardTime}>{relTime(item.createdAt)}</Text>
               </View>
-              {!item.readAt ? <View style={styles.dot} /> : null}
+              {!item.readAt ? <View style={styles.dot} accessibilityLabel="Unread" /> : null}
             </Pressable>
           )}
         />
@@ -257,7 +290,7 @@ function PreferencesView() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Quiet hours ({prefs.timezone || tenantTz})</Text>
-        <Text style={styles.rowSub}>No push during these hours; alerts still reach the inbox.</Text>
+        <Text style={styles.rowSub}>No push during these hours; alerts still reach the inbox. Use 24h times like 22:00 and 07:00.</Text>
         <View style={[styles.row, { gap: 8 }]}>
           <TextInput style={styles.input} value={quietStart} onChangeText={setQuietStart} placeholder="22:00" maxLength={5} keyboardType="numbers-and-punctuation" />
           <Text style={styles.rowSub}>to</Text>

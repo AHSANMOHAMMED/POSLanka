@@ -24,11 +24,38 @@ export const bankDetailsSchema = z.object({
   notes: text(500),
 })
 
+const annMsg = z.string().trim().max(300, 'Keep each message under 300 characters').optional().default('')
+
 export const announcementSchema = z.object({
   enabled: z.boolean(),
-  message: z.string().trim().max(300, 'Keep it under 300 characters').optional().default(''),
+  /** English / default (kept for older clients and APIs). */
+  message: annMsg,
+  messages: z.object({
+    en: annMsg,
+    si: annMsg,
+    ta: annMsg,
+  }).optional().default({ en: '', si: '', ta: '' }),
   type: z.enum(['info', 'warning', 'error']),
-}).refine((v) => !v.enabled || v.message.length >= 5, { message: 'Write the announcement (at least 5 characters) before turning it on', path: ['message'] })
+  /** Also show on vendor login screens before sign-in. */
+  showOnLogin: z.boolean().optional().default(true),
+}).transform((v) => {
+  const en = (v.messages?.en || v.message || '').trim()
+  return {
+    ...v,
+    message: en,
+    messages: {
+      en,
+      si: (v.messages?.si || '').trim(),
+      ta: (v.messages?.ta || '').trim(),
+    },
+    showOnLogin: v.showOnLogin !== false,
+  }
+}).superRefine((v, ctx) => {
+  if (!v.enabled) return
+  if (v.message.length < 5) {
+    ctx.addIssue({ code: 'custom', path: ['message'], message: 'Write the English announcement (at least 5 characters) before turning it on' })
+  }
+})
 
 const volumeTier = z.object({
   min: z.number().int().min(2, 'Tiers start at 2 businesses').max(1000),
@@ -92,7 +119,7 @@ export const SETTING_KEYS = Object.keys(SETTING_SCHEMAS) as SettingKey[]
 
 export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
   bank_details: 'Bank account vendors pay into by transfer',
-  system_announcement: 'Banner shown in the vendor app',
+  system_announcement: 'Banner shown in the vendor app and on login (EN / සිංහල / தமிழ்)',
   volume_discounts: 'Discount for accounts with several businesses',
   contact_info: 'Contact details on public pages and emails',
   seasonal_offer: 'Limited-time offer on the landing and pricing pages',
@@ -101,7 +128,13 @@ export const SETTING_DESCRIPTIONS: Record<SettingKey, string> = {
 /** Values used when nothing has been saved yet (mirrors the readers' fallbacks). */
 export const SETTING_DEFAULTS: Record<SettingKey, unknown> = {
   bank_details: { bankName: '', branchName: '', accountName: '', accountNumber: '', swiftCode: '', notes: '' },
-  system_announcement: { enabled: false, message: '', type: 'info' },
+  system_announcement: {
+    enabled: false,
+    message: '',
+    messages: { en: '', si: '', ta: '' },
+    type: 'info',
+    showOnLogin: true,
+  },
   volume_discounts: {
     tiers: [
       { min: 2, max: 5, percent: 15 },

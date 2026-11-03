@@ -12,7 +12,7 @@ const metrics = [
     value: '$12,458',
     change: '+8.2%',
     iconBg: 'bg-green-100',
-    iconColor: 'text-green-600',
+    iconColor: 'text-[#0050c0]',
     changeBg: 'bg-green-50 text-green-700',
     icon: (
       <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">

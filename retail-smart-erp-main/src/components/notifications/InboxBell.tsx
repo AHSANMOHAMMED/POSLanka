@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { BellRing, CheckCheck, Settings2 } from 'lucide-react'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useI18n } from '@/hooks/useI18n'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { sharedJson } from '@/lib/client/shared-fetch'
+import { pickLocalizedPair, type Locale } from '@/lib/i18n/locale'
 
 interface InboxItem {
   id: string
@@ -57,8 +59,16 @@ function safeBroadcastLink(link: string): string | null {
 const isExternal = (href: string) => /^https:\/\//i.test(href)
 
 /** In-app alert inbox (low stock, refunds, approvals, reminders …) for the signed-in user. */
+function localizeItem(item: InboxItem, locale: Locale): InboxItem {
+  const translations = item.data?.translations as Partial<Record<Locale, { title?: string; body?: string }>> | undefined
+  if (!translations) return item
+  const localized = pickLocalizedPair(translations, locale, { title: item.title, body: item.body || '' })
+  return { ...item, title: localized.title, body: localized.body }
+}
+
 export function InboxBell() {
   const { tenantSlug } = useCompany()
+  const { locale } = useI18n()
   const base = `/c/${tenantSlug}`
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState<InboxItem[]>([])
@@ -68,13 +78,14 @@ export function InboxBell() {
   const load = useCallback(async () => {
     try {
       // Joins a request already in flight; never serves stale data
-      const json = await sharedJson<{ data?: InboxItem[]; unreadCount?: number }>('/api/notifications?pageSize=15', { maxAgeMs: 0 })
-      setItems(Array.isArray(json.data) ? json.data : [])
+      const json = await sharedJson<{ data?: InboxItem[]; unreadCount?: number }>(`/api/notifications?pageSize=15&locale=${locale}`, { maxAgeMs: 0 })
+      const rows = Array.isArray(json.data) ? json.data : []
+      setItems(rows.map((row) => localizeItem(row, locale)))
       setUnread(typeof json.unreadCount === 'number' ? json.unreadCount : 0)
     } catch {
       // offline / transient: keep the last state
     }
-  }, [])
+  }, [locale])
 
   // Initial load + refresh whenever notify() pushes an inbox event to this user.
   useRealtimeData(load, { entityType: 'inbox-notification', pollingInterval: 0 })

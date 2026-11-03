@@ -116,7 +116,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         emailStatus = body.sendEmail
           ? await sendAdminCredentialsEmail({
             to: target.email, fullName: target.fullName, tempPassword, reason: 'reset',
-            requireTotp: target.totpRequired, baseUrl: process.env.NEXTAUTH_URL || request.nextUrl.origin,
+            requireTotp: target.totpRequired, baseUrl: (await import('@/lib/http/public-url')).publicAppOrigin(request.nextUrl.origin),
           })
           : 'skipped'
         audit.emailStatus = emailStatus

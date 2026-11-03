@@ -1,28 +1,40 @@
-// Admin app "More" tab: the signed-in platform admin, shortcuts to the full web console,
-// text size, device info and sign out.
+// Admin app "More" tab: native console hubs + optional open-on-web (sslip public base).
 import React, { useEffect, useState } from 'react'
 import { View, Text, ScrollView, Pressable, StyleSheet, Alert, Linking } from 'react-native'
 import Constants from 'expo-constants'
 import { Ionicons } from '@expo/vector-icons'
-import { getApiBase } from '../../src/lib/api'
-import { ADMIN_ROLE_LABEL, adminLogout, getAdminUser, type AdminUser } from '../../src/lib/adminApi'
+import { router } from 'expo-router'
+import { getApiBase, getPublicWebBase } from '../../src/lib/api'
+import { ADMIN_ROLE_LABEL, adminLogout, getAdminUser, useAdminUser, type AdminUser } from '../../src/lib/adminApi'
 import { THEME } from '../../src/lib/theme'
 import { TEXT_SCALES, useTextScale } from '../../src/lib/textScale'
 import { AdminShell, adminStyles } from '../../src/components/admin/AdminShell'
 import { Card, ListItem, SectionHeader, type IconName } from '../../src/components/ui'
 
-const WEB_LINKS: Array<{ title: string; subtitle: string; icon: IconName; path: string }> = [
-  { title: 'Web console', subtitle: 'Full platform dashboard', icon: 'desktop-outline', path: '/sys-control' },
-  { title: 'Subscriptions', subtitle: 'Plans, trials, renewals', icon: 'card-outline', path: '/sys-control/subscriptions' },
-  { title: 'Payments', subtitle: 'All payment records', icon: 'cash-outline', path: '/sys-control/payments' },
-  { title: 'Sales wall', subtitle: 'Live platform sales', icon: 'trending-up-outline', path: '/sys-control/sales-wall' },
-  { title: 'Messages', subtitle: 'Vendor messages', icon: 'chatbubbles-outline', path: '/sys-control/messages' },
-  { title: 'Error logs', subtitle: 'Server & client errors', icon: 'bug-outline', path: '/sys-control/error-logs' },
-  { title: 'Audit logs', subtitle: 'Who changed what', icon: 'document-text-outline', path: '/sys-control/audit-logs' },
+const NATIVE: Array<{ title: string; subtitle: string; icon: IconName; href: string; permission?: string }> = [
+  { title: 'Create vendor', subtitle: 'New tenant onboarding', icon: 'add-circle-outline', href: '/admin/vendors/create', permission: 'vendors.manage' },
+  { title: 'Subscriptions', subtitle: 'Plans, extend, lock', icon: 'card-outline', href: '/admin/subscriptions', permission: 'billing' },
+  { title: 'Pricing', subtitle: 'Monthly / yearly / lifetime', icon: 'pricetags-outline', href: '/admin/pricing', permission: 'billing' },
+  { title: 'Payments', subtitle: 'Bank slips & PayHere', icon: 'cash-outline', href: '/admin/payments', permission: 'billing' },
+  { title: 'Messages', subtitle: 'Vendor support inbox', icon: 'chatbubbles-outline', href: '/admin/messages', permission: 'messages' },
+  { title: 'Notifications', subtitle: 'Broadcasts', icon: 'notifications-outline', href: '/admin/notifications', permission: 'notifications' },
+  { title: 'Send email', subtitle: 'Platform email', icon: 'mail-outline', href: '/admin/send-email', permission: 'notifications' },
+  { title: 'Messaging providers', subtitle: 'SMS / WhatsApp config', icon: 'cloud-outline', href: '/admin/messaging', permission: 'settings' },
+  { title: 'Audit logs', subtitle: 'Who changed what', icon: 'document-text-outline', href: '/admin/audit-logs' },
+  { title: 'Error logs', subtitle: 'Server & client errors', icon: 'bug-outline', href: '/admin/error-logs', permission: 'error_logs' },
+  { title: 'Users', subtitle: 'Owners & platform admins', icon: 'people-outline', href: '/admin/users' },
+  { title: 'Settings', subtitle: 'Platform settings', icon: 'settings-outline', href: '/admin/settings', permission: 'settings' },
+  { title: 'Account', subtitle: 'Password & 2FA', icon: 'shield-checkmark-outline', href: '/admin/account', permission: 'self' },
+]
+
+const WEB_LINKS: Array<{ title: string; path: string }> = [
+  { title: 'Full web console', path: '/sys-control' },
+  { title: 'Sales wall (web)', path: '/sys-control/sales-wall' },
 ]
 
 export default function AdminMoreScreen() {
   const [admin, setAdmin] = useState<AdminUser | null>(null)
+  const { can } = useAdminUser()
   useEffect(() => {
     getAdminUser().then(setAdmin)
   }, [])
@@ -33,6 +45,8 @@ export default function AdminMoreScreen() {
       { text: 'Sign out', style: 'destructive', onPress: () => adminLogout() },
     ])
   }
+
+  const visible = NATIVE.filter((l) => !l.permission || can(l.permission) || l.permission === 'self' || can('read'))
 
   return (
     <AdminShell title="More" tab="more">
@@ -52,15 +66,29 @@ export default function AdminMoreScreen() {
           </View>
         </Card>
 
-        <SectionHeader title="Web console" />
+        <SectionHeader title="Console" />
+        <Card style={styles.list}>
+          {visible.map((l, i) => (
+            <ListItem
+              key={l.href}
+              icon={l.icon}
+              title={l.title}
+              subtitle={l.subtitle}
+              onPress={() => router.push(l.href as any)}
+              last={i === visible.length - 1}
+            />
+          ))}
+        </Card>
+
+        <SectionHeader title="Open on web" />
         <Card style={styles.list}>
           {WEB_LINKS.map((l, i) => (
             <ListItem
               key={l.path}
-              icon={l.icon}
+              icon="open-outline"
               title={l.title}
-              subtitle={`${l.subtitle} (opens browser)`}
-              onPress={() => Linking.openURL(`${getApiBase()}${l.path}`).catch(() => undefined)}
+              subtitle={getPublicWebBase()}
+              onPress={() => Linking.openURL(`${getPublicWebBase()}${l.path}`).catch(() => undefined)}
               last={i === WEB_LINKS.length - 1}
             />
           ))}

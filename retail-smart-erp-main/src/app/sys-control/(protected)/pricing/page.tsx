@@ -30,6 +30,7 @@ interface Tier {
   displayName: string
   priceMonthly: string | null
   priceYearly: string | null
+  priceLifetime: string | null
   currency: string
   maxUsers: number | null
   maxSalesMonthly: number | null
@@ -140,12 +141,15 @@ export default function PricingPage() {
     {
       key: 'price',
       header: 'Price',
-      cell: (t) => Number(t.priceMonthly ?? 0) === 0 && Number(t.priceYearly ?? 0) === 0 ? (
+      cell: (t) => Number(t.priceMonthly ?? 0) === 0 && Number(t.priceYearly ?? 0) === 0 && Number(t.priceLifetime ?? 0) === 0 ? (
         <span className="text-adm-fg">Free</span>
       ) : (
         <div className="adm-num">
           <p className="text-adm-fg">{fmtLKR(Number(t.priceMonthly))} <span className="text-[12px] text-adm-subtle">/ month</span></p>
           <p className="text-[12.5px] text-adm-subtle">{fmtLKR(Number(t.priceYearly))} / year</p>
+          {Number(t.priceLifetime ?? 0) > 0 && (
+            <p className="text-[12.5px] text-adm-subtle">{fmtLKR(Number(t.priceLifetime))} lifetime</p>
+          )}
         </div>
       ),
     },
@@ -310,6 +314,7 @@ function TierDialog({ tier, onClose, onSaved }: { tier: Tier | null; onClose: ()
   const [displayName, setDisplayName] = useState(tier?.displayName ?? '')
   const [priceMonthly, setPriceMonthly] = useState(tier?.priceMonthly != null ? String(Number(tier.priceMonthly)) : '')
   const [priceYearly, setPriceYearly] = useState(tier?.priceYearly != null ? String(Number(tier.priceYearly)) : '')
+  const [priceLifetime, setPriceLifetime] = useState(tier?.priceLifetime != null ? String(Number(tier.priceLifetime)) : '')
   const [maxUsers, setMaxUsers] = useState(tier?.maxUsers != null ? String(tier.maxUsers) : '')
   const [maxSales, setMaxSales] = useState(tier?.maxSalesMonthly != null ? String(tier.maxSalesMonthly) : '')
   const [dbGb, setDbGb] = useState(toGb(tier?.maxDatabaseBytes ?? null))
@@ -327,9 +332,13 @@ function TierDialog({ tier, onClose, onSaved }: { tier: Tier | null; onClose: ()
   const valid =
     displayName.trim().length > 0 &&
     (tier || /^[a-z0-9_-]{2,50}$/.test(name)) &&
-    [priceMonthly, priceYearly, maxUsers, maxSales, dbGb, fileGb, sortOrder, locations].every(num) &&
+    [priceMonthly, priceYearly, priceLifetime, maxUsers, maxSales, dbGb, fileGb, sortOrder, locations].every(num) &&
     priceMonthly.trim() !== ''
-  const priceChanged = tier && (Number(priceMonthly) !== Number(tier.priceMonthly) || Number(priceYearly || 0) !== Number(tier.priceYearly || 0))
+  const priceChanged = tier && (
+    Number(priceMonthly) !== Number(tier.priceMonthly) ||
+    Number(priceYearly || 0) !== Number(tier.priceYearly || 0) ||
+    Number(priceLifetime || 0) !== Number(tier.priceLifetime || 0)
+  )
 
   async function save() {
     setBusy(true)
@@ -346,6 +355,7 @@ function TierDialog({ tier, onClose, onSaved }: { tier: Tier | null; onClose: ()
       displayName: displayName.trim(),
       priceMonthly: Number(priceMonthly),
       priceYearly: priceYearly.trim() === '' ? undefined : Number(priceYearly),
+      priceLifetime: priceLifetime.trim() === '' ? null : Number(priceLifetime),
       maxUsers: intOrNull(maxUsers),
       maxSalesMonthly: intOrNull(maxSales),
       maxDatabaseBytes: fromGb(dbGb),
@@ -405,6 +415,9 @@ function TierDialog({ tier, onClose, onSaved }: { tier: Tier | null; onClose: ()
           </Field>
           <Field label="Yearly price (LKR)" htmlFor="t-py" hint={!tier ? 'Empty = 10 × monthly.' : undefined}>
             <Input id="t-py" type="number" min={0} step="1" value={priceYearly} onChange={(e) => setPriceYearly(e.target.value)} />
+          </Field>
+          <Field label="Lifetime price (LKR)" htmlFor="t-pl" hint="One-time purchase; empty = not offered.">
+            <Input id="t-pl" type="number" min={0} step="1" value={priceLifetime} onChange={(e) => setPriceLifetime(e.target.value)} placeholder="Not offered" />
           </Field>
           <Field label="Max active users" htmlFor="t-users" hint="Enforced when staff are added.">
             <Input id="t-users" type="number" min={1} value={maxUsers} onChange={(e) => setMaxUsers(e.target.value)} placeholder="Unlimited" />

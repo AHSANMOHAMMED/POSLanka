@@ -17,7 +17,7 @@ export default function ComparisonTable({ headers, rows }: ComparisonTableProps)
             <tr className="border-b border-white/10 bg-white/[0.02]">
               <th className="px-6 py-4 text-left text-sm font-semibold text-white">Feature</th>
               {headers.map((header, i) => (
-                <th key={header} className={`px-6 py-4 text-center text-sm font-semibold ${i === 0 ? 'text-emerald-400' : 'text-white'}`}>{header}</th>
+                <th key={header} className={`px-6 py-4 text-center text-sm font-semibold ${i === 0 ? 'text-sky-300' : 'text-white'}`}>{header}</th>
               ))}
             </tr>
           </thead>
@@ -31,7 +31,7 @@ export default function ComparisonTable({ headers, rows }: ComparisonTableProps)
                       <span className="text-sm font-semibold text-white">{val}</span>
                     ) : (
                       val && (
-                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 flex items-center justify-center mx-auto">
+                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mx-auto">
                           <Check size={14} className="text-white" strokeWidth={3} />
                         </div>
                       )

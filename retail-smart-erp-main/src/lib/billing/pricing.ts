@@ -5,10 +5,19 @@
  */
 
 export function getSubscriptionPrice(
-  subscription: { subscribedPriceMonthly?: string | null; subscribedPriceYearly?: string | null },
-  tier: { priceMonthly: string | null; priceYearly: string | null },
-  billingCycle: 'monthly' | 'yearly'
+  subscription: {
+    subscribedPriceMonthly?: string | null
+    subscribedPriceYearly?: string | null
+    subscribedPriceLifetime?: string | null
+  },
+  tier: { priceMonthly: string | null; priceYearly: string | null; priceLifetime?: string | null },
+  billingCycle: 'monthly' | 'yearly' | 'lifetime'
 ): number {
+  if (billingCycle === 'lifetime') {
+    return subscription.subscribedPriceLifetime != null && subscription.subscribedPriceLifetime !== ''
+      ? Number(subscription.subscribedPriceLifetime)
+      : Number(tier.priceLifetime ?? 0)
+  }
   if (billingCycle === 'yearly') {
     return subscription.subscribedPriceYearly
       ? Number(subscription.subscribedPriceYearly)

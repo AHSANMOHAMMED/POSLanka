@@ -16,7 +16,7 @@ export default function FeatureCard({
   icon: Icon,
   title,
   description,
-  gradient = 'from-emerald-500 to-emerald-600',
+  gradient = 'from-[#0050c0] to-[#2563eb]',
   aiPowered = false,
 }: FeatureCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)

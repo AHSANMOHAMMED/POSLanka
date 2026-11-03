@@ -2,7 +2,7 @@
 // Visibility mirrors the permissions the server routes enforce and the web sidebar's business-type
 // rules (src/lib/navigation/module-sidebar.ts); the server still refuses anything not allowed.
 import { Linking } from 'react-native'
-import { getApiBase, type AuthUser } from './api'
+import { getPublicWebBase, type AuthUser } from './api'
 import { hasPermission, isBackOffice, ROLE_PERMISSIONS, type Permission } from './roles'
 import type { IconName, Tone } from '../components/ui'
 
@@ -45,13 +45,16 @@ export const FEATURES: AppFeature[] = [
   { key: 'till', title: 'Sell at the till', subtitle: 'Cashier screen (needs a shift)', icon: 'cart-outline', tone: 'primary', anyOf: ['createSales'], route: '/pos', group: 'sell', backOffice: 'only' },
   { key: 'shifts', title: 'Shift', subtitle: 'Open / close, cash in & out', icon: 'time-outline', tone: 'primary', anyOf: ['createSales'], route: '/shifts', group: 'sell', backOffice: 'never' },
   { key: 'sales', title: 'Sales history', subtitle: 'Receipts & invoices', icon: 'receipt-outline', tone: 'primary', anyOf: ['createSales', 'manageSales', 'viewReports'], route: '/sales', group: 'sell' },
-  { key: 'customers', title: 'Customers', subtitle: 'Balances & contacts', icon: 'people-circle-outline', tone: 'primary', anyOf: ['manageCustomers', 'createSales'], route: '/module/customers', group: 'sell' },
+  { key: 'customers', title: 'Customers', subtitle: 'Balances & contacts', icon: 'people-circle-outline', tone: 'primary', anyOf: ['manageCustomers', 'createSales'], route: '/customers', group: 'sell' },
+  { key: 'quotation-new', title: 'New quotation', subtitle: 'Create a quote', icon: 'document-attach-outline', tone: 'primary', anyOf: ['createSales'], route: '/quotation-new', flag: 'quotation', group: 'modules' },
+  { key: 'settings', title: 'Business settings', subtitle: 'Name, phone, address', icon: 'settings-outline', tone: 'muted', anyOf: ['manageSettings', 'manageUsers'], route: '/settings', group: 'manage' },
   { key: 'money', title: 'Money out', subtitle: 'Expenses & cheques', icon: 'cash-outline', tone: 'warn', anyOf: ['createSales'], route: '/money', group: 'sell' },
 
   // Stock
   { key: 'item-new', title: 'Add product', subtitle: 'Name only, rest optional', icon: 'add-circle-outline', tone: 'ok', anyOf: ['manageItems'], route: '/item-new', group: 'stock' },
   { key: 'inventory', title: 'Stock ledger', subtitle: 'Stock movements', icon: 'cube-outline', tone: 'primary', anyOf: ['manageInventory'], route: '/inventory', group: 'stock' },
   { key: 'intake', title: 'Stock intake', subtitle: 'Scan goods received', icon: 'download-outline', tone: 'ok', anyOf: ['submitStockIntake'], route: '/intake', group: 'stock' },
+  { key: 'purchase-orders', title: 'Purchase orders', subtitle: 'PO list & drafts', icon: 'clipboard-outline', tone: 'primary', anyOf: ['managePurchases', 'createPurchaseOrders', 'viewPurchases', 'manageInventory'], route: '/purchase-orders', flag: 'purchase', group: 'stock' },
   { key: 'labels', title: 'Labels', subtitle: 'Print barcode labels', icon: 'pricetags-outline', tone: 'warn', anyOf: ['manageItems', 'manageInventory', 'submitStockIntake', 'createSales'], route: '/labels', group: 'stock' },
 
   // Reports
@@ -62,7 +65,7 @@ export const FEATURES: AppFeature[] = [
   // Management
   { key: 'approvals', title: 'Approvals', subtitle: 'Requisitions & advances', icon: 'checkmark-done-outline', tone: 'ok', anyOf: ['approveRequisitions', 'approveAdvances'], route: '/approvals', group: 'manage' },
   { key: 'staff', title: 'Staff', subtitle: 'Accounts, PINs, roles', icon: 'people-outline', tone: 'primary', anyOf: ['manageUsers'], route: '/staff', group: 'manage' },
-  { key: 'attendance', title: 'Attendance', subtitle: 'Fingerprint & shifts', icon: 'finger-print-outline', tone: 'primary', anyOf: ['manageEmployees'], webPath: '/hr/attendance', group: 'manage' },
+  { key: 'attendance', title: 'Attendance', subtitle: 'Fingerprint & shifts', icon: 'finger-print-outline', tone: 'primary', anyOf: ['manageEmployees'], route: '/attendance', webPath: '/hr/attendance', group: 'manage' },
 
   // Business modules (read-only lists, details on the web)
   { key: 'quotations', title: 'Quotations', subtitle: 'Quotes to customers', icon: 'document-outline', tone: 'primary', anyOf: ['createSales'], route: '/module/quotations', flag: 'quotation', group: 'modules' },
@@ -77,6 +80,7 @@ export const FEATURES: AppFeature[] = [
   // Device
   { key: 'printer', title: 'Printers', subtitle: 'Receipt, label, kitchen', icon: 'print-outline', tone: 'muted', anyOf: [], route: '/printer', group: 'device' },
   { key: 'alerts', title: 'Alerts', subtitle: 'Notifications & settings', icon: 'notifications-outline', tone: 'warn', anyOf: [], route: '/alerts', group: 'device' },
+  { key: 'notify-staff', title: 'Notify staff', subtitle: 'Message colleagues’ phones', icon: 'megaphone-outline', tone: 'warn', anyOf: ['manageUsers'], route: '/notify-staff', group: 'device' },
 ]
 
 export function featureVisible(f: AppFeature, user: AuthUser | null | undefined, hasFlag: (flag: string) => boolean): boolean {
@@ -100,7 +104,7 @@ export function featureByKey(key: string): AppFeature | undefined {
 /** Web page of this business (e.g. https://server/c/alisha-shop/quotations). */
 export function webUrl(user: AuthUser | null | undefined, path: string): string {
   const slug = user?.tenantSlug ? `/c/${encodeURIComponent(user.tenantSlug)}` : ''
-  return `${getApiBase()}${slug}${path.startsWith('/') ? path : `/${path}`}`
+  return `${getPublicWebBase()}${slug}${path.startsWith('/') ? path : `/${path}`}`
 }
 
 export function openWeb(user: AuthUser | null | undefined, path: string): void {

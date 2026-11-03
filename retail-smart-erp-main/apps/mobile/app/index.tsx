@@ -1,15 +1,25 @@
 import { Redirect } from 'expo-router'
 import { useEffect, useState } from 'react'
 import { ActivityIndicator, View } from 'react-native'
-import { getToken, getUser, loadSavedSettings, refreshPermissions } from '../src/lib/api'
+import {
+  checkMobileAccess,
+  clearSession,
+  getToken,
+  getUser,
+  loadSavedSettings,
+  navigateToAccessBlocked,
+  refreshPermissions,
+} from '../src/lib/api'
 import { isBackOffice } from '../src/lib/roles'
 import { getAdminToken } from '../src/lib/adminApi'
 import { registerPushToken } from '../src/lib/notifications'
 import { fetchCurrentShift } from '../src/lib/shift'
 import { IS_ADMIN_APP } from '../src/lib/appVariant'
 
+type AppTarget = '/login' | '/pos' | '/shifts' | '/home' | '/admin/pulse'
+
 export default function Index() {
-  const [target, setTarget] = useState<'/login' | '/pos' | '/shifts' | '/home' | '/admin/pulse' | null>(null)
+  const [target, setTarget] = useState<AppTarget | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -26,6 +36,24 @@ export default function Index() {
         if (!cancelled) setTarget('/login')
         return
       }
+
+      // Company suspended / locked / archived while the token is still valid:
+      // show the full-screen reason before any POS / home route.
+      const access = await checkMobileAccess()
+      if (cancelled) return
+      if (!access.ok && 'locked' in access && access.locked) {
+        await clearSession().catch(() => undefined)
+        navigateToAccessBlocked(access.payload)
+        return
+      }
+      if (!access.ok && 'unauthorized' in access && access.unauthorized) {
+        // Token rejected — normal sign-in again.
+        await clearSession().catch(() => undefined)
+        if (!cancelled) setTarget('/login')
+        return
+      }
+      // offline: keep going with the cached session (shop LAN may be down)
+
       // Re-register the push token on every cold start (tokens rotate); ignores 404 / Expo Go.
       registerPushToken().catch(() => undefined)
       // Pick up role / permission changes the owner made since the last launch. Bounded so a

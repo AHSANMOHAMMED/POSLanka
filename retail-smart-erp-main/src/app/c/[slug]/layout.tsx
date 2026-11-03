@@ -170,13 +170,9 @@ export default async function CompanyLayout({
   }
 
   // ── TENANT STATUS CHECKS ──
-  if (tenant.status === 'locked') {
-    redirect(`/c/${slug}/locked`)
-  }
-
+  // Suspended / locked / archived → full reason screen (never a blank page)
   if (tenant.status !== 'active') {
-    // Company suspended/cancelled - redirect to account page
-    redirect('/account?error=suspended')
+    redirect(`/c/${slug}/locked`)
   }
 
   if (!userRecord) {

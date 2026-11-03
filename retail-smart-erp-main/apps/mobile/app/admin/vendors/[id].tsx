@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { View, Text, ScrollView, Pressable, Switch, Alert, ActivityIndicator, RefreshControl, StyleSheet, Modal, TextInput } from 'react-native'
+import { View, Text, ScrollView, Pressable, Switch, Alert, ActivityIndicator, RefreshControl, StyleSheet, Modal, TextInput, Linking } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
 import { adminGet, adminPost, adminPut, useAdminUser } from '../../../src/lib/adminApi'
+import { getPublicWebBase } from '../../../src/lib/api'
 import { THEME, formatLKR } from '../../../src/lib/theme'
 import { ErrorView, InlineNotice, LoadingView } from '../../../src/components/StateViews'
 import { AdminVendorStaff, type AdminStaffRow } from '../../../src/components/admin/AdminVendorStaff'
@@ -64,6 +65,8 @@ export default function AdminVendorDetailScreen() {
   // Lock / unlock and feature switches are vendor management (owner role); the server enforces it
   const { can } = useAdminUser()
   const canManage = can('vendors.manage')
+  const canImpersonate = can('vendors.impersonate')
+  const canBill = can('billing')
 
   const load = useCallback(
     async (silent = false) => {
@@ -96,12 +99,14 @@ export default function AdminVendorDetailScreen() {
   const [suspendOpen, setSuspendOpen] = useState(false)
   const [suspendReason, setSuspendReason] = useState('')
 
-  // Suspend / reactivate go through the vendor actions (audited with a reason; reactivating also
-  // resumes a billing-locked or archived subscription, like the web console)
-  async function runAction(body: { action: 'suspend'; reason: string } | { action: 'reactivate' }) {
+  // Suspend / reactivate / extend / etc. go through the vendor actions API (audited).
+  async function runAction(body: Record<string, unknown>) {
     if (!vendor) return
     setBusy('lock')
-    const res = await adminPost<{ success: boolean; status?: string; warning?: string; message?: string }>(`/api/sys-control/vendors/${vendor.id}/actions`, body)
+    const res = await adminPost<{ success: boolean; status?: string; warning?: string; message?: string; temporaryPassword?: string }>(
+      `/api/sys-control/vendors/${vendor.id}/actions`,
+      body
+    )
     setBusy(null)
     if (!res.ok) {
       Alert.alert('Update Failed', res.error)
@@ -109,10 +114,47 @@ export default function AdminVendorDetailScreen() {
     }
     setSuspendOpen(false)
     setSuspendReason('')
-    const status = res.data?.status || (body.action === 'suspend' ? 'suspended' : 'active')
-    setVendor((prev) => (prev ? { ...prev, status, lockedAt: status === 'active' ? null : new Date().toISOString(), lockedReason: status === 'active' ? null : 'admin_suspended' } : prev))
-    if (res.data?.warning) Alert.alert('Reactivated', res.data.warning)
+    if (body.action === 'suspend' || body.action === 'reactivate') {
+      const status = res.data?.status || (body.action === 'suspend' ? 'suspended' : 'active')
+      setVendor((prev) =>
+        prev
+          ? {
+              ...prev,
+              status,
+              lockedAt: status === 'active' ? null : new Date().toISOString(),
+              lockedReason: status === 'active' ? null : 'admin_suspended',
+            }
+          : prev
+      )
+    }
+    if (res.data?.temporaryPassword) Alert.alert('Temporary password', res.data.temporaryPassword)
+    else if (res.data?.warning) Alert.alert('Note', res.data.warning)
+    else if (res.data?.message) Alert.alert('Done', res.data.message)
     load(true)
+  }
+
+  async function openAsOwner() {
+    if (!vendor || !canImpersonate) return
+    setBusy('impersonate')
+    const res = await adminPost<{ redirectUrl?: string; impersonateCode?: string }>(`/api/sys-control/vendors/${vendor.id}/impersonate`, {
+      reason: 'Opened from mobile Admin',
+    })
+    setBusy(null)
+    if (!res.ok) {
+      Alert.alert('Open as owner failed', res.error)
+      return
+    }
+    // Opaque jti only (`c=`) — never a JWT in the browser URL / history.
+    const path = res.data.redirectUrl
+      || (res.data.impersonateCode
+        ? `/api/auth/impersonate?c=${encodeURIComponent(res.data.impersonateCode)}&slug=${encodeURIComponent(vendor.slug)}`
+        : '')
+    if (!path) {
+      Alert.alert('Open as owner failed', 'Server did not return a sign-in link')
+      return
+    }
+    const url = `${getPublicWebBase()}${path.startsWith('/') ? path : `/${path}`}`
+    Linking.openURL(url).catch(() => Alert.alert('Could not open browser', url))
   }
 
   function toggleLock() {
@@ -191,8 +233,59 @@ export default function AdminVendorDetailScreen() {
             ) : null}
             {canManage ? (
               <Pressable style={[locked ? adminStyles.primaryBtn : adminStyles.dangerBtn, { marginTop: 12 }, busy === 'lock' && { opacity: 0.6 }]} onPress={toggleLock} disabled={busy === 'lock'}>
-                {busy === 'lock' ? <ActivityIndicator color="#FFF" /> : <Text style={adminStyles.primaryBtnText}>{locked ? '🔓 Reactivate vendor' : '🔒 Suspend vendor'}</Text>}
+                {busy === 'lock' ? <ActivityIndicator color="#FFF" /> : <Text style={adminStyles.primaryBtnText}>{locked ? 'Reactivate vendor' : 'Suspend vendor'}</Text>}
               </Pressable>
+            ) : null}
+            {canImpersonate && !locked ? (
+              <Pressable style={[adminStyles.primaryBtn, { marginTop: 8 }, busy === 'impersonate' && { opacity: 0.6 }]} onPress={openAsOwner} disabled={busy === 'impersonate'}>
+                {busy === 'impersonate' ? <ActivityIndicator color="#FFF" /> : <Text style={adminStyles.primaryBtnText}>Open as owner</Text>}
+              </Pressable>
+            ) : null}
+            {(canManage || canBill) ? (
+              <View style={{ marginTop: 10, gap: 6 }}>
+                {canBill ? (
+                  <Pressable
+                    style={adminStyles.ghostBtn}
+                    onPress={() =>
+                      Alert.alert('Extend subscription', 'Add one month to the current period?', [
+                        { text: 'Cancel', style: 'cancel' },
+                        { text: 'Extend', onPress: () => runAction({ action: 'extend', days: 30, reason: 'Mobile extend +30d' }) },
+                      ])
+                    }
+                  >
+                    <Text style={adminStyles.ghostBtnText}>Extend +30 days</Text>
+                  </Pressable>
+                ) : null}
+                {canManage ? (
+                  <>
+                    <Pressable style={adminStyles.ghostBtn} onPress={() => runAction({ action: 'resend_welcome' })}>
+                      <Text style={adminStyles.ghostBtnText}>Resend welcome</Text>
+                    </Pressable>
+                    <Pressable
+                      style={adminStyles.ghostBtn}
+                      onPress={() =>
+                        Alert.alert('Reset owner password?', 'A temporary password will be shown once.', [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Reset', onPress: () => runAction({ action: 'reset_password' }) },
+                        ])
+                      }
+                    >
+                      <Text style={adminStyles.ghostBtnText}>Reset owner password</Text>
+                    </Pressable>
+                    <Pressable
+                      style={adminStyles.ghostBtn}
+                      onPress={() =>
+                        Alert.alert('Archive vendor?', 'Type ARCHIVE in the next prompt is not required here — confirm carefully.', [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Archive', style: 'destructive', onPress: () => runAction({ action: 'archive', confirm: 'ARCHIVE', reason: 'Archived from mobile' }) },
+                        ])
+                      }
+                    >
+                      <Text style={[adminStyles.ghostBtnText, { color: THEME.colors.error }]}>Archive</Text>
+                    </Pressable>
+                  </>
+                ) : null}
+              </View>
             ) : null}
           </Card>
 

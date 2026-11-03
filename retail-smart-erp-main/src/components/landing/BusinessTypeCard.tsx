@@ -23,7 +23,7 @@ export default function BusinessTypeCard({
   icon: Icon,
   mockup,
   image,
-  gradient = 'from-emerald-600 to-emerald-500',
+  gradient = 'from-[#0050c0] to-[#2563eb]',
 }: BusinessTypeCardProps) {
   return (
     <motion.div whileHover={{ y: -8 }} transition={{ duration: 0.25 }}>
@@ -54,7 +54,7 @@ export default function BusinessTypeCard({
           <h3 className="text-lg font-bold text-white mb-1.5">{name}</h3>
           <p className="text-sm text-zinc-400 mb-3 line-clamp-2 leading-relaxed">{description}</p>
           <div className={`flex items-center gap-1.5 text-sm font-semibold bg-gradient-to-r ${gradient} bg-clip-text text-transparent group-hover:gap-2.5 transition-all`}>
-            Explore <ArrowRight className="w-4 h-4 text-emerald-400" />
+            Explore <ArrowRight className="w-4 h-4 text-sky-300" />
           </div>
         </div>
       </Link>

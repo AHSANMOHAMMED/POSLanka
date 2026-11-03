@@ -5,6 +5,7 @@ import { tenants, subscriptions, tenantUsage, pricingTiers, accountTenants } fro
 import { eq, and } from 'drizzle-orm'
 import Link from 'next/link'
 import { BrandWordmark } from '@/components/ui/logo'
+import { resolveLockMessage } from '@/lib/tenant/lock-message'
 
 interface LockedPageProps {
   params: Promise<{ slug: string }>
@@ -24,12 +25,16 @@ function getDaysUntil(date: Date): number {
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)))
 }
 
+/**
+ * Full-screen access gate for locked / suspended / archived companies.
+ * Never a blank or black screen — always a clear reason + next step.
+ */
 export default async function LockedPage({ params }: LockedPageProps) {
   const session = await auth()
   const { slug } = await params
 
-  if (!session?.user?.accountId) {
-    redirect('/login')
+  if (!session?.user) {
+    redirect(`/c/${slug}/login`)
   }
 
   const tenant = await db.query.tenants.findFirst({
@@ -40,24 +45,25 @@ export default async function LockedPage({ params }: LockedPageProps) {
     redirect('/account')
   }
 
-  if (tenant.status !== 'locked') {
-    redirect(`/c/${slug}`)
+  if (tenant.status === 'active') {
+    redirect(`/c/${slug}/dashboard`)
   }
 
-  // Verify membership
-  const membership = await db.query.accountTenants.findFirst({
-    where: and(
-      eq(accountTenants.accountId, session.user.accountId),
-      eq(accountTenants.tenantId, tenant.id),
-      eq(accountTenants.isActive, true)
-    ),
-  })
-
-  if (!membership) {
-    redirect('/account?error=no_access')
+  // Prefer account membership; company-session staff still see the message
+  const accountId = session.user.accountId
+  if (accountId) {
+    const membership = await db.query.accountTenants.findFirst({
+      where: and(
+        eq(accountTenants.accountId, accountId),
+        eq(accountTenants.tenantId, tenant.id),
+        eq(accountTenants.isActive, true),
+      ),
+    })
+    if (!membership && session.user.tenantId !== tenant.id) {
+      redirect('/account?error=no_access')
+    }
   }
 
-  // Get subscription and usage info
   const subscription = await db.query.subscriptions.findFirst({
     where: eq(subscriptions.tenantId, tenant.id),
   })
@@ -82,82 +88,80 @@ export default async function LockedPage({ params }: LockedPageProps) {
   const dbLimit = tier?.maxDatabaseBytes || 0
   const fileLimit = tier?.maxFileStorageBytes || 0
 
-  const reasonMessages: Record<string, { title: string; description: string }> = {
-    trial_expired: {
-      title: 'Your subscription has expired',
-      description: 'Your subscription period has ended. Upgrade to a paid plan to continue using your company.',
-    },
-    storage_full: {
-      title: 'Storage limit exceeded',
-      description: 'Your company has exceeded its storage limits. Upgrade to a higher plan to get more storage.',
-    },
-    subscription_expired: {
-      title: 'Your subscription has expired',
-      description: 'Your subscription payment is overdue. Please renew to continue using your company.',
-    },
-  }
+  const reason = resolveLockMessage({
+    status: tenant.status,
+    lockedReason: tenant.lockedReason,
+    settings: tenant.settings,
+  })
 
-  const reason = reasonMessages[tenant.lockedReason || ''] || {
-    title: 'Company access locked',
-    description: 'Your company access has been restricted. Please contact support or upgrade your plan.',
-  }
+  const tone = reason.tone === 'danger'
+    ? { iconBg: 'bg-red-100', icon: 'text-red-600', panel: 'bg-red-50 border-red-200', panelText: 'text-red-800', panelSub: 'text-red-700' }
+    : reason.tone === 'info'
+      ? { iconBg: 'bg-sky-100', icon: 'text-[#0050c0]', panel: 'bg-sky-50 border-sky-200', panelText: 'text-sky-900', panelSub: 'text-sky-700' }
+      : { iconBg: 'bg-amber-100', icon: 'text-amber-700', panel: 'bg-amber-50 border-amber-200', panelText: 'text-amber-900', panelSub: 'text-amber-800' }
+
+  const ctaHref = reason.ctaHref?.(slug, tenant.id)
+  const statusLabel = tenant.status === 'suspended' ? 'Suspended'
+    : tenant.status === 'cancelled' ? 'Archived'
+      : tenant.status === 'locked' ? 'Locked'
+        : tenant.status
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="max-w-lg w-full bg-white rounded-md shadow-lg p-8">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 via-white to-slate-100 flex items-center justify-center p-4">
+      <div className="max-w-lg w-full bg-white rounded-2xl shadow-xl border border-slate-200/80 p-8 sm:p-10">
         <div className="mb-6 flex justify-center"><BrandWordmark height={44} /></div>
-        {/* Lock Icon */}
-        <div className="flex justify-center mb-6">
-          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
-            <svg className="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+
+        <div className="flex justify-center mb-5">
+          <div className={`w-16 h-16 ${tone.iconBg} rounded-full flex items-center justify-center`}>
+            <svg className={`w-8 h-8 ${tone.icon}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
             </svg>
           </div>
         </div>
 
-        {/* Title */}
-        <h1 className="text-2xl font-bold text-gray-900 text-center mb-2">
+        <p className="text-center text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+          {statusLabel}
+          {tenant.lockedAt ? ` · since ${new Date(tenant.lockedAt).toLocaleDateString()}` : ''}
+        </p>
+        <h1 className="text-2xl font-bold text-slate-900 text-center mb-2 tracking-tight">
           {reason.title}
         </h1>
-        <p className="text-gray-600 text-center mb-6">
+        <p className="text-slate-600 text-center mb-6 leading-relaxed">
           {reason.description}
         </p>
 
-        {/* Deletion Warning */}
         {daysUntilDeletion !== null && (
-          <div className="bg-red-50 border border-red-200 rounded p-4 mb-6">
+          <div className={`${tone.panel} border rounded-xl p-4 mb-6`}>
             <div className="flex items-start gap-3">
-              <svg className="w-5 h-5 text-red-600 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className={`w-5 h-5 ${tone.icon} mt-0.5 shrink-0`} fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.232 16.5c-.77.833.192 2.5 1.732 2.5z" />
               </svg>
               <div>
-                <p className="font-semibold text-red-800">
+                <p className={`font-semibold ${tone.panelText}`}>
                   {daysUntilDeletion > 0
-                    ? `Data will be permanently deleted in ${daysUntilDeletion} day${daysUntilDeletion !== 1 ? 's' : ''}`
-                    : 'Data deletion is imminent'
-                  }
+                    ? `Data may be permanently deleted in ${daysUntilDeletion} day${daysUntilDeletion !== 1 ? 's' : ''}`
+                    : 'Data deletion is imminent'}
                 </p>
-                <p className="text-sm text-red-700 mt-1">
-                  All company data including sales, inventory, customers, and work orders will be permanently removed.
+                <p className={`text-sm ${tone.panelSub} mt-1`}>
+                  Renew or ask support to reactivate before that date to keep sales, stock, and customer records.
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Storage Usage */}
-        {(dbLimit > 0 || fileLimit > 0) && (
-          <div className="bg-gray-50 rounded p-4 mb-6 space-y-3">
-            <h3 className="font-medium text-gray-900 text-sm">Storage Usage</h3>
+        {(dbLimit > 0 || fileLimit > 0) && tenant.lockedReason === 'storage_full' && (
+          <div className="bg-slate-50 rounded-xl p-4 mb-6 space-y-3 border border-slate-200">
+            <h3 className="font-medium text-slate-900 text-sm">Storage usage</h3>
             {dbLimit > 0 && (
               <div>
-                <div className="flex justify-between text-sm text-gray-600 mb-1">
+                <div className="flex justify-between text-sm text-slate-600 mb-1">
                   <span>Database</span>
                   <span>{formatBytes(dbUsage)} / {formatBytes(dbLimit)}</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
+                <div className="w-full bg-slate-200 rounded-full h-2">
                   <div
-                    className={`h-2 rounded-full ${dbUsage > dbLimit ? 'bg-red-500' : dbUsage > dbLimit * 0.8 ? 'bg-yellow-500' : 'bg-blue-500'}`}
+                    className={`h-2 rounded-full ${dbUsage > dbLimit ? 'bg-red-500' : 'bg-[#0050c0]'}`}
                     style={{ width: `${Math.min(100, (dbUsage / dbLimit) * 100)}%` }}
                   />
                 </div>
@@ -165,13 +169,13 @@ export default async function LockedPage({ params }: LockedPageProps) {
             )}
             {fileLimit > 0 && (
               <div>
-                <div className="flex justify-between text-sm text-gray-600 mb-1">
-                  <span>File Storage</span>
+                <div className="flex justify-between text-sm text-slate-600 mb-1">
+                  <span>Files</span>
                   <span>{formatBytes(fileUsage)} / {formatBytes(fileLimit)}</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
+                <div className="w-full bg-slate-200 rounded-full h-2">
                   <div
-                    className={`h-2 rounded-full ${fileUsage > fileLimit ? 'bg-red-500' : fileUsage > fileLimit * 0.8 ? 'bg-yellow-500' : 'bg-blue-500'}`}
+                    className={`h-2 rounded-full ${fileUsage > fileLimit ? 'bg-red-500' : 'bg-[#0050c0]'}`}
                     style={{ width: `${Math.min(100, (fileUsage / fileLimit) * 100)}%` }}
                   />
                 </div>
@@ -180,25 +184,33 @@ export default async function LockedPage({ params }: LockedPageProps) {
           </div>
         )}
 
-        {/* Action Buttons */}
         <div className="space-y-3">
-          <Link
-            href={`/account/subscription/${tenant.id}`}
-            className="w-full flex items-center justify-center px-4 py-3 bg-blue-600 text-white rounded font-medium hover:bg-blue-700 transition-colors"
-          >
-            Upgrade Now
-          </Link>
+          {ctaHref && (
+            <Link
+              href={ctaHref}
+              className="w-full flex items-center justify-center px-4 py-3 bg-[#0050c0] text-white rounded-xl font-semibold hover:bg-[#00419e] transition-colors shadow-md shadow-[rgba(0,80,192,0.25)]"
+            >
+              {reason.ctaLabel || 'Continue'}
+            </Link>
+          )}
           <Link
             href="/account"
-            className="w-full flex items-center justify-center px-4 py-3 bg-gray-100 text-gray-700 rounded font-medium hover:bg-gray-200 transition-colors"
+            className="w-full flex items-center justify-center px-4 py-3 bg-slate-100 text-slate-800 rounded-xl font-medium hover:bg-slate-200 transition-colors"
           >
-            Go to Account Dashboard
+            Back to account
+          </Link>
+          <Link
+            href="/contact"
+            className="w-full flex items-center justify-center px-4 py-3 text-[#0050c0] font-medium hover:underline"
+          >
+            Contact skyERPOS support
           </Link>
         </div>
 
-        {/* Company Info */}
-        <p className="text-center text-sm text-gray-500 mt-6">
-          {tenant.name} ({slug})
+        <p className="text-center text-sm text-slate-500 mt-8">
+          {tenant.name}
+          <span className="text-slate-400"> · </span>
+          {slug}
         </p>
       </div>
     </div>

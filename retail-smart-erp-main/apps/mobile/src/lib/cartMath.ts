@@ -28,6 +28,8 @@ export interface CartLineLike {
   promotionLabels?: string[]
   priceListName?: string | null
   catalogPrice?: number
+  /** Cashier's manual line discount (amount, LKR) — sent as the sale line `discount` */
+  manualDiscount?: number
 }
 
 /**
@@ -39,14 +41,24 @@ export function lineGross(line: Pick<CartLineLike, 'sellingPrice' | 'quantity'>)
   return roundCurrency(roundUnitPrice(Number(line.sellingPrice) || 0) * line.quantity)
 }
 
-/** One line's total exactly as the server computes it (net of the line's promotions). */
-export function lineTotal(line: Pick<CartLineLike, 'sellingPrice' | 'quantity'> & { promotionDiscount?: number }): number {
-  return roundCurrency(lineGross(line) - (line.promotionDiscount || 0))
+/** One line's total exactly as the server computes it (net of the line's promotions + manual discount). */
+export function lineTotal(line: Pick<CartLineLike, 'sellingPrice' | 'quantity'> & { promotionDiscount?: number; manualDiscount?: number }): number {
+  return roundCurrency(lineGross(line) - (line.promotionDiscount || 0) - (line.manualDiscount || 0))
 }
 
 /** Σ of rounded line totals (the server's subtotal), not round(Σ unrounded). */
-export function cartSubtotal(cart: Array<Pick<CartLineLike, 'sellingPrice' | 'quantity'> & { promotionDiscount?: number }>): number {
+export function cartSubtotal(cart: Array<Pick<CartLineLike, 'sellingPrice' | 'quantity'> & { promotionDiscount?: number; manualDiscount?: number }>): number {
   return roundCurrency(cart.reduce((s, l) => s + lineTotal(l), 0))
+}
+
+export type ManualDiscountType = 'percentage' | 'fixed'
+
+/** Manual discount (cashier typed % or LKR) as an amount, never above `base`. */
+export function manualDiscountAmount(base: number, type: ManualDiscountType, value: number): number {
+  const v = Number(value)
+  if (!(v > 0) || !(base > 0)) return 0
+  const raw = type === 'percentage' ? roundCurrency((base * Math.min(v, 100)) / 100) : roundCurrency(v)
+  return Math.min(roundCurrency(base), raw)
 }
 
 /** Amount payable before loyalty: subtotal + tax charged on top of the prices. */

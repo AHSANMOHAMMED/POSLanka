@@ -22,6 +22,7 @@ export const ALERT_TYPES = [
   'import_finished',
   'cheque_due',
   'expense_claim',
+  'staff_announcement',
 ] as const
 
 export type AlertType = typeof ALERT_TYPES[number]
@@ -51,6 +52,7 @@ export const ALERT_TYPE_INFO: Record<AlertType, { label: string; description: st
   import_finished: { label: 'Import finished', description: 'A bulk import you started has finished', group: 'System' },
   cheque_due: { label: 'Cheques due', description: 'Cheques to bank or that will be presented today / tomorrow, and overdue ones (daily)', group: 'Sales' },
   expense_claim: { label: 'Expense claim', description: 'A staff reimbursement claim awaits approval', group: 'Approvals' },
+  staff_announcement: { label: 'Staff message', description: 'A message sent by a colleague from the POS or staff app', group: 'System' },
 }
 
 /**
@@ -76,10 +78,12 @@ export const DEDUPE_WINDOW_SECONDS: Record<AlertType, number> = {
   import_finished: 0,
   cheque_due: 20 * 3600,
   expense_claim: 0,
+  /** Soft anti-spam when caller passes dedupeKey (same title+body from same sender). */
+  staff_announcement: 120,
 }
 
-/** Types that ignore quiet hours for push (kept empty on purpose: everything respects quiet hours). */
-export const CRITICAL_ALERT_TYPES: readonly AlertType[] = []
+/** Types that ignore quiet hours for push (staff messages should reach phones promptly). */
+export const CRITICAL_ALERT_TYPES: readonly AlertType[] = ['staff_announcement']
 
 export interface TenantAlertSettings {
   /** Used when a branch has no minimum stock configured for an item (0 / unset = off). */

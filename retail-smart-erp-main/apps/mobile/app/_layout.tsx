@@ -30,6 +30,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
         <Stack.Screen name="login" options={{ animation: 'fade' }} />
+        <Stack.Screen name="access-blocked" options={{ animation: 'fade', gestureEnabled: false }} />
         <Stack.Screen name="shifts" />
         <Stack.Screen name="approvals" />
         <Stack.Screen name="inventory" />
@@ -40,6 +41,7 @@ export default function RootLayout() {
         <Stack.Screen name="intake" />
         <Stack.Screen name="item-new" />
         <Stack.Screen name="alerts" />
+        <Stack.Screen name="notify-staff" />
         <Stack.Screen name="labels" />
         <Stack.Screen name="money" />
         <Stack.Screen name="sales" />

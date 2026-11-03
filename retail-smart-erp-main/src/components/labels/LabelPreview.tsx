@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import type { LabelTemplate, LabelItemData, LabelShape } from '@/lib/labels/types'
 import { renderLabelHtml } from '@/lib/labels/label-renderer'
+import { sanitizeHtml } from '@/lib/utils/sanitize-html'
 
 interface LabelPreviewProps {
   template: Pick<LabelTemplate, 'widthMm' | 'heightMm' | 'elements'> & { labelShape?: LabelShape | string; cornerRadius?: number | null }
@@ -31,7 +32,7 @@ export function LabelPreview({ template, item, currencySymbol, tenantName, codeW
   useEffect(() => {
     const renderId = ++renderIdRef.current
     renderLabelHtml(stableTemplate, item || null, currencySymbol, tenantName, codeWord).then(result => {
-      if (renderId === renderIdRef.current) setHtml(result)
+      if (renderId === renderIdRef.current) setHtml(sanitizeHtml(result))
     })
   }, [stableTemplate, item, currencySymbol, tenantName, codeWord])
 

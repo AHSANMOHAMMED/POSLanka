@@ -21,7 +21,7 @@ export interface PushMessage {
   priority?: 'default' | 'normal' | 'high'
 }
 
-function isExpoToken(t: string): boolean {
+export function isExpoToken(t: string): boolean {
   return /^Expo(nent)?PushToken\[.+\]$/.test(t)
 }
 
@@ -57,7 +57,8 @@ export async function sendPushDetailed(tokens: string[], message: PushMessage): 
           body: message.body,
           data: message.data || {},
           sound: message.sound === null ? undefined : 'default',
-          channelId: message.channelId || 'default',
+          // Must match apps/mobile ANDROID_CHANNEL_ID ('poslanka-default')
+          channelId: message.channelId || 'poslanka-default',
           priority: message.priority || 'high',
         }))),
       })

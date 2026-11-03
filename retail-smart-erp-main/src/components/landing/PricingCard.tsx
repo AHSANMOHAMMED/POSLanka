@@ -35,12 +35,12 @@ export default function PricingCard({
       transition={{ duration: 0.25 }}
       className={`relative rounded-2xl p-7 ${
         popular
-          ? 'gradient-border-animated bg-white/5 shadow-2xl shadow-emerald-500/5'
+          ? 'gradient-border-animated bg-white/5 shadow-2xl shadow-[rgba(0,80,192,0.08)]'
           : 'bg-white/5 border border-white/10 hover:shadow-lg'
       } transition-shadow`}
     >
       {popular && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1 px-4 py-1 bg-gradient-to-r from-emerald-600 to-emerald-500 text-white text-xs font-bold rounded-full shadow-lg">
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1 px-4 py-1 bg-gradient-to-r from-[#0050c0] to-[#2563eb] text-white text-xs font-bold rounded-full shadow-lg">
           <Star size={12} className="fill-white" /> Most Popular
         </span>
       )}
@@ -52,14 +52,14 @@ export default function PricingCard({
         ) : (
           <>
             {period === 'forever' && (
-              <span className="inline-block mb-3 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
+              <span className="inline-block mb-3 bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)] text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
                 Free Forever
               </span>
             )}
             <div>
               <span className="text-4xl font-extrabold text-white tracking-tight">{currencyNote}{price}</span>
               {period === 'forever' ? (
-                <span className="text-sm text-emerald-400/70 ml-1">/forever</span>
+                <span className="text-sm text-sky-300/70 ml-1">/forever</span>
               ) : (
                 <span className="text-sm text-zinc-500 ml-1">/{period}</span>
               )}
@@ -82,7 +82,7 @@ export default function PricingCard({
       <ul className="space-y-3 mb-7">
         {features.map((feature, i) => (
           <li key={i} className="flex items-start gap-2.5 text-sm text-zinc-300">
-            <div className="mt-0.5 w-4 h-4 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-600 flex items-center justify-center flex-shrink-0">
+            <div className="mt-0.5 w-4 h-4 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center flex-shrink-0">
               <Check size={10} className="text-white" />
             </div>
             {feature}
@@ -94,8 +94,8 @@ export default function PricingCard({
         href={isCustom ? '/contact' : '/contact'}
         className={`block w-full py-3 text-center text-sm font-semibold rounded-md transition-all ${
           popular
-            ? 'bg-gradient-to-r from-emerald-600 to-emerald-500 text-white hover:from-emerald-700 hover:to-emerald-600 shadow-lg shadow-emerald-600/25'
-            : 'border-2 border-white/10 text-white hover:border-emerald-500/30 hover:text-emerald-400 hover:bg-emerald-500/10'
+            ? 'bg-gradient-to-r from-[#0050c0] to-[#2563eb] text-white hover:from-[#00419e] hover:to-[#1d4ed8] shadow-lg shadow-[rgba(0,80,192,0.35)]'
+            : 'border-2 border-white/10 text-white hover:border-[rgba(0,80,192,0.35)] hover:text-sky-300 hover:bg-[rgba(0,80,192,0.12)]'
         }`}
       >
         {isCustom ? 'Contact Us' : period === 'forever' ? 'Get Started Free' : 'Get Started'}

@@ -103,6 +103,8 @@ interface Detail {
     status: string
     lockedAt: string | null
     lockedReason: string | null
+    /** Free-text reason shown on the vendor lock screen (from settings.lockMessage) */
+    settings?: { lockMessage?: string } | null
     deletionScheduledAt: string | null
     planExpiresAt: string | null
     einvoiceEnabled: boolean
@@ -399,9 +401,15 @@ export default function VendorDetailPage() {
         </Alert>
       )}
       {!isActive && (
-        <Alert tone={v.status === 'locked' ? 'danger' : 'warning'} title={`${labelFor(VENDOR_STATUS_LABEL, v.status)}${v.lockedReason ? ` — ${labelFor(LOCK_REASON_LABEL, v.lockedReason)}` : ''}`}>
-          Staff cannot sign in{v.lockedAt ? ` since ${fmtDateTime(v.lockedAt)}` : ''}.
+        <Alert tone={v.status === 'locked' || v.status === 'suspended' ? 'danger' : 'warning'} title={`${labelFor(VENDOR_STATUS_LABEL, v.status)}${v.lockedReason ? ` — ${labelFor(LOCK_REASON_LABEL, v.lockedReason)}` : ''}`}>
+          Staff cannot sign in or sell{v.lockedAt ? ` since ${fmtDateTime(v.lockedAt)}` : ''}. Their app and dashboard show a full reason screen.
+          {typeof v.settings?.lockMessage === 'string' && v.settings.lockMessage.trim() ? (
+            <span className="mt-2 block rounded-lg bg-adm-surface-2 px-3 py-2 text-[13px] text-adm-fg">“{v.settings.lockMessage.trim()}”</span>
+          ) : null}
           {v.deletionScheduledAt && ` The billing job will permanently delete this vendor’s data on ${fmtDate(v.deletionScheduledAt)} unless the subscription is renewed or extended.`}
+          {v.status !== 'active' && canBill ? (
+            <span className="mt-2 block text-[13px]">Use <strong>Reactivate</strong> after payment to restore sales and staff sign-in.</span>
+          ) : null}
         </Alert>
       )}
 
@@ -1267,11 +1275,33 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
   async function impersonate() {
     setBusy(true)
     setError(null)
-    // Open the tab inside the click so pop-up blockers allow it, then point it at the sign-in link
-    const tab = window.open('about:blank', '_blank')
+    // Open the tab inside the click so pop-up blockers allow it, then POST the opaque code
+    // (never put the JWT in the address bar / history / access logs).
+    const tab = window.open('about:blank', 'impersonate_vendor')
     try {
-      const res = await adminFetch<{ redirectUrl: string }>(`/api/sys-control/vendors/${v.id}/impersonate`, { method: 'POST', json: { reason: reason.trim() || undefined } })
-      if (tab) {
+      const res = await adminFetch<{ redirectUrl: string; impersonateCode?: string; tenantSlug?: string }>(
+        `/api/sys-control/vendors/${v.id}/impersonate`,
+        { method: 'POST', json: { reason: reason.trim() || undefined } },
+      )
+      const code = res.impersonateCode
+      const slug = res.tenantSlug || v.slug
+      if (code && slug) {
+        const form = document.createElement('form')
+        form.method = 'POST'
+        form.action = '/api/auth/impersonate'
+        form.target = tab ? 'impersonate_vendor' : '_self'
+        for (const [name, value] of [['c', code], ['slug', slug]] as const) {
+          const input = document.createElement('input')
+          input.type = 'hidden'
+          input.name = name
+          input.value = value
+          form.appendChild(input)
+        }
+        document.body.appendChild(form)
+        if (tab) tab.opener = null
+        form.submit()
+        form.remove()
+      } else if (tab) {
         tab.opener = null
         tab.location.href = res.redirectUrl
       } else {
@@ -1308,8 +1338,24 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
   switch (dialog) {
     case 'suspend':
       return (
-        <AdminModal open onClose={onClose} title={`Suspend ${v.name}?`} description="Staff are signed out and cannot sign in on the web or the app. No data is changed." footer={footer('Suspend', () => run({ action: 'suspend', reason }), 'danger', !reasonOk)}>
+        <AdminModal open onClose={onClose} title={`Suspend ${v.name}?`} description="Staff are signed out and cannot sell on the web or the app. Their dashboard shows your reason in full. No data is deleted — Reactivate restores access after payment." footer={footer('Suspend access', () => run({ action: 'suspend', reason }), 'danger', !reasonOk)}>
           {err}
+          <div className="mb-3 flex flex-wrap gap-2">
+            {[
+              'Suspended for non-payment — renew the subscription to restore sales.',
+              'Suspended pending payment confirmation from accounts.',
+              'Temporarily suspended by platform support — contact skyERPOS.',
+            ].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className="rounded-full border border-adm-border bg-adm-surface-2 px-3 py-1 text-[12px] text-adm-muted hover:border-adm-primary hover:text-adm-primary"
+                onClick={() => setReason(preset)}
+              >
+                {preset.slice(0, 42)}…
+              </button>
+            ))}
+          </div>
           {reasonField()}
         </AdminModal>
       )

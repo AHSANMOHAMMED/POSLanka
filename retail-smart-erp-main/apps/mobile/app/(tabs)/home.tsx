@@ -14,6 +14,7 @@ import { shiftCounterName, shiftWarehouseName, paymentMethodLabel } from '../../
 import { subscribe as subscribeQueue, type QueueState } from '../../src/lib/offlineQueue'
 import { AlertsBell } from '../../src/components/AlertsBell'
 import { Banner, Card, EmptyState, IconBubble, KpiCard, ListItem, SectionHeader, Skeleton, uiStyles, type IconName, type Tone } from '../../src/components/ui'
+import { ErrorView } from '../../src/components/StateViews'
 import { canAny } from '../../src/lib/modules'
 
 function greeting(): string {
@@ -46,6 +47,7 @@ export default function HomeScreen() {
   const { user, reload } = useSessionUser()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [queue, setQueue] = useState<QueueState | null>(null)
   const loadedAt = useRef(0)
@@ -55,8 +57,17 @@ export default function HomeScreen() {
   const load = useCallback(async (u = user) => {
     if (!u) return
     loadedAt.current = Date.now()
-    const d = await loadDashboard(u).catch(() => null)
-    if (d) setData(d)
+    try {
+      const d = await loadDashboard(u)
+      if (d) {
+        setData(d)
+        setLoadFailed(false)
+      } else {
+        setLoadFailed(true)
+      }
+    } catch {
+      setLoadFailed(true)
+    }
     setLoading(false)
   }, [user])
 
@@ -118,6 +129,10 @@ export default function HomeScreen() {
             {data?.scope === 'shift' ? ' · figures for your shift' : data?.scope === 'store' ? ' · store-wide figures' : ''}
           </Text>
         </View>
+
+        {!loading && loadFailed && !data ? (
+          <ErrorView message="Could not load the home dashboard. Check your connection and try again." onRetry={() => { setLoading(true); void load() }} />
+        ) : null}
 
         {/* Shift status */}
         {sells || data?.shift ? <ShiftCard data={data} loading={loading} /> : null}

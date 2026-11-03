@@ -258,6 +258,8 @@ export const pricingTiers = pgTable('pricing_tiers', {
   displayName: varchar('display_name', { length: 100 }).notNull(),
   priceMonthly: decimal('price_monthly', { precision: 10, scale: 2 }),
   priceYearly: decimal('price_yearly', { precision: 10, scale: 2 }),
+  /** One-time purchase; subscription.billingCycle = 'lifetime' uses NEVER_EXPIRES. */
+  priceLifetime: decimal('price_lifetime', { precision: 10, scale: 2 }),
   currency: varchar('currency', { length: 3 }).notNull().default('LKR'), // ISO 4217 currency code
   maxUsers: integer('max_users'),
   maxSalesMonthly: integer('max_sales_monthly'),

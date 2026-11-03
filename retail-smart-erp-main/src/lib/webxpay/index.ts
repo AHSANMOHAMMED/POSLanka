@@ -63,7 +63,14 @@ export function verifyWebXPayWebhook(payload: {
       `${webxpayConfig.apiKey}${payload.order_id}${payload.amount}${payload.currency}${payload.status}`
     )
     .digest('hex')
-  return expected === payload.signature
+  const a = Buffer.from(expected)
+  const b = Buffer.from(String(payload.signature || ''))
+  if (a.length !== b.length) return false
+  try {
+    return crypto.timingSafeEqual(a, b)
+  } catch {
+    return false
+  }
 }
 
 export { webxpayConfig }

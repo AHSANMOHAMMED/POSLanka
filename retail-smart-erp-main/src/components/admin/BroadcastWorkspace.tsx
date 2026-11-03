@@ -280,6 +280,11 @@ function Composer({
   const [pushScope, setPushScope] = useState<PushScope>('owners_managers')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
+  const [titleSi, setTitleSi] = useState('')
+  const [bodySi, setBodySi] = useState('')
+  const [titleTa, setTitleTa] = useState('')
+  const [bodyTa, setBodyTa] = useState('')
+  const [showOnLogin, setShowOnLogin] = useState(kind === 'notification')
   const [link, setLink] = useState('')
   const [category, setCategory] = useState('info')
   const [channels, setChannels] = useState<Channel[]>(kind === 'email' ? ['email'] : ['in_app', 'account'])
@@ -317,7 +322,19 @@ function Composer({
   const ready = contentOk && audienceOk
 
   const payload = () => {
-    const base = { body: body.trim(), link: link.trim() || undefined, audience, recipientScope: scope }
+    const translations = {
+      en: { title: title.trim(), body: body.trim() },
+      ...(titleSi.trim() || bodySi.trim() ? { si: { title: titleSi.trim(), body: bodySi.trim() } } : {}),
+      ...(titleTa.trim() || bodyTa.trim() ? { ta: { title: titleTa.trim(), body: bodyTa.trim() } } : {}),
+    }
+    const base = {
+      body: body.trim(),
+      link: link.trim() || undefined,
+      audience,
+      recipientScope: scope,
+      translations,
+      showOnLogin: kind === 'notification' ? showOnLogin : false,
+    }
     return kind === 'email'
       ? { ...base, subject: title.trim() }
       : { ...base, title: title.trim(), category, channels, ...(channels.includes('push') ? { pushScope } : {}) }
@@ -351,7 +368,7 @@ function Composer({
       const r = res.result
       setConfirming(false)
       setResult(`${kind === 'email' ? 'Email' : 'Notification'} sent${r.vendorCount ? ` to ${fmtNumber(r.vendorCount)} vendor${r.vendorCount === 1 ? '' : 's'}` : ''}: ${deliverySummary({ channels: kind === 'email' ? ['email'] : channels, ...r })}.`)
-      setTitle(''); setBody(''); setLink(''); setPreview(null)
+      setTitle(''); setBody(''); setTitleSi(''); setBodySi(''); setTitleTa(''); setBodyTa(''); setLink(''); setPreview(null)
       onSent(r.id)
     } catch (e) {
       setConfirming(false)
@@ -448,12 +465,32 @@ function Composer({
 
           <section className="space-y-3">
             <h3 className="text-[14px] font-semibold text-adm-fg">Message</h3>
-            <Field label={kind === 'email' ? 'Subject' : 'Title'} htmlFor="bc-title" required hint={`${title.trim().length}/200`}>
+            <Field label={kind === 'email' ? 'Subject (English)' : 'Title (English)'} htmlFor="bc-title" required hint={`${title.trim().length}/200`}>
               <Input id="bc-title" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} />
             </Field>
-            <Field label="Message" htmlFor="bc-body" required hint={`${body.trim().length}/5000 · plain text; blank lines start a new paragraph`}>
-              <Textarea id="bc-body" rows={6} value={body} maxLength={5000} onChange={(e) => setBody(e.target.value)} />
+            <Field label="Message (English)" htmlFor="bc-body" required hint={`${body.trim().length}/5000 · plain text; blank lines start a new paragraph`}>
+              <Textarea id="bc-body" rows={5} value={body} maxLength={5000} onChange={(e) => setBody(e.target.value)} />
             </Field>
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+              <div className="space-y-3 rounded-lg border border-adm-border bg-adm-surface-2/60 p-3">
+                <p className="text-[12.5px] font-semibold text-adm-muted">සිංහල (optional)</p>
+                <Field label="Title" htmlFor="bc-title-si">
+                  <Input id="bc-title-si" value={titleSi} maxLength={200} onChange={(e) => setTitleSi(e.target.value)} />
+                </Field>
+                <Field label="Message" htmlFor="bc-body-si">
+                  <Textarea id="bc-body-si" rows={3} value={bodySi} maxLength={5000} onChange={(e) => setBodySi(e.target.value)} />
+                </Field>
+              </div>
+              <div className="space-y-3 rounded-lg border border-adm-border bg-adm-surface-2/60 p-3">
+                <p className="text-[12.5px] font-semibold text-adm-muted">தமிழ் (optional)</p>
+                <Field label="Title" htmlFor="bc-title-ta">
+                  <Input id="bc-title-ta" value={titleTa} maxLength={200} onChange={(e) => setTitleTa(e.target.value)} />
+                </Field>
+                <Field label="Message" htmlFor="bc-body-ta">
+                  <Textarea id="bc-body-ta" rows={3} value={bodyTa} maxLength={5000} onChange={(e) => setBodyTa(e.target.value)} />
+                </Field>
+              </div>
+            </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Link" htmlFor="bc-link" hint="Optional: a path like /account/billing or an https:// address" error={linkOk ? undefined : 'Use a path starting with / or an https:// address'}>
                 <Input id="bc-link" value={link} invalid={!linkOk} onChange={(e) => setLink(e.target.value)} placeholder="/account/billing" />
@@ -473,6 +510,12 @@ function Composer({
                   <Checkbox label="Account portal" description="Notifications in the owner’s account portal" checked={channels.includes('account')} onChange={() => setChannels(toggle(channels, 'account') as Channel[])} />
                   <Checkbox label="Email" description="Also email the same message" checked={channels.includes('email')} onChange={() => setChannels(toggle(channels, 'email') as Channel[])} />
                   <Checkbox label="Push to phones" description="A push notification on phones signed in to the skyERPOS app" checked={channels.includes('push')} onChange={() => setChannels(toggle(channels, 'push') as Channel[])} />
+                  <Checkbox
+                    label="Show on login"
+                    description="Vendors see this notice on the company sign-in page (in their chosen language)"
+                    checked={showOnLogin}
+                    onChange={() => setShowOnLogin((v) => !v)}
+                  />
                 </div>
               </Field>
             )}

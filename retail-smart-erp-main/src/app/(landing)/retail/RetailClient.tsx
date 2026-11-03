@@ -115,7 +115,7 @@ export default function RetailClient() {
                     icon={<ShoppingCart className="w-4 h-4 text-sky-400" />}
                     className="bg-white/10 text-white border-white/20 backdrop-blur-sm !mb-0"
                   />
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 backdrop-blur-sm">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-[rgba(0,80,192,0.35)] text-sky-300 backdrop-blur-sm">
                     <Check className="w-3.5 h-3.5" />
                     Free Forever
                   </span>
@@ -505,7 +505,7 @@ export default function RetailClient() {
             </StaggerItem>
             <StaggerItem>
               <Link href="/supermarket" className="group block">
-                <div className="rounded-2xl border border-white/[0.06] overflow-hidden hover:border-green-500/30 hover:shadow-lg transition-all">
+                <div className="rounded-2xl border border-white/[0.06] overflow-hidden hover:border-[rgba(0,80,192,0.4)] hover:shadow-lg transition-all">
                   <div className="relative h-40 overflow-hidden">
                     <Image
                       src="https://images.unsplash.com/photo-1604719312566-8912e9227c6a?w=600"
@@ -513,7 +513,7 @@ export default function RetailClient() {
                       fill
                       className="object-cover group-hover:scale-105 transition-transform duration-500"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-emerald-900/60 to-transparent" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#062f73]/70 to-transparent" />
                     <div className="absolute bottom-3 left-3 flex items-center gap-2">
                       <Store className="w-5 h-5 text-white" />
                       <span className="text-white font-bold">Supermarket</span>
@@ -523,7 +523,7 @@ export default function RetailClient() {
                     <p className="text-sm text-zinc-400">
                       High-volume checkout, department management, temperature zones, and bulk inventory tracking.
                     </p>
-                    <span className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-emerald-400 group-hover:gap-2 transition-all">
+                    <span className="mt-3 inline-flex items-center gap-1 text-sm font-semibold text-sky-300 group-hover:gap-2 transition-all">
                       Learn more <ArrowRight className="w-4 h-4" />
                     </span>
                   </div>

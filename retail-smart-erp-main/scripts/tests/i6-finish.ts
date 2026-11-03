@@ -508,7 +508,7 @@ async function main() {
       check('inbox row carries the link for the bell', inbox?.data?.link === '/account/billing', inbox)
 
       fetchCalls.length = 0
-      const all = await sendBroadcast({ title: 'I6 all staff', body: 'Hello everyone', channels: ['push'], recipientScope: 'owners', pushScope: 'all_staff', category: 'info', audience: { mode: 'selected', businessIds: [A.businessId] }, kind: 'notification', superAdminId: owner.id, baseUrl: 'http://localhost' })
+      const all = await sendBroadcast({ title: 'I6 all staff', body: 'Hello everyone', channels: ['push'], recipientScope: 'owners', pushScope: 'all_staff', category: 'info', showOnLogin: false, audience: { mode: 'selected', businessIds: [A.businessId] }, kind: 'notification', superAdminId: owner.id, baseUrl: 'http://localhost' })
       check('pushScope all_staff includes the cashier phone (121)', all.pushSent === 121, all)
       fetchHandler = null
     })

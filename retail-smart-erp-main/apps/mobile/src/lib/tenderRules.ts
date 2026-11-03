@@ -2,7 +2,7 @@
 // count the methods the shift was opened with (the profile's methods + cash), so selling with a
 // method the profile does not list leaves it uncounted and shows up as a variance on close.
 
-export type TenderOption = 'cash' | 'card' | 'lankaqr' | 'credit' | 'cheque'
+export type TenderOption = 'cash' | 'card' | 'lankaqr' | 'credit' | 'cheque' | 'gift_card'
 
 /** Server payment method each tender button records. */
 export const TENDER_METHOD: Record<TenderOption, string> = {
@@ -11,16 +11,17 @@ export const TENDER_METHOD: Record<TenderOption, string> = {
   lankaqr: 'bank_transfer',
   credit: 'credit',
   cheque: 'cheque',
+  gift_card: 'gift_card',
 }
 
 export function allowedTenders(profile: { paymentMethods?: Array<string | { paymentMethod?: string | null }> | null } | null | undefined): Set<TenderOption> {
   const listed = (profile?.paymentMethods || [])
     .map((pm) => (typeof pm === 'string' ? pm : pm?.paymentMethod))
     .filter((m): m is string => typeof m === 'string' && m.length > 0)
-  const all: TenderOption[] = ['cash', 'card', 'lankaqr', 'credit', 'cheque']
-  // No list configured (older profiles): everything is allowed, as before, except cheques, which
-  // a counter takes only when its profile lists them (shift close then counts them).
-  if (listed.length === 0) return new Set(all.filter((t) => t !== 'cheque'))
+  const all: TenderOption[] = ['cash', 'card', 'lankaqr', 'credit', 'cheque', 'gift_card']
+  // No list configured (older profiles): everything is allowed, as before, except cheques and gift
+  // cards, which a counter takes only when its profile lists them (shift close then counts them).
+  if (listed.length === 0) return new Set(all.filter((t) => t !== 'cheque' && t !== 'gift_card'))
   // Cash is always opened with a float, so it is always counted on close. Credit stays governed
   // by the profile's allowCreditSale flag (no money changes hands).
   return new Set(all.filter((t) => t === 'cash' || t === 'credit' || listed.includes(TENDER_METHOD[t])))

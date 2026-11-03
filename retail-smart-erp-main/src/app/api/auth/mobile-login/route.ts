@@ -51,13 +51,49 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Too many login attempts. Try again in a few minutes.' }, { status: 429 })
   }
 
-  if (!tenant || tenant.status !== 'active') {
+  if (!tenant) {
     await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
+  if (tenant.status !== 'active') {
+    await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
+    const { resolveLockMessage } = await import('@/lib/tenant/lock-message')
+    const msg = resolveLockMessage({
+      status: tenant.status,
+      lockedReason: tenant.lockedReason,
+      settings: tenant.settings,
+    })
+    return NextResponse.json({
+      error: `${msg.title}. ${msg.description}`,
+      code: 'TENANT_LOCKED',
+      status: tenant.status,
+      lockedReason: tenant.lockedReason,
+      title: msg.title,
+      description: msg.description,
+      tenantName: tenant.name,
+      tenantSlug: tenant.slug,
+    }, { status: 403 })
+  }
   // Same rule as the web login: an expired plan cannot sign in from the app either.
   if (tenant.planExpiresAt && new Date(tenant.planExpiresAt) < new Date()) {
-    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+    const { resolveLockMessage } = await import('@/lib/tenant/lock-message')
+    const reason =
+      tenant.lockedReason === 'trial_expired' ? 'trial_expired' : 'subscription_expired'
+    const msg = resolveLockMessage({
+      status: 'locked',
+      lockedReason: reason,
+      settings: tenant.settings,
+    })
+    return NextResponse.json({
+      error: `${msg.title}. ${msg.description}`,
+      code: 'TENANT_LOCKED',
+      status: 'locked',
+      lockedReason: reason,
+      title: msg.title,
+      description: msg.description,
+      tenantName: tenant.name,
+      tenantSlug: tenant.slug,
+    }, { status: 403 })
   }
 
   const user = await withTenant(tenant.id, (tdb) => findLoginUser(tdb, tenant, email, { activeOnly: true }))

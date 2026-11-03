@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useState, useSyncExternalStore } from 'react'
-import { getMessages, resolveLocale, t, type Locale } from '@/lib/i18n'
+import { getMessages, htmlLang, resolveLocale, t, type Locale } from '@/lib/i18n'
 
 const STORAGE_KEY = 'poslanka_locale'
 
@@ -29,7 +29,7 @@ export function useI18n() {
 
   const setLocale = useCallback((next: Locale) => {
     localStorage.setItem(STORAGE_KEY, next)
-    document.documentElement.lang = next === 'si' ? 'si' : 'en'
+    document.documentElement.lang = htmlLang(next)
     window.dispatchEvent(new Event('poslanka-locale-change'))
     bump((n) => n + 1)
   }, [])

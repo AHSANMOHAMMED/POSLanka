@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
       tiers,
       platform: {
         appName: process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS',
-        baseUrl: process.env.NEXTAUTH_URL || request.nextUrl.origin,
+        baseUrl: (await import('@/lib/http/public-url')).publicAppOrigin(request.nextUrl.origin),
         environment: process.env.NODE_ENV,
         emailConfigured: !!process.env.RESEND_API_KEY,
         emailFrom: process.env.SYSTEM_EMAIL_FROM || 'noreply@poslanka.lk',

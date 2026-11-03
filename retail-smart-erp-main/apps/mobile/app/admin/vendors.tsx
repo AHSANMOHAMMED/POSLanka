@@ -46,6 +46,7 @@ export default function AdminVendorsScreen() {
   const seq = useRef(0)
   const { can } = useAdminUser()
   const canSeeFigures = can('vendors.impersonate')
+  const canCreate = can('vendors.manage')
   const [figures, setFigures] = useState<Record<string, VendorFigures>>({})
 
   useEffect(() => {
@@ -90,7 +91,18 @@ export default function AdminVendorsScreen() {
   const hasMore = rows.length < total
 
   return (
-    <AdminShell title="Vendors" subtitle={`${total} companies on the platform`} tab="vendors">
+    <AdminShell
+      title="Vendors"
+      subtitle={`${total} companies on the platform`}
+      tab="vendors"
+      right={
+        canCreate ? (
+          <Pressable onPress={() => router.push('/admin/vendors/create' as any)} hitSlop={8}>
+            <Text style={{ color: THEME.colors.primary, fontWeight: '800', fontSize: 15 }}>Create</Text>
+          </Pressable>
+        ) : null
+      }
+    >
       <View style={styles.searchWrap}>
         <TextInput
           style={adminStyles.input}

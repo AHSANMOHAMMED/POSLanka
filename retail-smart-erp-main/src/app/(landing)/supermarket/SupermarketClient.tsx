@@ -164,7 +164,7 @@ export default function SupermarketClient() {
           className="object-cover"
         />
         {/* Gradient Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-r from-green-900/85 via-emerald-900/70 to-green-800/60" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#062f73]/90 via-[#0b3a8c]/75 to-[#123f7a]/65" />
 
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full py-20 sm:py-24">
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
@@ -174,10 +174,10 @@ export default function SupermarketClient() {
                 <div className="flex flex-wrap items-center gap-3">
                   <HeroBadge
                     text="Supermarket Solution"
-                    icon={<ShoppingCart className="w-4 h-4 text-green-600" />}
-                    className="bg-white/10 text-green-400 border-green-500/30 !mb-0"
+                    icon={<ShoppingCart className="w-4 h-4 text-[#0050c0]" />}
+                    className="bg-white/10 text-sky-300 border-[rgba(0,80,192,0.35)] !mb-0"
                   />
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 backdrop-blur-sm">
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-[rgba(0,80,192,0.35)] text-sky-300 backdrop-blur-sm">
                     <Check className="w-3.5 h-3.5" />
                     Free Forever
                   </span>
@@ -190,7 +190,7 @@ export default function SupermarketClient() {
                 </h1>
               </BlurFadeIn>
               <BlurFadeIn delay={0.2}>
-                <p className="mt-6 text-lg sm:text-xl text-green-100 leading-relaxed max-w-xl">
+                <p className="mt-6 text-lg sm:text-xl text-sky-100 leading-relaxed max-w-xl">
                   Department management, batch inventory, expiry tracking,
                   loyalty programs, and AI-assisted insights for grocery
                   operations.
@@ -200,7 +200,7 @@ export default function SupermarketClient() {
                 <div className="mt-8 flex flex-wrap gap-4">
                   <Link
                     href="/contact"
-                    className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 rounded-md transition-all shadow-lg shadow-green-500/25 hover:shadow-green-500/40 hover:-translate-y-0.5"
+                    className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-md transition-all shadow-lg shadow-[rgba(0,80,192,0.35)] hover:shadow-[rgba(0,80,192,0.5)] hover:-translate-y-0.5"
                   >
                     Get Started Free
                     <ArrowRight className="w-5 h-5" />
@@ -214,17 +214,17 @@ export default function SupermarketClient() {
                 </div>
               </BlurFadeIn>
               <BlurFadeIn delay={0.4}>
-                <div className="mt-8 flex items-center gap-6 text-sm text-green-200">
+                <div className="mt-8 flex items-center gap-6 text-sm text-sky-200">
                   <div className="flex items-center gap-1.5">
-                    <Check className="w-4 h-4 text-green-400" />
+                    <Check className="w-4 h-4 text-sky-300" />
                     Free Forever · No Credit Card
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Check className="w-4 h-4 text-green-400" />
+                    <Check className="w-4 h-4 text-sky-300" />
                     Unlimited users
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Check className="w-4 h-4 text-green-400" />
+                    <Check className="w-4 h-4 text-sky-300" />
                     Free forever plan
                   </div>
                 </div>
@@ -249,7 +249,7 @@ export default function SupermarketClient() {
           <StaggerContainer staggerDelay={0.12} className="grid sm:grid-cols-3 gap-6">
             <StaggerItem>
               <div className="bg-white/5 rounded-2xl border border-white/10 p-6 text-center shadow-sm">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-green-500/20">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mx-auto mb-4 shadow-lg shadow-[rgba(0,80,192,0.25)]">
                   <ShoppingCart className="w-7 h-7 text-white" />
                 </div>
                 <div className="text-3xl sm:text-4xl font-extrabold text-white">
@@ -265,7 +265,7 @@ export default function SupermarketClient() {
             </StaggerItem>
             <StaggerItem>
               <div className="bg-white/5 rounded-2xl border border-white/10 p-6 text-center shadow-sm">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-green-500/20">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mx-auto mb-4 shadow-lg shadow-[rgba(0,80,192,0.25)]">
                   <Package className="w-7 h-7 text-white" />
                 </div>
                 <div className="text-3xl sm:text-4xl font-extrabold text-white">
@@ -281,7 +281,7 @@ export default function SupermarketClient() {
             </StaggerItem>
             <StaggerItem>
               <div className="bg-white/5 rounded-2xl border border-white/10 p-6 text-center shadow-sm">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-green-500/20">
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mx-auto mb-4 shadow-lg shadow-[rgba(0,80,192,0.25)]">
                   <BarChart3 className="w-7 h-7 text-white" />
                 </div>
                 <div className="text-3xl sm:text-4xl font-extrabold text-white">
@@ -312,7 +312,7 @@ export default function SupermarketClient() {
             </FadeInLeft>
             <FadeInRight>
               <div>
-                <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full bg-green-500/10 text-green-400 border border-green-500/30 mb-4">
+                <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)] mb-4">
                   Point of Sale
                 </span>
                 <h2 className="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
@@ -327,7 +327,7 @@ export default function SupermarketClient() {
                       key={feature}
                       className="flex items-center gap-3 text-zinc-300"
                     >
-                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center flex-shrink-0">
+                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center flex-shrink-0">
                         <Check className="w-3 h-3 text-white" />
                       </div>
                       <span className="text-sm font-medium">{feature}</span>
@@ -346,7 +346,7 @@ export default function SupermarketClient() {
           <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
             <FadeInLeft className="order-2 lg:order-1">
               <div>
-                <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full bg-green-500/10 text-green-400 border border-green-500/30 mb-4">
+                <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)] mb-4">
                   Inventory
                 </span>
                 <h2 className="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
@@ -361,7 +361,7 @@ export default function SupermarketClient() {
                       key={feature}
                       className="flex items-center gap-3 text-zinc-300"
                     >
-                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center flex-shrink-0">
+                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center flex-shrink-0">
                         <Check className="w-3 h-3 text-white" />
                       </div>
                       <span className="text-sm font-medium">{feature}</span>
@@ -379,7 +379,7 @@ export default function SupermarketClient() {
                   height={800}
                   className="object-cover w-full h-auto"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-green-900/30 to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#062f73]/40 to-transparent" />
               </div>
             </FadeInRight>
           </div>
@@ -399,12 +399,12 @@ export default function SupermarketClient() {
                   height={800}
                   className="object-cover w-full h-auto"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-green-900/30 to-transparent" />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#062f73]/40 to-transparent" />
               </div>
             </FadeInLeft>
             <FadeInRight>
               <div>
-                <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full bg-green-500/10 text-green-400 border border-green-500/30 mb-4">
+                <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)] mb-4">
                   Analytics
                 </span>
                 <h2 className="text-3xl sm:text-4xl font-extrabold text-white leading-tight">
@@ -419,7 +419,7 @@ export default function SupermarketClient() {
                       key={feature}
                       className="flex items-center gap-3 text-zinc-300"
                     >
-                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center flex-shrink-0">
+                      <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center flex-shrink-0">
                         <Check className="w-3 h-3 text-white" />
                       </div>
                       <span className="text-sm font-medium">{feature}</span>
@@ -448,14 +448,14 @@ export default function SupermarketClient() {
               <FadeIn key={category.category}>
                 <div>
                   <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-green-500 to-emerald-500" />
+                    <span className="w-1.5 h-1.5 rounded-full bg-gradient-to-r from-[#0050c0] to-[#2563eb]" />
                     {category.category}
                   </h3>
                   <StaggerContainer className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     {category.items.map((item) => (
                       <StaggerItem key={item}>
-                        <div className="flex items-center gap-3 p-3 rounded-md bg-white/5 border border-white/10 hover:border-green-500/30 hover:bg-green-500/10 transition-colors shadow-sm">
-                          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center flex-shrink-0">
+                        <div className="flex items-center gap-3 p-3 rounded-md bg-white/5 border border-white/10 hover:border-[rgba(0,80,192,0.4)] hover:bg-[rgba(0,80,192,0.12)] transition-colors shadow-sm">
+                          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center flex-shrink-0">
                             <Check className="w-3 h-3 text-white" />
                           </div>
                           <span className="text-sm font-medium text-zinc-300">
@@ -475,13 +475,13 @@ export default function SupermarketClient() {
       {/* ── Section 7: AI Features (Dark Section) ── */}
       <section className="py-20 sm:py-28 bg-stone-900 relative overflow-hidden">
         {/* Decorative gradient accents */}
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-green-500/10 rounded-full blur-[120px]" />
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-[rgba(0,80,192,0.12)] rounded-full blur-[120px]" />
         <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-emerald-500/10 rounded-full blur-[100px]" />
 
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-16">
             <BlurFadeIn>
-              <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-green-500/10 text-green-400 border border-green-500/20 mb-6">
+              <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.3)] mb-6">
                 <Sparkles className="w-4 h-4" />
                 AI-Powered Intelligence
               </span>
@@ -503,15 +503,15 @@ export default function SupermarketClient() {
           <StaggerContainer staggerDelay={0.1} className="grid sm:grid-cols-3 gap-6">
             {aiFeatures.map((feature) => (
               <StaggerItem key={feature.title}>
-                <div className="bg-stone-800/50 border border-stone-700/50 rounded-2xl p-6 backdrop-blur-sm hover:border-green-500/30 transition-colors h-full">
-                  <div className="w-12 h-12 rounded-md bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center mb-4 shadow-lg shadow-green-500/20">
+                <div className="bg-stone-800/50 border border-stone-700/50 rounded-2xl p-6 backdrop-blur-sm hover:border-[rgba(0,80,192,0.4)] transition-colors h-full">
+                  <div className="w-12 h-12 rounded-md bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mb-4 shadow-lg shadow-[rgba(0,80,192,0.25)]">
                     <feature.icon className="w-6 h-6 text-white" />
                   </div>
                   <div className="flex items-center gap-2 mb-2">
                     <h3 className="text-lg font-bold text-white">
                       {feature.title}
                     </h3>
-                    <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-green-500/10 text-green-400 border border-green-500/20">
+                    <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider rounded-full bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.3)]">
                       AI
                     </span>
                   </div>
@@ -599,7 +599,7 @@ export default function SupermarketClient() {
                 href="/dealership"
                 className="group block bg-white/5 rounded-2xl border border-white/10 p-6 hover:border-cyan-500/30 hover:shadow-lg transition-all"
               >
-                <div className="w-12 h-12 rounded-md bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center mb-4 shadow-lg shadow-cyan-500/20">
+                <div className="w-12 h-12 rounded-md bg-gradient-to-br from-[#0050c0] to-[#2563eb] flex items-center justify-center mb-4 shadow-lg shadow-[rgba(0,80,192,0.25)]">
                   <Car className="w-6 h-6 text-white" />
                 </div>
                 <h3 className="text-lg font-bold text-white group-hover:text-cyan-400 transition-colors">

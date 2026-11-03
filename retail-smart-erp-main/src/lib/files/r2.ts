@@ -61,6 +61,38 @@ export function objectAclFor(key: string): 'public-read' | undefined {
 }
 
 /**
+ * Normalize and reject path-traversal / absolute keys before any local filesystem join.
+ * Empty segments and `..` are refused so local mode cannot escape public/uploads.
+ */
+export function sanitizeObjectKey(key: string): string {
+  const clean = String(key || '').replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
+  if (!clean || clean.includes('\0')) {
+    throw new Error('Invalid storage key')
+  }
+  const parts = clean.split('/')
+  if (parts.some((p) => !p || p === '.' || p === '..')) {
+    throw new Error('Invalid storage key')
+  }
+  return parts.join('/')
+}
+
+function localUploadsRoot(): string {
+  return path.resolve(process.cwd(), 'public', 'uploads')
+}
+
+/** Resolve a key under public/uploads; throws if the result escapes that directory. */
+export function localPathForKey(key: string): string {
+  const cleanKey = sanitizeObjectKey(key)
+  const root = localUploadsRoot()
+  const localFile = path.resolve(root, cleanKey)
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep
+  if (localFile !== root && !localFile.startsWith(prefix)) {
+    throw new Error('Invalid storage key')
+  }
+  return localFile
+}
+
+/**
  * Upload a file to R2 (or local public/uploads fallback) and return its URL.
  */
 export async function uploadToR2(
@@ -68,7 +100,7 @@ export async function uploadToR2(
   buffer: Buffer,
   contentType: string
 ): Promise<string> {
-  const cleanKey = key.replace(/^\/+/, '')
+  const cleanKey = sanitizeObjectKey(key)
 
   // Fallback to local storage when S3/R2 is not configured. In production that would silently
   // put uploads on the container's ephemeral disk (lost on redeploy, invisible to other
@@ -78,7 +110,7 @@ export async function uploadToR2(
       throw new Error('Object storage is not configured (set STORAGE_ACCESS_KEY_ID / STORAGE_SECRET_ACCESS_KEY / STORAGE_BUCKET, or ALLOW_LOCAL_UPLOADS=true)')
     }
     try {
-      const localFile = path.join(process.cwd(), 'public', 'uploads', cleanKey)
+      const localFile = localPathForKey(cleanKey)
       await fs.promises.mkdir(path.dirname(localFile), { recursive: true })
       await fs.promises.writeFile(localFile, buffer)
       return cdnUrl(cleanKey)
@@ -104,9 +136,14 @@ export async function uploadToR2(
  * Delete a file from R2 (and local storage) by its key.
  */
 export async function deleteFromR2(key: string): Promise<boolean> {
-  const cleanKey = key.replace(/^\/+/, '')
+  let cleanKey: string
   try {
-    const localFile = path.join(process.cwd(), 'public', 'uploads', cleanKey)
+    cleanKey = sanitizeObjectKey(key)
+  } catch {
+    return false
+  }
+  try {
+    const localFile = localPathForKey(cleanKey)
     if (fs.existsSync(localFile)) {
       await fs.promises.unlink(localFile).catch(() => {})
     }
@@ -137,12 +174,17 @@ export async function deleteFromR2(key: string): Promise<boolean> {
 export async function getFromR2(
   key: string
 ): Promise<{ buffer: Buffer; contentType: string } | null> {
-  const cleanKey = key.replace(/^\/+/, '')
+  let cleanKey: string
+  try {
+    cleanKey = sanitizeObjectKey(key)
+  } catch {
+    return null
+  }
 
   // Check local file first if S3 not configured
   if (!isS3Configured()) {
     try {
-      const localFile = path.join(process.cwd(), 'public', 'uploads', cleanKey)
+      const localFile = localPathForKey(cleanKey)
       if (fs.existsSync(localFile)) {
         const buffer = await fs.promises.readFile(localFile)
         return {
@@ -177,10 +219,18 @@ export async function getFromR2(
  * Check if a file exists in R2 or local storage.
  */
 export async function existsInR2(key: string): Promise<boolean> {
-  const cleanKey = key.replace(/^\/+/, '')
+  let cleanKey: string
+  try {
+    cleanKey = sanitizeObjectKey(key)
+  } catch {
+    return false
+  }
   if (!isS3Configured()) {
-    const localFile = path.join(process.cwd(), 'public', 'uploads', cleanKey)
-    return fs.existsSync(localFile)
+    try {
+      return fs.existsSync(localPathForKey(cleanKey))
+    } catch {
+      return false
+    }
   }
 
   try {
@@ -201,23 +251,32 @@ export async function existsInR2(key: string): Promise<boolean> {
  * Handles pagination automatically.
  */
 export async function listByPrefix(prefix: string): Promise<string[]> {
-  const cleanPrefix = prefix.replace(/^\/+/, '')
+  let cleanPrefix: string
+  try {
+    cleanPrefix = sanitizeObjectKey(prefix)
+  } catch {
+    return []
+  }
 
   if (!isS3Configured()) {
     try {
-      const dirPath = path.join(process.cwd(), 'public', 'uploads', cleanPrefix)
+      const dirPath = localPathForKey(cleanPrefix)
       if (!fs.existsSync(dirPath)) return []
 
+      const root = localUploadsRoot()
       const readDirRecursive = async (dir: string, base: string): Promise<string[]> => {
         let results: string[] = []
         const entries = await fs.promises.readdir(dir, { withFileTypes: true })
         for (const entry of entries) {
+          if (entry.name === '..' || entry.name === '.') continue
           const fullPath = path.join(dir, entry.name)
+          const resolved = path.resolve(fullPath)
+          if (!resolved.startsWith(root + path.sep) && resolved !== root) continue
           const relPath = path.join(base, entry.name)
           if (entry.isDirectory()) {
             results = results.concat(await readDirRecursive(fullPath, relPath))
           } else {
-            results.push(relPath)
+            results.push(relPath.replace(/\\/g, '/'))
           }
         }
         return results
@@ -294,7 +353,7 @@ export async function deleteManyFromR2(keys: string[]): Promise<number> {
  * Build the public CDN URL for an R2 key (or local URL).
  */
 export function cdnUrl(key: string): string {
-  const cleanKey = key.replace(/^\/+/, '')
+  const cleanKey = sanitizeObjectKey(key)
   if (isS3Configured() && PUBLIC_URL) {
     return `${PUBLIC_URL}/${cleanKey}`
   }
@@ -303,23 +362,24 @@ export function cdnUrl(key: string): string {
 
 /**
  * Extract the object key from a CDN URL or /uploads/ path.
- * Returns null if the URL doesn't match either format.
+ * Returns null if the URL doesn't match either format or the key is unsafe.
  */
 export function keyFromUrl(url: string): string | null {
+  let raw: string | null = null
   // CDN URL: https://cdn.retailsmarterp.com/tenantSlug/ab/hash-123.png
   if (PUBLIC_URL && url.startsWith(PUBLIC_URL + '/')) {
-    return url.slice(PUBLIC_URL.length + 1)
+    raw = url.slice(PUBLIC_URL.length + 1)
+  } else if (url.startsWith('/uploads/')) {
+    // Local path: /uploads/logos/xyz.png
+    raw = url.slice('/uploads/'.length)
+  } else if (url.startsWith('/storage/private/')) {
+    // Legacy private path: /storage/private/tenantSlug/ab/hash-123.png
+    raw = 'private/' + url.slice('/storage/private/'.length)
   }
-
-  // Local path: /uploads/logos/xyz.png
-  if (url.startsWith('/uploads/')) {
-    return url.slice('/uploads/'.length)
+  if (!raw) return null
+  try {
+    return sanitizeObjectKey(raw)
+  } catch {
+    return null
   }
-
-  // Legacy private path: /storage/private/tenantSlug/ab/hash-123.png
-  if (url.startsWith('/storage/private/')) {
-    return 'private/' + url.slice('/storage/private/'.length)
-  }
-
-  return null
 }

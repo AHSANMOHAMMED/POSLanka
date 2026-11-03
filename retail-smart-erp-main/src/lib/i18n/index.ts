@@ -1,11 +1,22 @@
 import en from './messages/en.json'
 import { siMessages } from './messages/si-nav'
+import { taMessages } from './messages/ta-nav'
+import type { Locale } from './locale'
 
-export type Locale = 'en' | 'si'
+export type { Locale } from './locale'
+export {
+  LOCALES,
+  LOCALE_LABELS,
+  htmlLang,
+  pickLocalizedText,
+  pickLocalizedPair,
+  resolveLocale,
+} from './locale'
 
 const catalogs: Record<Locale, typeof en> = {
   en,
   si: siMessages as unknown as typeof en,
+  ta: taMessages as unknown as typeof en,
 }
 
 export function getMessages(locale: Locale = 'en') {
@@ -28,9 +39,4 @@ export function t(
     }
   }
   return typeof cur === 'string' ? cur : fallback || path
-}
-
-export function resolveLocale(input?: string | null): Locale {
-  if (input === 'si') return 'si'
-  return 'en'
 }

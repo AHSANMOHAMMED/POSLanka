@@ -16,6 +16,7 @@ import {
   Input,
   PasswordInput,
 } from '@/components/admin/kit'
+import { LoginNoticesBanner } from '@/components/auth/LoginNoticesBanner'
 
 interface RecentCompany {
   slug: string
@@ -178,6 +179,8 @@ function LoginForm() {
         title="Welcome back"
         description="Sign in once — owners go to their business account, staff go straight to their work screen."
       />
+
+      <LoginNoticesBanner slug={businessId.trim() || recent?.slug || null} />
 
       <div className="space-y-5">
         {error && <Alert tone="danger">{error}</Alert>}

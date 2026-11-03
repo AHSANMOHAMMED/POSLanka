@@ -144,7 +144,7 @@ const createVendorSchema = z
     businessType: z.enum(businessTypeEnum.enumValues).default('retail'),
     /** Pricing tier to start on (pricing_tiers.id). Falls back to `plan` (legacy) or the free tier. */
     tierId: z.string().uuid().optional(),
-    billingCycle: z.enum(['monthly', 'yearly']).default('monthly'),
+    billingCycle: z.enum(['monthly', 'yearly', 'lifetime']).default('monthly'),
     /** Legacy: plan enum name; prefer tierId. */
     plan: z.enum(planEnum.enumValues).optional(),
     country: z.string().trim().length(2).toUpperCase().default('LK'),
@@ -325,6 +325,7 @@ export async function POST(request: NextRequest) {
         subscribedPriceMonthly: tier.priceMonthly,
         subscribedPriceYearly: tier.priceYearly,
         priceLockedAt: now,
+        // Lifetime: periodEnd is NEVER_EXPIRES via getNextPeriodDates
       })
 
       await tx.insert(accountTenants).values({
@@ -380,7 +381,8 @@ export async function POST(request: NextRequest) {
       return { tenant, owner, defaults, inviteToken, defaultTaxTemplateId }
     })
 
-    const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin
+    const { publicAppOrigin } = await import('@/lib/http/public-url')
+    const baseUrl = publicAppOrigin(request.nextUrl.origin)
     const loginUrl = `${baseUrl}/login`
     const companyLoginUrl = `${baseUrl}/c/${result.tenant.slug}/login`
 

@@ -23,6 +23,7 @@ import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import { createOwnerResetLink, sendOwnerResetEmail, sendOwnerWelcomeEmail, type OwnerMailTarget } from '@/lib/admin/vendor-emails'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { isPlaceholderLogin } from '@/lib/users/generated-login'
+import { withLockMessage } from '@/lib/tenant/lock-message'
 
 /**
  * POST /api/sys-control/vendors/[id]/actions — vendor lifecycle actions for the super admin.
@@ -110,7 +111,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const sub = await db.query.subscriptions.findFirst({ where: eq(subscriptions.tenantId, tenantId) })
 
     const now = new Date()
-    const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin
+    const { publicAppOrigin } = await import('@/lib/http/public-url')
+    const baseUrl = publicAppOrigin(request.nextUrl.origin)
     const audit = (action: 'update' | 'extend' | 'delete', details: Record<string, unknown>) =>
       logAdminAction({
         accountId: session.superAdminId,
@@ -126,7 +128,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         if (tenant.status === 'suspended') throw new ActionError('This vendor is already suspended.')
         if (tenant.status === 'cancelled') throw new ActionError('This vendor is archived. Reactivate it first.')
         await db.update(tenants)
-          .set({ status: 'suspended', lockedAt: now, lockedReason: 'admin_suspended', deletionScheduledAt: null, updatedAt: now })
+          .set({
+            status: 'suspended',
+            lockedAt: now,
+            lockedReason: 'admin_suspended',
+            deletionScheduledAt: null,
+            settings: withLockMessage(tenant.settings, input.reason),
+            updatedAt: now,
+          })
           .where(eq(tenants.id, tenantId))
         await audit('update', { reason: input.reason, before: { status: tenant.status }, after: { status: 'suspended' } })
         invalidatePermissionCache(tenantId) // staff sessions re-check (and fail) on their next request
@@ -139,7 +148,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         let warning: string | undefined
         await db.transaction(async (tx) => {
           await tx.update(tenants)
-            .set({ status: 'active', lockedAt: null, lockedReason: null, deletionScheduledAt: null, updatedAt: now })
+            .set({
+              status: 'active',
+              lockedAt: null,
+              lockedReason: null,
+              deletionScheduledAt: null,
+              settings: withLockMessage(tenant.settings, null),
+              updatedAt: now,
+            })
             .where(eq(tenants.id, tenantId))
           if (sub) {
             const set: Partial<typeof subscriptions.$inferInsert> = { updatedAt: now }
@@ -387,7 +403,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         // Soft archive: sign-in blocked, all business and billing records kept; the
         // automatic deletion of billing-locked companies never applies to archived ones.
         await db.update(tenants)
-          .set({ status: 'cancelled', lockedAt: now, lockedReason: 'admin_archived', deletionScheduledAt: null, updatedAt: now })
+          .set({
+            status: 'cancelled',
+            lockedAt: now,
+            lockedReason: 'admin_archived',
+            deletionScheduledAt: null,
+            settings: withLockMessage(tenant.settings, input.reason),
+            updatedAt: now,
+          })
           .where(eq(tenants.id, tenantId))
         invalidatePermissionCache(tenantId)
         await audit('delete', { reason: input.reason, soft: true, before: { status: tenant.status }, after: { status: 'cancelled' } })

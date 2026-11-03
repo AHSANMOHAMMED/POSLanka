@@ -76,6 +76,7 @@ export const sysCreatePricingTierSchema = z.object({
   displayName: shortTextSchema,
   priceMonthly: z.coerce.number().min(0).optional(),
   priceYearly: z.coerce.number().min(0).optional(),
+  priceLifetime: z.coerce.number().min(0).optional(),
   currency: z.string().min(2).max(10).default('LKR'),
   maxUsers: z.coerce.number().int().min(1).optional(),
   maxSalesMonthly: z.coerce.number().int().min(1).optional(),
@@ -90,6 +91,7 @@ export const sysUpdatePricingTierSchema = z.object({
   displayName: z.string().trim().min(1).max(255).optional(),
   priceMonthly: z.coerce.number().min(0).optional(),
   priceYearly: z.coerce.number().min(0).optional(),
+  priceLifetime: z.coerce.number().min(0).optional().nullable(),
   currency: z.string().min(2).max(10).optional(),
   // null = unlimited
   maxUsers: z.number().int().min(1).nullable().optional(),

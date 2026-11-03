@@ -37,7 +37,7 @@ const featureTabs: TabData[] = [
     key: 'pos',
     label: 'Point of Sale',
     icon: ShoppingCart,
-    gradient: 'from-emerald-500 to-teal-500',
+    gradient: 'from-[#0050c0] to-[#2563eb]',
     mockup: <MockPOS />,
     description: 'Fast, intuitive checkout with barcode scanning, multiple payment methods, and real-time inventory updates.',
     features: ['Barcode & SKU scanning', 'Multiple payment methods', 'Receipt printing & email', 'Returns and exchanges', 'Held sales & layaway', 'Gift card support'],
@@ -100,7 +100,7 @@ const featureTabs: TabData[] = [
     key: 'ai',
     label: 'AI & Analytics',
     icon: Sparkles,
-    gradient: 'from-emerald-600 to-teal-600',
+    gradient: 'from-[#00419e] to-[#1d4ed8]',
     mockup: <MockDashboard />,
     description: 'AI chat assistant, smart warnings, sales trend analysis, anomaly detection, and real-time dashboards.',
     features: ['AI chat assistant', 'Smart reorder alerts', 'Anomaly detection', 'Trend analysis', 'Custom reports', 'Real-time dashboards'],
@@ -137,7 +137,7 @@ export default function FeaturesClient() {
                 text="All Features Included"
                 icon={<Sparkles className="w-4 h-4 text-emerald-600" />}
               />
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)]">
                 Free Forever
               </span>
             </div>
@@ -149,7 +149,7 @@ export default function FeaturesClient() {
           </BlurFadeIn>
           <BlurFadeIn delay={0.2}>
             <p className="mt-6 text-lg sm:text-xl text-zinc-400 leading-relaxed max-w-2xl mx-auto">
-              No feature gating. No hidden costs. <span className="text-emerald-400 font-semibold">Free Forever.</span> From POS to AI analytics — everything your business needs in one platform.
+              No feature gating. No hidden costs. <span className="text-sky-300 font-semibold">Free Forever.</span> From POS to AI analytics — everything your business needs in one platform.
             </p>
           </BlurFadeIn>
         </div>
@@ -178,7 +178,7 @@ export default function FeaturesClient() {
           />
           <StaggerContainer staggerDelay={0.08} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {[
-              { icon: BarChart3, title: 'Advanced Analytics', description: 'Real-time dashboards and AI-generated custom reports', gradient: 'from-emerald-500 to-teal-500', aiPowered: true },
+              { icon: BarChart3, title: 'Advanced Analytics', description: 'Real-time dashboards and AI-generated custom reports', gradient: 'from-[#0050c0] to-[#2563eb]', aiPowered: true },
               { icon: Globe, title: 'Multi-Currency', description: 'Support for all currencies with automatic location detection', gradient: 'from-amber-500 to-orange-500' },
               { icon: Wifi, title: 'Real-Time Sync', description: 'Real-time live updates across all devices', gradient: 'from-sky-500 to-blue-500' },
               { icon: Shield, title: 'Advanced Security', description: 'Complete data isolation, encryption, and granular role-based access', gradient: 'from-stone-600 to-stone-700' },
@@ -207,7 +207,7 @@ export default function FeaturesClient() {
                 <thead>
                   <tr className="border-b border-white/10 bg-white/5">
                     <th className="px-6 py-4 text-left text-sm font-semibold text-white">Feature</th>
-                    <th className="px-6 py-4 text-center text-sm font-bold text-emerald-400">skyERPOS</th>
+                    <th className="px-6 py-4 text-center text-sm font-bold text-sky-300">skyERPOS</th>
                   </tr>
                 </thead>
                 <tbody>

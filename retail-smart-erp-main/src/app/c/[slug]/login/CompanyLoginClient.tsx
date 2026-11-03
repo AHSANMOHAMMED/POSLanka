@@ -22,11 +22,12 @@ import {
   PasswordInput,
   businessTypeLabel,
 } from '@/components/admin/kit'
+import { LoginNoticesBanner } from '@/components/auth/LoginNoticesBanner'
 import { cn } from '@/lib/utils'
 
 import type { CompanyInfo } from './company'
 
-const THEME_COLOR = '#0f766e'
+const THEME_COLOR = '#0050c0'
 const RECENT_KEY = 'poslanka:last-company'
 
 export function CompanyLogo({ company, size, onBrand }: { company: CompanyInfo; size: number; onBrand?: boolean }) {
@@ -80,6 +81,43 @@ function rememberCompany(company: CompanyInfo) {
   } catch {
     // storage unavailable
   }
+}
+
+function SuspendedLoginGate({ company }: { company: CompanyInfo }) {
+  return (
+    <AuthShell
+      aside={
+        <AuthBrandPanel footer={<>Contact skyERPOS support if you believe this is a mistake.</>}>
+          <div className="max-w-sm">
+            <CompanyLogo company={company} size={88} onBrand />
+            <h2 className="mt-6 text-[32px] font-semibold leading-tight tracking-[-0.02em] text-white">{company.name}</h2>
+            <p className="mt-1.5 text-[15px] text-white/75">{businessTypeLabel(company.businessType)} · Access paused</p>
+          </div>
+        </AuthBrandPanel>
+      }
+      mobileHeader={
+        <div className="flex items-center gap-3">
+          <CompanyLogo company={company} size={36} />
+          <div className="min-w-0">
+            <p className="truncate text-[17px] font-semibold text-adm-fg">{company.name}</p>
+            <p className="text-[12.5px] text-adm-muted">Access paused</p>
+          </div>
+        </div>
+      }
+    >
+      <AuthHeading
+        title={company.lockTitle || 'Access paused'}
+        description={company.lockDescription || 'This business cannot sign in right now. Ask your owner or skyERPOS support.'}
+      />
+      <Alert tone="warning" title={company.status === 'suspended' ? 'Suspended' : company.status === 'locked' ? 'Locked' : 'Unavailable'}>
+        Sales and staff sign-in stay off until the platform reactivates this company (usually after payment).
+      </Alert>
+      <div className="mt-6 space-y-3">
+        <LinkButton href="/contact" variant="primary" size="lg" fullWidth>Contact skyERPOS</LinkButton>
+        <LinkButton href="/login" variant="secondary" size="lg" fullWidth icon={ArrowLeft}>Back to sign-in</LinkButton>
+      </div>
+    </AuthShell>
+  )
 }
 
 function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
@@ -274,6 +312,8 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
     >
       <AuthHeading title="Staff sign-in" description={<>Sign in to <span className="font-medium text-adm-fg">{company.name}</span> with your username or email.</>} />
 
+      <LoginNoticesBanner slug={slug} />
+
       <div className="space-y-4">
         {invited && <Alert tone="success" title="Invitation accepted">You can now sign in to this company.</Alert>}
         {registered && <Alert tone="success" title="Account created">Sign in to get started.</Alert>}
@@ -358,6 +398,9 @@ export function CompanyNotFound({ slug }: { slug: string }) {
 
 export function CompanyLoginClient({ slug, company }: { slug: string; company: CompanyInfo | null }) {
   if (!company) return <CompanyNotFound slug={slug} />
+  if (company.status && company.status !== 'active') {
+    return <SuspendedLoginGate company={company} />
+  }
   return (
     <Suspense fallback={<div className="adm-root min-h-[100dvh]" />}>
       <LoginForm slug={slug} company={company} />

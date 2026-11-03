@@ -1,7 +1,7 @@
-import { calculateProration, cycleLengthDays, getPriceForCycle } from '@/lib/billing/proration'
+import { calculateProration, cycleLengthDays, getPriceForCycle, type BillingCycle } from '@/lib/billing/proration'
 import { getSubscriptionPrice } from '@/lib/billing/pricing'
 
-type Cycle = 'monthly' | 'yearly'
+type Cycle = BillingCycle
 
 export interface PlanChangeSubscription {
   status: string
@@ -10,12 +10,14 @@ export interface PlanChangeSubscription {
   currentPeriodEnd: Date | null
   subscribedPriceMonthly?: string | null
   subscribedPriceYearly?: string | null
+  subscribedPriceLifetime?: string | null
 }
 
 export interface PlanChangeTier {
   id: string
   priceMonthly: string | null
   priceYearly: string | null
+  priceLifetime?: string | null
 }
 
 export type PlanChangeQuote =
@@ -30,6 +32,11 @@ export type PlanChangeQuote =
     }
   | { ok: false; error: string }
 
+function normalizeCycle(cycle: string | null | undefined): Cycle {
+  if (cycle === 'yearly' || cycle === 'lifetime') return cycle
+  return 'monthly'
+}
+
 /**
  * Server-side amount for changing a subscription to `newTier` / `billingCycle`.
  * Single source of truth for the upgrade preview/execute route AND the PayHere checkout,
@@ -42,9 +49,18 @@ export function quotePlanChange(
   billingCycle: Cycle,
   now: Date = new Date(),
 ): PlanChangeQuote {
-  const currentCycle = (subscription.billingCycle || 'monthly') as Cycle
+  const currentCycle = normalizeCycle(subscription.billingCycle)
+  const targetCycle = normalizeCycle(billingCycle)
   const currentPrice = getSubscriptionPrice(subscription, currentTier, currentCycle)
-  const newPrice = getPriceForCycle(Number(newTier.priceMonthly), Number(newTier.priceYearly), billingCycle)
+  const newPrice =
+    targetCycle === 'lifetime'
+      ? getSubscriptionPrice({ subscribedPriceLifetime: null }, newTier, 'lifetime')
+      : getPriceForCycle(Number(newTier.priceMonthly), Number(newTier.priceYearly), targetCycle)
+
+  // Lifetime is prepaid once — charge the full new price (no day-based proration).
+  if (targetCycle === 'lifetime' || currentCycle === 'lifetime') {
+    return { ok: true, noProration: true, currentPrice, newPrice, amountDue: newPrice, proration: null }
+  }
 
   if (subscription.status === 'trial') {
     return { ok: true, noProration: true, currentPrice, newPrice, amountDue: newPrice, proration: null }
@@ -58,7 +74,7 @@ export function quotePlanChange(
     currentPeriodStart: subscription.currentPeriodStart,
     currentPeriodEnd: subscription.currentPeriodEnd,
     changeDate: now,
-    newPlanCycleDays: currentCycle !== billingCycle ? cycleLengthDays(now, billingCycle) : undefined,
+    newPlanCycleDays: currentCycle !== targetCycle ? cycleLengthDays(now, targetCycle) : undefined,
   })
   return { ok: true, noProration: false, currentPrice, newPrice, amountDue: proration.amountDue, proration }
 }

@@ -56,7 +56,8 @@ export async function POST(request: NextRequest) {
     // pending company / subscription, and upgrade amounts are re-quoted here. (Previously the
     // body's `tierId` and `amount` were used, so a renewal or upgrade could be bought for
     // 1 LKR, or a premium pending company paid at the cheapest tier's price.)
-    let billingCycle: 'monthly' | 'yearly' = requestedCycle
+    let billingCycle: 'monthly' | 'yearly' | 'lifetime' =
+      requestedCycle === 'lifetime' || requestedCycle === 'yearly' ? requestedCycle : 'monthly'
     let tier: typeof pricingTiers.$inferSelect | undefined
     let price: number
     let walletCredit = 0
@@ -90,10 +91,20 @@ export async function POST(request: NextRequest) {
       if (pending.status !== 'pending_payment') {
         return NextResponse.json({ error: 'Pending company is not awaiting payment' }, { status: 400 })
       }
-      billingCycle = pending.billingCycle === 'yearly' ? 'yearly' : 'monthly'
+      billingCycle =
+        pending.billingCycle === 'lifetime'
+          ? 'lifetime'
+          : pending.billingCycle === 'yearly'
+            ? 'yearly'
+            : 'monthly'
       tier = await db.query.pricingTiers.findFirst({ where: eq(pricingTiers.id, pending.tierId) })
       if (!tier) return NextResponse.json({ error: 'Pricing tier not found' }, { status: 404 })
-      price = billingCycle === 'yearly' ? Number(tier.priceYearly) : Number(tier.priceMonthly)
+      price =
+        billingCycle === 'lifetime'
+          ? Number(tier.priceLifetime ?? 0)
+          : billingCycle === 'yearly'
+            ? Number(tier.priceYearly)
+            : Number(tier.priceMonthly)
       const discounted = await applyCoupon(price, tier.id)
       if (discounted instanceof NextResponse) return discounted
       price = discounted
@@ -149,14 +160,16 @@ export async function POST(request: NextRequest) {
     }
 
     const couponApplied = coupon as { id: string; code: string; listAmount: number; discount: number } | null
-    const periodMonths = billingCycle === 'yearly' ? 12 : 1
+    const periodMonths = billingCycle === 'lifetime' ? 0 : billingCycle === 'yearly' ? 12 : 1
     const orderId = generateOrderId()
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+    const { publicAppOrigin } = await import('@/lib/http/public-url')
+    const baseUrl = publicAppOrigin(process.env.NEXT_PUBLIC_APP_URL)
 
+    const cycleLabel = billingCycle === 'lifetime' ? 'Lifetime' : billingCycle === 'yearly' ? 'Annual' : 'Monthly'
     const isUpgrade = !!upgradeTierId
     const description = isUpgrade
-      ? `Plan upgrade to ${tier.displayName} - ${billingCycle === 'yearly' ? 'Annual' : 'Monthly'} (prorated)`
-      : `${tier.displayName} Plan - ${billingCycle === 'yearly' ? 'Annual' : 'Monthly'}`
+      ? `Plan upgrade to ${tier.displayName} - ${cycleLabel} (prorated)`
+      : `${tier.displayName} Plan - ${cycleLabel}`
     const itemDescription = couponApplied ? `${description} (promo ${couponApplied.code})` : description
 
     // Create pending transaction record

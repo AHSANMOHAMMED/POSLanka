@@ -7,9 +7,12 @@ Android-first React Native POS client that talks to the same Next.js APIs as the
 ```bash
 cd apps/mobile
 npm install
-EXPO_PUBLIC_API_URL=https://your-server.example npx expo start   # or type the server URL on the login screen
+EXPO_PUBLIC_API_URL=https://168-144-216-104.sslip.io npx expo start   # or type the server URL on the login screen
 npm run typecheck
 ```
+
+**Production host (this deploy):** `https://168-144-216-104.sslip.io`  
+Defaults, EAS preview/production, and “Open on web” use this origin. Saved `localhost` URLs are auto-migrated away so Live/More never open the phone’s loopback.
 
 The server URL and company slug entered on the login screen are remembered on the device.
 
@@ -57,7 +60,7 @@ Set the server URL per profile in `eas.json` (`EXPO_PUBLIC_API_URL`). In Expo Go
 ### Local release APK (no Expo account)
 
 ```bash
-npm run build:apk                                   # → dist/POSLanka-<version>.apk, server https://app.poslanka.lk
+npm run build:apk                                   # → dist/skyERPOS-<version>.apk, server https://168-144-216-104.sslip.io
 API_URL=http://192.168.1.10:3000 npm run build:apk  # different default server (still editable on the sign-in screen)
 ABIS=x86_64 npm run build:apk                       # emulator test build (real phones are arm64/armv7)
 ```
@@ -70,3 +73,28 @@ an APK signed with a different key cannot be installed as an update over this on
 The latest published build is in `releases/` (with its SHA-256). Install it with
 `adb install releases/POSLanka-1.0.0.apk` or by copying it to the phone. `http://` servers on a shop's
 own network are allowed (cleartext), but use `https://` for anything reachable from the internet.
+Release builds **block** public `http://` API bases on the sign-in screen (private LAN `192.168/10/172.16–31` still OK).
+
+## Appearance & language
+
+- **Light theme only** (no dark mode).
+- **EN / සිංහල / தமிழ்** on the login screen and under More → language. Locale is stored as `poslanka_locale` and used for system login notices and inbox alert text. Full POS chrome translation is not shipped yet (same as web).
+
+## Staff & platform notifications
+
+| Flow | Where |
+|---|---|
+| Login notices (SA announcement + broadcasts with “show on login”) | Shop login screen before sign-in |
+| Staff → staff push + inbox | More → **Notify staff** (or Alerts → megaphone). Cashiers: selected colleagues only. Managers: also Managers / Everyone (rate limited). |
+| Alerts inbox + push prefs | More → Alerts |
+| Admin broadcasts (EN + optional SI/TA, show on login) | Admin app → Notifications |
+
+Push tokens register after shop login (`POST /api/account/devices`). Tokens cannot be stolen by another account (409). 401 / logout unregisters the device.
+
+## Smoke checklist
+
+1. Cashier: Notify staff → pick a manager → manager phone gets push + Alerts inbox row.
+2. Manager: Notify staff → Everyone (at most once/day) reaches active staff phones.
+3. Login notices: set SI/TA announcement in sys-control → open shop login → switch language → notice text changes.
+4. Register push on device A, then try registering the same Expo token as another user → **409**.
+5. Force 401 (invalidate session) → app returns to login and the device row is removed (no further push).

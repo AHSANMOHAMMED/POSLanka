@@ -2282,11 +2282,27 @@ html {
   animation: gradient-text-shift 8s ease infinite;
 }
 
-.gradient-text-emerald-gold {
-  background: linear-gradient(135deg, #059669, #f59e0b);
+/* skyERPOS brand blue (#0050C0) + warm accent — used across landing CTAs */
+.gradient-text-emerald-gold,
+.gradient-text-brand {
+  background: linear-gradient(135deg, #0050c0, #3b82f6 45%, #f59e0b);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+.landing-brand-btn {
+  background-image: linear-gradient(90deg, #0050c0, #2563eb);
+  box-shadow: 0 10px 28px -8px rgba(0, 80, 192, 0.45);
+}
+.landing-brand-btn:hover {
+  background-image: linear-gradient(90deg, #00419e, #1d4ed8);
+}
+
+.landing-brand-chip {
+  background: rgba(0, 80, 192, 0.12);
+  color: #93c5fd;
+  border: 1px solid rgba(0, 80, 192, 0.35);
 }
 
 .gradient-text-retail {
@@ -2304,7 +2320,7 @@ html {
 }
 
 .gradient-text-supermarket {
-  background: linear-gradient(135deg, #16a34a, #22c55e);
+  background: linear-gradient(135deg, #0050c0, #6366f1);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

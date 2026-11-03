@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     const emailStatus = sendEmail
       ? await sendAdminCredentialsEmail({
         to: email, fullName, tempPassword, reason: 'created', requireTotp,
-        baseUrl: process.env.NEXTAUTH_URL || request.nextUrl.origin,
+        baseUrl: (await import('@/lib/http/public-url')).publicAppOrigin(request.nextUrl.origin),
       })
       : 'skipped'
 

@@ -13,12 +13,18 @@
     "preview": {
       "distribution": "internal",
       "android": { "buildType": "apk" },
-      "env": { "EXPO_PUBLIC_API_URL": "https://168-144-216-104.sslip.io" }
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://168-144-216-104.sslip.io",
+        "EXPO_PUBLIC_WEB_URL": "https://168-144-216-104.sslip.io"
+      }
     },
     "production": {
       "autoIncrement": true,
       "android": { "buildType": "app-bundle" },
-      "env": { "EXPO_PUBLIC_API_URL": "https://168-144-216-104.sslip.io" }
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://168-144-216-104.sslip.io",
+        "EXPO_PUBLIC_WEB_URL": "https://168-144-216-104.sslip.io"
+      }
     }
   },
   "submit": {

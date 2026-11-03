@@ -43,6 +43,9 @@ export interface PosProfile {
   warehouse?: { id: string; name: string } | null
   defaultPaymentMethod?: string | null
   maxDiscountPercent?: string | number | null
+  /** false = every manual discount at this counter needs a supervisor PIN */
+  allowDiscountChange?: boolean
+  allowRateChange?: boolean
   allowCreditSale?: boolean
   paymentMethods?: PosProfilePaymentMethod[]
   isUserDefault?: boolean
