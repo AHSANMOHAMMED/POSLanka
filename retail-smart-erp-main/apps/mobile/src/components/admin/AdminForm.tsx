@@ -78,7 +78,7 @@ export function Field({
   )
 }
 
-/** Single-choice chips. */
+/** Single-choice chips. Pass `onChange={(v) => setX(v)}` (not the raw setter) so T stays the union. */
 export function Choice<T extends string>({
   label,
   options,
@@ -87,7 +87,7 @@ export function Choice<T extends string>({
   disabled,
 }: {
   label?: string
-  options: Array<{ value: T; label: string }>
+  options: Array<{ value: string; label: string }>
   value: T
   onChange: (v: T) => void
   disabled?: boolean
@@ -105,7 +105,7 @@ export function Choice<T extends string>({
               accessibilityRole="radio"
               accessibilityState={{ checked: on, disabled }}
               style={[styles.chip, on && styles.chipOn, disabled && { opacity: 0.5 }]}
-              onPress={() => onChange(o.value)}
+              onPress={() => onChange(o.value as T)}
             >
               <Text style={[styles.chipText, on && styles.chipTextOn]}>{o.label}</Text>
             </Pressable>
@@ -124,7 +124,7 @@ export function MultiChoice<T extends string>({
   onChange,
 }: {
   label?: string
-  options: Array<{ value: T; label: string }>
+  options: Array<{ value: string; label: string }>
   values: T[]
   onChange: (v: T[]) => void
 }) {
@@ -133,14 +133,15 @@ export function MultiChoice<T extends string>({
       {label ? <Text style={styles.label}>{label}</Text> : null}
       <View style={styles.chips}>
         {options.map((o) => {
-          const on = values.includes(o.value)
+          const typed = o.value as T
+          const on = values.includes(typed)
           return (
             <Pressable
               key={o.value}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: on }}
               style={[styles.chip, on && styles.chipOn]}
-              onPress={() => onChange(on ? values.filter((v) => v !== o.value) : [...values, o.value])}
+              onPress={() => onChange(on ? values.filter((v) => v !== typed) : [...values, typed])}
             >
               <Text style={[styles.chipText, on && styles.chipTextOn]}>{o.label}</Text>
             </Pressable>
@@ -259,13 +260,21 @@ export function ListFooter({ loadingMore, hasMore, shown, total, onMore }: { loa
 }
 
 /** Horizontal scrolling filter chips (single choice, not a form field). */
-export function FilterChips<T extends string>({ options, value, onChange }: { options: Array<{ value: T; label: string; count?: number }>; value: T; onChange: (v: T) => void }) {
+export function FilterChips<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: Array<{ value: string; label: string; count?: number }>
+  value: T
+  onChange: (v: T) => void
+}) {
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow} style={{ flexGrow: 0 }}>
       {options.map((o) => {
         const on = o.value === value
         return (
-          <Pressable key={o.value} style={[styles.chip, on && styles.chipOn]} onPress={() => onChange(o.value)}>
+          <Pressable key={o.value} style={[styles.chip, on && styles.chipOn]} onPress={() => onChange(o.value as T)}>
             <Text style={[styles.chipText, on && styles.chipTextOn]}>
               {o.label}
               {o.count != null ? ` (${o.count})` : ''}

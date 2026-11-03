@@ -163,8 +163,8 @@ export function BroadcastForm({ kind, tiers, canSend, onSent }: { kind: Broadcas
       <Choice label="Audience" value={mode} onChange={(m) => { setMode(m); setPreview(null) }} options={modes} />
       {mode === 'filtered' ? (
         <>
-          <MultiChoice label="Plans (blank = any)" values={tierIds} onChange={setTierIds} options={tiers.map((t) => ({ value: t.id, label: t.displayName }))} />
-          <MultiChoice label="Subscription status (blank = any)" values={subStatuses} onChange={setSubStatuses} options={SUB_STATUSES.map((s) => ({ value: s, label: s.replace('_', ' ') }))} />
+          <MultiChoice label="Plans (blank = any)" values={tierIds} onChange={(v) => setTierIds(v)} options={tiers.map((t) => ({ value: t.id, label: t.displayName }))} />
+          <MultiChoice label="Subscription status (blank = any)" values={subStatuses} onChange={(v) => setSubStatuses(v)} options={SUB_STATUSES.map((s) => ({ value: s, label: s.replace('_', ' ') }))} />
         </>
       ) : null}
       {mode === 'selected' ? <Field label="Business IDs" value={businessIds} onChangeText={setBusinessIds} multiline placeholder="PL-123456, PL-234567" hint="Separate with commas, spaces or new lines." /> : null}
@@ -177,8 +177,8 @@ export function BroadcastForm({ kind, tiers, canSend, onSent }: { kind: Broadcas
       <Field label="Title (தமிழ், optional)" value={titleTa} onChangeText={setTitleTa} maxLength={200} />
       <Field label="Message (தமிழ், optional)" value={bodyTa} onChangeText={setBodyTa} multiline maxLength={5000} />
       <Field label="Link (optional)" value={link} onChangeText={setLink} placeholder="/account/billing or https://…" />
-      <Choice label="Category" value={category} onChange={setCategory} options={CATEGORIES.map((c) => ({ value: c, label: c }))} />
-      {!isEmail ? <MultiChoice label="Channels" values={channels} onChange={setChannels} options={CHANNELS} /> : null}
+      <Choice label="Category" value={category} onChange={(v) => setCategory(v)} options={CATEGORIES.map((c) => ({ value: c, label: c }))} />
+      {!isEmail ? <MultiChoice label="Channels" values={channels} onChange={(v) => setChannels(v)} options={CHANNELS} /> : null}
       {!isEmail ? <SwitchRow label="Show on vendor login" hint="Also appear on company sign-in screens." value={showOnLogin} onValueChange={setShowOnLogin} /> : null}
       {mode !== 'addresses' ? <SwitchRow label="Send to all staff" hint="Off = vendor owners only." value={allStaff} onValueChange={setAllStaff} /> : null}
       {!isEmail && channels.includes('push') ? <SwitchRow label="Push to all staff" hint="Off = owners and managers only." value={pushAllStaff} onValueChange={setPushAllStaff} /> : null}

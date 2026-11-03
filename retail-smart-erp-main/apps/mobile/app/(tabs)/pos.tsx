@@ -1532,7 +1532,7 @@ export default function PosScreen() {
         onSubmit={saveQuotation}
       />
 
-      <RestaurantOrderSheet visible={restaurantVisible} warehouseId={warehouseId} value={restaurant} onClose={() => setRestaurantVisible(false)} onChange={setRestaurant} />
+      <RestaurantOrderSheet visible={restaurantVisible} warehouseId={warehouseId} value={restaurant} onClose={() => setRestaurantVisible(false)} onChange={(v) => setRestaurant(v)} />
 
       {shift && clientSaleId && (
         <TenderModal

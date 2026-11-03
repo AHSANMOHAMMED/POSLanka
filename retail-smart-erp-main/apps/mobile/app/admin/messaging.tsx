@@ -250,9 +250,9 @@ export default function AdminMessagingScreen() {
 
           <SectionTitle>SMS provider</SectionTitle>
           <Card style={{ padding: 14 }}>
-            <Choice value={provider} onChange={setProvider} options={PROVIDERS} disabled={!canEdit} />
+            <Choice value={provider} onChange={(v) => setProvider(v)} options={PROVIDERS} disabled={!canEdit} />
             {provider !== 'none' ? renderFields(SMS_FIELDS[provider]) : <Text style={adminStyles.muted}>Choose a provider to configure SMS.</Text>}
-            {provider === 'generic_http' ? <Choice label="HTTP method" value={method} onChange={setMethod} options={[{ value: 'POST', label: 'POST' }, { value: 'GET', label: 'GET' }]} disabled={!canEdit} /> : null}
+            {provider === 'generic_http' ? <Choice label="HTTP method" value={method} onChange={(v) => setMethod(v)} options={[{ value: 'POST', label: 'POST' }, { value: 'GET', label: 'GET' }]} disabled={!canEdit} /> : null}
             {provider === 'generic_http' ? <Text style={adminStyles.muted}>Extra fixed parameters are edited on the web console.</Text> : null}
           </Card>
 
@@ -268,7 +268,7 @@ export default function AdminMessagingScreen() {
 
           <SectionTitle>Test send</SectionTitle>
           <Card style={{ padding: 14 }}>
-            <Choice value={testChannel} onChange={setTestChannel} options={[{ value: 'sms', label: 'SMS' }, { value: 'whatsapp', label: 'WhatsApp' }]} />
+            <Choice value={testChannel} onChange={(v) => setTestChannel(v)} options={[{ value: 'sms', label: 'SMS' }, { value: 'whatsapp', label: 'WhatsApp' }]} />
             <Field label="Mobile number" value={testTo} onChangeText={setTestTo} keyboardType="phone-pad" placeholder="+94771234567" />
             <Field label="Text (optional)" value={testText} onChangeText={setTestText} maxLength={300} autoCapitalize="sentences" />
             {testChannel === 'whatsapp' ? <SwitchRow label="Use hello_world template" hint="Works outside the 24-hour window." value={helloWorld} onValueChange={setHelloWorld} /> : null}

@@ -241,7 +241,7 @@ export default function AdminVendorCreateScreen() {
             <Field label="Business name *" value={name} onChangeText={setName} placeholder="Sunrise Foods" autoCapitalize="words" />
             <Field label="Phone *" value={phone} onChangeText={setPhone} placeholder="+94 77 123 4567" keyboardType="phone-pad" />
             <Field label="Address *" value={address} onChangeText={setAddress} placeholder="12 Galle Road, Colombo 03" multiline autoCapitalize="sentences" />
-            <Choice label="Business type" value={businessType} onChange={setBusinessType} options={BUSINESS_TYPES.map((t) => ({ value: t, label: businessTypeLabel(t) }))} />
+            <Choice label="Business type" value={businessType} onChange={(v) => setBusinessType(v)} options={BUSINESS_TYPES.map((t) => ({ value: t, label: businessTypeLabel(t) }))} />
             <Field
               label="Web address (optional)"
               value={slug}
@@ -283,7 +283,7 @@ export default function AdminVendorCreateScreen() {
                 {tiers.length === 0 ? <Text style={adminStyles.empty}>No active plans. Create one under Pricing.</Text> : null}
               </Card>
               <Card style={styles.pad}>
-                <Choice label="Billing cycle" value={cycle} onChange={setCycle} options={BILLING_CYCLES.map((c) => ({ value: c, label: c[0].toUpperCase() + c.slice(1) }))} />
+                <Choice label="Billing cycle" value={cycle} onChange={(v) => setCycle(v)} options={BILLING_CYCLES.map((c) => ({ value: c, label: c[0].toUpperCase() + c.slice(1) }))} />
                 <Text style={adminStyles.muted}>The vendor starts with a complimentary first period; free plans never expire. Lifetime never expires.</Text>
               </Card>
             </>

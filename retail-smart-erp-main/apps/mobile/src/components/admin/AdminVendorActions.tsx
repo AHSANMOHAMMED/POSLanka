@@ -169,7 +169,7 @@ export function AdminVendorActions({ vendor, canManage, canBill, onChanged }: { 
           <>
             {tiersLoading ? <Text style={adminStyles.muted}>Loading plans…</Text> : null}
             <Choice label="Plan" value={tierId ?? ''} onChange={(v) => setTierId(v)} options={tiers.map((t) => ({ value: t.id, label: t.displayName }))} />
-            <Choice label="Billing cycle" value={cycle} onChange={setCycle} options={BILLING_CYCLES.map((c) => ({ value: c, label: c[0].toUpperCase() + c.slice(1) }))} />
+            <Choice label="Billing cycle" value={cycle} onChange={(v) => setCycle(v)} options={BILLING_CYCLES.map((c) => ({ value: c, label: c[0].toUpperCase() + c.slice(1) }))} />
             {tierId
               ? (() => {
                   const t = tiers.find((x) => x.id === tierId)
@@ -192,7 +192,7 @@ export function AdminVendorActions({ vendor, canManage, canBill, onChanged }: { 
             </View>
           ) : (
             <>
-              <Choice value={pwMode} onChange={setPwMode} options={[{ value: 'email', label: 'Email reset link' }, { value: 'temporary', label: 'Temporary password' }]} />
+              <Choice value={pwMode} onChange={(v) => setPwMode(v)} options={[{ value: 'email', label: 'Email reset link' }, { value: 'temporary', label: 'Temporary password' }]} />
               <Text style={adminStyles.muted}>
                 {pwMode === 'email' ? 'A reset link (valid 1 hour) is emailed to the owner.' : 'A new one-time password replaces the current one and is shown here once.'}
               </Text>

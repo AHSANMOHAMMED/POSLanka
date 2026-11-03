@@ -89,7 +89,7 @@ export default function AdminAuditLogsScreen() {
         <TextInput style={adminStyles.input} placeholder="Search resource, id or details…" placeholderTextColor={THEME.colors.textSubtle} autoCapitalize="none" autoCorrect={false} value={query} onChangeText={setQuery} />
         <TextInput style={[adminStyles.input, { marginTop: 8 }]} placeholder="Vendor (Business ID or name)…" placeholderTextColor={THEME.colors.textSubtle} autoCapitalize="none" autoCorrect={false} value={vendor} onChangeText={setVendor} />
       </View>
-      <FilterChips value={action} onChange={setAction} options={ACTIONS.map((a) => ({ value: a, label: titleCase(a) }))} />
+      <FilterChips value={action} onChange={(v) => setAction(v)} options={ACTIONS.map((a) => ({ value: a, label: titleCase(a) }))} />
 
       {list.loading ? (
         <LoadingView text="Loading audit log…" />

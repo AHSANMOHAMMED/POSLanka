@@ -98,7 +98,7 @@ function OwnersList({ canManage }: { canManage: boolean }) {
       <View style={styles.searchWrap}>
         <TextInput style={adminStyles.input} placeholder="Search name, email or phone…" placeholderTextColor={THEME.colors.textSubtle} autoCapitalize="none" autoCorrect={false} value={query} onChangeText={setQuery} />
       </View>
-      <FilterChips value={status} onChange={setStatus} options={[{ value: 'all', label: 'All' }, { value: 'active', label: 'Active' }, { value: 'inactive', label: 'Deactivated' }]} />
+      <FilterChips value={status} onChange={(v) => setStatus(v)} options={[{ value: 'all', label: 'All' }, { value: 'active', label: 'Active' }, { value: 'inactive', label: 'Deactivated' }]} />
       {list.loading ? (
         <LoadingView text="Loading accounts…" />
       ) : list.error ? (
@@ -272,7 +272,7 @@ function AdminsList({ canManage }: { canManage: boolean }) {
         <Field label="Email *" value={email} onChangeText={setEmail} keyboardType="email-address" />
         <Field label="Full name *" value={fullName} onChangeText={setFullName} autoCapitalize="words" />
         <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-        <Choice label="Role" value={role} onChange={setRole} options={ROLES} />
+        <Choice label="Role" value={role} onChange={(v) => setRole(v)} options={ROLES} />
         <SwitchRow label="Require two-factor sign-in" value={requireTotp} onValueChange={setRequireTotp} />
         <SwitchRow label="Email the temporary password" value={sendEmail} onValueChange={setSendEmail} />
         <Notice text="A temporary password is shown once. They must change it at first sign-in." />
@@ -284,7 +284,7 @@ function AdminsList({ canManage }: { canManage: boolean }) {
         {selected && canManage ? (
           <View style={{ gap: 8 }}>
             {isSelf ? <Notice text="This is your own account. Use Account to change your password; role and deactivation changes to yourself are refused by the server." /> : null}
-            <Choice label="Role" value={pendingRole} onChange={setPendingRole} options={ROLES} />
+            <Choice label="Role" value={pendingRole} onChange={(v) => setPendingRole(v)} options={ROLES} />
             <Btn label="Change role" tone="ghost" disabled={pendingRole === selected.role || !!busy} busy={busy === 'Role changed'} onPress={() => runAdminAction(selected, { action: 'change_role', role: pendingRole }, 'Role changed')} />
             <Btn label="Reset password (shows temporary password)" tone="ghost" disabled={!!busy} busy={busy === 'Password reset'} onPress={() => confirmAction('Reset password?', `${selected.fullName} is signed out everywhere and gets a new temporary password.`, 'Reset', () => runAdminAction(selected, { action: 'reset_password', sendEmail: true }, 'Password reset'))} />
             {selected.totpRequired ? (

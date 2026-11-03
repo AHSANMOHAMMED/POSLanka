@@ -143,9 +143,9 @@ export default function AdminPaymentsScreen() {
         />
       </View>
       {source === 'bank' ? (
-        <FilterChips value={slipStatus} onChange={setSlipStatus} options={SLIP_STATUSES.map((s) => ({ value: s, label: titleCase(s), count: s === 'all' ? undefined : slipCounts[s] }))} />
+        <FilterChips value={slipStatus} onChange={(v) => setSlipStatus(v)} options={SLIP_STATUSES.map((s) => ({ value: s, label: titleCase(s), count: s === 'all' ? undefined : slipCounts[s] }))} />
       ) : (
-        <FilterChips value={phStatus} onChange={setPhStatus} options={PAYHERE_STATUSES.map((s) => ({ value: s, label: titleCase(s), count: s === 'all' ? undefined : phTotals[s]?.count }))} />
+        <FilterChips value={phStatus} onChange={(v) => setPhStatus(v)} options={PAYHERE_STATUSES.map((s) => ({ value: s, label: titleCase(s), count: s === 'all' ? undefined : phTotals[s]?.count }))} />
       )}
 
       {source === 'bank' ? (

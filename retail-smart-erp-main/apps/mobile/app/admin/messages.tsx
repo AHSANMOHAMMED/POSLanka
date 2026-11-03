@@ -67,7 +67,7 @@ export default function AdminMessagesScreen() {
           onChangeText={setQuery}
         />
       </View>
-      <FilterChips value={filter} onChange={setFilter} options={FILTERS.map((f) => ({ value: f, label: titleCase(f), count: f === 'all' ? counts.all : counts[f] }))} />
+      <FilterChips value={filter} onChange={(v) => setFilter(v)} options={FILTERS.map((f) => ({ value: f, label: titleCase(f), count: f === 'all' ? counts.all : counts[f] }))} />
 
       {list.loading ? (
         <LoadingView text="Loading conversations…" />

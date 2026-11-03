@@ -112,8 +112,8 @@ export default function AdminErrorLogsScreen() {
       <View style={styles.searchWrap}>
         <TextInput style={adminStyles.input} placeholder="Search message, source or URL…" placeholderTextColor={THEME.colors.textSubtle} autoCapitalize="none" autoCorrect={false} value={query} onChangeText={setQuery} />
       </View>
-      <FilterChips value={status} onChange={setStatus} options={[{ value: 'unresolved', label: 'Unresolved', count: stats?.unresolved }, { value: 'closed', label: 'Resolved' }, { value: 'all', label: 'All' }]} />
-      <FilterChips value={level} onChange={setLevel} options={(['all', 'error', 'warning', 'info'] as LevelFilter[]).map((l) => ({ value: l, label: titleCase(l) }))} />
+      <FilterChips value={status} onChange={(v) => setStatus(v)} options={[{ value: 'unresolved', label: 'Unresolved', count: stats?.unresolved }, { value: 'closed', label: 'Resolved' }, { value: 'all', label: 'All' }]} />
+      <FilterChips value={level} onChange={(v) => setLevel(v)} options={(['all', 'error', 'warning', 'info'] as LevelFilter[]).map((l) => ({ value: l, label: titleCase(l) }))} />
 
       {list.loading ? (
         <LoadingView text="Loading error log…" />

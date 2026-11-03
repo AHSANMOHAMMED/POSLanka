@@ -118,7 +118,7 @@ export default function AdminSubscriptionsScreen() {
       </View>
       <FilterChips
         value={status}
-        onChange={setStatus}
+        onChange={(v) => setStatus(v)}
         options={STATUSES.map((s) => ({ value: s, label: s === 'all' ? 'All' : titleCase(s), count: s === 'all' ? undefined : counts[s] }))}
       />
       <Pressable style={styles.expiringRow} onPress={() => setExpiring((v) => !v)}>
