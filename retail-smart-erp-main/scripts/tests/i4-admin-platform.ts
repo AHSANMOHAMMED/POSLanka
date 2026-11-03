@@ -431,17 +431,18 @@ async function main() {
     await step('impersonation link is single-use', async () => {
       asAdmin()
       const r = await json(await impersonate(req('POST', `/api/sys-control/vendors/${vendors[0].id}/impersonate`, { reason: 'I4 support check' }), ctx(vendors[0].id)))
-      const tok = r.body.impersonateToken as string
-      check('issue → 200 with a recorded jti', r.status === 200 && typeof tok === 'string' && (await pg.query(`SELECT count(*)::int AS n FROM admin_impersonation_tokens WHERE vendor_id = $1 AND used_at IS NULL`, [vendors[0].id])).rows[0].n === 1, r.body)
-      const first = await consumeImpersonationToken(tok, '10.1.1.1')
+      // Opaque single-use code (`c=`) — JWT is no longer returned in the JSON (keeps secrets out of logs).
+      const code = r.body.impersonateCode as string
+      check('issue → 200 with a recorded jti', r.status === 200 && typeof code === 'string' && (await pg.query(`SELECT count(*)::int AS n FROM admin_impersonation_tokens WHERE vendor_id = $1 AND used_at IS NULL`, [vendors[0].id])).rows[0].n === 1, r.body)
+      const first = await consumeImpersonationToken(code, '10.1.1.1')
       check('first use accepted', first?.tenantId === vendors[0].id && first.adminId === adminId, first)
-      const second = await consumeImpersonationToken(tok, '10.1.1.1')
+      const second = await consumeImpersonationToken(code, '10.1.1.1')
       check('second use refused', second === null)
       const used = (await pg.query(`SELECT used_at, used_ip FROM admin_impersonation_tokens WHERE jti = $1`, [first?.jti])).rows[0]
       check('use recorded with IP', !!used?.used_at && used.used_ip === '10.1.1.1', used)
 
       const r2 = await json(await impersonate(req('POST', `/api/sys-control/vendors/${vendors[0].id}/impersonate`, {}), ctx(vendors[0].id)))
-      const race = await Promise.all([consumeImpersonationToken(r2.body.impersonateToken), consumeImpersonationToken(r2.body.impersonateToken), consumeImpersonationToken(r2.body.impersonateToken)])
+      const race = await Promise.all([consumeImpersonationToken(r2.body.impersonateCode), consumeImpersonationToken(r2.body.impersonateCode), consumeImpersonationToken(r2.body.impersonateCode)])
       check('concurrent use: exactly one wins', race.filter(Boolean).length === 1, race.map(Boolean))
 
       const jwt = (await import('jsonwebtoken')).default
@@ -449,8 +450,8 @@ async function main() {
       check('token without a recorded jti refused', (await consumeImpersonationToken(forged)) === null)
       const r3 = await json(await impersonate(req('POST', `/api/sys-control/vendors/${vendors[0].id}/impersonate`, {}), ctx(vendors[0].id)))
       await pg.query(`UPDATE admin_impersonation_tokens SET expires_at = now() - interval '1 second' WHERE used_at IS NULL AND vendor_id = $1`, [vendors[0].id])
-      check('expired link refused', (await consumeImpersonationToken(r3.body.impersonateToken)) === null)
-      check('bad signature refused', (await consumeImpersonationToken(r3.body.impersonateToken + 'x')) === null)
+      check('expired link refused', (await consumeImpersonationToken(r3.body.impersonateCode)) === null)
+      check('tampered code refused', (await consumeImpersonationToken(r3.body.impersonateCode + 'x')) === null)
     })
 
     // ============================================================ unlock without free month
