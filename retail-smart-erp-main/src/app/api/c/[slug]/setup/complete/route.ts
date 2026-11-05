@@ -116,7 +116,8 @@ export async function POST(
       const seedResult = await createSeedData(
         tx,
         tenant.id,
-        tenant.businessType, // Always use tenant's actual business type
+        // Always use tenant's actual business type (a mall: with the types it runs)
+        { businessType: tenant.businessType, businessSegments: tenant.businessSegments ?? null },
         wizardData,
         tenant.currency,
         ownerUser.id

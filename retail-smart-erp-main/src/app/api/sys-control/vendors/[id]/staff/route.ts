@@ -36,7 +36,7 @@ const updateSchema = z.object({
 async function loadTenant(id: string) {
   return db.query.tenants.findFirst({
     where: eq(tenants.id, id),
-    columns: { id: true, name: true, slug: true, businessId: true, businessType: true, status: true },
+    columns: { id: true, name: true, slug: true, businessId: true, businessType: true, businessSegments: true, status: true },
   })
 }
 
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const tenant = await loadTenant(p.data.id)
     if (!tenant) return NextResponse.json({ error: 'Vendor not found' }, { status: 404 })
     if (tenant.status === 'cancelled') return NextResponse.json({ error: 'This vendor is archived. Reactivate it before adding staff.' }, { status: 400 })
-    if (!getRolesForBusinessType(tenant.businessType).includes(parsed.data.role)) {
+    if (!getRolesForBusinessType(tenant).includes(parsed.data.role)) {
       return NextResponse.json({ error: 'This role is not available for this type of business', field: 'role' }, { status: 400 })
     }
 

@@ -6,7 +6,7 @@ import { Plus, Trash2, Search, X, Zap, ShieldCheck, ShieldAlert, Loader2, Eye, E
 import { toast } from '@/components/ui/toast'
 import { BranchSelect } from '@/components/ui/branch-select'
 import { useCurrency, usePermission } from '@/hooks'
-import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope, serviceJobBusinessType, serviceJobTypesOf } from '@/hooks/useBusinessScope'
 import {
   DEFAULT_ACCESSORIES, DEFAULT_CONDITION_CHECKLIST, DEVICE_TYPES, MEASUREMENT_PRESETS, jobKindForBusinessType, serviceJobTerms,
   type ServiceJobKind,
@@ -186,14 +186,20 @@ interface WarrantyResult {
 export function ServiceJobForm({ slug, initial }: { slug: string; initial?: ServiceJobFormInitial }) {
   const router = useRouter()
   const { fCurrency } = useCurrency()
-  const { businessType } = useCompany()
+  const scope = useBusinessScope()
+  // A mall uses its service-job department's words and may run several job kinds
+  const businessType = serviceJobBusinessType(scope)
+  const kindChoices = scope.isMall && !initial
+    ? Array.from(new Set(serviceJobTypesOf(scope).map((t) => jobKindForBusinessType(t))))
+    : []
+  const [chosenKind, setChosenKind] = useState<ServiceJobKind>(jobKindForBusinessType(businessType))
   const canCreateSales = usePermission('createSales')
   const canManageSales = usePermission('manageSales')
   const canWorkOrders = usePermission('manageWorkOrders')
   const canTakeMoney = canCreateSales || canManageSales
   const canPasscode = canWorkOrders || canManageSales
   const editing = !!initial
-  const kind: ServiceJobKind = initial?.jobType || jobKindForBusinessType(businessType)
+  const kind: ServiceJobKind = initial?.jobType || (kindChoices.length > 1 ? chosenKind : jobKindForBusinessType(businessType))
   const terms = serviceJobTerms(businessType)
 
   const [saving, setSaving] = useState(false)
@@ -378,6 +384,21 @@ export function ServiceJobForm({ slug, initial }: { slug: string; initial?: Serv
     <form onSubmit={submit} className="space-y-4 pb-24">
       <section className={sectionCls}>
         <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-100">Customer &amp; {terms.one.toLowerCase()}</h2>
+        {kindChoices.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-gray-600 dark:text-gray-300">Job type</span>
+            {kindChoices.map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setChosenKind(k)}
+                className={`px-3 py-1 rounded-full border text-xs ${kind === k ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300'}`}
+              >
+                {k === 'repair' ? 'Repair' : k === 'tailoring' ? 'Tailoring' : 'Service'}
+              </button>
+            ))}
+          </div>
+        )}
         <CustomerFields customerId={customer.customerId} name={customer.name} phone={customer.phone} onChange={(v) => setCustomer(v)} />
         {!editing && !customer.customerId && (
           <label className="flex items-center gap-2 text-sm cursor-pointer select-none text-gray-700 dark:text-gray-300">

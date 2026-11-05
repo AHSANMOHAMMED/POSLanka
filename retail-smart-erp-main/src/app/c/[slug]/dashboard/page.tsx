@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { WorkspaceRenderer } from '@/components/workspace/WorkspaceRenderer'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { useRealtimeData, useDateFormat } from '@/hooks'
@@ -150,17 +150,18 @@ export default function DashboardPage() {
   const router = useRouter()
   const params = useParams()
   const { data: session } = useSession()
-  const company = useCompanyOptional()
   const slug = params.slug as string
   const role = session?.user?.role
-  const businessType = company?.businessType || session?.user?.businessType
+  const { has } = useBusinessScope()
+  const runsRestaurant = has('restaurant')
+  const runsPharmacy = has('pharmacy')
 
   useEffect(() => {
     // Chef in restaurant -> redirect to kitchen display
-    if (role === 'chef' && businessType === 'restaurant') {
+    if (role === 'chef' && runsRestaurant) {
       router.replace(`/c/${slug}/restaurant/kitchen`)
     }
-  }, [router, slug, role, businessType])
+  }, [router, slug, role, runsRestaurant])
 
   return (
     <div className="space-y-3">
@@ -174,8 +175,8 @@ export default function DashboardPage() {
         </ErrorBoundary>
       </PermissionGuard>
       <AIInsightsWidget />
-      {businessType === 'supermarket' && <ExpiringItemsWidget />}
-      {businessType === 'pharmacy' && (
+      {has('supermarket') && !runsPharmacy && <ExpiringItemsWidget />}
+      {runsPharmacy && (
         <PermissionGuard permission="manageInventory" fallback={<ExpiringItemsWidget />}>
           <ErrorBoundary>
             <PharmacyExpiryWidget />

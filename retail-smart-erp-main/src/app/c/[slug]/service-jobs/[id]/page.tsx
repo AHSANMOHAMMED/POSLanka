@@ -12,7 +12,7 @@ import { Modal } from '@/components/ui/modal'
 import { PageLoading } from '@/components/ui/loading-spinner'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { useCurrency, usePermission } from '@/hooks'
-import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope, serviceJobBusinessType } from '@/hooks/useBusinessScope'
 import { ServiceJobForm, type ServiceJobFormInitial } from '@/components/service-jobs/ServiceJobForm'
 import { PAPER_SIZES, printServiceJobCard, printServiceJobReceipt, type PaperSize, type PrintCompanyInfo, type ServiceJobDoc } from '@/components/service-jobs/print-docs'
 import {
@@ -64,7 +64,8 @@ export default function ServiceJobDetailPage() {
   const slug = params.slug as string
   const id = params.id as string
   const { fCurrency, currency } = useCurrency()
-  const { businessType } = useCompany()
+  // A mall uses the words of its service-job department (electronics repairs, tailoring …)
+  const businessType = serviceJobBusinessType(useBusinessScope())
   const terms = serviceJobTerms(businessType)
   const canCreateSales = usePermission('createSales')
   const canManageSales = usePermission('manageSales')

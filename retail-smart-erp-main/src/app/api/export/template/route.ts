@@ -6,6 +6,7 @@ import { withTenant } from '@/lib/db'
 import { loadWarehouses } from '@/lib/import-export/import-validate'
 import { generateTemplate } from '@/lib/import-export/export-utils'
 import { logError } from '@/lib/ai/error-logger'
+import { importBusinessScope } from '@/lib/import-export/entity-config'
 
 export async function GET(request: NextRequest) {
   try {
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
     const permError = requirePermission(session, entityConfig.permission as Parameters<typeof requirePermission>[1])
     if (permError) return permError
 
-    const businessType = session.user.businessType || undefined
+    const businessType = importBusinessScope(session.user)
     let importFields = getImportFields(entityConfig, businessType)
     if (entityName === 'items') {
       // One `stock:<CODE>` column per active warehouse (same format as the items export)

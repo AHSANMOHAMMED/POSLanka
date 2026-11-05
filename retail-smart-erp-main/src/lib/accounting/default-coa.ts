@@ -1,6 +1,8 @@
 // Default Chart of Accounts template
 // Seeded per tenant on first accounting setup, customized by business type
 
+import { type BusinessScope, primaryBusinessType, scopeTypes } from '@/lib/business-types/scope'
+
 export interface AccountTemplate {
   accountNumber: string
   name: string
@@ -99,9 +101,78 @@ function getBaseAccounts(): AccountTemplate[] {
 
 /**
  * Returns the chart of accounts template customized for the given business type.
- * Each type gets the same base accounts plus business-type-specific additions.
+ * Each type gets the same base accounts plus business-type-specific additions. A mall gets its
+ * primary type's chart plus the extra accounts of every other type it runs (see mergeAccountTemplates).
  */
-export function getChartOfAccountsForBusinessType(businessType: string): AccountTemplate[] {
+export function getChartOfAccountsForBusinessType(scope: BusinessScope): AccountTemplate[] {
+  const types = scopeTypes(scope)
+  if (types.length <= 1) return chartForOneType(types[0] ?? '')
+  const coa = chartForOneType(primaryBusinessType(types))
+  for (const t of types) mergeAccountTemplates(coa, chartForOneType(t))
+  return coa
+}
+
+/** Visits every account with its parent (null at the root). */
+export function walkAccountTemplates(
+  nodes: AccountTemplate[],
+  visit: (node: AccountTemplate, parent: AccountTemplate | null) => void,
+  parent: AccountTemplate | null = null,
+): void {
+  for (const node of nodes) {
+    visit(node, parent)
+    if (node.children) walkAccountTemplates(node.children, visit, node)
+  }
+}
+
+/**
+ * The next free account number under a group for an account whose wanted number is taken:
+ * steps of 10 (then 1) inside the group's range (4000 → 4000–4999, 2100 → 2100–2199, …).
+ * Null when the range is full.
+ */
+export function nextFreeAccountNumber(wanted: string, parentNumber: string | null | undefined, used: ReadonlySet<string>): string | null {
+  if (!used.has(wanted)) return wanted
+  const w = Number(wanted)
+  const p = Number(parentNumber)
+  if (!Number.isFinite(w)) return null
+  const pn = parentNumber && Number.isFinite(p) ? parentNumber : wanted
+  const width = /000$/.test(pn) ? 1000 : /00$/.test(pn) ? 100 : 10
+  const lo = Number.isFinite(p) && parentNumber ? p : w - (w % width)
+  const hi = lo + width
+  for (const step of [10, 1]) {
+    for (let n = w + step; n < hi; n += step) if (!used.has(String(n))) return String(n)
+    for (let n = lo + step; n < w; n += step) if (!used.has(String(n))) return String(n)
+  }
+  return null
+}
+
+/**
+ * Adds to `target` the leaf accounts of `extra` it does not have yet (matched by name), under the
+ * group with the same number. A number already used for a different account moves to the next
+ * free one in that group (4200 "Online Sales Revenue" vs 4200 "Hire Purchase Interest Income").
+ */
+export function mergeAccountTemplates(target: AccountTemplate[], extra: AccountTemplate[]): AccountTemplate[] {
+  const names = new Set<string>()
+  const used = new Set<string>()
+  const groups = new Map<string, AccountTemplate>()
+  walkAccountTemplates(target, (n) => {
+    names.add(n.name.trim().toLowerCase())
+    used.add(n.accountNumber)
+    if (n.isGroup) groups.set(n.accountNumber, n)
+  })
+  walkAccountTemplates(extra, (n, parent) => {
+    if (n.isGroup || !parent || names.has(n.name.trim().toLowerCase())) return
+    const group = groups.get(parent.accountNumber)
+    if (!group) return
+    const accountNumber = nextFreeAccountNumber(n.accountNumber, group.accountNumber, used)
+    if (!accountNumber) return
+    ;(group.children ||= []).push({ ...n, accountNumber })
+    names.add(n.name.trim().toLowerCase())
+    used.add(accountNumber)
+  })
+  return target
+}
+
+function chartForOneType(businessType: string): AccountTemplate[] {
   const coa = getBaseAccounts()
 
   // Helper to find a group and add children to it

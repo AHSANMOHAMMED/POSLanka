@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { getMenuPerformance } from '@/lib/reports/business-specific'
 import { logError } from '@/lib/ai/error-logger'
 import { requireAllBranches } from '@/lib/auth/branch-access'
+import { hasBusinessType } from '@/lib/business-types/scope'
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,7 +20,7 @@ export async function GET(request: NextRequest) {
     const branchError = await requireAllBranches(session)
     if (branchError) return branchError
 
-    if (session.user.businessType !== 'restaurant') {
+    if (!hasBusinessType(session.user, 'restaurant')) {
       return NextResponse.json({ error: 'This report is only available for restaurant businesses' }, { status: 403 })
     }
 

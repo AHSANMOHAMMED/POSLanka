@@ -15,7 +15,7 @@ export default function NewBarcodeLabelTemplatePage({ params }: { params: Promis
   if (preset === undefined) {
     return (
       <TemplatePresetPicker
-        businessType={company?.businessType}
+        businessType={company ? { businessType: company.businessType, businessSegments: company.businessSegments } : undefined}
         tenantSlug={slug}
         onSelect={(p) => setPreset(p)}
         onSkip={() => setPreset(null)}

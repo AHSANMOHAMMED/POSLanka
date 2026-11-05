@@ -62,6 +62,7 @@ import { QuoteFromCartModal } from '../../src/components/QuoteFromCartModal'
 import { RestaurantOrderSheet, restaurantLabel, type RestaurantContext } from '../../src/components/RestaurantOrderSheet'
 import { SerialPickerModal, VariantPickerModal } from '../../src/components/ItemOptionPickers'
 import { SupervisorPinModal, type SupervisorApprovalRequest } from '../../src/components/SupervisorPinModal'
+import { tillBusinessType } from '../../src/lib/businessScope'
 
 /** Search wording of the newer business types (same terminology as the web POS, src/lib/terminology.ts) */
 const SEARCH_PLACEHOLDER_BY_TYPE: Record<string, string> = {
@@ -298,7 +299,10 @@ export default function PosScreen() {
     else if (cart.length === 0 && clientSaleId) setClientSaleId(null)
   }, [cart.length, clientSaleId])
   // Restaurants: kitchen tickets (KOT) for this cart on the kitchen-role printer.
-  const kitchen = useKitchenTickets({ enabled: user?.businessType === 'restaurant', orderKey: clientSaleId, server: user?.name, orderType: restaurant?.orderType, table: restaurant?.table, tableArea: restaurant?.tableArea })
+  // The type this till sells as: the vendor's own type; at a mall, the counter's segment (food court
+  // counter → restaurant till) or the mall's main shop type.
+  const tillType = tillBusinessType(user, shift?.posProfile?.businessSegment)
+  const kitchen = useKitchenTickets({ enabled: tillType === 'restaurant', orderKey: clientSaleId, server: user?.name, orderType: restaurant?.orderType, table: restaurant?.table, tableArea: restaurant?.tableArea })
 
   // ------------------------------------------------------------------ catalog
   useEffect(() => {
@@ -1105,7 +1109,7 @@ export default function PosScreen() {
                 <Ionicons name="search" size={20} color={THEME.colors.textMuted} />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder={SEARCH_PLACEHOLDER_BY_TYPE[user?.businessType || ''] || 'Search items or type a barcode'}
+                  placeholder={SEARCH_PLACEHOLDER_BY_TYPE[tillType] || 'Search items or type a barcode'}
                   placeholderTextColor={THEME.colors.textSubtle}
                   value={query}
                   onChangeText={setQuery}
@@ -1178,7 +1182,7 @@ export default function PosScreen() {
           </Pressable>
 
           {/* Restaurant: order type + table (printed on the kitchen ticket) */}
-          {user?.businessType === 'restaurant' ? (
+          {tillType === 'restaurant' ? (
             <Pressable style={styles.restaurantStrip} onPress={() => setRestaurantVisible(true)} accessibilityRole="button" accessibilityLabel="Set order type and table">
               <Ionicons name="restaurant-outline" size={18} color={restaurant ? THEME.colors.primary : THEME.colors.textMuted} />
               <Text style={[styles.restaurantText, restaurant && { color: THEME.colors.text, fontWeight: '800' }]} numberOfLines={1}>
@@ -1372,7 +1376,7 @@ export default function PosScreen() {
                     <Text style={styles.toolChipText}>Quote</Text>
                   </Pressable>
                 ) : null}
-                {user?.businessType === 'restaurant' ? (
+                {tillType === 'restaurant' ? (
                   <Pressable style={[styles.toolChip, !!restaurant && styles.toolChipOn]} onPress={() => setRestaurantVisible(true)} accessibilityRole="button" accessibilityLabel="Order type and table">
                     <Ionicons name="restaurant-outline" size={15} color={restaurant ? '#FFF' : THEME.colors.primary} />
                     <Text style={[styles.toolChipText, !!restaurant && { color: '#FFF' }]}>{restaurant ? restaurantLabel(restaurant) : 'Table'}</Text>

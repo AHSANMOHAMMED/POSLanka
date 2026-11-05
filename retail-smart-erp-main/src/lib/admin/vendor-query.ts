@@ -58,6 +58,7 @@ const rowColumns = {
   email: tenants.email,
   phone: tenants.phone,
   businessType: tenants.businessType,
+  businessSegments: tenants.businessSegments,
   status: tenants.status,
   plan: tenants.plan,
   country: tenants.country,
@@ -83,6 +84,8 @@ export interface VendorRow {
   email: string
   phone: string | null
   businessType: string
+  /** 'mall' only: the business types it runs */
+  businessSegments: string[] | null
   status: string
   plan: string
   country: string

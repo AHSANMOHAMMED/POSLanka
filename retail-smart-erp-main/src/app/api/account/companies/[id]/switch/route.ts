@@ -54,6 +54,7 @@ export async function POST(
       tenantSlug: tenant.slug,
       tenantName: tenant.name,
       businessType: tenant.businessType,
+      businessSegments: tenant.businessSegments ?? null,
       role: membership.role,
       isOwner: membership.isOwner,
     })

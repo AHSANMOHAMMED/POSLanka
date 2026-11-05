@@ -19,6 +19,7 @@ import {
   LogIn,
 } from 'lucide-react'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 
 interface CatalogItem {
   id: string
@@ -56,7 +57,8 @@ export default function SelfServiceKioskPage() {
   const params = useParams()
   const slug = (params?.slug as string) || ''
   const company = useCompanyOptional()
-  const isRestaurant = company?.businessType === 'restaurant'
+  // One mode per kiosk: a mall's kiosk follows its primary type (self-checkout unless it only runs a restaurant)
+  const isRestaurant = useBusinessScope().primary === 'restaurant' && !!company
   const currency = company?.currency || 'LKR'
 
   const [language, setLanguage] = useState<'en' | 'si' | 'ta'>('en')

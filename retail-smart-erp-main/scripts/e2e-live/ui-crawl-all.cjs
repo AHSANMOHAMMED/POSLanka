@@ -21,9 +21,9 @@ const { chromium } = createRequire(path.join(root, 'package.json'))('@playwright
 const BASE = (process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, '')
 const CONCURRENCY = Number(process.env.CONCURRENCY || 3)
 const PASSWORD = 'Crawl@12345'
-const ALL_TYPES = ['retail', 'supermarket', 'restaurant', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office', 'textile']
+const ALL_TYPES = ['retail', 'supermarket', 'restaurant', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office', 'textile', 'mall']
 const STAFF_ROLES = ['manager', 'cashier', 'system_manager', 'accounts_manager', 'sales_manager', 'purchase_manager', 'hr_manager', 'stock_manager', 'pos_user', 'report_user']
-const TYPE_ROLES = { restaurant: ['chef', 'waiter'], auto_service: ['technician'], dealership: ['dealer_sales'], electronics: ['technician'], textile: ['technician'], supermarket: STAFF_ROLES }
+const TYPE_ROLES = { restaurant: ['chef', 'waiter'], auto_service: ['technician'], dealership: ['dealer_sales'], electronics: ['technician'], textile: ['technician'], mall: ['chef', 'waiter', 'technician', 'cashier', 'manager'], supermarket: STAFF_ROLES }
 const types = (process.env.TYPES || ALL_TYPES.join(',')).split(',').filter(Boolean)
 const roleFilter = process.env.ROLES ? new Set(process.env.ROLES.split(',')) : null
 // Pages that are not part of a signed-in session or that sign the user out
@@ -122,7 +122,7 @@ async function pool(items, n, fn) {
     const slug = `crawl-${type.replace('_', '')}-${uid}`
     const v = await api('POST', '/api/sys-control/vendors', {
       name: `Crawl ${type} ${uid}`, slug, email: `${slug}@example.test`, phone: '+94771234567', address: 'Colombo',
-      businessType: type, plan: 'trial', country: 'LK', currency: 'LKR', ownerName: `Crawl Owner ${type}`, ownerPassword: PASSWORD,
+      businessType: type, ...(type === 'mall' ? { businessSegments: ['supermarket', 'retail', 'textile', 'electronics', 'hardware', 'pharmacy', 'restaurant', 'print_studio', 'office', 'auto_service', 'dealership'] } : {}), plan: 'trial', country: 'LK', currency: 'LKR', ownerName: `Crawl Owner ${type}`, ownerPassword: PASSWORD,
     }, adminCookie)
     if (v.status !== 200) { console.log(`FAIL create vendor ${type}: ${v.status} ${JSON.stringify(v.data)}`); report.runs.push({ type, error: `create vendor ${v.status}` }); continue }
     const vendorId = v.data.vendor.id

@@ -1,5 +1,6 @@
 // Service jobs (drizzle/0193): labels, colours and per-type defaults. Client-safe.
 import { getTerms } from '@/lib/terminology'
+import { type BusinessScope, primaryBusinessType } from '@/lib/business-types/scope'
 
 export const SERVICE_JOB_STATUSES = ['received', 'diagnosing', 'awaiting_approval', 'in_progress', 'ready', 'delivered', 'cancelled'] as const
 export type ServiceJobStatusKey = (typeof SERVICE_JOB_STATUSES)[number]
@@ -50,14 +51,16 @@ export const PAYMENT_METHOD_LABELS: Record<string, string> = {
 export const LINE_TYPE_LABELS: Record<string, string> = { part: 'Part', labour: 'Labour', other: 'Other' }
 
 /** The job kind a business type works with (its job cards look like that by default). */
-export function jobKindForBusinessType(businessType?: string | null): ServiceJobKind {
-  if (businessType === 'textile') return 'tailoring'
-  if (businessType === 'office') return 'service'
+export function jobKindForBusinessType(businessType?: BusinessScope): ServiceJobKind {
+  // A mall: the job kind of its primary type (the job form lets the user pick another)
+  const type = primaryBusinessType(businessType)
+  if (type === 'textile') return 'tailoring'
+  if (type === 'office') return 'service'
   return 'repair'
 }
 
 /** Module / document words for the business type (terminology.ts, with fallbacks). */
-export function serviceJobTerms(businessType?: string | null): { one: string; many: string } {
+export function serviceJobTerms(businessType?: BusinessScope): { one: string; many: string } {
   const t = getTerms(businessType)
   return { one: t.serviceJob || 'Service Job', many: t.serviceJobs || 'Service Jobs' }
 }

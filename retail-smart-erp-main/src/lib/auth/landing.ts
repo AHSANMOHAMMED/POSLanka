@@ -1,25 +1,29 @@
 /**
  * Where a signed-in staff member lands, by role (and business type). Client-safe (no DB).
  * Cashiers go straight to the till, kitchen staff to the kitchen screen, stock staff to items …
- * Owners and managers open the dashboard.
+ * Owners and managers open the dashboard. A mall (several business types) lands a role on the
+ * page of whichever of its types uses that role (chef → kitchen when it runs a food court).
  */
-export function landingPathForRole(role: string | null | undefined, businessType?: string | null): string {
+import { type BusinessScope, hasBusinessType } from '@/lib/business-types/scope'
+
+export function landingPathForRole(role: string | null | undefined, businessType?: BusinessScope): string {
+  const runs = (t: string | readonly string[]) => hasBusinessType(businessType, t)
   switch (role) {
     case 'cashier':
     case 'pos_user':
       return '/pos'
     case 'waiter':
-      return businessType === 'restaurant' ? '/restaurant/orders' : '/pos'
+      return runs('restaurant') ? '/restaurant/orders' : '/pos'
     case 'chef':
-      return businessType === 'restaurant' ? '/restaurant/kitchen' : '/dashboard'
+      return runs('restaurant') ? '/restaurant/kitchen' : '/dashboard'
     case 'technician':
-      if (businessType === 'auto_service' || businessType === 'dealership') return '/work-orders'
+      if (runs(['auto_service', 'dealership'])) return '/work-orders'
       // repair technicians / tailors open their job list (service jobs, 0193)
-      if (businessType === 'electronics' || businessType === 'textile') return '/service-jobs'
-      if (businessType === 'print_studio') return '/print-jobs'
+      if (runs(['electronics', 'textile'])) return '/service-jobs'
+      if (runs('print_studio')) return '/print-jobs'
       return '/dashboard'
     case 'dealer_sales':
-      return businessType === 'dealership' ? '/dealership/sales' : '/pos'
+      return runs('dealership') ? '/dealership/sales' : '/pos'
     case 'stock_manager':
       return '/items'
     case 'purchase_manager':

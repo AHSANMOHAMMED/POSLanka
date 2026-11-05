@@ -58,7 +58,7 @@ export interface PendingCompanyData {
   email: string | null
   phone: string | null
   address: string | null
-  businessType: 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'dealership' | 'pharmacy' | 'electronics' | 'hardware' | 'print_studio' | 'office' | 'textile'
+  businessType: 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'dealership' | 'pharmacy' | 'electronics' | 'hardware' | 'print_studio' | 'office' | 'textile' | 'mall'
   country: string
   dateFormat: string
   timeFormat: string

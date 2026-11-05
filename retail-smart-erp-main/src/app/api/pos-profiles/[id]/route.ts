@@ -12,6 +12,7 @@ import { updatePosProfileSchema } from '@/lib/validation/schemas/pos'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
+import { clearsField, counterSegmentError } from '@/lib/business-types/counter-segment'
 
 // GET a single POS profile
 export async function GET(
@@ -84,8 +85,13 @@ export async function PUT(
     const paramsParsed = validateParams(await params, idParamSchema)
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
+    const rawBody = await request.clone().json().catch(() => null)
     const parsed = await validateBody(request, updatePosProfileSchema)
     if (!parsed.success) return parsed.response
+    // Mall counters: shop type this till works as (null / '' clears it)
+    const clearSegment = clearsField(rawBody, 'businessSegment')
+    const segmentError = await counterSegmentError(session.user.tenantId, parsed.data.businessSegment)
+    if (segmentError) return NextResponse.json({ error: segmentError, field: 'businessSegment' }, { status: 400 })
 
     return await withTenant(session.user.tenantId, async (db) => {
       // Check if profile exists
@@ -175,6 +181,8 @@ export async function PUT(
       if (defaultPaymentMethod !== undefined) updateData.defaultPaymentMethod = defaultPaymentMethod
       if (allowCreditSale !== undefined) updateData.allowCreditSale = allowCreditSale
       if (status !== undefined) updateData.status = status
+      if (clearSegment) updateData.businessSegment = null
+      else if (parsed.data.businessSegment) updateData.businessSegment = parsed.data.businessSegment
 
       // Update main profile
       await db.update(posProfiles)

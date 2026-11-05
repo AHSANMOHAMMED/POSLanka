@@ -1,6 +1,9 @@
 // Signed-in user for screens + the tab bar. Reads the stored user instantly and refreshes the
-// server-effective permissions on focus (at most every 30 s) so an owner's role change shows quickly.
+// server-effective permissions on focus (at most every 30 s) so an owner's role change shows quickly,
+// and again whenever the app comes back to the foreground (a super admin may have changed the business
+// type / mall segments meanwhile).
 import { useCallback, useEffect, useState } from 'react'
+import { AppState } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import { getUser, refreshPermissions, type AuthUser } from './api'
 
@@ -21,6 +24,18 @@ export async function reloadSessionUser(force = false): Promise<AuthUser | null>
   return u
 }
 
+// One app-wide listener (not one per mounted hook): back in the foreground → refresh at once
+let foregroundWatched = false
+function watchForeground() {
+  if (foregroundWatched) return
+  foregroundWatched = true
+  AppState.addEventListener('change', (state) => {
+    if (state === 'active' && listeners.size > 0 && Date.now() - lastRefresh > 5_000) {
+      reloadSessionUser(true).catch(() => undefined)
+    }
+  })
+}
+
 /** undefined while loading, null when signed out. */
 export function useSessionUser(): { user: AuthUser | null | undefined; reload: (force?: boolean) => Promise<AuthUser | null> } {
   const [user, setUser] = useState<AuthUser | null | undefined>(undefined)
@@ -34,6 +49,7 @@ export function useSessionUser(): { user: AuthUser | null | undefined; reload: (
       if (alive) setUser(u)
     }
     listeners.add(l)
+    watchForeground()
     return () => {
       alive = false
       listeners.delete(l)

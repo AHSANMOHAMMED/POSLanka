@@ -36,6 +36,7 @@ import {
   printTemplateDocumentTypes,
 } from './seed-data'
 import type { ServiceGroupSeed } from './seed-data'
+import { type BusinessScope, hasBusinessType } from '@/lib/business-types/scope'
 import { seedCountryTaxTemplates } from './seed-tax-templates'
 
 export interface WarehouseInput {
@@ -153,7 +154,7 @@ export async function createSeedData(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
   tenantId: string,
-  businessType: string,
+  businessType: BusinessScope,
   data: SetupWizardData,
   tenantCurrency?: string,
   ownerUserId?: string
@@ -230,12 +231,12 @@ export async function createSeedData(
   }
 
   // 6. Business-type specific setup
-  if (businessType === 'restaurant' && data.numberOfTables) {
+  if (hasBusinessType(businessType, 'restaurant') && data.numberOfTables) {
     const clampedTables = Math.min(Math.max(1, data.numberOfTables), 200)
     await createRestaurantTables(tx, tenantId, clampedTables, data.tableAreas || ['Main Hall'], defaultWarehouse?.id || null)
   }
 
-  if (businessType === 'auto_service') {
+  if (hasBusinessType(businessType, 'auto_service')) {
     if (data.selectedServiceGroups) {
       await createAutoServiceTypes(tx, tenantId, data.selectedServiceGroups, data.defaultLaborRate)
     }
@@ -243,8 +244,9 @@ export async function createSeedData(
     await seedAutoServiceDefaults(tx, tenantId)
   }
 
-  if (businessType === 'dealership') {
-    // Dealerships also need vehicle types + service center defaults
+  if (hasBusinessType(businessType, 'dealership') && !hasBusinessType(businessType, 'auto_service')) {
+    // Dealerships also need vehicle types + service center defaults (already seeded above for a
+    // mall that also runs auto service)
     await seedDealershipDefaults(tx, tenantId)
     // If service groups selected during setup, create service types
     if (data.selectedServiceGroups && data.selectedServiceGroups.length > 0) {
@@ -777,12 +779,15 @@ export async function createMinimalDefaults(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
   tenantId: string,
-  businessType?: string,
+  businessType?: BusinessScope,
   tenantCurrency?: string,
   ownerUserId?: string
 ) {
   const tenantInfo = await tx.query.tenants.findFirst({ where: eq(tenants.id, tenantId) })
-  const bType = businessType || tenantInfo?.businessType || 'retail'
+  // A mall's segments come from the tenant row when only the type string is passed
+  const bType: BusinessScope = businessType && typeof businessType !== 'string'
+    ? businessType
+    : { businessType: businessType || tenantInfo?.businessType || 'retail', businessSegments: tenantInfo?.businessSegments ?? null }
   const currency = tenantCurrency || tenantInfo?.currency || 'LKR'
 
   await tx.update(tenants).set({
@@ -868,7 +873,7 @@ async function seedChartOfAccounts(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
   tenantId: string,
-  businessType: string,
+  businessType: BusinessScope,
   currency: string,
   accountOverrides?: Record<string, string>,
   coaTemplate?: 'numbered' | 'unnumbered'
@@ -981,7 +986,7 @@ async function seedCancellationReasons(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tx: any,
   tenantId: string,
-  businessType: string
+  businessType: BusinessScope
 ) {
   const reasonSeeds = getCancellationReasonsForBusinessType(businessType)
   for (const seed of reasonSeeds) {

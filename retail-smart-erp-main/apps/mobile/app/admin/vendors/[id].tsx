@@ -6,7 +6,8 @@ import { getPublicWebBase } from '../../../src/lib/api'
 import { THEME, formatLKR } from '../../../src/lib/theme'
 import { ErrorView, InlineNotice, LoadingView } from '../../../src/components/StateViews'
 import { AdminVendorStaff, type AdminStaffRow } from '../../../src/components/admin/AdminVendorStaff'
-import { AdminShell, Card, Kpi, ListRow, Pill, SectionTitle, adminStyles, businessTypeLabel, compactLKR, statusTone, timeAgo } from '../../../src/components/admin/AdminShell'
+import { AdminShell, Card, Kpi, ListRow, Pill, SectionTitle, SegmentChips, adminStyles, businessTypeLabel, compactLKR, statusTone, timeAgo } from '../../../src/components/admin/AdminShell'
+import { ChangeBusinessTypeModal, describeTypeChanges } from '../../../src/components/admin/ChangeBusinessTypeModal'
 
 /** Feature catalogue from the server (GET /api/sys-control/vendors/[id] → featureDefs) */
 interface FeatureDef { key: string; label: string; description: string; group: string; applies: boolean }
@@ -19,6 +20,9 @@ interface VendorDetail {
   phone?: string | null
   address?: string | null
   businessType: string
+  /** Mall only: the business types it runs */
+  businessSegments?: string[] | null
+  businessId?: string | null
   country?: string | null
   currency?: string | null
   status: string
@@ -31,6 +35,21 @@ interface VendorDetail {
   subscription?: { status: string; currentPeriodEnd?: string | null; trialEndsAt?: string | null; tier?: { name: string } | null } | null
   branches: Array<{ id: string; name: string; isActive?: boolean }>
   counters: Array<{ id: string; name: string; status?: string | null }>
+}
+
+/** GET vendors/[id] `segmentTypes` → chip options (accepts [{value|type|key, label}] or { type: label }). */
+function segmentOptionsFrom(raw: unknown): Array<{ value: string; label: string }> | null {
+  if (Array.isArray(raw)) {
+    const list = raw
+      .map((r: any) => (typeof r === 'string' ? { value: r, label: businessTypeLabel(r) } : { value: String(r?.value ?? r?.type ?? r?.key ?? ''), label: String(r?.label ?? businessTypeLabel(r?.value ?? r?.type ?? r?.key)) }))
+      .filter((o) => o.value)
+    return list.length ? list : null
+  }
+  if (raw && typeof raw === 'object') {
+    const list = Object.entries(raw as Record<string, unknown>).map(([value, label]) => ({ value, label: typeof label === 'string' ? label : businessTypeLabel(value) }))
+    return list.length ? list : null
+  }
+  return null
 }
 
 interface RangeTotals {
@@ -55,6 +74,8 @@ export default function AdminVendorDetailScreen() {
   const [staff, setStaff] = useState<AdminStaffRow[]>([])
   const [roles, setRoles] = useState<string[]>([])
   const [featureDefs, setFeatureDefs] = useState<FeatureDef[]>([])
+  const [segmentOptions, setSegmentOptions] = useState<Array<{ value: string; label: string }> | null>(null)
+  const [typeOpen, setTypeOpen] = useState(false)
   const [showOtherFeatures, setShowOtherFeatures] = useState(false)
   const [analytics, setAnalytics] = useState<VendorAnalytics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -75,11 +96,13 @@ export default function AdminVendorDetailScreen() {
       setError(null)
       setNotice(null)
       const [vRes, aRes] = await Promise.all([
-        adminGet<{ vendor: VendorDetail; staff: AdminStaffRow[]; assignableRoles?: string[]; featureDefs?: FeatureDef[] }>(`/api/sys-control/vendors/${id}`),
+        adminGet<{ vendor: VendorDetail; staff: AdminStaffRow[]; assignableRoles?: string[]; featureDefs?: FeatureDef[]; businessSegments?: string[] | null; segmentTypes?: unknown }>(`/api/sys-control/vendors/${id}`),
         adminGet<VendorAnalytics>(`/api/sys-control/analytics/vendors/${id}`),
       ])
       if (vRes.ok) {
-        setVendor(vRes.data.vendor)
+        const v = vRes.data.vendor
+        setVendor(v.businessSegments === undefined && vRes.data.businessSegments !== undefined ? { ...v, businessSegments: vRes.data.businessSegments } : v)
+        setSegmentOptions(segmentOptionsFrom(vRes.data.segmentTypes ?? (v as any).segmentTypes))
         setStaff(vRes.data.staff || [])
         setRoles(vRes.data.assignableRoles || [])
         setFeatureDefs(vRes.data.featureDefs || [])
@@ -218,6 +241,7 @@ export default function AdminVendorDetailScreen() {
               {vendor.plan ? <Pill text={vendor.plan} tone="primary" /> : null}
               {vendor.subscription ? <Pill text={`sub: ${vendor.subscription.status}${vendor.subscription.tier?.name ? ` · ${vendor.subscription.tier.name}` : ''}`} tone={statusTone(vendor.subscription.status)} /> : null}
             </View>
+            <SegmentChips businessType={vendor.businessType} segments={vendor.businessSegments} />
             <Text style={[adminStyles.muted, { marginTop: 8 }]}>
               {vendor.userCount} users • {vendor.branches.length} branches • {vendor.counters.length} counters • since {new Date(vendor.createdAt).toLocaleDateString()}
             </Text>
@@ -258,6 +282,9 @@ export default function AdminVendorDetailScreen() {
                 ) : null}
                 {canManage ? (
                   <>
+                    <Pressable style={adminStyles.ghostBtn} onPress={() => setTypeOpen(true)}>
+                      <Text style={adminStyles.ghostBtnText}>Change business type</Text>
+                    </Pressable>
                     <Pressable style={adminStyles.ghostBtn} onPress={() => runAction({ action: 'resend_welcome' })}>
                       <Text style={adminStyles.ghostBtnText}>Resend welcome</Text>
                     </Pressable>
@@ -438,6 +465,20 @@ export default function AdminVendorDetailScreen() {
           </View>
         </View>
       </Modal>
+      {vendor ? (
+        <ChangeBusinessTypeModal
+          visible={typeOpen}
+          vendor={vendor}
+          segmentOptions={segmentOptions}
+          onClose={() => setTypeOpen(false)}
+          onChanged={(v, changes) => {
+            setTypeOpen(false)
+            setVendor((prev) => (prev ? { ...prev, businessType: v.businessType, businessSegments: v.businessSegments } : prev))
+            Alert.alert('Business type changed', `${vendor.name} is now ${businessTypeLabel(v.businessType)}. All data and the Business ID were kept.\n\n${describeTypeChanges(changes)}`)
+            load(true)
+          }}
+        />
+      ) : null}
     </AdminShell>
   )
 }

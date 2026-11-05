@@ -1,5 +1,6 @@
 // Seed data constants for post-company-creation setup wizard
 // Business-type-specific defaults
+import { type BusinessScope, scopeTypes } from '@/lib/business-types/scope'
 
 export interface CategorySeed {
   name: string
@@ -255,7 +256,25 @@ export interface CancellationReasonSeed {
 
 const commonReasons = ['Customer request', 'Duplicate entry', 'Error in creation']
 
-export function getCancellationReasonsForBusinessType(businessType: string): CancellationReasonSeed[] {
+/**
+ * Cancellation reasons for a business type. A mall gets every reason of each type it runs
+ * (per document type, in order, without duplicates).
+ */
+export function getCancellationReasonsForBusinessType(scope: BusinessScope): CancellationReasonSeed[] {
+  const types = scopeTypes(scope)
+  if (types.length <= 1) return cancellationReasonsForOneType(types[0] ?? '')
+  const merged: CancellationReasonSeed[] = []
+  for (const t of types) {
+    for (const seed of cancellationReasonsForOneType(t)) {
+      const target = merged.find((m) => m.documentType === seed.documentType)
+      if (!target) merged.push({ documentType: seed.documentType, reasons: [...seed.reasons] })
+      else for (const r of seed.reasons) if (!target.reasons.includes(r)) target.reasons.push(r)
+    }
+  }
+  return merged
+}
+
+function cancellationReasonsForOneType(businessType: string): CancellationReasonSeed[] {
   const base: CancellationReasonSeed[] = [
     {
       documentType: 'purchase_order',
@@ -644,7 +663,24 @@ export const dealershipCategories: CategorySeed[] = [
   { name: 'Vehicle Accessories', selected: true },
 ]
 
-export function getCategoriesForBusinessType(businessType: string): CategorySeed[] {
+/** Category seeds for a business type; a mall gets those of every type it runs (by name, once). */
+export function getCategoriesForBusinessType(scope: BusinessScope): CategorySeed[] {
+  const types = scopeTypes(scope)
+  if (types.length <= 1) return categoriesForOneType(types[0] ?? '')
+  const seen = new Set<string>()
+  const merged: CategorySeed[] = []
+  for (const t of types) {
+    for (const c of categoriesForOneType(t)) {
+      const key = c.name.trim().toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(c)
+    }
+  }
+  return merged
+}
+
+function categoriesForOneType(businessType: string): CategorySeed[] {
   switch (businessType) {
     case 'retail':
       return retailCategories

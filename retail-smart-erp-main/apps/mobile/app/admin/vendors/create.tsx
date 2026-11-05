@@ -7,8 +7,10 @@ import { adminGet, adminPost, useAdminUser } from '../../../src/lib/adminApi'
 import { THEME } from '../../../src/lib/theme'
 import { ErrorView, LoadingView } from '../../../src/components/StateViews'
 import { AdminShell, Card, ListRow, Pill, SectionTitle, adminStyles, businessTypeLabel } from '../../../src/components/admin/AdminShell'
-import { Btn, Choice, Field, Notice, SwitchRow } from '../../../src/components/admin/AdminForm'
+import { Btn, Choice, Field, MultiChoice, Notice, SwitchRow } from '../../../src/components/admin/AdminForm'
 import { BILLING_CYCLES, BUSINESS_TYPES, alertIfFailed, fmtMoney, pickList, type BillingCycle } from '../../../src/lib/adminForms'
+import { DEFAULT_MALL_SEGMENTS, MALL, SEGMENT_TYPES, cleanSegments } from '../../../src/lib/businessScope'
+import { MALL_DESCRIPTION } from '../../../src/lib/businessTypeLabels'
 
 interface Tier {
   id: string
@@ -52,6 +54,8 @@ export default function AdminVendorCreateScreen() {
   const [phone, setPhone] = useState('')
   const [address, setAddress] = useState('')
   const [businessType, setBusinessType] = useState<(typeof BUSINESS_TYPES)[number]>('retail')
+  /** Mall only: the business types it runs */
+  const [segments, setSegments] = useState<string[]>([...DEFAULT_MALL_SEGMENTS])
   const [slug, setSlug] = useState('')
   const [slugState, setSlugState] = useState<{ checking: boolean; available?: boolean; reason?: string }>({ checking: false })
   const [vatRegistered, setVatRegistered] = useState(false)
@@ -127,6 +131,7 @@ export default function AdminVendorCreateScreen() {
       if (slug.trim() && slugState.available === false) return slugState.reason || 'That web address is not available.'
       if (slug.trim() && slugState.checking) return 'Still checking the web address…'
       if (vatRegistered && !taxId.trim()) return 'A VAT-registered business needs its TIN / VAT number.'
+      if (businessType === MALL && cleanSegments(segments).length === 0) return 'Tick at least one shop type the mall runs.'
     }
     if (s === 1) {
       if (!tierId) return 'Choose a plan.'
@@ -161,6 +166,7 @@ export default function AdminVendorCreateScreen() {
       phone: phone.trim(),
       address: address.trim(),
       businessType,
+      ...(businessType === MALL ? { businessSegments: cleanSegments(segments) } : {}),
       billingCycle: cycle,
       vatRegistered,
     }
@@ -242,6 +248,12 @@ export default function AdminVendorCreateScreen() {
             <Field label="Phone *" value={phone} onChangeText={setPhone} placeholder="+94 77 123 4567" keyboardType="phone-pad" />
             <Field label="Address *" value={address} onChangeText={setAddress} placeholder="12 Galle Road, Colombo 03" multiline autoCapitalize="sentences" />
             <Choice label="Business type" value={businessType} onChange={(v) => setBusinessType(v)} options={BUSINESS_TYPES.map((t) => ({ value: t, label: businessTypeLabel(t) }))} />
+            {businessType === MALL ? (
+              <>
+                <Text style={adminStyles.muted}>{MALL_DESCRIPTION}. Tick every kind of shop it runs; it gets the menus and features of all of them.</Text>
+                <MultiChoice label="Shop types in this mall *" values={segments} onChange={setSegments} options={SEGMENT_TYPES.map((t) => ({ value: t, label: businessTypeLabel(t) }))} />
+              </>
+            ) : null}
             <Field
               label="Web address (optional)"
               value={slug}
@@ -307,6 +319,7 @@ export default function AdminVendorCreateScreen() {
             <SectionTitle>Review</SectionTitle>
             <Card>
               <ListRow title={name.trim()} subtitle={`${businessTypeLabel(businessType)} · ${phone.trim()}`} />
+              {businessType === MALL ? <ListRow title="Shop types" subtitle={cleanSegments(segments).map(businessTypeLabel).join(', ')} /> : null}
               <ListRow title="Address" subtitle={address.trim()} />
               <ListRow title="Web address" subtitle={slug.trim() || 'Generated from the name'} />
               <ListRow title="Plan" subtitle={`${tier?.displayName || '—'} · ${cycle} · ${tier ? cyclePrice(tier, cycle) : ''}`} />

@@ -2,21 +2,22 @@
 // Defines sidebar links per module, with route-to-module mapping
 import { getTerms } from '@/lib/terminology'
 import { hasPermission, type Permission } from '@/lib/auth/roles'
+import { hasBusinessType, primaryBusinessType, scopeTypes, type BusinessScope } from '@/lib/business-types/scope'
 
 /**
  * Returns true if the business type supports service center operations
  * (work orders, appointments, service types, vehicles, insurance estimates).
  */
-export function isServiceCapable(businessType?: string): boolean {
-  return businessType === 'auto_service' || businessType === 'dealership'
+export function isServiceCapable(businessType?: BusinessScope): boolean {
+  return hasBusinessType(businessType, ['auto_service', 'dealership'])
 }
 
 /** Shops selling goods over a counter: retail (clothing, footwear, bags, stationery, fancy …),
  * supermarket, pharmacy, electronics & appliances, hardware, print / photo studios and textile shops share the
  * store features (departments, scales, velocity, category sales, variants). */
 export const STORE_BUSINESS_TYPES = ['retail', 'supermarket', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'textile'] as const
-export function isStoreBusiness(businessType?: string | null): boolean {
-  return !!businessType && (STORE_BUSINESS_TYPES as readonly string[]).includes(businessType)
+export function isStoreBusiness(businessType?: BusinessScope): boolean {
+  return hasBusinessType(businessType, STORE_BUSINESS_TYPES)
 }
 
 export interface SidebarItem {
@@ -324,13 +325,14 @@ export function isDetailPage(pathname: string): boolean {
 /**
  * Given a pathname like /c/my-company/items or /items, returns the module key (e.g. 'stock')
  */
-export function getModuleFromPathname(pathname: string, businessType?: string): string | null {
+export function getModuleFromPathname(pathname: string, businessType?: BusinessScope): string | null {
   const relativePath = getRelativePath(pathname)
 
   for (const [route, moduleKey] of ROUTE_MODULE_MAP) {
     if (relativePath === route || relativePath.startsWith(route + '/')) {
       // Dealership users accessing auto-service routes should stay in dealership module
-      if (moduleKey === 'auto-service' && businessType === 'dealership') {
+      // (a mall running both keeps the Auto Service module)
+      if (moduleKey === 'auto-service' && hasBusinessType(businessType, 'dealership') && !hasBusinessType(businessType, 'auto_service')) {
         return 'dealership'
       }
       return moduleKey
@@ -930,15 +932,15 @@ const LABEL_OVERRIDES: Record<string, string> = {
  */
 export function isModuleTabVisible(
   tab: ModuleTab,
-  businessType?: string,
+  businessType?: BusinessScope,
   role?: string,
   isModuleEnabled?: (moduleKey: string, role?: string) => boolean,
   /** Server-effective permission check (custom roles, overrides); defaults to role defaults */
   can?: (permission: Permission) => boolean,
 ): boolean {
-  if (tab.autoServiceOnly && businessType !== 'auto_service') return false
-  if (tab.dealershipOnly && businessType !== 'dealership') return false
-  if (tab.restaurantOnly && businessType !== 'restaurant') return false
+  if (tab.autoServiceOnly && !hasBusinessType(businessType, 'auto_service')) return false
+  if (tab.dealershipOnly && !hasBusinessType(businessType, 'dealership')) return false
+  if (tab.restaurantOnly && !hasBusinessType(businessType, 'restaurant')) return false
   const check = can || ((p: Permission) => !!role && hasPermission(role, p))
   if (tab.permission && role && !check(tab.permission)
     && !(tab.altPermissions || []).some((p) => check(p))) return false
@@ -964,7 +966,8 @@ export function getModuleTabHref(tab: ModuleTab, role?: string, can?: (permissio
  */
 export function getModuleSidebar(
   moduleKey: string,
-  businessType?: string,
+  /** A business type or scope (a mall gets the union of its segments' links, de-duplicated) */
+  businessType?: BusinessScope,
   role?: string,
   isModuleEnabled?: (moduleKey: string, role?: string) => boolean,
   can?: (permission: Permission) => boolean,
@@ -979,10 +982,14 @@ export function getModuleSidebar(
 
   const isAutoServiceCapable = isServiceCapable(businessType)
   const isStore = isStoreBusiness(businessType)
-  const isPharmacy = businessType === 'pharmacy'
-  const isRestaurant = businessType === 'restaurant'
-  const isDealership = businessType === 'dealership'
-  const t = getTerms(businessType)
+  const isPharmacy = hasBusinessType(businessType, 'pharmacy')
+  const isRestaurant = hasBusinessType(businessType, 'restaurant')
+  const isDealership = hasBusinessType(businessType, 'dealership')
+  const t = getTerms(primaryBusinessType(businessType))
+  // A mall can qualify for the same link twice (Work Orders for auto service + dealership,
+  // Warranty Tracker for auto service + electronics): keep the first. Single-type vendors are untouched.
+  const multi = scopeTypes(businessType).length > 1
+  const seen = new Set<string>()
 
   return sections
     .map((section) => ({
@@ -994,8 +1001,12 @@ export function getModuleSidebar(
           if (item.pharmacyOnly && !isPharmacy) return false
           if (item.restaurantOnly && !isRestaurant) return false
           if (item.dealershipOnly && !isDealership) return false
-          if (item.businessTypes && !(businessType && item.businessTypes.includes(businessType))) return false
+          if (item.businessTypes && !hasBusinessType(businessType, item.businessTypes)) return false
           if (item.permission && role && !check(item.permission)) return false
+          if (multi) {
+            if (seen.has(item.href)) return false
+            seen.add(item.href)
+          }
           return true
         })
         .map((item) => {

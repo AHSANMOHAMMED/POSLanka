@@ -57,6 +57,8 @@ export interface AuthUser {
   tenantSlug: string
   tenantName: string
   businessType?: string | null
+  /** Mall only: the business types it runs (src/lib/businessScope.ts); null for other vendors. */
+  businessSegments?: string[] | null
   /** Vendor Business ID (e.g. PL985633) — what staff type at sign-in. */
   businessId?: string | null
   customRoleId?: string | null
@@ -193,6 +195,9 @@ interface EffectivePermissionsResponse {
   customRoleId?: string | null
   customRoleName?: string | null
   businessId?: string | null
+  /** Sent by servers with the mall business type; older servers omit both. */
+  businessType?: string | null
+  businessSegments?: string[] | null
 }
 
 /**
@@ -214,6 +219,9 @@ export async function refreshPermissions(): Promise<AuthUser | null> {
     customRoleId: res.data.customRoleId !== undefined ? res.data.customRoleId : current.customRoleId,
     customRoleName: res.data.customRoleName !== undefined ? res.data.customRoleName : current.customRoleName,
     businessId: res.data.businessId || current.businessId,
+    // A super admin may change the business type (e.g. supermarket → mall) while signed in
+    businessType: res.data.businessType || current.businessType,
+    businessSegments: res.data.businessSegments !== undefined ? res.data.businessSegments : current.businessSegments,
   }
   await setUser(next)
   return next

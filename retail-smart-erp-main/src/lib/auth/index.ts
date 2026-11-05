@@ -176,6 +176,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             tenantSlug: tenant.slug,
             tenantName: tenant.name,
             businessType: tenant.businessType,
+            businessSegments: tenant.businessSegments ?? null,
             aiEnabled: tenant.aiEnabled,
             isSuperAdmin: user.isSuperAdmin,
             isOwner: user.role === 'owner',
@@ -323,6 +324,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             tenantSlug: tenant.slug,
             tenantName: tenant.name,
             businessType: tenant.businessType,
+            businessSegments: tenant.businessSegments ?? null,
             aiEnabled: tenant.aiEnabled,
             isSuperAdmin: user.isSuperAdmin || false,
             isOwner: membership.isOwner,
@@ -389,6 +391,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             tenantSlug: tenant.slug,
             tenantName: tenant.name,
             businessType: tenant.businessType,
+            businessSegments: tenant.businessSegments ?? null,
             aiEnabled: tenant.aiEnabled,
             isSuperAdmin: false,
             isOwner: true,
@@ -465,6 +468,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.tenantSlug = user.tenantSlug
         token.tenantName = user.tenantName
         token.businessType = user.businessType
+        token.businessSegments = user.businessSegments ?? null
         token.aiEnabled = user.aiEnabled
         token.isSuperAdmin = user.isSuperAdmin
         token.isOwner = user.isOwner
@@ -503,6 +507,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (cached) {
         token.logoUrl = cached.logoUrl
         token.aiEnabled = cached.aiEnabled
+        // A super admin may change the business type (e.g. supermarket → mall); follow it
+        if (cached.businessType) {
+          token.businessType = cached.businessType
+          token.businessSegments = cached.businessSegments ?? null
+        }
         token.invalid = false
       } else if (cacheKey && !user && token.tenantId && token.id) {
         const now = Date.now()
@@ -513,7 +522,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
               eq(tenants.id, token.tenantId as string),
               eq(tenants.status, 'active')
             ),
-            columns: { id: true, logoUrl: true, aiEnabled: true },
+            columns: { id: true, logoUrl: true, aiEnabled: true, businessType: true, businessSegments: true },
           })
 
           if (!tenant) {
@@ -544,12 +553,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
           token.logoUrl = tenant.logoUrl || undefined
           token.aiEnabled = tenant.aiEnabled
+          token.businessType = tenant.businessType
+          token.businessSegments = tenant.businessSegments ?? null
           token.invalid = false
 
           setSessionValidation(cacheKey, {
             validatedAt: now,
             logoUrl: tenant.logoUrl || undefined,
             aiEnabled: tenant.aiEnabled,
+            businessType: tenant.businessType,
+            businessSegments: tenant.businessSegments ?? null,
           })
         } catch (error) {
           console.error('[JWT] Session validation DB error (keeping session):', error)
@@ -560,6 +573,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (trigger === 'update' && session) {
         if (session.businessType !== undefined) {
           token.businessType = session.businessType
+        }
+        if (session.businessSegments !== undefined) {
+          token.businessSegments = session.businessSegments
         }
         if (session.tenantName !== undefined) {
           token.tenantName = session.tenantName
@@ -581,6 +597,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           session.user.tenantSlug = ''
           session.user.tenantName = ''
           session.user.businessType = ''
+          session.user.businessSegments = null
           session.user.isSuperAdmin = false
           session.user.isOwner = false
           session.user.aiEnabled = false
@@ -596,6 +613,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         session.user.tenantSlug = (token.tenantSlug || '') as string
         session.user.tenantName = (token.tenantName || '') as string
         session.user.businessType = (token.businessType || '') as string
+        session.user.businessSegments = (token.businessSegments ?? null) as string[] | null
         session.user.isSuperAdmin = token.isSuperAdmin as boolean
         session.user.isOwner = token.isOwner as boolean
         session.user.aiEnabled = token.aiEnabled as boolean
@@ -632,6 +650,8 @@ declare module 'next-auth' {
     tenantSlug: string
     tenantName: string
     businessType: string
+    /** 'mall' only: the business types it runs (src/lib/business-types/scope.ts) */
+    businessSegments?: string[] | null
     aiEnabled: boolean
     isSuperAdmin: boolean
     isOwner: boolean
@@ -656,6 +676,7 @@ declare module 'next-auth' {
       tenantSlug: string
       tenantName: string
       businessType: string
+      businessSegments?: string[] | null
       aiEnabled: boolean
       isSuperAdmin: boolean
       isOwner: boolean
@@ -679,6 +700,8 @@ declare module 'next-auth' {
     tenantSlug: string
     tenantName: string
     businessType: string
+    /** 'mall' only: the business types it runs (src/lib/business-types/scope.ts) */
+    businessSegments?: string[] | null
     aiEnabled: boolean
     isSuperAdmin: boolean
     isOwner: boolean
@@ -707,6 +730,8 @@ export interface CompanySession {
     tenantSlug: string
     tenantName: string
     businessType: string
+    /** 'mall' only: the business types it runs (src/lib/business-types/scope.ts) */
+    businessSegments?: string[] | null
     aiEnabled: boolean
     isSuperAdmin: boolean
     isOwner: boolean
@@ -762,6 +787,7 @@ export async function authWithCompany(): Promise<CompanySession | null> {
         tenantSlug: string
         tenantName: string
         businessType?: string
+        businessSegments?: string[] | null
         aiEnabled?: boolean
         accountId?: string | null
         customRoleId?: string | null
@@ -780,14 +806,16 @@ export async function authWithCompany(): Promise<CompanySession | null> {
 
       // Prefer live tenant fields when available
       let businessType = payload.businessType || 'retail'
+      let businessSegments: string[] | null = payload.businessSegments ?? null
       let aiEnabled = Boolean(payload.aiEnabled)
       try {
         const tenant = await db.query.tenants.findFirst({
           where: eq(tenants.id, payload.tenantId),
-          columns: { businessType: true, aiEnabled: true, status: true },
+          columns: { businessType: true, businessSegments: true, aiEnabled: true, status: true },
         })
         if (!tenant || tenant.status !== 'active') return null
         businessType = tenant.businessType
+        businessSegments = tenant.businessSegments ?? null
         aiEnabled = tenant.aiEnabled
       } catch {
         // keep token claims
@@ -818,6 +846,7 @@ export async function authWithCompany(): Promise<CompanySession | null> {
           tenantSlug: payload.tenantSlug,
           tenantName: payload.tenantName,
           businessType,
+          businessSegments,
           aiEnabled,
           isSuperAdmin: false,
           isOwner: payload.role === 'owner',

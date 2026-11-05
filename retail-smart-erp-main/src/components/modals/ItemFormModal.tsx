@@ -14,6 +14,7 @@ import { Package, Tag, DollarSign, Boxes, Truck, Ruler, Leaf, Snowflake, Pill, L
 import { Pagination } from '@/components/ui/pagination'
 import { useTerminology, useSmartWarnings } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { SmartWarningBanner } from '@/components/ai/SmartWarningBanner'
 import { VehicleMakeModal } from './VehicleMakeModal'
 import { VehicleModelModal } from './VehicleModelModal'
@@ -134,15 +135,24 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
   const t = useTerminology()
   const company = useCompanyOptional()
   const businessType = company?.businessType
-  const isAutoService = businessType === 'auto_service' || businessType === 'dealership'
-  const isRestaurant = businessType === 'restaurant'
-  const isPharmacy = businessType === 'pharmacy'
+  // A mall gets the fields / tabs of every business type it runs
+  const scope = useBusinessScope()
+  const runs = (type: string | readonly string[]) => !!businessType && scope.has(type)
+  const isAutoService = runs(['auto_service', 'dealership'])
+  const isRestaurant = runs('restaurant')
+  const isPharmacy = runs('pharmacy')
+  // New items are batch & expiry tracked by default in a pharmacy (not in a mall's other departments)
+  const batchesByDefault = isPharmacy && scope.types.length === 1
   // Printing & photo studio: size pricing (per sq ft / running ft) is shown open by default
-  const isPrintStudio = businessType === 'print_studio'
+  const isPrintStudio = !!businessType && scope.primary === 'print_studio'
   const [showSizePricing, setShowSizePricing] = useState(isPrintStudio)
   const variantsOn = useFeatureFlag('variants')
   // Freshness tab (PLU, shelf life, storage temperature, expiry): supermarket and pharmacy
-  const isSupermarket = businessType === 'supermarket' || isPharmacy
+  const isSupermarket = runs('supermarket') || isPharmacy
+  // Warranty months: vehicle businesses; a mall also for its electronics department
+  const showWarranty = isAutoService || !businessType || (scope.isMall && runs('electronics'))
+  const variantTypes = ['retail', 'supermarket', 'pharmacy', 'textile', 'hardware']
+  const variantsApply = runs(variantTypes)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const priceWarnings = useSmartWarnings('price_change')
@@ -195,7 +205,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
     unit: 'pcs',
     trackStock: true,
     productType: 'stockable' as ProductType,
-    trackBatches: isPharmacy, // pharmacy stock is batch & expiry tracked
+    trackBatches: batchesByDefault, // pharmacy stock is batch & expiry tracked
     trackSerialNumbers: false,
     // New item only: opening stock + reorder level in the default branch (POST /api/items books it through the stock ledger)
     openingStock: '',
@@ -443,7 +453,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       unit: 'pcs',
       trackStock: true,
       productType: 'stockable' as ProductType,
-      trackBatches: isPharmacy,
+      trackBatches: batchesByDefault,
       trackSerialNumbers: false,
       openingStock: '',
       minStock: '',
@@ -579,7 +589,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       base.push({ key: 'freshness', label: isPharmacy ? 'Storage & Expiry' : 'Freshness', icon: <Snowflake size={16} /> })
     }
     // Size / colour variants: shops, for a saved main product (not a variant itself)
-    if (editItem && !editItem.parentItemId && variantsOn && ['retail', 'supermarket', 'pharmacy', 'textile', 'hardware'].includes(businessType || '')) {
+    if (editItem && !editItem.parentItemId && variantsOn && variantsApply) {
       base.push({ key: 'variants', label: 'Variants', icon: <Layers size={16} /> })
     }
     if (editItem) {
@@ -587,7 +597,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       base.push({ key: 'history', label: 'History', icon: <Clock size={16} /> })
     }
     return base
-  }, [isAutoService, isRestaurant, isSupermarket, isPharmacy, businessType, editItem, variantsOn])
+  }, [isAutoService, isRestaurant, isSupermarket, isPharmacy, businessType, editItem, variantsOn, variantsApply])
 
   function handleClose() {
     resetForm()
@@ -976,7 +986,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                       </FormSelect>
                     </div>
                   )}
-                  {(isAutoService || !businessType) && (
+                  {showWarranty && (
                     <div>
                       <FormLabel>Warranty (Months)</FormLabel>
                       <FormInput

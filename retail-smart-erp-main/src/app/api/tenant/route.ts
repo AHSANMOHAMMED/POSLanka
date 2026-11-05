@@ -30,6 +30,7 @@ export async function GET(request?: Request) {
           // Permanent vendor identifier staff type at sign-in (read-only)
           businessId: true,
           businessType: true,
+          businessSegments: true,
           currency: true,
           country: true,
           taxRate: true,
@@ -94,7 +95,13 @@ export async function PUT(request: NextRequest) {
     const updateData: Record<string, any> = { updatedAt: new Date() }
 
     if (businessType !== undefined) {
+      // A mall (and the shop types it runs) is set up by the platform team
+      // (PUT /api/sys-control/vendors/[id]/business-type), not from the shop's own settings
+      if (businessType === 'mall' && session.user.businessType !== 'mall') {
+        return NextResponse.json({ error: 'Ask the skyERPOS team to change your business to a mall / multi-shop', field: 'businessType' }, { status: 400 })
+      }
       updateData.businessType = businessType
+      if (businessType !== 'mall') updateData.businessSegments = null
     }
 
     if (timezone !== undefined) {

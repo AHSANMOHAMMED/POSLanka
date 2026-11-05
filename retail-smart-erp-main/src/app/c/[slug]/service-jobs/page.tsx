@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Plus, RefreshCw, Search, Zap, Clock, AlertTriangle, ShieldCheck, User } from 'lucide-react'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { useCurrency } from '@/hooks'
-import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope, serviceJobBusinessType } from '@/hooks/useBusinessScope'
 import { Pagination } from '@/components/ui/pagination'
 import { WarrantyCheckPanel } from '@/components/service-jobs/WarrantyCheckPanel'
 import {
@@ -55,7 +55,8 @@ export default function ServiceJobsPage() {
   const slug = params.slug as string
   const searchParams = useSearchParams()
   const { fCurrency } = useCurrency()
-  const { businessType } = useCompany()
+  // A mall uses the words of its service-job department (electronics repairs, tailoring …)
+  const businessType = serviceJobBusinessType(useBusinessScope())
   const terms = serviceJobTerms(businessType)
   const kind = jobKindForBusinessType(businessType)
 

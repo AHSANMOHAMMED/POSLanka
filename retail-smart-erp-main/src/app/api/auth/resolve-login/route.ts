@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
       if (!tenant || tenant.status !== 'active') return fail()
       const user = await withTenant(tenant.id, (tdb) => findLoginUser(tdb, tenant, login, { activeOnly: true }))
       if (!user || !(await bcrypt.compare(password, user.passwordHash))) return fail()
-      return ok({ kind: 'staff', slug: tenant.slug, name: tenant.name, landing: landingPathForRole(user.role, tenant.businessType) })
+      return ok({ kind: 'staff', slug: tenant.slug, name: tenant.name, landing: landingPathForRole(user.role, tenant) })
     }
 
     if (!login.includes('@')) {
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
 
     // 3. Staff login by email across shops (only shops where the password matches)
     const rows = await withoutTenant((tdb) => tdb
-      .select({ hash: users.passwordHash, role: users.role, slug: tenants.slug, name: tenants.name, businessType: tenants.businessType })
+      .select({ hash: users.passwordHash, role: users.role, slug: tenants.slug, name: tenants.name, businessType: tenants.businessType, businessSegments: tenants.businessSegments })
       .from(users)
       .innerJoin(tenants, eq(tenants.id, users.tenantId))
       .where(and(sql`lower(${users.email}) = ${login}`, eq(users.isActive, true), eq(tenants.status, 'active')))
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
     if (matches.length === 0) return accountOk ? ok({ kind: 'owner' }) : fail()
     if (matches.length === 1) {
       const m = matches[0]
-      return ok({ kind: 'staff', slug: m.slug, name: m.name, landing: landingPathForRole(m.role, m.businessType) })
+      return ok({ kind: 'staff', slug: m.slug, name: m.name, landing: landingPathForRole(m.role, m) })
     }
     return ok({ kind: 'choose', companies: matches.map((m) => ({ slug: m.slug, name: m.name })) })
   } catch (error) {

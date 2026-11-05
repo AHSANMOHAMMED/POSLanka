@@ -6,9 +6,11 @@ import { Layout, Tag, ShoppingCart, UtensilsCrossed, Car, Circle, ArrowLeft } fr
 import { LABEL_PRESETS, type LabelPreset } from '@/lib/labels/presets'
 import { LabelPreview } from './LabelPreview'
 import { StickerRollPreview } from './StickerRollPreview'
+import { scopeTypes, type BusinessScope } from '@/lib/business-types/scope'
 
 interface TemplatePresetPickerProps {
-  businessType?: string
+  /** A business type or scope (a mall sees the presets of every type it runs) */
+  businessType?: BusinessScope
   tenantSlug?: string
   onSelect: (preset: LabelPreset) => void
   onSkip: () => void
@@ -27,8 +29,9 @@ export function TemplatePresetPicker({ businessType, tenantSlug, onSelect, onSki
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
   // Filter presets by business type, show all if none specified
-  const relevantPresets = businessType
-    ? LABEL_PRESETS.filter(p => p.businessTypes.includes(businessType) || p.businessTypes.includes('all'))
+  const types = scopeTypes(businessType)
+  const relevantPresets = types.length
+    ? LABEL_PRESETS.filter(p => p.businessTypes.some((t) => types.includes(t)) || p.businessTypes.includes('all'))
     : LABEL_PRESETS
 
   const selectedPreset = relevantPresets.find(p => p.id === selectedId)

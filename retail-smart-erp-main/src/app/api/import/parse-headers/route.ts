@@ -5,6 +5,7 @@ import { parseCsv, parseXlsx, mapColumns, getMappedImportFields } from '@/lib/im
 import { logError } from '@/lib/ai/error-logger'
 import { requirePermission, type Permission } from '@/lib/auth/roles'
 import { readFormData } from '@/lib/api/form-data'
+import { importBusinessScope } from '@/lib/import-export/entity-config'
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
     const permError = requirePermission(session, entityConfig.permission as Permission)
     if (permError) return permError
 
-    const businessType = session.user.businessType || undefined
+    const businessType = importBusinessScope(session.user)
 
     // Parse file to get headers
     let rawRows: Record<string, string>[]

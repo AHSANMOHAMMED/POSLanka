@@ -165,7 +165,7 @@ export async function createSalesInvoice(opts: {
  */
 export async function systemSessionFor(tenantId: string, preferredUserId?: string | null): Promise<CompanySession | null> {
   const row = await withoutTenant(async (db) => {
-    const [t] = await db.select({ id: tenants.id, slug: tenants.slug, name: tenants.name, businessType: tenants.businessType, status: tenants.status })
+    const [t] = await db.select({ id: tenants.id, slug: tenants.slug, name: tenants.name, businessType: tenants.businessType, businessSegments: tenants.businessSegments, status: tenants.status })
       .from(tenants).where(eq(tenants.id, tenantId)).limit(1)
     if (!t || t.status !== 'active') return null
     const candidates = await db.select({ id: users.id, accountId: users.accountId, email: users.email, fullName: users.fullName, role: users.role, customRoleId: users.customRoleId })
@@ -193,7 +193,7 @@ export async function systemSessionFor(tenantId: string, preferredUserId?: strin
     user: {
       id: row.u.id, accountId: row.u.accountId ?? null, email: row.u.email, name: row.u.fullName || row.u.email,
       role: row.u.role, customRoleId: row.u.customRoleId, tenantId, tenantSlug: row.t.slug, tenantName: row.t.name,
-      businessType: row.t.businessType, aiEnabled: false, isSuperAdmin: false, isOwner: row.u.role === 'owner', mode: 'company',
+      businessType: row.t.businessType, businessSegments: row.t.businessSegments ?? null, aiEnabled: false, isSuperAdmin: false, isOwner: row.u.role === 'owner', mode: 'company',
     },
   }
 }

@@ -8,6 +8,7 @@
  */
 import { sql } from 'drizzle-orm'
 import type { TenantDb } from '@/lib/db/tenant-context'
+import { type BusinessScope, scopeTypes } from '@/lib/business-types/scope'
 
 function rowsOf<T>(res: unknown): T[] {
   return ((res as { rows?: T[] }).rows) || (Array.isArray(res) ? (res as T[]) : [])
@@ -64,20 +65,27 @@ export const BUSINESS_TYPE_UNITS: Record<string, Array<{ code: string; name: str
 }
 
 /** The units a new tenant of this business type starts with. */
-export function defaultUnitsFor(businessType?: string | null): Array<{ code: string; name: string; allowFraction: boolean }> {
-  const extra = (businessType && BUSINESS_TYPE_UNITS[businessType]) || []
+export function defaultUnitsFor(businessType?: BusinessScope): Array<{ code: string; name: string; allowFraction: boolean }> {
+  // A mall starts with the units of every type it runs
+  const extra = scopeTypes(businessType).flatMap((t) => BUSINESS_TYPE_UNITS[t] || [])
   const seen = new Set(DEFAULT_UNITS.map((u) => u.code))
-  return [...DEFAULT_UNITS, ...extra.filter((u) => !seen.has(u.code))]
+  const out = [...DEFAULT_UNITS]
+  for (const u of extra) {
+    if (seen.has(u.code)) continue
+    seen.add(u.code)
+    out.push(u)
+  }
+  return out
 }
 
 /** Seed the default units for a tenant that has none yet (tenants created after drizzle/0161). */
-export async function ensureDefaultUnits(db: TenantDb, tenantId: string, businessType?: string | null): Promise<void> {
+export async function ensureDefaultUnits(db: TenantDb, tenantId: string, businessType?: BusinessScope): Promise<void> {
   const [{ c }] = rowsOf<{ c: number }>(await db.execute(sql`SELECT count(*)::int AS c FROM units WHERE tenant_id = ${tenantId}::uuid`))
   if (c > 0) return
-  let bt = businessType ?? null
+  let bt: BusinessScope = businessType ?? null
   if (!bt) {
-    const [t] = rowsOf<{ bt: string | null }>(await db.execute(sql`SELECT business_type::text AS bt FROM tenants WHERE id = ${tenantId}::uuid`))
-    bt = t?.bt ?? null
+    const [t] = rowsOf<{ bt: string | null; segs: string[] | null }>(await db.execute(sql`SELECT business_type::text AS bt, business_segments AS segs FROM tenants WHERE id = ${tenantId}::uuid`))
+    bt = t ? { businessType: t.bt, businessSegments: t.segs } : null
   }
   await db.execute(sql`
     INSERT INTO units (tenant_id, code, name, allow_fraction)

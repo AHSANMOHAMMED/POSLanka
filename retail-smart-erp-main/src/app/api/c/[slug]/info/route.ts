@@ -22,6 +22,7 @@ export async function GET(
         id: true,
         name: true,
         businessType: true,
+        businessSegments: true,
         currency: true,
         country: true,
         taxRate: true,

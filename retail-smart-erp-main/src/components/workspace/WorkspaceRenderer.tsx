@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { RefreshCw, Settings2, Loader2 } from 'lucide-react'
 import { useRealtimeData, useModuleAccess } from '@/hooks'
-import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import type { WorkspaceConfig, WorkspaceBlock, MetricValues } from '@/lib/workspace/types'
 import { stripBasePathFromBlocks, toRelativeHref } from '@/lib/workspace/shortcut-catalog'
 import { HeadingBlock } from './blocks/HeadingBlock'
@@ -45,8 +45,7 @@ export function WorkspaceRenderer({ workspaceKey, renderSettingsContent }: Works
 
   // Business context for shortcut picker
   const { data: session } = useSession()
-  const company = useCompanyOptional()
-  const businessType = company?.businessType || session?.user?.businessType
+  const { scope: businessScope } = useBusinessScope()
   const role = session?.user?.role
   const { isModuleEnabled } = useModuleAccess()
 
@@ -312,7 +311,7 @@ export function WorkspaceRenderer({ workspaceKey, renderSettingsContent }: Works
           onClose={() => { setPickerOpen(false); setPickerBlockId(null) }}
           onSave={handlePickerSave}
           currentShortcuts={pickerCurrentShortcuts}
-          businessType={businessType}
+          businessType={businessScope}
           role={role}
           isModuleEnabled={isModuleEnabled}
         />

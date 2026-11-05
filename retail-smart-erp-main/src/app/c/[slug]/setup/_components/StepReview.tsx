@@ -4,14 +4,18 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { AlertCircle, FolderOpen, Users, Warehouse, Banknote, Calendar, FileText, Tag, Landmark, Info } from 'lucide-react'
 import type { SetupWizardData } from '@/lib/setup/create-seed-data'
+import { hasBusinessType } from '@/lib/business-types/scope'
+import { getBusinessScopeLabel } from '@/lib/constants/business-types'
 
 interface StepReviewProps {
   data: SetupWizardData
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   companyInfo: any
+  /** Mall only: the business types it runs */
+  businessSegments?: string[] | null
 }
 
-export function StepReview({ data, companyInfo }: StepReviewProps) {
+export function StepReview({ data, companyInfo, businessSegments }: StepReviewProps) {
   const [showDetails, setShowDetails] = useState<Record<string, boolean>>({})
 
   const toggleDetails = (section: string) => {
@@ -19,6 +23,10 @@ export function StepReview({ data, companyInfo }: StepReviewProps) {
   }
 
   const businessType = companyInfo?.businessType || 'retail'
+  const scope = { businessType, businessSegments }
+  const runsRestaurant = hasBusinessType(scope, 'restaurant')
+  const runsVehicles = hasBusinessType(scope, ['auto_service', 'dealership'])
+  const typeLabel = businessType === 'mall' ? getBusinessScopeLabel(businessType, businessSegments) : businessType.replace('_', ' ')
   const categoryCount = data.selectedCategories?.length || 0
   const costCenters = data.costCenters || []
   const defaultCostCenter = data.defaultCostCenter || costCenters[0] || ''
@@ -26,11 +34,11 @@ export function StepReview({ data, companyInfo }: StepReviewProps) {
   // Build categories summary based on business type
   const categorySummary = (() => {
     const parts: string[] = [`${categoryCount} categor${categoryCount !== 1 ? 'ies' : 'y'}`]
-    if (businessType === 'restaurant') {
+    if (runsRestaurant) {
       parts.push(`${data.numberOfTables || 10} tables`)
       if (data.tableAreas?.length) parts.push(`${data.tableAreas.length} area${data.tableAreas.length !== 1 ? 's' : ''}`)
     }
-    if ((businessType === 'auto_service' || businessType === 'dealership') && data.selectedServiceGroups?.length) {
+    if (runsVehicles && data.selectedServiceGroups?.length) {
       parts.push(`${data.selectedServiceGroups.length} service group${data.selectedServiceGroups.length !== 1 ? 's' : ''}`)
     }
     return parts.join(' • ')
@@ -42,7 +50,7 @@ export function StepReview({ data, companyInfo }: StepReviewProps) {
       key: 'company',
       title: 'Company Information',
       icon: <FolderOpen size={18} />,
-      summary: `${companyInfo?.name || 'Company'} • ${businessType.replace('_', ' ')} • ${data.logoUrl ? 'Logo uploaded' : 'No logo'}`,
+      summary: `${companyInfo?.name || 'Company'} • ${typeLabel} • ${data.logoUrl ? 'Logo uploaded' : 'No logo'}`,
       details: (
         <div className="space-y-2 text-sm">
           <div className="grid grid-cols-2 gap-2">
@@ -51,7 +59,7 @@ export function StepReview({ data, companyInfo }: StepReviewProps) {
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="text-gray-500">Business Type:</div>
-            <div className="font-medium capitalize">{businessType.replace('_', ' ')}</div>
+            <div className="font-medium capitalize">{typeLabel}</div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="text-gray-500">COA Template:</div>
@@ -90,7 +98,7 @@ export function StepReview({ data, companyInfo }: StepReviewProps) {
           )}
 
           {/* Restaurant-specific */}
-          {businessType === 'restaurant' && (
+          {runsRestaurant && (
             <>
               <div className="grid grid-cols-2 gap-2">
                 <div className="text-gray-500">Number of Tables:</div>
@@ -106,7 +114,7 @@ export function StepReview({ data, companyInfo }: StepReviewProps) {
           )}
 
           {/* Auto service / dealership */}
-          {(businessType === 'auto_service' || businessType === 'dealership') && (
+          {runsVehicles && (
             <>
               {data.selectedServiceGroups && data.selectedServiceGroups.length > 0 && (
                 <div>

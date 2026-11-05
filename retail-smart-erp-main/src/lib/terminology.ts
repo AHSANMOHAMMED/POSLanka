@@ -1,5 +1,6 @@
 // Central terminology mapping for business-type-specific labels
 // Each business type uses different terms for the same concepts
+import { type BusinessScope, isMall, primaryBusinessType } from '@/lib/business-types/scope'
 
 export interface TerminologyMap {
   // Items
@@ -342,9 +343,11 @@ const DEFAULT_TERMS = TERMINOLOGY.retail
 
 /**
  * Get terminology map for a given business type.
- * Falls back to retail terminology if business type is unknown.
+ * Falls back to retail terminology if business type is unknown. A mall (several types) uses the
+ * words of its primary type (src/lib/business-types/scope.ts).
  */
-export function getTerms(businessType?: string | null): TerminologyMap {
+export function getTerms(businessType?: BusinessScope): TerminologyMap {
   if (!businessType) return DEFAULT_TERMS
-  return TERMINOLOGY[businessType] || DEFAULT_TERMS
+  const type = typeof businessType === 'string' && !isMall(businessType) ? businessType : primaryBusinessType(businessType)
+  return TERMINOLOGY[type] || DEFAULT_TERMS
 }

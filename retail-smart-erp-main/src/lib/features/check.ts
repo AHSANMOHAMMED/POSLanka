@@ -34,10 +34,10 @@ export async function getTenantEffectiveFeatureFlags(
 ): Promise<FeatureFlagsMap> {
   const tenant = await db.query.tenants.findFirst({
     where: eq(tenants.id, tenantId),
-    columns: { settings: true, businessType: true },
+    columns: { settings: true, businessType: true, businessSegments: true },
   })
   const settings = (tenant?.settings || {}) as TenantSettings
-  return effectiveFeatureFlags(settings.featureFlags, tenant?.businessType)
+  return effectiveFeatureFlags(settings.featureFlags, tenant ? { businessType: tenant.businessType, businessSegments: tenant.businessSegments } : null)
 }
 
 export async function requireTenantFeature(

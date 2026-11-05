@@ -16,6 +16,7 @@ import { MessageInput } from './MessageInput'
 import { NewChatModal } from './NewChatModal'
 import { cn } from '@/lib/utils'
 import { sharedJson, whenIdle } from '@/lib/client/shared-fetch'
+import { primaryBusinessType } from '@/lib/business-types/scope'
 
 // ─── AI Markdown Renderer ────────────────────────────────────────────
 
@@ -169,7 +170,8 @@ export function ChatHub() {
   // Derived
   const userId = session?.user?.id || ''
   const tenantSlug = (session?.user as { tenantSlug?: string })?.tenantSlug || ''
-  const businessType = (session?.user as { businessType?: string })?.businessType || 'retail'
+  // A mall's suggestions follow its primary type
+  const businessType = primaryBusinessType({ businessType: session?.user?.businessType, businessSegments: session?.user?.businessSegments }) || 'retail'
   const slugPrefix = tenantSlug ? `/c/${tenantSlug}` : ''
   const totalUnreadCount = chatStore.totalUnreadCount
   const isChatPage = pathname?.includes('/chat')

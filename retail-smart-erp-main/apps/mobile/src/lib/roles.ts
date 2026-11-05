@@ -4,6 +4,7 @@
 // GET /api/role-permissions/effective — custom roles, tenant overrides and module access
 // applied) those win; this table is only the fallback for sessions from older servers.
 import type { AuthUser } from './api'
+import { scopeTypes, type BusinessScope } from './businessScope'
 
 export const ROLE_PERMISSIONS = {
   createSales: ['owner', 'manager', 'cashier', 'waiter', 'sales_manager', 'dealer_sales', 'pos_user'],
@@ -112,10 +113,13 @@ const BUSINESS_TYPE_ROLES: Record<string, string[]> = {
   textile: ['technician'],
 }
 
-/** Roles the actor may assign to new staff (business-type aware, never owner), highest first. */
-export function assignableRoles(actorRole: string, businessType?: string | null): string[] {
+/**
+ * Roles the actor may assign to new staff (business-type aware, never owner), highest first.
+ * `scope` is the vendor's type or the signed-in user (a mall gets the roles of all its segments).
+ */
+export function assignableRoles(actorRole: string, scope?: BusinessScope): string[] {
   const specific = new Set(Object.values(BUSINESS_TYPE_ROLES).flat())
-  const allowed = new Set(BUSINESS_TYPE_ROLES[businessType || ''] || [])
+  const allowed = new Set(scopeTypes(scope).flatMap((t) => BUSINESS_TYPE_ROLES[t] || []))
   return Object.keys(ROLE_HIERARCHY)
     .filter((r) => r !== 'owner')
     .filter((r) => !specific.has(r) || allowed.has(r))

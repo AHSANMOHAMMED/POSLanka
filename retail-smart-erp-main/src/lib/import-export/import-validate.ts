@@ -1,6 +1,7 @@
 // Validate phase of a bulk import (NO writes).
 // Shared by the preview endpoint, the execute endpoint and tests so that the
 // preview shows exactly what the runner will do.
+import type { ImportBusinessScope } from './entity-config'
 
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import * as schema from '@/lib/db/schema'
@@ -38,7 +39,7 @@ export interface ValidateImportParams {
   columnMapping: Record<string, string>
   mode: ImportMode
   options?: ImportValidationOptions
-  businessType?: string
+  businessType?: ImportBusinessScope
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

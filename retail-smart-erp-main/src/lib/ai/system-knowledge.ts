@@ -1462,7 +1462,7 @@ export const COMMON_WORKFLOWS: WorkflowEntry[] = [
     name: 'Setting Up a New Company',
     steps: [
       'Register for an account at the registration page.',
-      'Enter your company name, business type (retail, restaurant, supermarket, pharmacy, auto_service, dealership, electronics, hardware, print_studio, office, textile), and other details.',
+      'Enter your company name, business type (retail, restaurant, supermarket, pharmacy, auto_service, dealership, electronics, hardware, print_studio, office, textile, mall — a mall / multi-shop runs several of these types in one business), and other details.',
       'Complete email verification.',
       'Log in to your new company workspace.',
       'Go to Settings to configure company details, currency, and logo.',
@@ -1661,7 +1661,8 @@ function canAccessPage(page: PageEntry, userRole?: string): boolean {
 function isApplicableBusinessType(page: PageEntry, businessType?: string): boolean {
   if (!page.businessTypes || page.businessTypes.length === 0) return true
   if (!businessType) return true // If no business type specified, don't filter
-  return page.businessTypes.includes(businessType)
+  // A mall passes the shop types it runs as a comma list ('supermarket,textile,restaurant')
+  return businessType.split(',').some((t) => page.businessTypes!.includes(t.trim()))
 }
 
 /**
@@ -1773,7 +1774,7 @@ export function getSystemKnowledgeCatalog(): string {
     '- searchWorkflows(query) - Find step-by-step workflow instructions.',
     '- getAccessiblePages(businessType, userRole) - Get all pages a user can access.',
     '',
-    'Business types: retail, restaurant, supermarket, pharmacy, auto_service, dealership, electronics (appliances & phones: hire purchase, deliveries, warranty claims), hardware, print_studio (print & photo job orders), office (HR & attendance, service tickets), textile (clothing & fabric by the metre, size / colour variants, tailoring & alteration orders). Service jobs (/service-jobs): repair jobs for electronics (device, serial / IMEI, warranty check), tailoring orders for textile, service tickets for office — estimate, advance, parts & labour, ready SMS, convert to invoice, job card print.',
+    'Business types: mall (mall / multi-shop: several of the following types in one business — the super admin ticks which; menus, features and roles of every included type; a food-court counter (POS profile shop type restaurant) opens the restaurant till), retail, restaurant, supermarket, pharmacy, auto_service, dealership, electronics (appliances & phones: hire purchase, deliveries, warranty claims), hardware, print_studio (print & photo job orders), office (HR & attendance, service tickets), textile (clothing & fabric by the metre, size / colour variants, tailoring & alteration orders). Service jobs (/service-jobs): repair jobs for electronics (device, serial / IMEI, warranty check), tailoring orders for textile, service tickets for office — estimate, advance, parts & labour, ready SMS, convert to invoice, job card print.',
     'User roles: owner, manager, cashier, technician, chef, waiter, system_manager, accounts_manager, sales_manager, purchase_manager, hr_manager, stock_manager, pos_user, report_user',
     '',
     'Use these functions to answer questions like:',

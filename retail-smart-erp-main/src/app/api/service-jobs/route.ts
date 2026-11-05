@@ -185,7 +185,7 @@ export async function POST(request: NextRequest) {
       // Repairs: was the unit sold here and is it still under the shop's warranty?
       const imei = normalizeImei(body.imei).slice(0, 20) || null
       const imei2 = normalizeImei(body.imei2).slice(0, 20) || null
-      const jobType = body.jobType || jobKindForBusinessType(session.user.businessType)
+      const jobType = body.jobType || jobKindForBusinessType(session.user)
       const lookupTerm = imei || body.serialNumber || imei2
       const warranty = jobType === 'repair' && lookupTerm ? await checkServiceWarranty(db, tenantId, lookupTerm, await getBranchScope(session, db)) : null
 

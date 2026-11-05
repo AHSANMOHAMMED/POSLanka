@@ -7,6 +7,7 @@
  * - Supermarket: Barcode | Name | PLU Code (or SKU)
  * - Restaurant: Name only (menu items)
  */
+import { type BusinessScope, primaryBusinessType } from '@/lib/business-types/scope'
 
 export interface ItemDisplayFields {
   name: string
@@ -21,9 +22,10 @@ export interface ItemDisplayFields {
  */
 export function getItemPartNumber(
   item: Pick<ItemDisplayFields, 'oemPartNumber' | 'sku' | 'pluCode'>,
-  businessType?: string | null
+  businessType?: BusinessScope
 ): string | null {
-  switch (businessType) {
+  // A mall shows items the way its primary type does
+  switch (primaryBusinessType(businessType)) {
     case 'auto_service':
     case 'dealership':
       return item.oemPartNumber || item.sku || null
@@ -44,9 +46,9 @@ export function getItemPartNumber(
  */
 export function formatItemLabel(
   item: ItemDisplayFields,
-  businessType?: string | null
+  businessType?: BusinessScope
 ): string {
-  if (businessType === 'restaurant') {
+  if (primaryBusinessType(businessType) === 'restaurant') {
     return item.name
   }
 

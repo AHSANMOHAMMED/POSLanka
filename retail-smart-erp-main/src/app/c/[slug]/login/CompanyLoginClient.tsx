@@ -144,7 +144,7 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
     try {
       const res = await fetch('/api/auth/session')
       const data = res.ok ? await res.json() : null
-      landing = requestedPath || landingPathForRole(data?.user?.role, data?.user?.businessType ?? company.businessType)
+      landing = requestedPath || landingPathForRole(data?.user?.role, data?.user?.businessType ? { businessType: data.user.businessType, businessSegments: data.user.businessSegments } : company.businessType)
     } catch {
       // keep the dashboard
     }
@@ -181,7 +181,7 @@ function LoginForm({ slug, company }: { slug: string; company: CompanyInfo }) {
         const data = res.ok ? await res.json() : null
         if (cancelled) return
         if (data?.user?.tenantSlug === slug && !isExplicitLogout) {
-          router.replace(`/c/${slug}${requestedPath || landingPathForRole(data.user.role, data.user.businessType ?? company.businessType)}`)
+          router.replace(`/c/${slug}${requestedPath || landingPathForRole(data.user.role, data.user.businessType ? { businessType: data.user.businessType, businessSegments: data.user.businessSegments } : company.businessType)}`)
           return
         }
         if (isExplicitLogout) return

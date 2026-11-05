@@ -1,7 +1,8 @@
 // Central registry defining how each entity exports/imports
 // Adapted from ERPNext's Data Import/Export pattern
+import { type BusinessScope, hasBusinessType, isMall, scopeTypes } from '@/lib/business-types/scope'
 
-export type BusinessType = 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'pharmacy' | 'dealership' | 'electronics' | 'hardware' | 'print_studio' | 'office' | 'textile'
+export type BusinessType = 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'pharmacy' | 'dealership' | 'electronics' | 'hardware' | 'print_studio' | 'office' | 'textile' | 'mall'
 
 export interface EntityFieldConfig {
   key: string              // DB column name (camelCase)
@@ -560,20 +561,35 @@ export function getExportableEntities(): EntityConfig[] {
   return Object.values(ENTITY_CONFIGS)
 }
 
+/**
+ * The business type(s) import / export filter fields by: the type string for an ordinary vendor,
+ * the list of shop types for a mall (it gets the fields of every type it runs).
+ */
+export type ImportBusinessScope = string | string[]
+export function importBusinessScope(user: { businessType?: string | null; businessSegments?: readonly string[] | null }): ImportBusinessScope | undefined {
+  if (!user.businessType) return undefined
+  return isMall(user.businessType) ? scopeTypes(user) : user.businessType
+}
+
+/** Is a type-scoped field shown for this scope? (no scope = every field) */
+function fieldInScope(f: EntityFieldConfig, businessType?: BusinessScope): boolean {
+  if (!f.businessTypes) return true
+  const types = scopeTypes(businessType)
+  return types.length === 0 || hasBusinessType(types, f.businessTypes)
+}
+
 // Get export fields (excludes importOnly fields)
-export function getExportFields(config: EntityConfig, businessType?: string): EntityFieldConfig[] {
+export function getExportFields(config: EntityConfig, businessType?: BusinessScope): EntityFieldConfig[] {
   return config.fields.filter(f => {
     if (f.importOnly) return false
-    if (businessType && f.businessTypes && !f.businessTypes.includes(businessType as BusinessType)) return false
-    return true
+    return fieldInScope(f, businessType)
   })
 }
 
 // Get import fields (excludes exportOnly fields)
-export function getImportFields(config: EntityConfig, businessType?: string): EntityFieldConfig[] {
+export function getImportFields(config: EntityConfig, businessType?: BusinessScope): EntityFieldConfig[] {
   return config.fields.filter(f => {
     if (f.exportOnly) return false
-    if (businessType && f.businessTypes && !f.businessTypes.includes(businessType as BusinessType)) return false
-    return true
+    return fieldInScope(f, businessType)
   })
 }

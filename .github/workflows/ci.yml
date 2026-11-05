@@ -120,6 +120,7 @@ jobs:
           npx tsx scripts/tests/l18-document-print.ts
           npx tsx scripts/tests/l13-split-tenders.ts
           npx tsx scripts/tests/l16-mobile-pay.ts
+          npx tsx scripts/tests/o2-mall-menus.ts
 
       - name: Staff accounts
         run: npx tsx scripts/tests/w1-staff.ts
@@ -199,6 +200,7 @@ jobs:
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l17-admin-business.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l14-item-create.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/n1-service-jobs.ts
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/o1-mall.ts
 
   build:
     name: Production build

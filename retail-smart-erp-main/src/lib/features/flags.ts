@@ -13,6 +13,8 @@
  * Client-safe: no server imports.
  */
 
+import { type BusinessScope, hasBusinessType, scopeTypes } from '@/lib/business-types/scope'
+
 export const FEATURE_FLAGS = [
   // Sales & POS
   'credit_customer',
@@ -299,19 +301,28 @@ export const BUSINESS_TYPE_FEATURE_PRESETS: Record<string, Partial<FeatureFlagsM
   },
 }
 
-/** The switches a new vendor of this business type starts with (defaults + the type's preset). */
-export function defaultFeatureFlagsForBusinessType(businessType: string | null | undefined): FeatureFlagsMap {
-  return { ...DEFAULT_VENDOR_FEATURE_FLAGS, ...((businessType && BUSINESS_TYPE_FEATURE_PRESETS[businessType]) || {}) }
+/**
+ * The switches a new vendor of this business type starts with (defaults + the type's preset).
+ * A mall runs several types: a switch starts off only when it is off for ALL of its segments.
+ */
+export function defaultFeatureFlagsForBusinessType(scope: BusinessScope): FeatureFlagsMap {
+  const types = scopeTypes(scope)
+  if (types.length <= 1) {
+    const businessType = types[0]
+    return { ...DEFAULT_VENDOR_FEATURE_FLAGS, ...((businessType && BUSINESS_TYPE_FEATURE_PRESETS[businessType]) || {}) }
+  }
+  const presets = types.map((t) => defaultFeatureFlagsForBusinessType(t))
+  return Object.fromEntries(FEATURE_FLAGS.map((k) => [k, presets.some((p) => p[k])])) as FeatureFlagsMap
 }
 
 export function getFeatureDef(flag: FeatureFlag): FeatureDef | undefined {
   return DEF_BY_KEY.get(flag)
 }
 
-/** Does this switch matter to this type of business? */
-export function featureAppliesTo(flag: FeatureFlag, businessType: string | null | undefined): boolean {
+/** Does this switch matter to this type of business (a mall: to any of its segments)? */
+export function featureAppliesTo(flag: FeatureFlag, scope: BusinessScope): boolean {
   const types = DEF_BY_KEY.get(flag)?.businessTypes
-  return !types || !businessType || types.includes(businessType)
+  return !types || scopeTypes(scope).length === 0 || hasBusinessType(scope, types)
 }
 
 export function normalizeFeatureFlags(input?: Partial<Record<string, boolean>> | null): FeatureFlagsMap {
@@ -343,12 +354,12 @@ export function isTypeScopedFeature(flag: FeatureFlag): boolean {
  */
 export function effectiveFeatureFlags(
   input: Partial<Record<string, boolean>> | null | undefined,
-  businessType: string | null | undefined,
+  scope: BusinessScope,
 ): FeatureFlagsMap {
   const flags = normalizeFeatureFlags(input)
-  if (!businessType) return flags
+  if (scopeTypes(scope).length === 0) return flags
   for (const key of FEATURE_FLAGS) {
-    if (flags[key] && isTypeScopedFeature(key) && !featureAppliesTo(key, businessType)) flags[key] = false
+    if (flags[key] && isTypeScopedFeature(key) && !featureAppliesTo(key, scope)) flags[key] = false
   }
   return flags
 }

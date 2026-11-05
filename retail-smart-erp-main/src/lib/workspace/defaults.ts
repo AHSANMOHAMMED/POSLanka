@@ -2,9 +2,10 @@
 // These are used when a user hasn't customized their workspace yet
 
 import type { WorkspaceConfig, WorkspaceBlock } from './types'
+import { primaryBusinessType, scopeTypes, type BusinessScope } from '@/lib/business-types/scope'
 
 // Business-type-aware dashboard defaults
-function getDashboardBlocks(businessType?: string): WorkspaceBlock[] {
+function getDashboardBlocksForType(businessType?: string): WorkspaceBlock[] {
   const isAutoService = businessType === 'auto_service'
   const isDealership = businessType === 'dealership'
   const isBigTicket = businessType === 'electronics' || businessType === 'hardware'
@@ -132,7 +133,7 @@ function getDashboardBlocks(businessType?: string): WorkspaceBlock[] {
 }
 
 // Business-type-aware selling defaults
-function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
+function getSellingBlocksForType(businessType?: string): WorkspaceBlock[] {
   const isAutoService = businessType === 'auto_service'
   const isDealership = businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
@@ -403,7 +404,7 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
 }
 
 // Business-type-aware reports workspace defaults
-function getReportsBlocks(businessType?: string): WorkspaceBlock[] {
+function getReportsBlocksForType(businessType?: string): WorkspaceBlock[] {
   const isAutoService = businessType === 'auto_service'
   const isDealership = businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
@@ -495,6 +496,96 @@ function getReportsBlocks(businessType?: string): WorkspaceBlock[] {
   }
 
   return [...shortcuts, ...cards]
+}
+
+/** Identity of a block for de-duplication when several business types' defaults are merged. */
+function blockKey(b: WorkspaceBlock): string {
+  const d = b.data as Record<string, unknown>
+  switch (b.type) {
+    case 'number_card': return `nc:${d.metricKey}`
+    case 'chart': return `ch:${d.chartKey}`
+    case 'quick_list': return `ql:${d.listKey}`
+    case 'card': return `c:${d.title}`
+    default: return `${b.type}:${JSON.stringify(d)}`
+  }
+}
+
+const ID_PREFIX: Record<string, string> = { number_card: 'nc', shortcut: 's', chart: 'ch', quick_list: 'ql', card: 'c' }
+
+/**
+ * A mall's workspace: the union of its segments' default blocks, primary type first. Blocks are
+ * grouped by kind in the primary layout's order and de-duplicated (one shortcut row and one card
+ * per title, links merged by href); number cards every segment shares (cash control, low stock)
+ * move after the segment-specific ones.
+ */
+export function mergeWorkspaceBlocks(lists: WorkspaceBlock[][]): WorkspaceBlock[] {
+  if (lists.length <= 1) return lists[0] ?? []
+  const kindOrder: string[] = []
+  for (const list of lists) for (const b of list) if (!kindOrder.includes(b.type)) kindOrder.push(b.type)
+
+  const byKind = new Map<string, WorkspaceBlock[]>()
+  const index = new Map<string, WorkspaceBlock>()
+  const seenIn = new Map<string, number>()
+  for (const list of lists) {
+    const keysHere = new Set<string>()
+    for (const b of list) {
+      const group = byKind.get(b.type) ?? []
+      byKind.set(b.type, group)
+      if (b.type === 'shortcut') {
+        // One shortcut row: shortcuts merged by href
+        const first = group[0]
+        if (!first) { group.push({ ...b, data: { ...b.data, shortcuts: [...b.data.shortcuts] } }); continue }
+        if (first.type !== 'shortcut') continue
+        for (const sc of b.data.shortcuts) {
+          if (!first.data.shortcuts.some((x) => x.href === sc.href)) first.data.shortcuts.push(sc)
+        }
+        continue
+      }
+      const key = blockKey(b)
+      if (!keysHere.has(key)) { keysHere.add(key); seenIn.set(key, (seenIn.get(key) ?? 0) + 1) }
+      const existing = index.get(key)
+      if (!existing) {
+        const copy = (b.type === 'card' ? { ...b, data: { ...b.data, links: [...b.data.links] } } : b) as WorkspaceBlock
+        index.set(key, copy)
+        group.push(copy)
+      } else if (existing.type === 'card' && b.type === 'card') {
+        for (const link of b.data.links) {
+          if (!existing.data.links.some((x) => x.href === link.href)) existing.data.links.push(link)
+        }
+      }
+    }
+  }
+
+  const out: WorkspaceBlock[] = []
+  for (const kind of kindOrder) {
+    let group = byKind.get(kind) ?? []
+    if (kind === 'number_card') {
+      const common = (b: WorkspaceBlock) => seenIn.get(blockKey(b)) === lists.length
+      group = [...group.filter((b) => !common(b)), ...group.filter(common)]
+    }
+    group.forEach((b, i) => out.push({ ...b, id: `${ID_PREFIX[kind] ?? kind}${i + 1}` } as WorkspaceBlock))
+  }
+  return out
+}
+
+/** Single-type vendors get exactly their type's blocks; a mall the merged blocks of its types. */
+function blocksForScope(scope: BusinessScope | undefined, build: (businessType?: string) => WorkspaceBlock[]): WorkspaceBlock[] {
+  const types = scopeTypes(scope)
+  if (types.length <= 1) return build(types[0] ?? (typeof scope === 'string' ? scope : undefined))
+  const primary = primaryBusinessType(types)
+  return mergeWorkspaceBlocks([primary, ...types.filter((t) => t !== primary)].map((t) => build(t)))
+}
+
+function getDashboardBlocks(scope?: BusinessScope): WorkspaceBlock[] {
+  return blocksForScope(scope, getDashboardBlocksForType)
+}
+
+function getSellingBlocks(scope?: BusinessScope): WorkspaceBlock[] {
+  return blocksForScope(scope, getSellingBlocksForType)
+}
+
+function getReportsBlocks(scope?: BusinessScope): WorkspaceBlock[] {
+  return blocksForScope(scope, getReportsBlocksForType)
 }
 
 export const DEFAULT_WORKSPACES: Record<string, WorkspaceConfig> = {
@@ -661,7 +752,7 @@ export const DEFAULT_WORKSPACES: Record<string, WorkspaceConfig> = {
 /**
  * Get workspace config with business-type-aware defaults
  */
-export function getDefaultWorkspace(key: string, businessType?: string): WorkspaceConfig | null {
+export function getDefaultWorkspace(key: string, businessType?: BusinessScope): WorkspaceConfig | null {
   const config = DEFAULT_WORKSPACES[key]
   if (!config) return null
 

@@ -20,6 +20,9 @@ import { adminAuthError, validateAdminSession, adminAudit } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { createMinimalDefaults } from '@/lib/setup/create-seed-data'
+import { validateTypeChange } from '@/lib/business-types/change-type'
+import { segmentTypeOptions } from '@/lib/business-types/labels'
+import { ensureBusinessTypeSeedData } from '@/lib/business-types/ensure-seed'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import {
   DEFAULT_VENDOR_FEATURE_FLAGS,
@@ -77,6 +80,8 @@ export async function GET(request: NextRequest) {
       defaults: DEFAULT_VENDOR_FEATURE_FLAGS,
       /** Per business type differences from `defaults` applied when a vendor is created */
       typeDefaults: BUSINESS_TYPE_FEATURE_PRESETS,
+      /** Shop types a mall can run (create form); a mall starts with the union of their presets */
+      segmentTypes: segmentTypeOptions(),
     })
   } catch (error) {
     logError('api/sys-control/vendors', error)
@@ -142,6 +147,8 @@ const createVendorSchema = z
     ),
     email: z.preprocess((v) => (v === '' ? undefined : v), z.string().trim().email().max(255).optional()),
     businessType: z.enum(businessTypeEnum.enumValues).default('retail'),
+    /** 'mall' only (required there): the shop types it runs, e.g. ['supermarket', 'textile', 'restaurant'] */
+    businessSegments: z.array(z.string().max(30)).max(20).optional(),
     /** Pricing tier to start on (pricing_tiers.id). Falls back to `plan` (legacy) or the free tier. */
     tierId: z.string().uuid().optional(),
     billingCycle: z.enum(['monthly', 'yearly', 'lifetime']).default('monthly'),
@@ -182,6 +189,12 @@ export async function POST(request: NextRequest) {
       name, legalName, phone, address, businessType, tierId, billingCycle, plan, country, currency,
       brn, vatRegistered, featureFlags, ownerPassword, sendInvite,
     } = parsed.data
+    const typeCheck = validateTypeChange({ businessType, businessSegments: parsed.data.businessSegments }, businessTypeEnum.enumValues)
+    if (!typeCheck.ok) {
+      return NextResponse.json({ error: typeCheck.error, field: typeCheck.field }, { status: 400 })
+    }
+    const businessSegments = typeCheck.businessSegments
+    const scope = { businessType, businessSegments }
     const taxId = parsed.data.taxId || parsed.data.tin || null
     // tenants.email is NOT NULL: the business email, else the owner's, else empty
     const email = parsed.data.email || parsed.data.ownerEmail || ''
@@ -223,7 +236,7 @@ export async function POST(request: NextRequest) {
 
     // The business type's preset (electronics: installments, deliveries, warranty …; office: HR,
     // no counter extras), then any switches the admin set explicitly
-    const typeFlags = defaultFeatureFlagsForBusinessType(businessType)
+    const typeFlags = defaultFeatureFlagsForBusinessType(scope)
     const mergedFlags: FeatureFlagsMap = featureFlags
       ? {
           ...typeFlags,
@@ -300,6 +313,7 @@ export async function POST(request: NextRequest) {
           taxId,
           brn: brn || null,
           businessType,
+          businessSegments,
           plan: tierNameToPlan(tier.name),
           planExpiresAt: free ? null : planExpiryFor({ status: 'active', trialEndsAt: null, currentPeriodEnd: periodEnd }),
           country,
@@ -354,7 +368,9 @@ export async function POST(request: NextRequest) {
 
       // Default warehouse (MAIN, default) + default POS profile linked to it,
       // with the owner assigned via pos_profile_users. Also marks setup complete.
-      const defaults = await createMinimalDefaults(tx, tenant.id, businessType, currency, owner.id)
+      const defaults = await createMinimalDefaults(tx, tenant.id, scope, currency, owner.id)
+      // A mall starts with the category suggestions (and vehicle defaults) of every shop type it runs
+      if (businessSegments) await ensureBusinessTypeSeedData(tx, tenant.id, businessSegments)
 
       // VAT-registered → the country's standard VAT template becomes the default sales tax.
       // Not registered → no default tax (prices are charged without VAT).
@@ -407,6 +423,7 @@ export async function POST(request: NextRequest) {
       slug: result.tenant.slug,
       businessId: result.tenant.businessId,
       businessType,
+      businessSegments,
       tierId: tier.id,
       tier: tier.name,
       billingCycle,

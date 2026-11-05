@@ -53,7 +53,7 @@ export async function POST(_request: NextRequest) {
 
       // Seed chart of accounts from business-type-specific template
       const businessType = session!.user.businessType || 'retail'
-      const template = getChartOfAccountsForBusinessType(businessType)
+      const template = getChartOfAccountsForBusinessType({ businessType, businessSegments: session!.user.businessSegments })
       const accountNumberToId = new Map<string, string>()
 
       // Recursive function to insert accounts with correct parentId linkage

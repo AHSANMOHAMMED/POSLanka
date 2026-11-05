@@ -27,6 +27,8 @@ import { CopyButton, adminFetch, fmtBytes } from '@/components/admin/console-hel
 import { formatBusinessId } from '@/lib/tenant/business-id-format'
 import { cn } from '@/lib/utils'
 import { displayLogin } from '@/lib/users/display-login'
+import { MallSegmentPicker } from '@/components/admin/MallSegments'
+import { DEFAULT_MALL_SEGMENTS } from '@/lib/business-types/scope'
 
 interface Tier {
   id: string
@@ -101,6 +103,8 @@ function CreateVendorForm() {
   const [name, setName] = useState('')
   const [legalName, setLegalName] = useState('')
   const [businessType, setBusinessType] = useState('retail')
+  // Mall / multi-shop: the shop types it runs (at least one)
+  const [segments, setSegments] = useState<string[]>([...DEFAULT_MALL_SEGMENTS])
   const [slug, setSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
   const [slugState, setSlugState] = useState<SlugState>({ state: 'idle' })
@@ -173,6 +177,7 @@ function CreateVendorForm() {
       }
       if (email.trim() && !EMAIL_RE.test(email.trim())) e.email = 'Enter a valid email address.'
       if (vatRegistered && !taxId.trim()) e.taxId = 'A VAT-registered business needs its TIN / VAT number.'
+      if (businessType === 'mall' && segments.length === 0) e.segments = 'Tick at least one shop type.'
     }
     if (s === 1) {
       if (!tierId) e.tier = 'Choose a plan.'
@@ -211,6 +216,7 @@ function CreateVendorForm() {
           phone: phone.trim(),
           address: address.trim(),
           businessType,
+          ...(businessType === 'mall' ? { businessSegments: segments } : {}),
           brn: brn.trim() || undefined,
           taxId: taxId.trim() || undefined,
           vatRegistered,
@@ -363,6 +369,11 @@ function CreateVendorForm() {
                 {Object.entries(BUSINESS_TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </Select>
             </Field>
+            {businessType === 'mall' && (
+              <Field label="Shop types in this mall" required className="md:col-span-2" hint="Menus, features and roles of every ticked type. A counter can later be set to one of them (e.g. food court → Restaurant till).">
+                <MallSegmentPicker value={segments} onChange={setSegments} error={errors.segments} />
+              </Field>
+            )}
             <Field label="Web address" htmlFor="v-slug" error={errors.slug ?? (slugTouched && slugState.state === 'taken' ? slugState.reason : undefined)} hint={slugHint}>
               <Input
                 id="v-slug"
@@ -511,7 +522,7 @@ function CreateVendorForm() {
               items={[
                 { label: 'Business name', value: name },
                 { label: 'Legal name', value: legalName || '—' },
-                { label: 'Business type', value: businessTypeLabel(businessType) },
+                { label: 'Business type', value: businessType === 'mall' ? `${businessTypeLabel(businessType)} (${segments.map(businessTypeLabel).join(', ')})` : businessTypeLabel(businessType) },
                 { label: 'Web address', value: slug && SLUG_RE.test(slug) && (slugTouched || slugState.state !== 'taken') ? slug : 'Generated from the name' },
                 { label: 'Email', value: email || '—' },
                 { label: 'Phone', value: phone || '—' },

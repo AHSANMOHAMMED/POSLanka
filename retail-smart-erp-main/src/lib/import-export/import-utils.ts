@@ -1,6 +1,7 @@
 import type { EntityConfig, EntityFieldConfig, ImportMode } from './entity-config'
 import { getImportFields, stockColumnKey, isStockColumnKey, stockColumnField, CLEAR_TOKEN } from './entity-config'
 import Papa from 'papaparse'
+import type { ImportBusinessScope } from './entity-config'
 
 export interface ImportError {
   row: number
@@ -207,7 +208,7 @@ export async function parseXlsx(buffer: ArrayBuffer, maxRows: number = MAX_IMPOR
 export function mapColumns(
   rawHeaders: string[],
   config: EntityConfig,
-  businessType?: string
+  businessType?: ImportBusinessScope
 ): Record<string, string> {
   const importFields = getImportFields(config, businessType)
   const mapping: Record<string, string> = {}
@@ -260,7 +261,7 @@ export function mapColumns(
 export function getMappedImportFields(
   config: EntityConfig,
   columnMapping: Record<string, string>,
-  businessType?: string,
+  businessType?: ImportBusinessScope,
 ): EntityFieldConfig[] {
   const fields = getImportFields(config, businessType)
   if (config.name !== 'items') return fields
@@ -391,7 +392,7 @@ function startValidation(
   config: EntityConfig,
   columnMapping: Record<string, string>,
   mode: ImportMode,
-  businessType?: string,
+  businessType?: ImportBusinessScope,
 ) {
   const ctx: RowValidationContext = { importFields: getMappedImportFields(config, columnMapping, businessType), columnMapping, mode }
   const result: ValidationResult = {
@@ -442,7 +443,7 @@ export function validateRows(
   config: EntityConfig,
   columnMapping: Record<string, string>,
   mode: ImportMode,
-  businessType?: string
+  businessType?: ImportBusinessScope
 ): ValidationResult {
   const v = startValidation(rawRows, config, columnMapping, mode, businessType)
   v.run(0, v.total)
@@ -458,7 +459,7 @@ export async function validateRowsChunked(
   config: EntityConfig,
   columnMapping: Record<string, string>,
   mode: ImportMode,
-  businessType?: string,
+  businessType?: ImportBusinessScope,
   chunkSize: number = VALIDATION_CHUNK_ROWS,
 ): Promise<ValidationResult> {
   const v = startValidation(rawRows, config, columnMapping, mode, businessType)

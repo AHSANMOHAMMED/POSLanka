@@ -257,6 +257,8 @@ export interface ActiveShift {
     /** Per-counter receipt overrides (partial ReceiptSettings). */
     receiptSettings?: Record<string, unknown> | null
     paymentMethods?: PaymentMethodConfig[]
+    /** Mall only: the business type this counter works as (food court → 'restaurant') */
+    businessSegment?: string | null
   }
   warehouse?: {
     id: string
@@ -330,6 +332,8 @@ export interface ModifierForPOS {
 }
 
 export interface POSBusinessConfig {
+  /** The business type this till works as (the vendor's type; a mall counter's segment) */
+  tillBusinessType?: string
   showVehicleSelector: boolean
   showTableSelector: boolean
   showOrderTypeSelector: boolean

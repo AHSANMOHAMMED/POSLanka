@@ -1,6 +1,7 @@
 // Streaming export: rows are read in chunks of EXPORT_CHUNK (separate short
 // tenant transactions) and written to a ReadableStream, so exports are not
 // capped and never hold the whole result set in memory.
+import type { ImportBusinessScope } from './entity-config'
 
 import { PassThrough, Readable } from 'stream'
 import { sql, ilike, and, or, gte, lte, inArray, eq, type SQL } from 'drizzle-orm'
@@ -34,7 +35,7 @@ export interface ExportRequest {
   /** Selected field keys (null = all). `warehouseStock` expands to `stock:<CODE>` columns. */
   fields?: string[] | null
   filters?: ExportFilters
-  businessType?: string
+  businessType?: ImportBusinessScope
   chunkSize?: number
 }
 

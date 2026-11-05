@@ -51,6 +51,7 @@ export const BUSINESS_TYPE_LABELS: Record<string, string> = {
   print_studio: 'Printing & photo studio',
   office: 'Office & services',
   textile: 'Textile & clothing',
+  mall: 'Mall / multi-shop',
 }
 
 export function businessTypeLabel(t: string | null | undefined): string {

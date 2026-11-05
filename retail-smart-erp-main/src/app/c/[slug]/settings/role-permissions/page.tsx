@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import Link from 'next/link'
 import { useRealtimeData } from '@/hooks'
 import { toast } from '@/components/ui/toast'
@@ -88,7 +89,9 @@ export default function RolePermissionsPage() {
   const [showCreateModal, setShowCreateModal] = useState(false)
 
   const tenantSlug = session?.user?.tenantSlug || ''
-  const businessType = session?.user?.businessType || 'retail'
+  // A mall: roles and permission groups of every business type it runs
+  const businessScope = useBusinessScope()
+  const businessType = businessScope.businessType ? businessScope.scope : 'retail'
 
   // Filter roles and permission categories by business type
   const builtinRoles = useMemo(() => getRolesForBusinessType(businessType), [businessType])

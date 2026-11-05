@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useSession } from 'next-auth/react'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { toast } from '@/components/ui/toast'
 import Link from 'next/link'
@@ -221,7 +222,9 @@ export default function StaffPage() {
   }, [fetchUsers, fetchInvites, fetchOptions])
 
   const actorRole = session?.user?.role || ''
-  const businessType = (session?.user as { businessType?: string } | undefined)?.businessType || ''
+  // A mall: the roles of every business type it runs
+  const businessScope = useBusinessScope()
+  const businessType = businessScope.businessType ? businessScope.scope : ''
 
   // Roles the current user may assign: relevant to the business type, never owner,
   // and not above the actor's own level (ROLE_HIERARCHY via canModifyUser)
@@ -240,7 +243,7 @@ export default function StaffPage() {
   // Custom roles the actor may hand out: active and based on an assignable built-in role
   // (the server additionally refuses any custom role carrying permissions the actor lacks)
   const assignableCustomRoles = customRoleOptions.filter(cr => cr.isActive && assignableRoles.includes(cr.baseRole))
-  const permissionCategories = getCategoriesForBusinessType(businessType || 'retail')
+  const permissionCategories = getCategoriesForBusinessType(businessScope.businessType ? businessScope.scope : 'retail')
 
   async function openPermissionsView(user: User) {
     setPermViewLoading(user.id)

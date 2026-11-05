@@ -1,14 +1,14 @@
 'use client'
 
-import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { getTerms, type TerminologyMap } from '@/lib/terminology'
 
 /**
  * React hook that returns business-type-specific terminology.
- * Uses the current company context to determine the business type.
+ * Uses the current company context to determine the business type (a mall uses its primary type).
  * Falls back to retail terminology if no company context is available.
  */
 export function useTerminology(): TerminologyMap {
-  const company = useCompanyOptional()
-  return getTerms(company?.businessType)
+  const { primary } = useBusinessScope()
+  return getTerms(primary || undefined)
 }

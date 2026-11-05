@@ -5,6 +5,7 @@ import { withTenant } from '@/lib/db'
 import { logError } from '@/lib/ai/error-logger'
 import { sql } from 'drizzle-orm'
 import { requireAllBranches } from '@/lib/auth/branch-access'
+import { hasBusinessType } from '@/lib/business-types/scope'
 
 export async function GET(request: NextRequest) {
   try {
@@ -19,8 +20,8 @@ export async function GET(request: NextRequest) {
     const branchError = await requireAllBranches(session)
     if (branchError) return branchError
 
-    const isElectronics = session.user.businessType === 'electronics'
-    if (session.user.businessType !== 'dealership' && !isElectronics) {
+    const isElectronics = hasBusinessType(session.user, 'electronics')
+    if (!hasBusinessType(session.user, 'dealership') && !isElectronics) {
       return NextResponse.json({ error: 'This report is only available for dealership and electronics businesses' }, { status: 403 })
     }
 

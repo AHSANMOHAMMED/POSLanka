@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
       tenantName: tenant.name,
       businessId: tenant.businessId,
       businessType: tenant.businessType,
+      businessSegments: tenant.businessSegments ?? null,
       aiEnabled: tenant.aiEnabled,
       accountId: user.accountId || null,
       customRoleId: user.customRoleId || null,
@@ -159,6 +160,7 @@ export async function POST(request: NextRequest) {
       tenantName: tenant.name,
       businessId: tenant.businessId,
       businessType: tenant.businessType,
+      businessSegments: tenant.businessSegments ?? null,
       permissions,
     },
   })

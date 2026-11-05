@@ -12,6 +12,7 @@ import { useImport } from '@/hooks/useImport'
 import { PageLoading } from '@/components/ui/loading-spinner'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { useCompany, useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { Modal } from '@/components/ui/modal'
 import { toast } from '@/components/ui/toast'
@@ -341,7 +342,7 @@ export default function ItemsPage() {
 
   const { tenantSlug } = useCompany()
   const company = useCompanyOptional()
-  const isSupermarket = company?.businessType === 'supermarket'
+  const isSupermarket = useBusinessScope().has('supermarket') && !!company
 
   const hasFilters = !!warehouseFilter || isLowStockFilter || expiringFilter || inStockOnly
 

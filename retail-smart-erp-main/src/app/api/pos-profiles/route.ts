@@ -12,6 +12,7 @@ import { validateBody } from '@/lib/validation/helpers'
 import { createPosProfileSchema } from '@/lib/validation/schemas/pos'
 import { SAFE_USER } from '@/lib/db/safe-columns'
 import { getBranchScope, canAccessBranch, assertBranchAccess } from '@/lib/auth/branch-access'
+import { counterSegmentError } from '@/lib/business-types/counter-segment'
 
 // GET current user's POS profiles (profiles they have access to)
 export async function GET(request: NextRequest) {
@@ -151,7 +152,11 @@ export async function POST(request: NextRequest) {
       // Users to assign
       userIds,
       userAssignments,
+      businessSegment,
     } = parsed.data
+
+    const segmentError = await counterSegmentError(session.user.tenantId, businessSegment)
+    if (segmentError) return NextResponse.json({ error: segmentError, field: 'businessSegment' }, { status: 400 })
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
@@ -202,6 +207,7 @@ export async function POST(request: NextRequest) {
         receiptSettings: receiptSettings ?? {},
         defaultPaymentMethod,
         allowCreditSale,
+        businessSegment: businessSegment || null,
         status: 'active',
       }).returning()
 

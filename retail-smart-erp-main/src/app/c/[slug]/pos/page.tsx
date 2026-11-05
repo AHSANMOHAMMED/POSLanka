@@ -107,6 +107,8 @@ import { PharmacySubstitutesModal } from '@/components/pos/PharmacySubstitutesMo
 import { PatientAlertBanner } from '@/components/pos/PatientAlertBanner'
 import { useOfflinePos } from '@/hooks/useOfflinePos'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
+import { hasBusinessType, type BusinessScope } from '@/lib/business-types/scope'
 import { formatItemLabel } from '@/lib/utils/item-display'
 import { usePriceQuote, lineNet } from '@/components/pos/price-quote'
 import { loadPricingBundleCache } from '@/lib/offline/pricing-cache'
@@ -120,9 +122,19 @@ const RECEIPT_CODE_RE = /^(INV|RTN|OFF)-/i
 
 export default function POSPage() {
   const { currency: currencyCode } = useCurrency()
-  const config = usePOSBusinessConfig()
+  // Shift Management State (the shift's counter decides the till mode for a mall)
+  const [activeShift, setActiveShift] = useState<ActiveShift | null>(null)
+  const counterSegment = activeShift?.posProfile?.businessSegment ?? null
+  const config = usePOSBusinessConfig(counterSegment)
   const { flags: featureFlags } = useFeatureFlags()
   const company = useCompany()
+  const { scope: businessScope, isMall: mallVendor } = useBusinessScope()
+  /** The till's business type: the vendor's own type, or a mall counter's segment */
+  const tillType = config.tillBusinessType || company.businessType
+  // A mall counter set to one segment sells as that type only; other counters (and every
+  // non-mall vendor) get everything the business runs
+  const tillScope: BusinessScope = mallVendor && counterSegment && tillType === counterSegment ? tillType : businessScope
+  const pharmacyTill = hasBusinessType(tillScope, 'pharmacy')
   const router = useRouter()
   const params = useParams()
 
@@ -260,7 +272,6 @@ export default function POSPage() {
   const [deleteHeldConfirm, setDeleteHeldConfirm] = useState<{ open: boolean; id: string | null }>({ open: false, id: null })
 
   // Shift Management State
-  const [activeShift, setActiveShift] = useState<ActiveShift | null>(null)
   const [shiftLoading, setShiftLoading] = useState(true)
   const [showShiftOpenModal, setShowShiftOpenModal] = useState(false)
   const [showShiftCloseModal, setShowShiftCloseModal] = useState(false)
@@ -934,7 +945,7 @@ export default function POSPage() {
       setCart(prev => [...prev, {
         cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         itemId: item.id,
-        name: item.uom ? `${formatItemLabel(item, company.businessType)} (${item.uom})` : formatItemLabel(item, company.businessType),
+        name: item.uom ? `${formatItemLabel(item, tillType)} (${item.uom})` : formatItemLabel(item, tillType),
         quantity: qty,
         unitPrice,
         total: roundCurrency(unitPrice * qty),
@@ -959,7 +970,7 @@ export default function POSPage() {
       setCart(prev => [...prev, {
         cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         itemId: item.id,
-        name: formatItemLabel(item, company.businessType),
+        name: formatItemLabel(item, tillType),
         quantity: 1,
         unitPrice: total,
         total,
@@ -986,7 +997,7 @@ export default function POSPage() {
     setSizeEntry({
       item,
       target: {
-        name: formatItemLabel(item, company.businessType),
+        name: formatItemLabel(item, tillType),
         pricingMode: item.pricingMode === 'length' ? 'length' : 'area',
         areaUnit: item.areaUnit === 'sqm' ? 'sqm' : 'sqft',
         minChargeArea: min > 0 ? min : null,
@@ -1055,7 +1066,7 @@ export default function POSPage() {
     setCart(prev => [...prev, {
       cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       itemId: item.id,
-      name: formatItemLabel(item, company.businessType) + labelSuffix,
+      name: formatItemLabel(item, tillType) + labelSuffix,
       quantity: 1,
       unitPrice: total,
       total,
@@ -1081,7 +1092,7 @@ export default function POSPage() {
     setCart([...cart, {
       cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       itemId: item.id,
-      name: formatItemLabel(item, company.businessType),
+      name: formatItemLabel(item, tillType),
       quantity: 1,
       unitPrice,
       total: unitPrice,
@@ -1108,7 +1119,7 @@ export default function POSPage() {
     setCart(prev => [...prev, {
       cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       itemId: item.id,
-      name: formatItemLabel(item, company.businessType),
+      name: formatItemLabel(item, tillType),
       quantity,
       unitPrice: price,
       total: quantity * price,
@@ -1185,7 +1196,7 @@ export default function POSPage() {
           return [...prev, {
             cartLineId: `${item.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             itemId: item.id,
-            name: formatItemLabel(item, company.businessType),
+            name: formatItemLabel(item, tillType),
             quantity: -qtyToAdd,
             unitPrice: price,
             total: -qtyToAdd * price,
@@ -1221,7 +1232,7 @@ export default function POSPage() {
         return [...prev, {
           cartLineId: newLineId,
           itemId: item.id,
-          name: formatItemLabel(item, company.businessType),
+          name: formatItemLabel(item, tillType),
           quantity: qtyToAdd,
           unitPrice: price,
           total: qtyToAdd * price,
@@ -2735,7 +2746,7 @@ export default function POSPage() {
   const quotationsEnabled = featureFlags.quotation !== false
   /** Industry module: switched on for this business and meant for its business type (flags.ts) */
   const industryOn = (flag: 'installments' | 'deliveries' | 'warranty_claims' | 'print_jobs') =>
-    !!featureFlags[flag] && !!company.businessType && featureAppliesTo(flag, company.businessType)
+    !!featureFlags[flag] && !!company.businessType && featureAppliesTo(flag, tillScope)
   /** Hire purchase in the payment modal: installments module, a plain sale (no return / exchange / table order) */
   const hirePurchaseAvailable = industryOn('installments') && !isReturnMode && !exchangeFrom && !restaurantOrderId
 
@@ -2989,7 +3000,7 @@ export default function POSPage() {
 
   async function openPaymentModal(rxOverride?: PrescriptionForm) {
     // Pharmacy: prescription / controlled medicines need the prescription before payment
-    if (company.businessType === 'pharmacy' && !isReturnMode && online && cart.length > 0) {
+    if (pharmacyTill && !isReturnMode && online && cart.length > 0) {
       const rxNow = rxOverride ?? prescription
       try {
         const ids = Array.from(new Set(cart.map((c) => c.itemId))).join(',')
@@ -3612,7 +3623,7 @@ export default function POSPage() {
           </div>
         </div>
       </div>
-      {company.businessType === 'pharmacy' && <PatientAlertBanner customerId={selectedCustomer?.id} slug={String(params.slug || '')} />}
+      {pharmacyTill && <PatientAlertBanner customerId={selectedCustomer?.id} slug={String(params.slug || '')} />}
       <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
       <ProductGrid
         items={items}
@@ -3632,9 +3643,9 @@ export default function POSPage() {
         cartHasItems={cart.length > 0}
         shiftLabelOnly
         config={config}
-        businessType={company.businessType}
+        businessType={tillType}
         onScanSubmit={handleScanSubmit}
-        onShowSubstitutes={company.businessType === 'pharmacy' && !isReturnMode ? setSubstitutesFor : undefined}
+        onShowSubstitutes={pharmacyTill && !isReturnMode ? setSubstitutesFor : undefined}
       />
 
       <CartPanel

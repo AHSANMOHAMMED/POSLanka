@@ -12,7 +12,7 @@
  *            of 100 with per-vendor delivery counts
  * Every send is stored in platform_broadcasts with per-recipient delivery rows.
  */
-import { and, asc, eq, inArray, ne, sql, type SQL } from 'drizzle-orm'
+import { and, asc, eq, inArray, ne, or, sql, type SQL } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import {
@@ -139,7 +139,13 @@ export async function resolveVendors(a: Audience): Promise<{ vendors: Vendor[]; 
   if (a.statuses?.length) conds.push(inArray(tenants.status, a.statuses))
   else conds.push(ne(tenants.status, 'cancelled'))
   if (a.mode === 'filtered') {
-    if (a.businessTypes?.length) conds.push(inArray(tenants.businessType, a.businessTypes))
+    // A mall that runs one of the chosen types counts too (mall + restaurant → restaurant notices)
+    if (a.businessTypes?.length) {
+      const segs = a.businessTypes.filter((t) => t !== 'mall')
+      conds.push(segs.length
+        ? or(inArray(tenants.businessType, a.businessTypes), sql`${tenants.businessSegments} && ARRAY[${sql.join(segs.map((t) => sql`${t}`), sql`, `)}]::text[]`)!
+        : inArray(tenants.businessType, a.businessTypes))
+    }
     if (a.tierIds?.length) conds.push(inArray(subscriptions.tierId, a.tierIds))
     if (a.subscriptionStatuses?.length) conds.push(inArray(subscriptions.status, a.subscriptionStatuses))
   }

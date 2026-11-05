@@ -19,6 +19,8 @@ import {
 } from 'lucide-react'
 import { POSProfileFormModal } from '@/components/modals/POSProfileFormModal'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
+import { getBusinessTypeLabel } from '@/lib/constants/business-types'
 
 interface PaymentMethod {
   id: string
@@ -63,6 +65,8 @@ interface POSProfile {
   defaultPaymentMethod: string
   allowCreditSale: boolean
   costCenterId: string | null
+  /** Mall only: the business type this counter works as */
+  businessSegment?: string | null
   status: string
   createdAt: string
   updatedAt: string
@@ -76,6 +80,7 @@ interface POSProfile {
 
 export default function POSProfilesPage() {
   const t = useTerminology()
+  const { isMall: mallVendor } = useBusinessScope()
   const [profiles, setProfiles] = useState<POSProfile[]>([])
   const [loading, setLoading] = useState(true)
   const [showInactive, setShowInactive] = useState(false)
@@ -242,6 +247,11 @@ export default function POSProfilesPage() {
                       <span className="flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
                         <Star size={12} />
                         Default
+                      </span>
+                    )}
+                    {mallVendor && profile.businessSegment && (
+                      <span className="text-xs bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 px-2 py-0.5 rounded">
+                        {getBusinessTypeLabel(profile.businessSegment)} counter
                       </span>
                     )}
                     {profile.status !== 'active' && (

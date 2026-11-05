@@ -130,7 +130,7 @@ export async function authenticateApiKey(request: Request, scope: ApiScope): Pro
         scopes: apiKeys.scopes, createdBy: apiKeys.createdBy, expiresAt: apiKeys.expiresAt,
         revokedAt: apiKeys.revokedAt, lastUsedAt: apiKeys.lastUsedAt,
         tenantSlug: tenants.slug, tenantName: tenants.name, tenantStatus: tenants.status,
-        businessType: tenants.businessType, aiEnabled: tenants.aiEnabled,
+        businessType: tenants.businessType, businessSegments: tenants.businessSegments, aiEnabled: tenants.aiEnabled,
       })
       .from(apiKeys)
       .innerJoin(tenants, eq(tenants.id, apiKeys.tenantId))
@@ -193,6 +193,7 @@ export async function authenticateApiKey(request: Request, scope: ApiScope): Pro
       tenantSlug: row.tenantSlug,
       tenantName: row.tenantName,
       businessType: row.businessType,
+      businessSegments: row.businessSegments ?? null,
       aiEnabled: row.aiEnabled,
       isSuperAdmin: false,
       isOwner: live.role === 'owner',

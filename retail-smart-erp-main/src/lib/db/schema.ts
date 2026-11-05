@@ -5,7 +5,7 @@ import { relations, sql } from 'drizzle-orm'
 
 export const planEnum = pgEnum('plan', ['trial', 'basic', 'standard', 'premium'])
 export const tenantStatusEnum = pgEnum('tenant_status', ['active', 'suspended', 'cancelled', 'locked'])
-export const businessTypeEnum = pgEnum('business_type', ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office', 'textile'])
+export const businessTypeEnum = pgEnum('business_type', ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office', 'textile', 'mall'])
 export const userRoleEnum = pgEnum('user_role', [
   'owner', 'manager', 'cashier', 'technician', 'chef', 'waiter',
   'system_manager', 'accounts_manager', 'sales_manager', 'purchase_manager',
@@ -292,6 +292,8 @@ export const tenants = pgTable('tenants', {
   website: varchar('website', { length: 255 }),
   receiptSettings: jsonb('receipt_settings').notNull().default({}), // see src/lib/print/receipt-settings.ts
   businessType: businessTypeEnum('business_type').notNull().default('retail'),
+  // 'mall' only: the business types it runs (src/lib/business-types/scope.ts). NULL otherwise.
+  businessSegments: text('business_segments').array(),
   country: varchar('country', { length: 2 }).notNull().default('LK'), // ISO 3166-1 alpha-2
   currency: varchar('currency', { length: 3 }).notNull().default('LKR'), // ISO 4217
   dateFormat: varchar('date_format', { length: 20 }).notNull().default('DD/MM/YYYY'),
@@ -990,6 +992,8 @@ export const posProfiles = pgTable('pos_profiles', {
 
   // Core Settings
   warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  // Mall counters: which business type this till works as (e.g. 'restaurant'). NULL = main type.
+  businessSegment: varchar('business_segment', { length: 30 }),
   defaultCustomerId: uuid('default_customer_id').references(() => customers.id),
 
   // Tax moved to tenant-level settings (tenants.tax_rate, tenants.tax_inclusive)

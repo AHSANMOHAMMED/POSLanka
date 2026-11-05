@@ -49,6 +49,8 @@ export interface PosProfile {
   allowCreditSale?: boolean
   paymentMethods?: PosProfilePaymentMethod[]
   isUserDefault?: boolean
+  /** Mall counters only: the segment this till sells as (e.g. 'restaurant' = food court). */
+  businessSegment?: string | null
   /** Printed at the top / bottom of receipts (free text, may contain newlines). */
   receiptHeader?: string | null
   receiptFooter?: string | null

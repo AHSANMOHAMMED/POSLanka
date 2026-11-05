@@ -23,7 +23,7 @@ import { Logo } from '@/components/ui/logo'
 import { AlertBell } from './AlertBell'
 import { InboxBell } from '@/components/notifications/InboxBell'
 import { useChatStore } from '@/lib/stores/chat-store'
-import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { MODULE_TABS, getModuleFromPathname, getModuleTabHref, isModuleTabVisible } from '@/lib/navigation/module-sidebar'
 import { useModuleAccess } from '@/hooks/useModuleAccess'
 import { useEffectivePermissions } from '@/hooks/useEffectivePermissions'
@@ -45,7 +45,6 @@ interface NavbarProps {
 export function Navbar({ tenantName, userEmail, appVersion, companySlug }: NavbarProps) {
   const pathname = usePathname()
   const { data: session } = useSession()
-  const company = useCompanyOptional()
   // The signed-in user's text size (90%..140%), per user on this device
   useTextScale('app', session?.user?.id || null)
   const { mobileOpen, setMobileOpen } = useSidebar()
@@ -69,8 +68,8 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
   const isDesktop = useBreakpoint('lg', 'up')
   const isCompact = !isDesktop
 
-  const businessType = company?.businessType || session?.user?.businessType
-  const t = getTerms(businessType)
+  const { scope: businessType, primary: primaryType } = useBusinessScope()
+  const t = getTerms(primaryType || undefined)
   const basePath = `/c/${companySlug}`
   const currentModule = getModuleFromPathname(pathname, businessType)
 

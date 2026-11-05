@@ -3,6 +3,7 @@
 
 import { MODULE_TABS, isModuleTabVisible, getModuleSidebar } from '@/lib/navigation/module-sidebar'
 import type { WorkspaceBlock } from './types'
+import type { BusinessScope } from '@/lib/business-types/scope'
 
 export interface ShortcutCatalogItem {
   label: string
@@ -24,7 +25,7 @@ export interface ShortcutCatalogGroup {
  * filtered by business type, role, and module access config.
  */
 export function buildShortcutCatalog(
-  businessType?: string,
+  businessType?: BusinessScope,
   role?: string,
   isModuleEnabled?: (moduleKey: string, role?: string) => boolean
 ): ShortcutCatalogGroup[] {

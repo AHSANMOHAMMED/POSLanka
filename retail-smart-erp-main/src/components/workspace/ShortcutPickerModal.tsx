@@ -5,6 +5,7 @@ import { Modal, ModalBody, ModalFooter } from '@/components/ui/modal'
 import { Search, ChevronDown, ChevronRight } from 'lucide-react'
 import { getIcon } from './icon-map'
 import { buildShortcutCatalog, toRelativeHref } from '@/lib/workspace/shortcut-catalog'
+import type { BusinessScope } from '@/lib/business-types/scope'
 import type { ShortcutCatalogGroup } from '@/lib/workspace/shortcut-catalog'
 
 interface ShortcutData {
@@ -20,7 +21,7 @@ interface ShortcutPickerModalProps {
   onClose: () => void
   onSave: (shortcuts: ShortcutData[]) => void
   currentShortcuts: ShortcutData[]
-  businessType?: string
+  businessType?: BusinessScope
   role?: string
   isModuleEnabled?: (moduleKey: string, role?: string) => boolean
 }

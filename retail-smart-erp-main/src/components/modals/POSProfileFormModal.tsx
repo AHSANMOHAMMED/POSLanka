@@ -5,6 +5,8 @@ import { sanitizeReceiptSettingsPatch, type InvoiceCodeType, type ReceiptSetting
 import { Modal } from '@/components/ui/modal'
 import { toast } from '@/components/ui/toast'
 import { Loader2, Plus, Trash2, GripVertical } from 'lucide-react'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
+import { getBusinessTypeLabel } from '@/lib/constants/business-types'
 
 interface PaymentMethodItem {
   id?: string
@@ -71,6 +73,8 @@ interface POSProfile {
   receiptSettings?: Record<string, unknown> | null
   defaultPaymentMethod: string
   allowCreditSale: boolean
+  /** Mall only: the business type this counter works as */
+  businessSegment?: string | null
   status: string
   paymentMethods?: PaymentMethodItem[]
   users?: UserAssignment[]
@@ -122,12 +126,15 @@ const initialFormData = {
   receiptFooter: '',
   defaultPaymentMethod: 'cash',
   allowCreditSale: true,
+  businessSegment: '',
 }
 
 export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: POSProfileFormModalProps) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [formData, setFormData] = useState(initialFormData)
+  // Malls pick what each counter sells as (food court → restaurant till, grocery → supermarket …)
+  const { isMall: mallVendor, types: mallSegments, primary: primaryType } = useBusinessScope()
   // Per-counter receipt overrides stored in pos_profiles.receipt_settings
   const [receiptOverrides, setReceiptOverrides] = useState<ReceiptSettingsPatch>({})
   const [cashierPermissions, setCashierPermissions] = useState({
@@ -175,6 +182,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
           isDefault: editProfile.isDefault,
           warehouseId: editProfile.warehouseId || '',
           costCenterId: editProfile.costCenterId || '',
+          businessSegment: editProfile.businessSegment || '',
           applyDiscountOn: editProfile.applyDiscountOn,
           allowRateChange: editProfile.allowRateChange,
           allowDiscountChange: editProfile.allowDiscountChange,
@@ -354,6 +362,8 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
           ...formData,
           warehouseId: formData.warehouseId || null,
           costCenterId: formData.costCenterId || null,
+          // Only malls have counter types; other vendors never send it
+          businessSegment: mallVendor ? (formData.businessSegment || null) : undefined,
           code: formData.code || null,
           maxDiscountPercent: parseFloat(formData.maxDiscountPercent) || 100,
           expenseLimit: formData.expenseLimit === '' || formData.expenseLimit == null ? null : Math.max(0, parseFloat(formData.expenseLimit) || 0),
@@ -496,6 +506,25 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
                     ))}
                   </select>
                 </div>
+
+                {mallVendor && (
+                  <div>
+                    <label className="block text-sm font-medium mb-1 dark:text-gray-300">Counter type</label>
+                    <select
+                      value={formData.businessSegment}
+                      onChange={(e) => setFormData({ ...formData, businessSegment: e.target.value })}
+                      className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:border-gray-700 dark:text-white"
+                    >
+                      <option value="">General counter ({getBusinessTypeLabel(primaryType)})</option>
+                      {mallSegments.map((seg) => (
+                        <option key={seg} value={seg}>{getBusinessTypeLabel(seg)}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      The till on this counter works as this shop type, e.g. Restaurant for a food court (tables, kitchen orders), Supermarket for groceries (weighing scale), Pharmacy for medicines.
+                    </p>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium mb-1 dark:text-gray-300">Apply Discount On</label>

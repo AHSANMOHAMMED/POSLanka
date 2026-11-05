@@ -27,6 +27,7 @@ import { FEATURE_DEFS, FEATURE_FLAG_LABELS, featureAppliesTo, normalizeFeatureFl
 import { foldTenantUsage } from '@/lib/db/storage-quota'
 import { neverExpires } from '@/lib/billing/subscription-state'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
+import { segmentTypeOptions } from '@/lib/business-types/labels'
 
 export async function GET(
   _request: NextRequest,
@@ -173,9 +174,13 @@ export async function GET(
 
     return NextResponse.json({
       /** Roles the super admin may give new staff of this vendor (by business type, owner excluded) */
-      assignableRoles: getRolesForBusinessType(vendor.businessType).filter((r) => r !== 'owner'),
+      assignableRoles: getRolesForBusinessType(vendor).filter((r) => r !== 'owner'),
       vendor: {
         ...vendor,
+        /** 'mall' only: the business types it runs (null for other vendors) */
+        businessSegments: vendor.businessSegments ?? null,
+        /** Every type a mall can include, with labels (change-type / create forms) */
+        segmentTypes: segmentTypeOptions(),
         vatRegistered: settings.vatRegistered === true,
         featureFlags: flags,
         /** Switches saved for this vendor; the others run at the global default (FeaturesTab marks them) */
@@ -228,7 +233,8 @@ export async function GET(
       tiers,
       featureFlagLabels: FEATURE_FLAG_LABELS,
       /** Feature catalogue for clients that cannot import it (mobile admin) */
-      featureDefs: FEATURE_DEFS.map((d) => ({ key: d.key, label: d.label, description: d.description, group: d.group, applies: featureAppliesTo(d.key, vendor.businessType) })),
+      featureDefs: FEATURE_DEFS.map((d) => ({ key: d.key, label: d.label, description: d.description, group: d.group, applies: featureAppliesTo(d.key, vendor) })),
+      segmentTypes: segmentTypeOptions(),
     })
   } catch (error) {
     logError('api/sys-control/vendors/[id] GET', error)

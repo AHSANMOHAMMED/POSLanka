@@ -16,6 +16,7 @@ import { useSetupWizard } from './hooks/useSetupWizard'
 import { useSetupSound } from './hooks/useSetupSound'
 import { Loader2, Volume2, VolumeX, Sparkles, CheckCircle, RotateCcw, ArrowLeft, ArrowRight, Save } from 'lucide-react'
 import { BrandWordmark } from '@/components/ui/logo'
+import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 
 interface SetupWizardProps {
   companySlug: string
@@ -55,6 +56,8 @@ export function SetupWizard({ companySlug }: SetupWizardProps) {
     setError,
     companyInfo
   } = useSetupWizard(companySlug)
+  // Mall: the business types it runs (from the /c/[slug] layout's company context)
+  const businessSegments = useCompanyOptional()?.businessSegments ?? null
 
   const { playClick, playStepComplete, playSetupComplete, isMuted, toggleMute } = useSetupSound()
 
@@ -210,6 +213,7 @@ export function SetupWizard({ companySlug }: SetupWizardProps) {
             country={companyInfo?.country || ''}
             countryName={companyInfo?.countryName || ''}
             businessType={companyInfo?.businessType || 'retail'}
+            businessSegments={businessSegments}
             companySlug={companySlug}
             aiEnabled={companyInfo?.aiEnabled}
             onChange={updateWizardData}
@@ -220,6 +224,7 @@ export function SetupWizard({ companySlug }: SetupWizardProps) {
           <StepBusinessConfig
             data={wizardData}
             businessType={companyInfo?.businessType || 'retail'}
+            businessSegments={businessSegments}
             companySlug={companySlug}
             country={companyInfo?.country || ''}
             countryName={companyInfo?.countryName || ''}
@@ -281,6 +286,7 @@ export function SetupWizard({ companySlug }: SetupWizardProps) {
           <StepReview
             data={wizardData}
             companyInfo={companyInfo}
+            businessSegments={businessSegments}
           />
         )
       default:

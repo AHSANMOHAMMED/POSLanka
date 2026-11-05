@@ -10,6 +10,7 @@ import {
   Printer,
   Briefcase,
   Shirt,
+  Building2,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -123,6 +124,16 @@ export const BUSINESS_TYPES: BusinessType[] = [
     color: 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400',
     features: ['Vehicle Inventory', 'Sales Orders', 'Trade-ins', 'Financing'],
   },
+  {
+    // Runs several of the types above in one business (tenants.business_segments)
+    value: 'mall',
+    label: 'Mall / Multi-shop',
+    icon: Building2,
+    emoji: '🏬',
+    description: 'Supermarket, textile, electronics, stationery, pharmacy, food court… in one business',
+    color: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400',
+    features: ['Pick the shop types it runs', 'Menus & features of every type', 'Food-court counters', 'One stock, one set of books'],
+  },
 ]
 
 export function getBusinessTypeLabel(type: string): string {
@@ -142,3 +153,13 @@ export function getBusinessType(type: string): BusinessType | undefined {
 }
 
 export const BUSINESS_TYPE_VALUES = BUSINESS_TYPES.map(t => t.value)
+
+/** Business types a mall can include (every type except 'mall'), with their cards */
+export const MALL_SEGMENT_CARDS: BusinessType[] = BUSINESS_TYPES.filter((t) => t.value !== 'mall')
+
+/** "Mall / Multi-shop" plus its segments, e.g. "Mall / Multi-shop (Supermarket, Restaurant)" */
+export function getBusinessScopeLabel(type: string, segments?: readonly string[] | null): string {
+  const label = getBusinessTypeLabel(type)
+  if (type !== 'mall' || !segments?.length) return label
+  return `${label} (${segments.map((s) => getBusinessTypeLabel(s)).join(', ')})`
+}

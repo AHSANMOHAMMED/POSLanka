@@ -7,6 +7,7 @@ import { toast } from '@/components/ui/toast'
 import { User, Phone, MapPin, Building2, FileText } from 'lucide-react'
 import { useTerminology } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 
 interface Customer {
   id: string
@@ -97,7 +98,8 @@ type TabType = 'basic' | 'contact' | 'address' | 'business' | 'notes'
 export function CustomerFormModal({ isOpen, onClose, onSaved, editCustomer, initialName = '' }: CustomerFormModalProps) {
   const t = useTerminology()
   const company = useCompanyOptional()
-  const isAutoService = company?.businessType === 'auto_service' || company?.businessType === 'dealership'
+  // Vehicle fields: auto service / dealership (also a mall running one of them)
+  const isAutoService = useBusinessScope().has(['auto_service', 'dealership']) && !!company
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [activeTab, setActiveTab] = useState<TabType>('basic')

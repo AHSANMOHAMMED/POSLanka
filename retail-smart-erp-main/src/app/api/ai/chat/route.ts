@@ -12,6 +12,7 @@ import { aiChatMessages, tenants } from '@/lib/db/schema'
 import { validateBody } from '@/lib/validation/helpers'
 import { aiChatSchema } from '@/lib/validation/schemas/ai'
 import { requireQuota } from '@/lib/db/storage-quota'
+import { isMall, scopeTypes } from '@/lib/business-types/scope'
 
 export async function POST(request: NextRequest) {
   const session = await authWithCompany()
@@ -36,6 +37,9 @@ export async function POST(request: NextRequest) {
   const userId = session.user.id
   const userRole = session.user.role || 'cashier'
   const businessType = session.user.businessType || 'retail'
+  // A mall runs several shop types: tools filter pages by all of them, prompts name them
+  const runsTypes = scopeTypes(session.user)
+  const businessTypeText = isMall(businessType) ? `mall / multi-shop (${runsTypes.join(', ')})` : businessType
   const userName = session.user.name || 'User'
   const tenantSlug = session.user.tenantSlug || ''
 
@@ -95,7 +99,7 @@ export async function POST(request: NextRequest) {
     // Prepare params for navigation/system tools
     const toolParams: Record<string, string> = {
       query: message,
-      businessType,
+      businessType: runsTypes.join(',') || businessType,
       userRole,
       companyName: companyInfo.name,
       plan: companyInfo.plan,
@@ -104,7 +108,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Step 1: Use LLM to select relevant tools, fallback to keyword matching
-    let selectedTools = await selectToolsWithLLM(message, businessType, conversationHistory)
+    let selectedTools = await selectToolsWithLLM(message, businessTypeText, conversationHistory)
 
     if (selectedTools.length === 0) {
       selectedTools = findRelevantToolsByKeyword(message)
@@ -125,7 +129,7 @@ export async function POST(request: NextRequest) {
     // Step 3: Build enhanced prompt with full context
     const contextParts: string[] = []
     contextParts.push(`Company: ${companyInfo.name}`)
-    contextParts.push(`Business type: ${businessType}`)
+    contextParts.push(`Business type: ${businessTypeText}`)
     contextParts.push(`Currency: ${companyInfo.currency || 'Not configured'}`)
     contextParts.push(`Plan: ${companyInfo.plan || 'free'}`)
 

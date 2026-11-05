@@ -1,6 +1,7 @@
 // Persistent import job repository (import_jobs + import_job_rows).
 // Job state lives in PostgreSQL so progress survives restarts, works across
 // instances and interrupted jobs can be resumed.
+import type { ImportBusinessScope } from './entity-config'
 
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { withTenant, withTenantTransaction } from '@/lib/db'
@@ -24,7 +25,7 @@ export interface ImportJobOptions {
   stockMode?: StockImportMode
   blankPolicy?: 'keep'
   skipErrors?: boolean
-  businessType?: string
+  businessType?: ImportBusinessScope
   /** File headers in original order (errors CSV). */
   headers?: string[]
   columnMapping?: Record<string, string>

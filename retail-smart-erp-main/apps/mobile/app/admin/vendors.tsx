@@ -4,7 +4,7 @@ import { router } from 'expo-router'
 import { adminGet, useAdminUser } from '../../src/lib/adminApi'
 import { THEME } from '../../src/lib/theme'
 import { ErrorView, LoadingView } from '../../src/components/StateViews'
-import { AdminShell, Pill, adminStyles, businessTypeLabel, compactLKR, statusTone } from '../../src/components/admin/AdminShell'
+import { AdminShell, Pill, SegmentChips, adminStyles, businessTypeLabel, compactLKR, statusTone } from '../../src/components/admin/AdminShell'
 
 const PAGE_SIZE = 30
 
@@ -15,6 +15,8 @@ interface VendorRow {
   email?: string | null
   phone?: string | null
   businessType: string
+  /** Mall only (sent by newer servers) */
+  businessSegments?: string[] | null
   country?: string | null
   currency?: string | null
   status: 'active' | 'suspended' | 'cancelled' | 'locked' | string
@@ -153,6 +155,7 @@ export default function AdminVendorsScreen() {
                 <Text style={adminStyles.muted} numberOfLines={1}>
                   {item.slug} • {businessTypeLabel(item.businessType)} • {item.userCount ?? 0} users
                 </Text>
+                <SegmentChips businessType={item.businessType} segments={item.businessSegments} />
                 {figures[item.id] ? (
                   <Text style={styles.figures} numberOfLines={1}>
                     Stock {compactLKR(figures[item.id].stockAtCost)} • 30d sales {compactLKR(figures[item.id].netSales)} • profit {compactLKR(figures[item.id].grossProfit)}

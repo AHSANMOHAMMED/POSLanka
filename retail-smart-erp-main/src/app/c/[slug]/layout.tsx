@@ -220,6 +220,7 @@ export default async function CompanyLayout({
     tenantSlug: tenant.slug,
     tenantName: tenant.name,
     businessType: tenant.businessType,
+    businessSegments: tenant.businessSegments ?? null,
     role: userRecord.role,
     isOwner: userRecord.role === 'owner',
     currency: tenant.currency || 'LKR',

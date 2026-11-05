@@ -5,6 +5,7 @@ import { Modal } from '@/components/ui/modal'
 import { toast } from '@/components/ui/toast'
 import { Warehouse, Check, Loader2 } from 'lucide-react'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import type { UserRole } from '@/lib/auth/roles'
 
 interface WarehouseData {
@@ -44,6 +45,9 @@ const initialFormData = {
 export function StaffFormModal({ isOpen, onClose, onSaved, editUser, currentUserId }: StaffFormModalProps) {
   const company = useCompanyOptional()
   const businessType = company?.businessType
+  // A mall offers the roles of every business type it runs
+  const { has } = useBusinessScope()
+  const runs = (type: string) => !!businessType && has(type)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [formData, setFormData] = useState(initialFormData)
@@ -261,9 +265,9 @@ export function StaffFormModal({ isOpen, onClose, onSaved, editUser, currentUser
               <option value="owner">Owner</option>
               <option value="manager">Manager</option>
               <option value="cashier">Cashier</option>
-              {businessType === 'auto_service' && <option value="technician">Technician</option>}
-              {businessType === 'restaurant' && <option value="chef">Chef</option>}
-              {businessType === 'restaurant' && <option value="waiter">Waiter</option>}
+              {runs('auto_service') && <option value="technician">Technician</option>}
+              {runs('restaurant') && <option value="chef">Chef</option>}
+              {runs('restaurant') && <option value="waiter">Waiter</option>}
               {!businessType && <option value="technician">Technician</option>}
               <option value="system_manager">System Manager</option>
               <option value="accounts_manager">Accounts Manager</option>

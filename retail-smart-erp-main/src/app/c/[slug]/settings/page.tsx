@@ -17,6 +17,7 @@ import { useDebounce } from '@/hooks/useDebounce'
 import { hasPermission } from '@/lib/auth/roles'
 import { broadcastAuthEvent } from '@/lib/auth/events'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { AIConsentModal } from '@/components/modals'
 import { SectionCard, Field, FieldGrid } from '@/components/ui/section-card'
 import { LogoUpload } from '@/components/ui/logo-upload'
@@ -214,9 +215,8 @@ export default function SettingsPage() {
     }
   }
 
-  const isAutoService = session?.user?.businessType === 'auto_service'
-  const isDealership = session?.user?.businessType === 'dealership'
-  const isVehicleBusiness = isAutoService || isDealership
+  const { has: runsBusinessType } = useBusinessScope()
+  const isVehicleBusiness = runsBusinessType(['auto_service', 'dealership'])
 
   // Build nav cards data for filtering
   const allNavCards = useMemo(() => {

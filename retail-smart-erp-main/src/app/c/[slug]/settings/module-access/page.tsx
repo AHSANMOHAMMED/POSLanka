@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useCallback, useMemo } from 'react'
-import { useSession } from 'next-auth/react'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
+import { scopeTypes } from '@/lib/business-types/scope'
 import { useRealtimeData } from '@/hooks'
 import { toast } from '@/components/ui/toast'
 import { PermissionGuard } from '@/components/auth/PermissionGuard'
@@ -58,8 +59,9 @@ const BUSINESS_TYPE_MODULES: Record<string, string[]> = {
 }
 
 export default function ModuleAccessPage() {
-  const { data: session } = useSession()
-  const businessType = session?.user?.businessType || 'retail'
+  // A mall: roles and modules of every business type it runs
+  const businessScope = useBusinessScope()
+  const businessType = businessScope.businessType ? businessScope.scope : 'retail'
   const [rows, setRows] = useState<ModuleAccessRow[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -77,7 +79,7 @@ export default function ModuleAccessPage() {
     for (const mods of Object.values(BUSINESS_TYPE_MODULES)) {
       for (const m of mods) allSpecificModules.add(m)
     }
-    const allowedSpecific = new Set(BUSINESS_TYPE_MODULES[businessType] || [])
+    const allowedSpecific = new Set(scopeTypes(businessType).flatMap((t) => BUSINESS_TYPE_MODULES[t] || []))
     return Object.keys(MODULE_LABELS).filter(
       key => !allSpecificModules.has(key) || allowedSpecific.has(key)
     )

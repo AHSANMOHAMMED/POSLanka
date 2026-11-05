@@ -78,7 +78,7 @@ export async function GET(
 
     if (existing) {
       const blocks = filterBlocksForSession(resolveBlockHrefs(existing.blocks as WorkspaceBlock[], basePath), session)
-      const defaultConfig = getDefaultWorkspace(key, session.user.businessType)
+      const defaultConfig = getDefaultWorkspace(key, session.user)
       const config: WorkspaceConfig = {
         key,
         title: defaultConfig?.title || key,
@@ -91,7 +91,7 @@ export async function GET(
     }
 
     // Fall back to default workspace
-    const defaultConfig = getDefaultWorkspace(key, session.user.businessType)
+    const defaultConfig = getDefaultWorkspace(key, session.user)
     if (!defaultConfig) {
       return NextResponse.json({ error: 'Workspace not found' }, { status: 404 })
     }
@@ -148,7 +148,7 @@ export async function PUT(
       logAndBroadcast(session.user.tenantId, 'workspace', 'updated', upserted.id)
 
       const basePath = `/c/${session.user.tenantSlug}`
-      const defaultConfig = getDefaultWorkspace(key, session.user.businessType)
+      const defaultConfig = getDefaultWorkspace(key, session.user)
       const config: WorkspaceConfig = {
         key,
         title: defaultConfig?.title || key,

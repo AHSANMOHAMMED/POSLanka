@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons'
 import { THEME } from '../../lib/theme'
 import { ADMIN_ROLE_LABEL, getAdminUser, type AdminUser } from '../../lib/adminApi'
 import { useHeaderPad, useBottomPad } from '../../lib/safeArea'
+import { businessTypeLabel as typeLabel, mallSegments } from '../../lib/businessTypeLabels'
 
 export type AdminTab = 'pulse' | 'live' | 'vendors' | 'approvals' | 'more'
 
@@ -164,6 +165,19 @@ export function Pill({ text, tone = 'muted' }: { text: string; tone?: 'muted' | 
   )
 }
 
+/** A mall's business types as chips (renders nothing for other vendors). */
+export function SegmentChips({ businessType, segments }: { businessType: string | null | undefined; segments: readonly unknown[] | null | undefined }) {
+  const list = mallSegments(businessType, segments)
+  if (list.length === 0) return null
+  return (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+      {list.map((s) => (
+        <Pill key={s} text={typeLabel(s)} tone="primary" />
+      ))}
+    </View>
+  )
+}
+
 export function statusTone(status: string | null | undefined): 'ok' | 'warn' | 'error' | 'muted' {
   switch (status) {
     case 'active':
@@ -191,33 +205,9 @@ export function compactLKR(n: number | string | null | undefined): string {
   return `${sign}LKR ${abs.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 }
 
+/** Kept here for the admin screens' imports; the labels live in src/lib/businessTypeLabels.ts. */
 export function businessTypeLabel(t: string | null | undefined): string {
-  switch (t) {
-    case 'retail':
-      return 'Retail'
-    case 'restaurant':
-      return 'Restaurant'
-    case 'supermarket':
-      return 'Supermarket'
-    case 'auto_service':
-      return 'Auto service'
-    case 'dealership':
-      return 'Dealership'
-    case 'pharmacy':
-      return 'Pharmacy'
-    case 'electronics':
-      return 'Electronics & appliances'
-    case 'hardware':
-      return 'Hardware'
-    case 'print_studio':
-      return 'Printing & photo studio'
-    case 'office':
-      return 'Office & services'
-    case 'textile':
-      return 'Textile & clothing'
-    default:
-      return t ? t.replace(/_/g, ' ') : 'Unknown'
-  }
+  return typeLabel(t)
 }
 
 export function timeAgo(iso: string | Date | null | undefined): string {

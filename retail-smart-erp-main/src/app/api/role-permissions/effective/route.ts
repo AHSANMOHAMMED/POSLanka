@@ -20,10 +20,11 @@ export async function GET() {
     const { role, tenantId, customRoleId } = session.user
     const permissions = getEffectivePermissions(role, tenantId, customRoleId)
 
-    // Business ID lets older app installs (signed in with the slug) learn it
+    // Business ID lets older app installs (signed in with the slug) learn it; business type +
+    // mall segments let the app pick up a super-admin type change without signing in again
     const tenant = await db.query.tenants.findFirst({
       where: eq(tenants.id, tenantId),
-      columns: { businessId: true },
+      columns: { businessId: true, businessType: true, businessSegments: true },
     }).catch(() => undefined)
 
     return NextResponse.json({
@@ -32,6 +33,7 @@ export async function GET() {
       customRoleId: customRoleId || null,
       customRoleName: customRoleId ? getCustomRoleName(tenantId, customRoleId) ?? null : null,
       businessId: tenant?.businessId ?? null,
+      ...(tenant ? { businessType: tenant.businessType, businessSegments: tenant.businessSegments ?? null } : {}),
     })
   } catch (error) {
     logError('api/role-permissions/effective', error)

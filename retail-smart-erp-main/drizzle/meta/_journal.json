@@ -1303,6 +1303,20 @@
       "when": 1771446439033,
       "tag": "0194_pharmacy_completion",
       "breakpoints": true
+    },
+    {
+      "idx": 195,
+      "version": "7",
+      "when": 1771446440033,
+      "tag": "0195_business_type_mall",
+      "breakpoints": true
+    },
+    {
+      "idx": 196,
+      "version": "7",
+      "when": 1771446441033,
+      "tag": "0196_business_segments",
+      "breakpoints": true
     }
   ]
 }

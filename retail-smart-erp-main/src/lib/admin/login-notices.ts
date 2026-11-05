@@ -4,6 +4,7 @@ import { platformBroadcasts, systemSettings, tenants } from '@/lib/db/schema'
 import { announcementTextForLocale, normalizeAnnouncement } from '@/lib/admin/announcement'
 import { normalizeBusinessId } from '@/lib/tenant/business-id'
 import { pickLocalizedPair, resolveLocale, type Locale } from '@/lib/i18n/locale'
+import { hasBusinessType } from '@/lib/business-types/scope'
 
 export interface LoginNotice {
   id: string
@@ -29,7 +30,7 @@ type AudienceMeta = {
 
 function audienceIncludesVendor(
   audience: AudienceMeta,
-  vendor: { id: string; businessId: string; status: string; businessType: string },
+  vendor: { id: string; businessId: string; status: string; businessType: string; businessSegments?: string[] | null },
 ): boolean {
   if (audience.showOnLogin !== true) return false
   const mode = audience.mode || 'all'
@@ -44,7 +45,7 @@ function audienceIncludesVendor(
   } else if (vendor.status === 'archived') {
     return false
   }
-  if (audience.businessTypes?.length && !audience.businessTypes.includes(vendor.businessType)) return false
+  if (audience.businessTypes?.length && !audience.businessTypes.includes(vendor.businessType) && !hasBusinessType(vendor, audience.businessTypes)) return false
   // tier / subscription filters are approximate on login (no join) — show when mode is all or filtered without those
   if (mode === 'filtered' && (audience.tierIds?.length || audience.subscriptionStatuses?.length)) {
     // Conservative: still show filtered broadcasts on login for matching type/status vendors
@@ -80,12 +81,12 @@ export async function getLoginNotices(opts: {
     }
   }
 
-  let vendor: { id: string; businessId: string; status: string; businessType: string } | null = null
+  let vendor: { id: string; businessId: string; status: string; businessType: string; businessSegments?: string[] | null } | null = null
   const slugProvided = Boolean(opts.slug && String(opts.slug).trim())
   if (slugProvided) {
     const t = await db.query.tenants.findFirst({
       where: eq(tenants.slug, String(opts.slug).trim()),
-      columns: { id: true, businessId: true, status: true, businessType: true },
+      columns: { id: true, businessId: true, status: true, businessType: true, businessSegments: true },
     })
     if (t) vendor = t
   }

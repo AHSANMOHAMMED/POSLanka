@@ -7,6 +7,7 @@ import { notInRecycleBin } from '@/lib/recycle-bin'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { formatCurrencyWithSymbol } from '@/lib/utils/currency'
 import { logError } from '@/lib/ai/error-logger'
+import { type BusinessScope, hasBusinessType } from '@/lib/business-types/scope'
 
 // X1: Unified global search across multiple modules
 export async function GET(request: NextRequest) {
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
     }
 
     const searchPattern = `%${escapeLikePattern(query)}%`
-    const isAutoService = session.user.businessType === 'auto_service' || session.user.businessType === 'dealership'
+    const isAutoService = hasBusinessType(session.user, ['auto_service', 'dealership'])
     const slug = session.user.tenantSlug
 
     // Execute with RLS tenant context
@@ -212,7 +213,7 @@ export async function GET(request: NextRequest) {
         .limit(limit)
 
       // Search navigation pages (static, no DB query)
-      const navigationPages = getNavigationPages(slug, session.user.businessType || '')
+      const navigationPages = getNavigationPages(slug, session.user)
       const searchLower = query.toLowerCase()
       const pageResults = navigationPages.filter(p =>
         p.title.toLowerCase().includes(searchLower) ||
@@ -327,7 +328,7 @@ interface NavPage {
   keywords: string[]
 }
 
-function getNavigationPages(slug: string, businessType: string): NavPage[] {
+function getNavigationPages(slug: string, businessType: BusinessScope): NavPage[] {
   const base = `/c/${slug}`
   const pages: NavPage[] = [
     // Core
@@ -367,7 +368,7 @@ function getNavigationPages(slug: string, businessType: string): NavPage[] {
   ]
 
   // Business-type-specific pages
-  if (businessType === 'auto_service' || businessType === 'dealership') {
+  if (hasBusinessType(businessType, ['auto_service', 'dealership'])) {
     pages.push(
       { title: 'Work Orders', section: 'Service', url: `${base}/work-orders`, keywords: ['jobs', 'repair', 'service'] },
       { title: 'Vehicles', section: 'Service', url: `${base}/vehicles`, keywords: ['cars', 'auto', 'fleet'] },
@@ -375,7 +376,7 @@ function getNavigationPages(slug: string, businessType: string): NavPage[] {
       { title: 'Insurance Estimates', section: 'Service', url: `${base}/insurance-estimates`, keywords: ['estimate', 'quote', 'insurance', 'claim'] },
     )
   }
-  if (businessType === 'restaurant') {
+  if (hasBusinessType(businessType, 'restaurant')) {
     pages.push(
       { title: 'Kitchen Display', section: 'Restaurant', url: `${base}/restaurant/kitchen`, keywords: ['kitchen', 'orders', 'cooking'] },
       { title: 'Tables', section: 'Restaurant', url: `${base}/restaurant/tables`, keywords: ['table', 'seating', 'floor plan'] },

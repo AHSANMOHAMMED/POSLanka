@@ -25,7 +25,7 @@ type Ctx = { params: Promise<{ id: string }> }
 async function ownerSession(tenantId: string): Promise<CompanySession | null> {
   const tenant = await db.query.tenants.findFirst({
     where: eq(tenants.id, tenantId),
-    columns: { id: true, slug: true, name: true, businessType: true },
+    columns: { id: true, slug: true, name: true, businessType: true, businessSegments: true },
   })
   if (!tenant) return null
   const [owner] = await withTenant(tenantId, (tdb) =>
@@ -46,6 +46,7 @@ async function ownerSession(tenantId: string): Promise<CompanySession | null> {
       tenantSlug: tenant.slug,
       tenantName: tenant.name,
       businessType: tenant.businessType,
+      businessSegments: tenant.businessSegments ?? null,
       aiEnabled: false,
       isSuperAdmin: false,
       isOwner: true,

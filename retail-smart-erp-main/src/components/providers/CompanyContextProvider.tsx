@@ -7,6 +7,8 @@ export interface CompanyContext {
   tenantSlug: string
   tenantName: string
   businessType: string
+  /** 'mall' only: the business types it runs (see useBusinessScope) */
+  businessSegments?: string[] | null
   role: string
   isOwner: boolean
   currency: string

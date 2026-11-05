@@ -7,6 +7,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { getTaxSuggestionForCountryCode } from './country-wise-tax'
 import { getCountryByCode } from '@/lib/utils/countries'
 import * as schema from '@/lib/db/schema'
+import { hasBusinessType } from '@/lib/business-types/scope'
 
 /**
  * Retry a transaction with exponential backoff for concurrency safety
@@ -440,11 +441,11 @@ export function validateCompanySetup(data: Partial<CompanyCreationOptions>): Val
   }
 
   // Business type specific warnings
-  if (data.businessType === 'restaurant' && !data.address?.trim()) {
+  if (hasBusinessType(data.businessType, 'restaurant') && !data.address?.trim()) {
     warnings.push('Restaurants should have an address for delivery purposes')
   }
 
-  if (data.businessType === 'auto_service' && !data.phone?.trim()) {
+  if (hasBusinessType(data.businessType, 'auto_service') && !data.phone?.trim()) {
     warnings.push('Auto service businesses should have a phone number for customer contact')
   }
 

@@ -1,4 +1,5 @@
 // Shared parsing of import form posts (preview + execute) and job access checks.
+import type { ImportBusinessScope } from './entity-config'
 
 import { NextResponse } from 'next/server'
 import { createHash } from 'crypto'
@@ -9,6 +10,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { getEntityConfig, type EntityConfig, type ImportMode } from './entity-config'
 import { parseCsv, parseXlsx, mapColumns } from './import-utils'
 import type { ImportJobOptions, ImportJobRecord } from './import-job-store'
+import { importBusinessScope } from './entity-config'
 
 const optionsSchema = z.object({
   mode: z.enum(['insert', 'update', 'upsert']).default('insert'),
@@ -28,7 +30,7 @@ export interface ParsedImportRequest {
   columnMapping: Record<string, string>
   fileName: string
   fileHash: string
-  businessType?: string
+  businessType?: ImportBusinessScope
 }
 
 function str(fd: FormData, key: string): string | null {
@@ -105,7 +107,7 @@ export async function parseImportRequest(
   }
 
   const headers = Object.keys(rawRows[0])
-  const businessType = session.user.businessType || undefined
+  const businessType = importBusinessScope(session.user)
   const columnMapping = parsedOpts.data.columnMapping || mapColumns(headers, entityConfig, businessType)
 
   return {

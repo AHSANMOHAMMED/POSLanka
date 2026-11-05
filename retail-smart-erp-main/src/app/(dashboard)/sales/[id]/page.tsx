@@ -16,6 +16,7 @@ import { PageLoading } from '@/components/ui/loading-spinner'
 import { formatCurrency } from '@/lib/utils/currency'
 import { formatDate } from '@/lib/utils/date-format'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { formatItemLabel, buildItemSearchOption, type SearchableItem } from '@/lib/utils/item-display'
 import { LinkField, LinkFieldOption } from '@/components/ui/link-field'
 import { LineUnitSelect } from '@/components/items/LineUnitSelect'
@@ -126,6 +127,7 @@ export default function SalesInvoiceDetailPage() {
   const id = params.id as string
   const router = useRouter()
   const { tenantSlug, businessType } = useCompany()
+  const { has: runsBusinessType } = useBusinessScope()
   const isCreateMode = id === 'new'
 
   const [sale, setSale] = useState<SaleData | null>(null)
@@ -915,7 +917,7 @@ export default function SalesInvoiceDetailPage() {
             label={sale.isReturn ? 'Print credit note' : 'Print A4 invoice'}
           />
           {/* 0193: warranty card per sold unit (serial / IMEI, warranty until) */}
-          {!sale.isReturn && !isVoid && ['electronics', 'hardware', 'retail'].includes(businessType || '') && (
+          {!sale.isReturn && !isVoid && runsBusinessType(['electronics', 'hardware', 'retail']) && (
             <WarrantyCardButton saleId={sale.id} />
           )}
           {/* Customer's WhatsApp chat with the receipt PDF link, or the PDF itself */}

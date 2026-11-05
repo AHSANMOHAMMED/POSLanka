@@ -70,6 +70,8 @@ import { getRolesForBusinessType } from '@/lib/auth/roles'
 import { FEATURE_DEFS, FEATURE_GROUPS, featureAppliesTo, isTypeScopedFeature, type FeatureDef } from '@/lib/features/flags'
 import { VendorImportCard } from './VendorImportCard'
 import { VendorBusinessTab } from './VendorBusinessTab'
+import { BusinessTypeChips, BusinessTypeChangeSummary, ChangeBusinessTypeDialog, type BusinessTypeChangeResult } from '@/components/admin/MallSegments'
+import type { BusinessScope } from '@/lib/business-types/scope'
 import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
 
 /* ------------------------------------------------------------------ types */
@@ -98,6 +100,8 @@ interface Detail {
     brn: string | null
     vatRegistered: boolean
     businessType: string
+    /** 'mall' only: the shop types it runs */
+    businessSegments?: string[] | null
     country: string
     currency: string
     status: string
@@ -212,6 +216,8 @@ export default function VendorDetailPage() {
   const [creatingCashier, setCreatingCashier] = useState(false)
   const [credResult, setCredResult] = useState<{ title: string; email: string; password: string } | null>(null)
   const canManage = useAdminCan('vendors.manage')
+  const [changingType, setChangingType] = useState(false)
+  const [typeChange, setTypeChange] = useState<BusinessTypeChangeResult | null>(null)
   // Stock tab reloads its list after a file import
   const [stockKey, setStockKey] = useState(0)
   const onImported = useCallback((text: string) => {
@@ -264,6 +270,8 @@ export default function VendorDetailPage() {
   }
 
   const { vendor: v, subscription: sub, usage, limits, owner } = data
+  // The business types the vendor runs (a mall: its segments) for roles / features
+  const vendorScope = { businessType: v.businessType, businessSegments: v.businessSegments ?? null }
   const bid = formatBusinessId(v.businessId)
   const isActive = v.status === 'active'
   const cashiers = data.staff.filter((s) => s.role === 'cashier')
@@ -366,7 +374,7 @@ export default function VendorDetailPage() {
           <span aria-hidden>·</span>
           <span>{v.slug}</span>
           <span aria-hidden>·</span>
-          <span>{businessTypeLabel(v.businessType)}</span>
+          <BusinessTypeChips type={v.businessType} segments={v.businessSegments} />
         </span>
       }
       breadcrumbs={[{ label: 'Vendors', href: '/sys-control/vendors' }, { label: v.name }]}
@@ -383,6 +391,26 @@ export default function VendorDetailPage() {
     >
       {flash && (
         <Alert tone={flash.tone} action={<Button size="sm" variant="ghost" onClick={() => setFlash(null)}>Dismiss</Button>}>{flash.text}</Alert>
+      )}
+      {typeChange && (
+        <Alert tone="success" title="Business type changed" action={<Button size="sm" variant="ghost" onClick={() => setTypeChange(null)}>Dismiss</Button>}>
+          <BusinessTypeChangeSummary result={typeChange} />
+        </Alert>
+      )}
+      {changingType && (
+        <ChangeBusinessTypeDialog
+          open
+          onClose={() => setChangingType(false)}
+          vendorId={v.id}
+          vendorName={v.name}
+          currentType={v.businessType}
+          currentSegments={v.businessSegments ?? null}
+          onChanged={(res) => {
+            setChangingType(false)
+            setTypeChange(res)
+            load()
+          }}
+        />
       )}
       {credResult && (
         <Alert tone="warning" title={`${credResult.title} (shown once)`}>
@@ -439,13 +467,16 @@ export default function VendorDetailPage() {
       {tab === 'overview' && (
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
           <div className="space-y-5 xl:col-span-2">
-            <AdminCard title="Business profile">
+            <AdminCard
+              title="Business profile"
+              actions={canManage ? <Button size="sm" variant="secondary" onClick={() => setChangingType(true)}>Change business type</Button> : undefined}
+            >
               <div className="grid grid-cols-1 gap-x-8 lg:grid-cols-2">
                 <KeyValueList
                   items={[
                     { label: 'Business ID', value: <span className="adm-num">{bid}</span> },
                     { label: 'Legal name', value: v.legalName || '—' },
-                    { label: 'Business type', value: businessTypeLabel(v.businessType) },
+                    { label: 'Business type', value: <BusinessTypeChips type={v.businessType} segments={v.businessSegments} /> },
                     { label: 'Email', value: v.email },
                     { label: 'Phone', value: v.phone || '—' },
                     { label: 'Address', value: v.address || '—' },
@@ -712,7 +743,7 @@ export default function VendorDetailPage() {
       )}
 
       {tab === 'business' && canImpersonate && <VendorBusinessTab vendorId={v.id} />}
-      {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={v.businessType} branches={v.branches.filter((b) => b.isActive)} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
+      {tab === 'staff' && <StaffTab staff={data.staff} vendorId={v.id} businessType={vendorScope} branches={v.branches.filter((b) => b.isActive)} canManage={canManage} onChanged={(text) => { setFlash({ tone: 'success', text }); load() }} />}
       {tab === 'stock' && canImpersonate && (
         <div className="space-y-5">
           <StockTab key={stockKey} vendorId={v.id} onSaved={(text) => setFlash({ tone: 'success', text })} />
@@ -720,7 +751,7 @@ export default function VendorDetailPage() {
         </div>
       )}
       {tab === 'billing' && <BillingTab data={data} />}
-      {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} savedKeys={v.featureFlagsSaved} branchCount={v.branches.length} businessType={v.businessType} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
+      {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} savedKeys={v.featureFlagsSaved} branchCount={v.branches.length} businessType={vendorScope} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
       {tab === 'activity' && <ActivityTab activity={data.activity} />}
 
       <ActionDialogs key={dialog ?? 'none'} dialog={dialog} data={data} onClose={() => setDialog(null)} onDone={done} />
@@ -737,7 +768,7 @@ type StaffResult = { title: string; email: string; password: string }
 type BranchRow = Detail['vendor']['branches'][number]
 
 function StaffTab({ staff, vendorId, businessType, branches, canManage, onChanged }: {
-  staff: Detail['staff']; vendorId: string; businessType: string; branches: BranchRow[]; canManage: boolean; onChanged: (text: string) => void
+  staff: Detail['staff']; vendorId: string; businessType: BusinessScope; branches: BranchRow[]; canManage: boolean; onChanged: (text: string) => void
 }) {
   const [adding, setAdding] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -825,7 +856,7 @@ function StaffTab({ staff, vendorId, businessType, branches, canManage, onChange
 }
 
 function AddStaffDialog({ vendorId, businessType, branches, onClose, onCreated }: {
-  vendorId: string; businessType: string; branches: BranchRow[]; onClose: () => void; onCreated: (name: string, email: string, password: string | null) => void
+  vendorId: string; businessType: BusinessScope; branches: BranchRow[]; onClose: () => void; onCreated: (name: string, email: string, password: string | null) => void
 }) {
   const roles = getRolesForBusinessType(businessType).filter((r) => r !== 'owner')
   const [fullName, setFullName] = useState('')
@@ -958,7 +989,7 @@ function featureOffSummary(d: FeatureDef): string {
   return [hides, d.offEffect].filter(Boolean).join(' ') || 'Off: the POS and the app stop offering it.'
 }
 
-function FeaturesTab({ vendorId, flags, savedKeys, branchCount, businessType, onSaved }: { vendorId: string; flags: Record<string, boolean>; savedKeys?: string[]; branchCount: number; businessType: string; onSaved: (text: string) => void }) {
+function FeaturesTab({ vendorId, flags, savedKeys, branchCount, businessType, onSaved }: { vendorId: string; flags: Record<string, boolean>; savedKeys?: string[]; branchCount: number; businessType: { businessType: string; businessSegments: string[] | null }; onSaved: (text: string) => void }) {
   // What the server holds now. Starts from the loaded flags and follows each save, so a change can be
   // saved and then switched back and saved again (comparing with the stale prop disabled Save).
   const [saved, setSaved] = useState(flags)
@@ -1029,7 +1060,7 @@ function FeaturesTab({ vendorId, flags, savedKeys, branchCount, businessType, on
   return (
     <AdminCard
       title="Feature switches"
-      description={`${onCount} of ${relevant.length} features on for this ${businessTypeLabel(businessType).toLowerCase()} business. A switched-off feature disappears from the vendor’s menus, web and app, and its API answers “turned off”. Existing data is kept and comes back when switched on.`}
+      description={`${onCount} of ${relevant.length} features on for this ${businessTypeLabel(businessType.businessType).toLowerCase()}${businessType.businessType === 'mall' && businessType.businessSegments?.length ? ` (${businessType.businessSegments.map(businessTypeLabel).join(', ')})` : ''} business. A switched-off feature disappears from the vendor’s menus, web and app, and its API answers “turned off”. Existing data is kept and comes back when switched on.`}
       footer={
         <div className="flex flex-wrap items-center justify-end gap-2">
           {error && <span className="mr-auto text-[13px] text-adm-danger">{error}</span>}

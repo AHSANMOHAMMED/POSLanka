@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { Session } from 'next-auth'
 import type { CompanySession } from '@/lib/auth'
+import { type BusinessScope, scopeTypes } from '@/lib/business-types/scope'
 // Permission cache functions — registered at runtime by authWithCompany() via
 // dynamic import('./permission-cache'). This avoids bundling pg/db in client code.
 let _getPermissionOverride: ((tenantId: string, role: string, permission: string) => boolean | undefined) | null = null
@@ -267,7 +268,7 @@ export const BUSINESS_TYPE_CATEGORIES: Record<string, string[]> = {
  * Get built-in roles relevant to a business type.
  * Universal roles are always included; business-specific roles are added per type.
  */
-export function getRolesForBusinessType(businessType: string): UserRole[] {
+export function getRolesForBusinessType(businessType: BusinessScope): UserRole[] {
   // Collect all business-specific roles
   const allSpecificRoles = new Set<UserRole>()
   for (const roles of Object.values(BUSINESS_TYPE_ROLES)) {
@@ -283,8 +284,8 @@ export function getRolesForBusinessType(businessType: string): UserRole[] {
     'pos_user', 'report_user', 'dealer_sales',
   ]
 
-  // Roles allowed for this business type
-  const allowedSpecific = new Set(BUSINESS_TYPE_ROLES[businessType] || [])
+  // Roles allowed for this business type (a mall: for any of its types)
+  const allowedSpecific = new Set(scopeTypes(businessType).flatMap((t) => BUSINESS_TYPE_ROLES[t] || []))
 
   for (const role of allRoles) {
     if (!allSpecificRoles.has(role) || allowedSpecific.has(role)) {
@@ -299,14 +300,14 @@ export function getRolesForBusinessType(businessType: string): UserRole[] {
  * Get permission categories relevant to a business type.
  * Universal categories are always included; business-specific categories are added per type.
  */
-export function getCategoriesForBusinessType(businessType: string): Record<string, Permission[]> {
+export function getCategoriesForBusinessType(businessType: BusinessScope): Record<string, Permission[]> {
   // Collect all business-specific categories
   const allSpecificCategories = new Set<string>()
   for (const cats of Object.values(BUSINESS_TYPE_CATEGORIES)) {
     for (const c of cats) allSpecificCategories.add(c)
   }
 
-  const allowedSpecific = new Set(BUSINESS_TYPE_CATEGORIES[businessType] || [])
+  const allowedSpecific = new Set(scopeTypes(businessType).flatMap((t) => BUSINESS_TYPE_CATEGORIES[t] || []))
 
   const result: Record<string, Permission[]> = {}
   for (const [category, perms] of Object.entries(PERMISSION_CATEGORIES)) {

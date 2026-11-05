@@ -4,13 +4,14 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 import { ServiceJobForm } from '@/components/service-jobs/ServiceJobForm'
-import { useCompany } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope, serviceJobBusinessType } from '@/hooks/useBusinessScope'
 import { serviceJobTerms } from '@/lib/service-jobs/constants'
 
 export default function NewServiceJobPage() {
   const params = useParams()
   const slug = params.slug as string
-  const { businessType } = useCompany()
+  // A mall uses the words of its service-job department (electronics repairs, tailoring …)
+  const businessType = serviceJobBusinessType(useBusinessScope())
   const terms = serviceJobTerms(businessType)
   return (
     <div className="max-w-6xl mx-auto space-y-3">

@@ -15,6 +15,8 @@ interface StepBusinessProfileProps {
   country: string
   countryName: string
   businessType: string
+  /** Mall only: the business types it runs (chart of accounts covers all of them) */
+  businessSegments?: string[] | null
   companySlug: string
   aiEnabled?: boolean
   onChange: (updates: Partial<SetupWizardData>) => void
@@ -129,12 +131,17 @@ export function StepBusinessProfile({
   country,
   countryName,
   businessType,
+  businessSegments,
   companySlug,
   aiEnabled,
   onChange,
 }: StepBusinessProfileProps) {
   const coaTemplate = data.coaTemplate || 'numbered'
-  const coaTree = useMemo(() => getChartOfAccountsForBusinessType(businessType), [businessType])
+  const segKey = businessSegments?.join(',') ?? ''
+  const coaTree = useMemo(
+    () => getChartOfAccountsForBusinessType({ businessType, businessSegments: segKey ? segKey.split(',') : null }),
+    [businessType, segKey],
+  )
   const totalAccounts = useMemo(() => countAccounts(coaTree), [coaTree])
 
   const { suggestions } = useStepSuggestions<AISuggestion>({

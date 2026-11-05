@@ -134,6 +134,8 @@ export const createPosProfileSchema = z.object({
   code: z.string().trim().max(50).nullish(),
   warehouseId: uuidSchema,
   costCenterId: uuidSchema,
+  /** Mall counters: the shop type this till works as (one of the mall's segments) */
+  businessSegment: z.string().trim().max(30).nullish(),
   isDefault: z.boolean().default(false),
   applyDiscountOn: z.enum(['grand_total', 'net_total']).default('grand_total'),
   // Permissions
@@ -177,6 +179,8 @@ export const updatePosProfileSchema = z.object({
   warehouseId: optionalUuid,
   defaultCustomerId: optionalUuid,
   costCenterId: optionalUuid,
+  /** Mall counters: one of the mall's segments; send null / '' to clear */
+  businessSegment: z.string().trim().max(30).nullish(),
   isDefault: z.boolean().optional(),
   applyDiscountOn: z.enum(['grand_total', 'net_total']).optional(),
   allowRateChange: z.boolean().optional(),

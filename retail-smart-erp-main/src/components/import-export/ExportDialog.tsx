@@ -52,7 +52,7 @@ export function ExportDialog({ isOpen, onClose, entity, currentFilters }: Export
 
   const company = useCompanyOptional()
   const entityConfig = getEntityConfig(entity)
-  const exportFields = entityConfig ? getExportFields(entityConfig, company?.businessType) : []
+  const exportFields = entityConfig ? getExportFields(entityConfig, company ? { businessType: company.businessType, businessSegments: company.businessSegments } : undefined) : []
   const hasDateField = DATE_FILTERABLE_ENTITIES.has(entity)
 
   // Initialize when dialog opens

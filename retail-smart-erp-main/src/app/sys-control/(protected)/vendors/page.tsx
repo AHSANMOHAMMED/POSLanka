@@ -16,7 +16,6 @@ import {
   SegmentedControl,
   Select,
   buttonClass,
-  businessTypeLabel,
   fmtCompact,
   fmtLKR,
   statusTone,
@@ -25,6 +24,7 @@ import {
   type AdminColumn,
 } from '@/components/admin/kit'
 import { useAdminCan } from '@/components/admin/AdminRoleContext'
+import { BusinessTypeChips } from '@/components/admin/MallSegments'
 import {
   Pager,
   SUBSCRIPTION_STATUS_LABEL,
@@ -45,6 +45,8 @@ interface VendorRow {
   businessId: string
   email: string
   businessType: string
+  /** 'mall' only: the shop types it runs */
+  businessSegments?: string[] | null
   status: string
   lockedReason: string | null
   createdAt: string
@@ -202,7 +204,7 @@ export default function VendorsPage() {
         </div>
       ),
     },
-    { key: 'type', header: 'Type', hideBelow: 'lg', cell: (v) => <span className="text-adm-muted">{businessTypeLabel(v.businessType)}</span> },
+    { key: 'type', header: 'Type', hideBelow: 'lg', cell: (v) => <BusinessTypeChips className="text-adm-muted" type={v.businessType} segments={v.businessSegments} max={3} /> },
     {
       key: 'owner',
       header: 'Owner',

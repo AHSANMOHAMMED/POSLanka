@@ -4,7 +4,7 @@ import { useState, useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
+import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { useSidebar } from './Sidebar'
 import { useTheme } from '@/components/providers/ThemeProvider'
 import { getModuleFromPathname, getModuleSidebar, isDetailPage } from '@/lib/navigation/module-sidebar'
@@ -25,7 +25,6 @@ interface ModuleSidebarProps {
 export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
   const pathname = usePathname()
   const { data: session } = useSession()
-  const company = useCompanyOptional()
   const { mobileOpen, setMobileOpen, collapsed: userCollapsed, setCollapsed } = useSidebar()
   // Appearance: hidden = drawer opened with ☰ (any screen size), icons = rail only, open = docked
   // (visibility per mode is CSS on html[data-sidebar], set before paint, so server and client markup match)
@@ -40,7 +39,7 @@ export function ModuleSidebar({ companySlug }: ModuleSidebarProps) {
   const can = effective ? (p: Permission) => effective[p] ?? false : undefined
   const { flags } = useFeatureFlags()
 
-  const businessType = company?.businessType || session?.user?.businessType
+  const { scope: businessType } = useBusinessScope()
   const userRole = session?.user?.role
   const basePath = `/c/${companySlug}`
 

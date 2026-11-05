@@ -4,6 +4,7 @@
 import { Linking } from 'react-native'
 import { getPublicWebBase, type AuthUser } from './api'
 import { hasPermission, isBackOffice, ROLE_PERMISSIONS, type Permission } from './roles'
+import { hasBusinessType } from './businessScope'
 import type { IconName, Tone } from '../components/ui'
 
 /** Permission check that also accepts keys the mobile role table does not list (effective permissions only). */
@@ -31,7 +32,7 @@ export interface AppFeature {
   route?: string
   /** Web page under /c/<slug> opened in the browser when there is no native screen. */
   webPath?: string
-  /** Only for these business types (web sidebar rule). */
+  /** Only for these business types (web sidebar rule; a mall needs any of them among its segments). */
   businessTypes?: readonly string[]
   /** Business feature switch (GET /api/features) that must not be off. */
   flag?: string
@@ -87,7 +88,8 @@ export const FEATURES: AppFeature[] = [
 export function featureVisible(f: AppFeature, user: AuthUser | null | undefined, hasFlag: (flag: string) => boolean): boolean {
   if (!user) return false
   if (!canAny(user, f.anyOf)) return false
-  if (f.businessTypes && !f.businessTypes.includes(user.businessType || 'retail')) return false
+  // A mall sees the features of every business type it runs
+  if (f.businessTypes && !hasBusinessType(user.businessType ? user : 'retail', f.businessTypes)) return false
   if (f.flag && !hasFlag(f.flag)) return false
   if (f.backOffice === 'only' && !isBackOffice(user)) return false
   if (f.backOffice === 'never' && isBackOffice(user)) return false

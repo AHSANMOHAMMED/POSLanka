@@ -13,6 +13,8 @@ interface Entry {
   validatedAt: number
   logoUrl?: string
   aiEnabled?: boolean
+  businessType?: string
+  businessSegments?: string[] | null
 }
 
 type TenantListener = (tenantId: string) => void

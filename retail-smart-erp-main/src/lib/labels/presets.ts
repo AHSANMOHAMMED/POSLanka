@@ -1,4 +1,5 @@
 import type { LabelElement, LabelShape } from './types'
+import { type BusinessScope, hasBusinessType } from '@/lib/business-types/scope'
 
 export interface LabelPreset {
   id: string
@@ -394,9 +395,10 @@ export const LABEL_PRESETS: LabelPreset[] = [
 /**
  * Get presets relevant for a given business type
  */
-export function getPresetsForBusinessType(businessType?: string): LabelPreset[] {
+export function getPresetsForBusinessType(businessType?: BusinessScope): LabelPreset[] {
   if (!businessType) return LABEL_PRESETS
+  // A mall gets the presets of every type it runs
   return LABEL_PRESETS.filter(p =>
-    p.businessTypes.includes(businessType) || p.businessTypes.includes('all')
+    hasBusinessType(businessType, p.businessTypes) || p.businessTypes.includes('all')
   )
 }

@@ -28,8 +28,8 @@ export async function GET(request: NextRequest) {
         .where(eq(labelTemplates.tenantId, session.user.tenantId)).limit(1)).length > 0
       if (!anyTemplate) {
         // Auto-seed default label presets (Zebra 50x30, 40x25, scale labels, hang tags, etc.)
-        const businessType = (session.user as { businessType?: string }).businessType || 'retail'
-        const presets = getPresetsForBusinessType(businessType)
+        const businessType = session.user.businessType || 'retail'
+        const presets = getPresetsForBusinessType({ businessType, businessSegments: session.user.businessSegments })
         const toInsert = presets.map((p, idx) => ({
           tenantId: session.user.tenantId,
           name: p.name,

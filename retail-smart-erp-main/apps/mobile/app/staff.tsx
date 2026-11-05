@@ -115,7 +115,7 @@ export default function StaffScreen() {
 
   const canManage = hasPermission(user ?? null, 'manageUsers')
   const actorRole = user?.role || ''
-  const roles = useMemo(() => assignableRoles(actorRole, user?.businessType), [actorRole, user?.businessType])
+  const roles = useMemo(() => assignableRoles(actorRole, user), [actorRole, user])
 
   useEffect(() => {
     getUser().then((u) => setUser(u))

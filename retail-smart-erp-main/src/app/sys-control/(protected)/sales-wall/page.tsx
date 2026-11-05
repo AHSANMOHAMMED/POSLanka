@@ -24,6 +24,7 @@ import {
   fmtNumber,
   type AdminColumn,
 } from '@/components/admin/kit'
+import { BusinessTypeChips } from '@/components/admin/MallSegments'
 import { cn } from '@/lib/utils'
 
 type RangeKey = 'today' | '7d' | '30d'
@@ -35,6 +36,8 @@ interface LiveReceipt {
   tenantName: string
   tenantSlug: string
   businessType: string
+  /** 'mall' only: the shop types it runs */
+  businessSegments?: string[] | null
   warehouseName: string | null
   cashierName: string | null
   total: number
@@ -77,6 +80,7 @@ const BUSINESS_TYPES: Array<{ value: string; label: string }> = [
   { value: 'print_studio', label: 'Print & photo studio' },
   { value: 'office', label: 'Office & services' },
   { value: 'textile', label: 'Textile & clothing' },
+  { value: 'mall', label: 'Mall / multi-shop' },
 ]
 
 const PAYMENT_LABEL: Record<string, string> = {
@@ -270,7 +274,7 @@ export default function LiveSalesPage() {
       key: 'type',
       header: 'Type',
       hideBelow: 'xl',
-      cell: (tx) => (tx.isReturn ? <Badge tone="danger">Return</Badge> : <span className="text-adm-muted">{businessTypeLabel(tx.businessType)}</span>),
+      cell: (tx) => (tx.isReturn ? <Badge tone="danger">Return</Badge> : <BusinessTypeChips className="text-adm-muted" type={tx.businessType} segments={tx.businessSegments} max={2} />),
     },
     {
       key: 'amount',

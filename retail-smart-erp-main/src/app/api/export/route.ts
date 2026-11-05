@@ -7,6 +7,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import type { EntityType } from '@/lib/websocket/events'
 import { requireAllBranches } from '@/lib/auth/branch-access'
+import { importBusinessScope } from '@/lib/import-export/entity-config'
 
 const ENTITY_TYPE_MAP: Record<string, EntityType> = {
   items: 'item', customers: 'customer', suppliers: 'supplier', categories: 'category',
@@ -73,7 +74,7 @@ export async function GET(request: NextRequest) {
       format: format as 'csv' | 'xlsx',
       fields: fieldsParam ? fieldsParam.split(',').map(k => k.trim()).filter(Boolean) : null,
       filters,
-      businessType: session.user.businessType || undefined,
+      businessType: importBusinessScope(session.user),
     }
 
     const counts = await countExport(req)

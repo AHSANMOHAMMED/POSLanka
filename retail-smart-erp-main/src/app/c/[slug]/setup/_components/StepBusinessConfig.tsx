@@ -8,10 +8,13 @@ import { DealershipConfig } from './DealershipConfig'
 import { useStepSuggestions } from './useStepSuggestions'
 import type { SetupWizardData } from '@/lib/setup/create-seed-data'
 import { getCategoriesForBusinessType } from '@/lib/setup/seed-data'
+import { hasBusinessType, isMall, scopeTypes } from '@/lib/business-types/scope'
 
 interface StepBusinessConfigProps {
   data: SetupWizardData
   businessType: string
+  /** Mall only: the business types it runs */
+  businessSegments?: string[] | null
   companySlug: string
   country: string
   countryName: string
@@ -33,6 +36,7 @@ import { getBusinessTypeLabel } from '@/lib/constants/business-types'
 export function StepBusinessConfig({
   data,
   businessType,
+  businessSegments,
   companySlug,
   country,
   countryName,
@@ -40,6 +44,11 @@ export function StepBusinessConfig({
   aiEnabled,
   onChange,
 }: StepBusinessConfigProps) {
+  const scope = { businessType, businessSegments }
+  const mall = isMall(scope)
+  // A mall picks its categories once from every department's list; tables / labour rates
+  // still come from the restaurant / service sections below
+  const runs = (t: string | readonly string[]) => hasBusinessType(scope, t)
   const { suggestions, loading, dismissed, dismiss } = useStepSuggestions<BusinessConfigSuggestion>({
     step: 'business_config',
     context: { businessType, country, countryName, currency },
@@ -56,9 +65,25 @@ export function StepBusinessConfig({
         <p className="text-sm text-gray-400 dark:text-gray-500 mt-0.5">
           Configure defaults for your {getBusinessTypeLabel(businessType)?.toLowerCase() || 'business'}.
         </p>
+        {mall && (
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            Includes: {scopeTypes(scope).map((t) => getBusinessTypeLabel(t)).join(', ')}
+          </p>
+        )}
       </div>
 
-      {['electronics', 'hardware', 'print_studio', 'office', 'textile'].includes(businessType) && (
+      {mall && (
+        <RetailConfig
+          data={data}
+          onChange={onChange}
+          suggestions={suggestions}
+          suggestionsLoading={loading}
+          dismissed={dismissed}
+          onDismiss={dismiss}
+          categorySeeds={getCategoriesForBusinessType(scope)}
+        />
+      )}
+      {!mall && ['electronics', 'hardware', 'print_studio', 'office', 'textile'].includes(businessType) && (
         <RetailConfig
           data={data}
           onChange={onChange}
@@ -69,7 +94,7 @@ export function StepBusinessConfig({
           categorySeeds={getCategoriesForBusinessType(businessType)}
         />
       )}
-      {businessType === 'retail' && (
+      {!mall && businessType === 'retail' && (
         <RetailConfig
           data={data}
           onChange={onChange}
@@ -79,7 +104,7 @@ export function StepBusinessConfig({
           onDismiss={dismiss}
         />
       )}
-      {businessType === 'restaurant' && (
+      {runs('restaurant') && (
         <RestaurantConfig
           data={data}
           onChange={onChange}
@@ -90,7 +115,7 @@ export function StepBusinessConfig({
           onDismiss={dismiss}
         />
       )}
-      {(businessType === 'supermarket' || businessType === 'pharmacy') && (
+      {!mall && (businessType === 'supermarket' || businessType === 'pharmacy') && (
         <SupermarketConfig
           data={data}
           onChange={onChange}
@@ -100,7 +125,7 @@ export function StepBusinessConfig({
           onDismiss={dismiss}
         />
       )}
-      {businessType === 'auto_service' && (
+      {runs('auto_service') && (
         <AutoServiceConfig
           data={data}
           onChange={onChange}
@@ -111,7 +136,7 @@ export function StepBusinessConfig({
           onDismiss={dismiss}
         />
       )}
-      {businessType === 'dealership' && (
+      {runs('dealership') && (
         <DealershipConfig
           data={data}
           onChange={onChange}

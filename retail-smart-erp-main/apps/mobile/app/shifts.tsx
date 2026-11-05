@@ -24,6 +24,7 @@ import {
   type Shift,
 } from '../src/lib/shift'
 import { displayRole, hasPermission } from '../src/lib/roles'
+import { counterSegmentLabel } from '../src/lib/businessTypeLabels'
 import { THEME, formatLKR } from '../src/lib/theme'
 import { ErrorView, EmptyView } from '../src/components/StateViews'
 import { getPrinterSettings, isPrintingEnabled, printerErrorMessage, printZReport } from '../src/lib/printer'
@@ -505,6 +506,9 @@ export default function ShiftsScreen() {
                         <Text style={[styles.chipText, active && styles.chipTextActive]}>{p.name}</Text>
                         {p.warehouse?.name ? (
                           <Text style={[styles.chipSub, active && styles.chipTextActive]}>{p.warehouse.name}</Text>
+                        ) : null}
+                        {p.businessSegment ? (
+                          <Text style={[styles.chipSub, active && styles.chipTextActive]}>{counterSegmentLabel(p.businessSegment)}</Text>
                         ) : null}
                       </Pressable>
                     )

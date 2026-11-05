@@ -7,6 +7,7 @@ import { eq, and, sql, gte, lte } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { tenantDayRange } from '@/lib/reports/date-range'
 import { requireAllBranches } from '@/lib/auth/branch-access'
+import { hasBusinessType } from '@/lib/business-types/scope'
 
 export async function GET(request: NextRequest) {
   try {
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
     const branchError = await requireAllBranches(session)
     if (branchError) return branchError
 
-    if (session.user.businessType !== 'restaurant' && session.user.businessType !== 'supermarket') {
+    if (!hasBusinessType(session.user, ['restaurant', 'supermarket'])) {
       return NextResponse.json({ error: 'This report is only available for restaurant and supermarket businesses' }, { status: 403 })
     }
 
