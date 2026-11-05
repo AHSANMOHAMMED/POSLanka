@@ -109,7 +109,7 @@ export function SaveQuotationModal({ slug, lines, totals, customer, currencyCode
     window.open(`/c/${slug}/quotations/${saved.id}?print=1`, '_blank', 'noopener')
   }
 
-  const inputCls = 'w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-teal-500'
+  const inputCls = 'w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 theme-ring-primary'
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onMouseDown={onClose}>
@@ -122,7 +122,7 @@ export function SaveQuotationModal({ slug, lines, totals, customer, currencyCode
       >
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-gray-700">
           <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <FileText size={20} className="text-teal-700 dark:text-teal-400" /> {saved ? 'Quotation saved' : 'Save as quotation'}
+            <FileText size={20} className="theme-text-primary" /> {saved ? 'Quotation saved' : 'Save as quotation'}
           </h3>
           <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 text-slate-500 dark:text-gray-400" aria-label="Close">
             <X size={18} />

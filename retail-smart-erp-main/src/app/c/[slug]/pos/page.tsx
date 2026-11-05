@@ -3519,7 +3519,7 @@ export default function POSPage() {
   if (config.redirectToDealPipeline) {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-50">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+        <Loader2 className="w-8 h-8 animate-spin theme-text-primary" />
       </div>
     )
   }
@@ -3528,7 +3528,7 @@ export default function POSPage() {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-50">
         <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin text-blue-600 mx-auto" />
+          <Loader2 className="w-12 h-12 animate-spin theme-text-primary mx-auto" />
           <p className="text-gray-500 mt-4 font-medium">Loading POS...</p>
         </div>
       </div>
@@ -3590,12 +3590,12 @@ export default function POSPage() {
     { id: 'recallHeld', label: heldSales.length ? `Recall held (${heldSales.length})` : 'Recall held sale', icon: History, shortcut: 'F3', keywords: 'hold parked', disabledReason: heldSales.length ? null : 'No held sales', tone: 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400', run: () => runPosAction('recallHeld') },
     { id: 'saveQuotation', label: 'Save as quotation', icon: FileText, shortcut: 'Alt+Q', keywords: 'quote estimate proforma',
       disabledReason: !quotationsEnabled ? 'Quotations are switched off' : isReturnMode || exchangeFrom ? 'Not during a return' : cart.length === 0 ? 'Cart is empty' : null,
-      tone: 'bg-teal-100 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300', run: () => runPosAction('saveQuotation') },
+      tone: 'theme-badge-primary', run: () => runPosAction('saveQuotation') },
     { id: 'quotations', label: 'Quotations list', icon: Files, keywords: 'quote estimate', disabledReason: quotationsEnabled ? null : 'Quotations are switched off',
       run: () => { window.open(`/c/${params.slug}/quotations`, '_blank', 'noopener') } },
     // Industry modules (feature switch on and relevant to this business type) — new tab, the sale stays
     ...(industryOn('print_jobs') ? [
-      { id: 'newPrintJob', label: 'New print job', icon: Ruler, keywords: 'print photo job order size banner flex', tone: 'bg-teal-100 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300', run: () => openModuleTab('/print-jobs/new') },
+      { id: 'newPrintJob', label: 'New print job', icon: Ruler, keywords: 'print photo job order size banner flex', tone: 'theme-badge-primary', run: () => openModuleTab('/print-jobs/new') },
       { id: 'printJobs', label: 'Print jobs', icon: ClipboardList, keywords: 'print photo job orders pickup ready', run: () => openModuleTab('/print-jobs') },
     ] : []),
     ...(industryOn('warranty_claims') ? [
@@ -3607,7 +3607,7 @@ export default function POSPage() {
     ...(industryOn('deliveries') ? [
       { id: 'deliveriesToday', label: 'Deliveries today', icon: Truck, keywords: 'delivery installation schedule driver', run: () => openModuleTab('/deliveries') },
     ] : []),
-    { id: 'customerDisplay', label: 'Customer display', icon: MonitorUp, shortcut: 'Alt+D', keywords: 'second screen monitor', disabledReason: customerDisplayEnabled ? null : 'Turned off for this shop / counter', tone: 'bg-teal-100 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300', run: () => runPosAction('customerDisplay') },
+    { id: 'customerDisplay', label: 'Customer display', icon: MonitorUp, shortcut: 'Alt+D', keywords: 'second screen monitor', disabledReason: customerDisplayEnabled ? null : 'Turned off for this shop / counter', tone: 'theme-badge-primary', run: () => runPosAction('customerDisplay') },
     { id: 'printer', label: `Printer: ${printer.transportLabel}`, icon: Printer, keywords: 'receipt printer settings', run: () => setShowPrinterSettings(true) },
     { id: 'camera', label: 'Camera scan', icon: Camera, keywords: 'barcode webcam', run: () => setShowCameraScan(true) },
     { id: 'scannerTest', label: 'Scanner test', icon: ScanBarcode, keywords: 'barcode check label diagnose', run: () => setShowScannerTest(true) },
@@ -3646,7 +3646,7 @@ export default function POSPage() {
           <span className="text-slate-600">•</span>
           <span className="text-slate-300">{posWarehouse?.name || 'No branch'}</span>
           <span className="text-slate-600">•</span>
-          <span className="text-teal-400 font-bold">{posProfile?.name || 'No counter'}</span>
+          <span className="font-bold theme-text-primary">{posProfile?.name || 'No counter'}</span>
           {cashierName && (<>
             <span className="text-slate-600">•</span>
             <span className="text-slate-300">{cashierName}</span>
@@ -3664,7 +3664,7 @@ export default function POSPage() {
           <button
             type="button"
             onClick={() => setShowActions(true)}
-            className="px-2.5 py-0.5 rounded bg-teal-700 hover:bg-teal-600 text-white font-bold border border-teal-500 flex items-center gap-1.5"
+            className="px-2.5 py-0.5 rounded theme-btn-primary font-bold flex items-center gap-1.5"
             title="Actions: shift, cash in/out, bills history, reprint, price check, return, quotation … (Alt+A or Ctrl+K)"
           >
             <LayoutGrid className="w-3.5 h-3.5" />
@@ -3673,7 +3673,7 @@ export default function POSPage() {
           </button>
           <div className="flex items-center gap-1.5 bg-slate-800/90 px-2 py-0.5 rounded-lg border border-slate-700/80 text-slate-300" title="Language Switcher (English, Sinhala, Tamil)">
             <span className="text-[10px] uppercase font-bold text-slate-400 hidden xl:inline">Lang</span>
-            <LanguageSwitcher className="text-xs bg-slate-900 border-slate-700 text-slate-200 rounded px-1.5 py-0.5 font-semibold focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer" />
+            <LanguageSwitcher className="text-xs bg-slate-900 border-slate-700 text-slate-200 rounded px-1.5 py-0.5 font-semibold focus:outline-none focus:ring-1 theme-ring-primary cursor-pointer" />
           </div>
         </div>
       </div>

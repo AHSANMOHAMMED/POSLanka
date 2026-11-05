@@ -104,7 +104,7 @@ export function HeldOrdersDrawerModal({
                   </div>
 
                   <div className="text-right font-mono">
-                    <span className="text-sm font-bold text-teal-700 dark:text-teal-400 block">
+                    <span className="text-sm font-bold theme-text-primary block">
                       LKR {order.totalAmount.toFixed(2)}
                     </span>
                     <span className="text-[12px] text-slate-400">
@@ -137,7 +137,7 @@ export function HeldOrdersDrawerModal({
                     <button
                       type="button"
                       onClick={() => onResumeOrder(order.id)}
-                      className="px-4 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
+                      className="px-4 py-1.5 rounded-lg theme-btn-primary text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all active:scale-95"
                     >
                       <Play className="w-3.5 h-3.5 fill-current" />
                       <span>Resume Sale</span>

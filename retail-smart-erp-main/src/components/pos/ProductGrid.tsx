@@ -221,7 +221,7 @@ export function ProductGrid({
 
           {/* Warehouse Badge */}
           {posWarehouseName && (
-            <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 text-blue-700 rounded-md text-sm font-medium flex-shrink-0">
+            <div className="flex items-center gap-2 px-3 py-2 theme-badge-primary rounded-md text-sm font-medium flex-shrink-0">
               <Warehouse size={16} />
               <span>{posWarehouseName}</span>
             </div>
@@ -293,7 +293,7 @@ export function ProductGrid({
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as POSSortOption)}
-              className="text-[12px] font-semibold pl-6 pr-2 py-1 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer"
+              className="text-[12px] font-semibold pl-6 pr-2 py-1 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-1 theme-ring-primary cursor-pointer"
               title="Sort products"
             >
               <option value="default">Default Order</option>
@@ -312,7 +312,7 @@ export function ProductGrid({
               onClick={() => setViewMode('grid')}
               className={`p-1 rounded-md transition-colors ${
                 viewMode === 'grid'
-                  ? 'bg-white dark:bg-gray-800 text-teal-800 dark:text-teal-400 shadow-xs'
+                  ? 'bg-white dark:bg-gray-800 theme-text-primary shadow-xs font-bold'
                   : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
               title="Grid View"
@@ -324,7 +324,7 @@ export function ProductGrid({
               onClick={() => setViewMode('list')}
               className={`p-1 rounded-md transition-colors ${
                 viewMode === 'list'
-                  ? 'bg-white dark:bg-gray-800 text-teal-800 dark:text-teal-400 shadow-xs'
+                  ? 'bg-white dark:bg-gray-800 theme-text-primary shadow-xs font-bold'
                   : 'text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
               }`}
               title="List View"
@@ -359,7 +359,7 @@ export function ProductGrid({
                   disabled={isOutOfStock && !isReturnMode}
                   data-pos-tile="1"
                   title={`${item.name} — click or Enter to add 1`}
-                  className={`flex-1 min-w-0 bg-white dark:bg-gray-800 rounded-xl border p-3.5 min-[1920px]:p-4 text-left flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 transition-all hover:shadow-md hover:border-teal-600 group relative ${
+                  className={`flex-1 min-w-0 bg-white dark:bg-gray-800 rounded-xl border p-3.5 min-[1920px]:p-4 text-left flex flex-col focus:outline-none focus-visible:ring-2 theme-ring-primary transition-all hover:shadow-md hover:border-[var(--primary)] group relative ${
                     isOutOfStock && !isReturnMode
                       ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-gray-700'
                       : 'border-slate-200 dark:border-gray-700 hover:-translate-y-0.5'
@@ -383,7 +383,7 @@ export function ProductGrid({
                     )}
                   </div>
 
-                  <h3 className="font-bold text-slate-900 dark:text-white text-sm min-[1920px]:text-base min-[2560px]:text-lg leading-snug line-clamp-2 min-h-[2.5em] mb-1 group-hover:text-teal-700 dark:group-hover:text-teal-400 transition-colors">
+                  <h3 className="font-bold text-slate-900 dark:text-white text-sm min-[1920px]:text-base min-[2560px]:text-lg leading-snug line-clamp-2 min-h-[2.5em] mb-1 group-hover:theme-text-primary transition-colors">
                     {item.name}
                   </h3>
                   {(item.genericName || item.drugSchedule === 'prescription' || item.drugSchedule === 'controlled') && (
@@ -439,7 +439,7 @@ export function ProductGrid({
                     type="button"
                     onClick={() => onShowSubstitutes(item)}
                     title="Other brands of this medicine (same generic & strength)"
-                    className="absolute bottom-2.5 right-2.5 rounded-md border border-teal-600 bg-white px-1.5 py-0.5 text-[11px] font-bold text-teal-700 hover:bg-teal-50 dark:bg-gray-800 dark:text-teal-400"
+                    className="absolute bottom-2.5 right-2.5 rounded-md border theme-border-primary bg-white px-1.5 py-0.5 text-[11px] font-bold theme-text-primary hover:theme-bg-subtle dark:bg-gray-800"
                   >
                     Alt
                   </button>
@@ -502,7 +502,7 @@ export function ProductGrid({
                     type="button"
                     onClick={() => onShowSubstitutes(item)}
                     title="Other brands of this medicine (same generic & strength)"
-                    className="rounded-xl border border-teal-600 bg-white px-2 text-xs font-bold text-teal-700 hover:bg-teal-50 dark:bg-gray-800 dark:text-teal-400"
+                    className="rounded-xl border theme-border-primary bg-white px-2 text-xs font-bold theme-text-primary hover:theme-bg-subtle dark:bg-gray-800"
                   >
                     Alt
                   </button>

@@ -135,7 +135,7 @@ export function ScannerTestModal({ isOpen, onClose, warehouseId }: {
       >
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-gray-700">
           <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <ScanBarcode size={20} className="text-teal-700 dark:text-teal-400" /> Scanner test
+            <ScanBarcode size={20} className="theme-text-primary" /> Scanner test
           </h3>
           <div className="flex items-center gap-1">
             <button type="button" onClick={() => setReads([])} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 text-slate-500 dark:text-gray-400" aria-label="Clear" title="Clear">
@@ -153,7 +153,7 @@ export function ScannerTestModal({ isOpen, onClose, warehouseId }: {
             cannot read the label (print quality, size, symbology switched off in the scanner) — it is not the till.
           </p>
 
-          <div className="rounded-xl border-2 border-dashed border-teal-500/60 bg-teal-50/50 dark:bg-teal-950/20 px-4 py-3 font-mono text-lg min-h-[3.25rem] break-all text-slate-900 dark:text-white">
+          <div className="rounded-xl border-2 border-dashed theme-border-primary theme-bg-subtle px-4 py-3 font-mono text-lg min-h-[3.25rem] break-all text-slate-900 dark:text-white">
             {live ? visibleScanText(live) : <span className="text-sm font-sans text-slate-400 dark:text-gray-500">Waiting for a scan…</span>}
           </div>
 

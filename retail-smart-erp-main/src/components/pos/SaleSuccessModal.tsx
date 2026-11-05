@@ -117,7 +117,7 @@ export function SaleSuccessModal({
             className={`w-full py-3.5 text-white rounded-xl font-bold text-base shadow-md transition-all active:scale-[0.98] ${
               lastSale.isReturn
                 ? 'bg-gradient-to-r from-red-600 to-red-500 hover:from-red-700 hover:to-red-600'
-                : 'bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600'
+                : 'theme-btn-primary'
             }`}
           >
             {lastSale.isReturn ? 'Continue' : terms.newSale}

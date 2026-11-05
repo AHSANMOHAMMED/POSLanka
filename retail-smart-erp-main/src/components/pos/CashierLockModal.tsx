@@ -70,7 +70,7 @@ export function CashierLockModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-200">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col items-center p-8 text-center">
         {/* Lock Icon Shield */}
-        <div className="w-16 h-16 rounded-2xl bg-teal-600/10 dark:bg-teal-500/20 text-teal-600 dark:text-teal-400 flex items-center justify-center mb-4 shadow-inner ring-8 ring-teal-50 dark:ring-teal-950/40">
+        <div className="w-16 h-16 rounded-2xl theme-bg-subtle theme-text-primary flex items-center justify-center mb-4 shadow-inner ring-8 ring-[var(--primary)]/10">
           <Lock className="w-8 h-8" />
         </div>
 
@@ -94,7 +94,7 @@ export function CashierLockModal({
               key={idx}
               className={`w-12 h-14 rounded-2xl border-2 flex items-center justify-center font-mono text-2xl font-bold transition-all ${
                 idx < pin.length
-                  ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/50 text-teal-600 dark:text-teal-300 shadow-md scale-105'
+                  ? 'theme-border-primary theme-bg-subtle theme-text-primary shadow-md scale-105'
                   : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-transparent'
               }`}
             >
@@ -151,7 +151,7 @@ export function CashierLockModal({
             type="button"
             disabled={pin.length < 4 || isUnlocking}
             onClick={handleAttemptUnlock}
-            className="w-full h-12 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg shadow-teal-600/20 transition-all active:scale-98"
+            className="w-full h-12 rounded-xl theme-btn-primary disabled:opacity-40 text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-lg transition-all active:scale-98"
           >
             {isUnlocking ? 'Unlocking...' : 'Unlock Register'}
           </button>

@@ -131,7 +131,7 @@ export function SizeEntryDialog({ target, onClose, onConfirm, onRemove }: {
       >
         <div className="px-5 py-4 flex items-center justify-between border-b border-gray-100 dark:border-gray-700">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-teal-100 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 rounded-xl theme-bg-subtle theme-text-primary flex items-center justify-center shrink-0">
               <Ruler size={18} />
             </div>
             <div className="min-w-0">
@@ -157,7 +157,7 @@ export function SizeEntryDialog({ target, onClose, onConfirm, onRemove }: {
                   onClick={() => pickPreset(p)}
                   className={`px-2 py-1 rounded-lg text-xs font-semibold border transition-colors ${
                     w === p.width && h === p.height && unit === p.unit
-                      ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300'
+                      ? 'theme-border-primary theme-bg-subtle theme-text-primary font-bold'
                       : 'border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
                   }`}
                 >
@@ -250,7 +250,7 @@ export function SizeEntryDialog({ target, onClose, onConfirm, onRemove }: {
                     onClick={() => setSides(n)}
                     className={`flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors ${
                       sides === n
-                        ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300'
+                        ? 'theme-border-primary theme-bg-subtle theme-text-primary font-bold'
                         : 'border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
                     }`}
                   >
@@ -292,7 +292,7 @@ export function SizeEntryDialog({ target, onClose, onConfirm, onRemove }: {
             <div className="flex flex-wrap gap-1">
               {FINISHING_ADDONS.filter((f) => f.code !== 'other' ? !finishing.some((x) => x.code === f.code) : true).map((f) => (
                 <button key={f.code} type="button" onClick={() => addFinishing(f.code)}
-                  className="px-2 py-0.5 text-xs rounded-full border border-dashed border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-teal-500 hover:text-teal-700 flex items-center gap-0.5">
+                  className="px-2 py-0.5 text-xs rounded-full border border-dashed border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:theme-border-primary hover:theme-text-primary flex items-center gap-0.5">
                   <Plus size={11} /> {f.label}
                 </button>
               ))}

@@ -145,7 +145,7 @@ export function PosActionsPanel({ isOpen, onClose, actions }: {
       >
         <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-100 dark:border-gray-700">
           <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <LayoutGrid size={20} className="text-teal-700 dark:text-teal-400" /> Actions
+            <LayoutGrid size={20} className="theme-text-primary" /> Actions
           </h3>
           <div className="flex-1 max-w-xs px-3 py-1.5 rounded-lg border border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-800 text-sm font-mono text-slate-700 dark:text-gray-200 truncate" aria-live="polite">
             {filter ? filter : <span className="text-slate-400 dark:text-gray-500 font-sans">Type to filter…</span>}

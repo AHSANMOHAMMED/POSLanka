@@ -176,7 +176,7 @@ export function SupervisorAuthModal({
             <select
               value={reason}
               onChange={e => setReason(e.target.value)}
-              className="h-10 px-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500"
+              className="h-10 px-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 theme-ring-primary"
             >
               <option value="Customer Goodwill / Manager Discretion">Customer Goodwill / Manager Discretion</option>
               <option value="Packaging Damaged / Near Expiry Markdown">Packaging Damaged / Near Expiry Markdown</option>
@@ -190,7 +190,7 @@ export function SupervisorAuthModal({
           {/* PIN Input & Visual Indicators */}
           <div className="flex flex-col items-center gap-3">
             <label className="text-xs font-mono text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-              <Lock className="w-3.5 h-3.5 text-teal-600" />
+              <Lock className="w-3.5 h-3.5 theme-text-primary" />
               Enter 4-to-6 Digit Supervisor PIN
             </label>
             <div className="flex gap-3">
@@ -199,7 +199,7 @@ export function SupervisorAuthModal({
                   key={idx}
                   className={`w-10 h-12 rounded-lg border-2 flex items-center justify-center font-mono text-xl font-bold transition-all ${
                     idx < pin.length
-                      ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 shadow-sm'
+                      ? 'theme-border-primary theme-bg-subtle theme-text-primary shadow-sm'
                       : 'border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-800/40 text-transparent'
                   }`}
                 >
@@ -265,7 +265,7 @@ export function SupervisorAuthModal({
             type="button"
             disabled={pin.length < 4 || isSubmitting}
             onClick={handleApprove}
-            className="px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold text-sm flex items-center gap-2 shadow-md transition-all active:scale-95"
+            className="px-6 py-2.5 rounded-xl theme-btn-primary disabled:opacity-50 text-white font-semibold text-sm flex items-center gap-2 shadow-md transition-all active:scale-95"
           >
             {isSubmitting ? (
               <span>Verifying...</span>

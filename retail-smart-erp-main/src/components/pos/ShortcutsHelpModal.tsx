@@ -35,7 +35,7 @@ export function ShortcutsHelpModal({ isOpen, onClose }: { isOpen: boolean; onClo
       >
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-gray-700">
           <h3 className="font-bold text-lg text-slate-900 dark:text-white flex items-center gap-2">
-            <Keyboard size={20} className="text-teal-700" /> Keyboard shortcuts
+            <Keyboard size={20} className="theme-text-primary" /> Keyboard shortcuts
           </h3>
           <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-gray-800 text-slate-500" aria-label="Close">
             <X size={18} />

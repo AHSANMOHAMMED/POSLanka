@@ -228,7 +228,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/70">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center font-bold">
+            <div className="w-9 h-9 rounded-xl theme-bg-subtle theme-text-primary flex items-center justify-center font-bold">
               <IconComponent size={20} />
             </div>
             <div>
@@ -287,7 +287,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
                     onClick={() => handleSelectChip(chip.val, chip.unit)}
                     className={`py-2 px-1 text-xs font-bold rounded-lg border transition-all text-center ${
                       isSelected
-                        ? 'bg-teal-700 border-teal-700 text-white shadow-sm'
+                        ? 'theme-btn-primary shadow-sm'
                         : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
                     }`}
                   >
@@ -311,7 +311,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
                     type="button"
                     onClick={() => setInputUnit('kg')}
                     className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-all ${
-                      inputUnit === 'kg' ? 'bg-white text-teal-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      inputUnit === 'kg' ? 'bg-white theme-text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     kg
@@ -320,7 +320,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
                     type="button"
                     onClick={() => setInputUnit('g')}
                     className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-all ${
-                      inputUnit === 'g' ? 'bg-white text-teal-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      inputUnit === 'g' ? 'bg-white theme-text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     g (Grams)
@@ -333,7 +333,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
                     type="button"
                     onClick={() => setInputUnit('l')}
                     className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-all ${
-                      inputUnit === 'l' ? 'bg-white text-teal-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      inputUnit === 'l' ? 'bg-white theme-text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     L
@@ -342,7 +342,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
                     type="button"
                     onClick={() => setInputUnit('ml')}
                     className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-all ${
-                      inputUnit === 'ml' ? 'bg-white text-teal-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      inputUnit === 'ml' ? 'bg-white theme-text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     ml (Milliliters)
@@ -355,7 +355,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
                     type="button"
                     onClick={() => setInputUnit('m')}
                     className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-all ${
-                      inputUnit === 'm' ? 'bg-white text-teal-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      inputUnit === 'm' ? 'bg-white theme-text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     m (Meters)
@@ -364,7 +364,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
                     type="button"
                     onClick={() => setInputUnit('yard')}
                     className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-all ${
-                      inputUnit === 'yard' ? 'bg-white text-teal-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                      inputUnit === 'yard' ? 'bg-white theme-text-primary shadow-sm' : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     yd (Yards)
@@ -393,15 +393,15 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
 
           {/* Calculated summary */}
           {baseQuantity > 0 && (
-            <div className="bg-teal-50/80 border border-teal-100 rounded-xl p-3.5 flex items-center justify-between">
+            <div className="theme-bg-subtle theme-border-primary border rounded-xl p-3.5 flex items-center justify-between">
               <div>
-                <span className="text-xs font-semibold text-teal-900 block">Total Calculated</span>
-                <span className="text-xs text-teal-700 font-mono mt-0.5 block">
+                <span className="text-xs font-semibold theme-text-primary block">Total Calculated</span>
+                <span className="text-xs text-slate-600 dark:text-slate-300 font-mono mt-0.5 block">
                   {displayLabel} &times; {currencyCode} {unitPrice.toFixed(2)}
                 </span>
               </div>
               <div className="text-right">
-                <span className="text-xl font-bold text-teal-800 font-mono block">
+                <span className="text-xl font-bold theme-text-primary font-mono block">
                   {currencyCode} {total.toFixed(2)}
                 </span>
               </div>
@@ -420,7 +420,7 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
             <button
               type="submit"
               disabled={baseQuantity <= 0}
-              className="flex-1 py-2.5 px-4 bg-teal-700 text-white rounded-xl font-bold text-sm hover:bg-teal-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
+              className="flex-1 py-2.5 px-4 theme-btn-primary rounded-xl font-bold text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
             >
               <Check size={16} />
               Add to Cart

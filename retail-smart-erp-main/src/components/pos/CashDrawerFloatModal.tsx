@@ -69,13 +69,13 @@ export function CashDrawerFloatModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
       <div className="w-full max-w-2xl bg-white dark:bg-slate-900 rounded-2xl shadow-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col">
         {/* Header Strip */}
-        <div className="bg-teal-700 text-white px-6 py-4 flex items-center justify-between">
+        <div className="theme-btn-primary text-white px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-white/10 flex items-center justify-center">
-              <Wallet className="w-6 h-6 text-teal-200" />
+            <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+              <Wallet className="w-6 h-6 text-white" />
             </div>
             <div>
-              <span className="text-[11px] font-mono uppercase tracking-wider text-teal-200 font-bold block">
+              <span className="text-[11px] font-mono uppercase tracking-wider text-white/80 font-bold block">
                 Drawer Cash Management • Sunmi T2s
               </span>
               <h2 className="text-lg font-bold leading-tight">
@@ -85,7 +85,7 @@ export function CashDrawerFloatModal({
           </div>
           <button
             onClick={onClose}
-            className="w-9 h-9 rounded-lg hover:bg-white/10 flex items-center justify-center text-teal-100 transition-colors"
+            className="w-9 h-9 rounded-lg hover:bg-white/20 flex items-center justify-center text-white transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -103,7 +103,7 @@ export function CashDrawerFloatModal({
               }}
               className={`py-2 rounded-lg text-xs font-bold transition-all ${
                 operationType === 'float_in'
-                  ? 'bg-teal-600 text-white shadow-sm'
+                  ? 'theme-btn-primary shadow-sm'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
               }`}
             >
@@ -148,8 +148,8 @@ export function CashDrawerFloatModal({
               </span>
             </div>
             <div className="text-right">
-              <span className="text-xs text-teal-600 font-mono font-bold block">Counted Total</span>
-              <span className="text-2xl font-bold font-mono text-teal-700 dark:text-teal-400">
+              <span className="text-xs theme-text-primary font-mono font-bold block">Counted Total</span>
+              <span className="text-2xl font-bold font-mono theme-text-primary">
                 LKR {calculatedTotal.toFixed(2)}
               </span>
             </div>
@@ -191,7 +191,7 @@ export function CashDrawerFloatModal({
                       <button
                         type="button"
                         onClick={() => handleCountChange(item.value, 1)}
-                        className="w-8 h-8 rounded-lg bg-teal-100 dark:bg-teal-950/60 hover:bg-teal-200 text-teal-800 dark:text-teal-300 flex items-center justify-center transition-colors"
+                        className="w-8 h-8 rounded-lg theme-badge-primary hover:opacity-80 flex items-center justify-center transition-colors"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -211,7 +211,7 @@ export function CashDrawerFloatModal({
               type="text"
               value={reason}
               onChange={e => setReason(e.target.value)}
-              className="h-10 px-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-teal-500"
+              className="h-10 px-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 theme-ring-primary"
             />
           </div>
         </div>
@@ -229,7 +229,7 @@ export function CashDrawerFloatModal({
             type="button"
             disabled={calculatedTotal <= 0 || isSubmitting}
             onClick={handleSubmit}
-            className="px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold text-sm flex items-center gap-2 shadow-md transition-all active:scale-95"
+            className="px-6 py-2.5 rounded-xl theme-btn-primary disabled:opacity-50 text-white font-semibold text-sm flex items-center gap-2 shadow-md transition-all active:scale-95"
           >
             <CheckCircle2 className="w-4 h-4" />
             <span>Confirm & Record Float</span>

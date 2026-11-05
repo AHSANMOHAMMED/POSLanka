@@ -106,7 +106,7 @@ export function ListPageLayout({
             )}
             <ChevronRight size={13} className="flex-shrink-0 text-gray-400" />
             <span 
-              className="px-2 py-0.5 rounded-md bg-primary/10 text-primary font-semibold truncate"
+              className="px-2 py-0.5 rounded-md theme-badge-primary font-semibold truncate"
               title={title}
             >
               {title}

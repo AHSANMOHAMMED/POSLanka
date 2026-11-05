@@ -592,7 +592,7 @@ export function POSPaymentModal({
                         <button
                           type="button"
                           onClick={openQuickCreate}
-                          className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
+                          className="text-xs font-bold theme-text-primary hover:underline flex items-center gap-1"
                         >
                           <Plus size={14} /> Quick Add Customer
                         </button>
@@ -613,7 +613,7 @@ export function POSPaymentModal({
                               }}
                               onFocus={() => setShowCustomerDropdown(true)}
                               placeholder="Search by mobile number (e.g. 077...) or customer name..."
-                              className="w-full pl-9 pr-8 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary"
+                              className="w-full pl-9 pr-8 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 theme-ring-primary"
                             />
                             {customerSearchQuery && (
                               <button
@@ -641,7 +641,7 @@ export function POSPaymentModal({
                                     <p className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">{c.name}</p>
                                     {c.phone && <p className="text-xs text-gray-500 font-mono">{c.phone}</p>}
                                   </div>
-                                  <span className="text-xs font-semibold text-teal-600 dark:text-teal-400 flex items-center gap-1 shrink-0">
+                                  <span className="text-xs font-semibold theme-text-primary flex items-center gap-1 shrink-0">
                                     Select <ArrowRight size={12} />
                                   </span>
                                 </button>
@@ -653,7 +653,7 @@ export function POSPaymentModal({
                                   <button
                                     type="button"
                                     onClick={openQuickCreate}
-                                    className="mt-2 px-3 py-1.5 rounded-lg bg-teal-600 text-white font-bold text-xs hover:bg-teal-700 inline-flex items-center gap-1"
+                                    className="mt-2 px-3 py-1.5 rounded-lg theme-btn-primary font-bold text-xs inline-flex items-center gap-1"
                                   >
                                     <Plus size={14} /> Quick Add &quot;{customerSearchQuery}&quot;
                                   </button>
@@ -664,9 +664,9 @@ export function POSPaymentModal({
                         )}
                       </div>
                     ) : (
-                      <form onSubmit={handleCreateCustomerSubmit} className="p-3 rounded-xl bg-white dark:bg-gray-900 border border-teal-200 dark:border-teal-800 space-y-2.5">
+                      <form onSubmit={handleCreateCustomerSubmit} className="p-3 rounded-xl bg-white dark:bg-gray-900 border theme-border-primary space-y-2.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-teal-800 dark:text-teal-300">Quick Add Customer</span>
+                          <span className="text-xs font-bold theme-text-primary">Quick Add Customer</span>
                           <button
                             type="button"
                             onClick={() => setQuickCreateOpen(false)}
@@ -683,14 +683,14 @@ export function POSPaymentModal({
                             placeholder="Customer Name *"
                             required
                             autoFocus
-                            className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-gray-100 outline-none focus:border-teal-500"
+                            className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-gray-100 outline-none focus:border-[var(--primary)] theme-ring-primary"
                           />
                           <input
                             type="tel"
                             value={quickPhone}
                             onChange={(e) => setQuickPhone(e.target.value)}
                             placeholder="Mobile Number (e.g. 077...)"
-                            className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-gray-100 outline-none focus:border-teal-500"
+                            className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-gray-100 outline-none focus:border-[var(--primary)] theme-ring-primary"
                           />
                         </div>
                         <div className="flex justify-end gap-2 pt-1">
@@ -704,7 +704,7 @@ export function POSPaymentModal({
                           <button
                             type="submit"
                             disabled={quickSaving || !quickName.trim()}
-                            className="px-3.5 py-1.5 text-xs font-bold bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 flex items-center gap-1.5"
+                            className="px-3.5 py-1.5 text-xs font-bold theme-btn-primary rounded-lg disabled:opacity-50 flex items-center gap-1.5"
                           >
                             {quickSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
                             Save & Attach

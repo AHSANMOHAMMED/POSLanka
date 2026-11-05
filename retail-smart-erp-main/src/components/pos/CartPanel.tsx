@@ -309,7 +309,7 @@ export function CartPanel({
         onFocus={() => onCartFocusChange?.(true)}
         onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) onCartFocusChange?.(false) }}
         aria-label="Cart lines"
-        className={`flex-1 min-h-0 overflow-y-auto outline-none ${cartFocused ? 'ring-2 ring-inset ring-teal-500/60' : ''}`}
+        className={`flex-1 min-h-0 overflow-y-auto outline-none ${cartFocused ? 'ring-2 ring-inset theme-ring-primary' : ''}`}
       >
         {cart.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
@@ -322,7 +322,7 @@ export function CartPanel({
         ) : (
           <div className="p-3 min-[1920px]:p-4 space-y-2.5">
             {cartFocused && (
-              <p className="text-[11px] font-mono text-teal-700 dark:text-teal-400 px-1">
+              <p className="text-[11px] font-mono theme-text-primary px-1">
                 ↑↓ line · type qty + Enter · + / − · U unit · Del remove · Esc search
               </p>
             )}
@@ -410,7 +410,7 @@ export function CartPanel({
                       </p>
                     )}
                     {item.batchNumber && (
-                      <div className="text-xs text-teal-700 dark:text-teal-400 mt-0.5 flex items-center gap-1">
+                      <div className="text-xs theme-text-primary mt-0.5 flex items-center gap-1">
                         <span>Batch</span>
                         {onChangeBatch && item.batchOptions && item.batchOptions.length > 1 ? (
                           <select

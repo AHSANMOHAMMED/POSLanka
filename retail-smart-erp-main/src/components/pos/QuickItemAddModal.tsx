@@ -172,7 +172,7 @@ export function QuickItemAddModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 bg-slate-50/70">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center font-bold">
+            <div className="w-9 h-9 rounded-xl theme-bg-subtle theme-text-primary flex items-center justify-center font-bold">
               <PlusCircle size={20} />
             </div>
             <div>
@@ -180,7 +180,7 @@ export function QuickItemAddModal({
                 <h3 className="font-bold text-slate-900 text-base leading-tight">
                   Quick Add Item
                 </h3>
-                <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-teal-100 text-teal-800 font-bold">
+                <span className="text-[11px] font-mono px-1.5 py-0.5 rounded theme-badge-primary font-bold">
                   F4
                 </span>
               </div>
@@ -235,7 +235,7 @@ export function QuickItemAddModal({
                     const generated = Math.floor(100000000000 + Math.random() * 900000000000).toString()
                     setBarcode(generated)
                   }}
-                  className="text-[11px] font-semibold text-teal-600 hover:text-teal-800 hover:underline"
+                  className="text-[11px] font-semibold theme-text-primary hover:opacity-80 hover:underline"
                 >
                   Auto Generate
                 </button>
@@ -255,7 +255,7 @@ export function QuickItemAddModal({
               <select
                 value={categoryId}
                 onChange={(e) => setCategoryId(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 font-medium text-slate-800"
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 theme-ring-primary font-medium text-slate-800"
               >
                 <option value="">No Category</option>
                 {categories.map((c) => (
@@ -313,7 +313,7 @@ export function QuickItemAddModal({
               <select
                 value={unit}
                 onChange={(e) => handleUnitChange(e.target.value)}
-                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-teal-600 font-medium text-slate-800"
+                className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 theme-ring-primary font-medium text-slate-800"
               >
                 {COMMON_UNITS.map((u) => (
                   <option key={u.value} value={u.value}>
@@ -356,7 +356,7 @@ export function QuickItemAddModal({
               type="checkbox"
               checked={isWeighable}
               onChange={(e) => setIsWeighable(e.target.checked)}
-              className="w-4 h-4 text-teal-600 rounded border-slate-300 focus:ring-teal-500 cursor-pointer"
+              className="w-4 h-4 accent-[var(--primary)] rounded border-slate-300 cursor-pointer"
             />
           </div>
 
@@ -373,7 +373,7 @@ export function QuickItemAddModal({
             <button
               type="submit"
               disabled={saving || !name.trim() || !sellingPrice}
-              className="flex-1 py-2.5 px-4 bg-teal-700 text-white rounded-xl font-bold text-sm hover:bg-teal-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
+              className="flex-1 py-2.5 px-4 theme-btn-primary rounded-xl font-bold text-sm transition-colors disabled:opacity-50 flex items-center justify-center gap-2 shadow-sm"
             >
               {saving ? (
                 <>

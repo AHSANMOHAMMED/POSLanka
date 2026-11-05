@@ -92,7 +92,7 @@ export function PharmacySubstitutesModal({ item, warehouseId, inCart, onPick, on
                     {base > 0 && diff !== 0 && <span className={`block text-xs ${diff < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>{diff < 0 ? '−' : '+'}{fCurrency(Math.abs(diff))}</span>}
                   </span>
                   <button type="button" disabled={!sellable} onClick={() => onPick(s.id)}
-                    className="inline-flex items-center gap-1 rounded bg-teal-700 px-3 py-1.5 text-white hover:bg-teal-600 disabled:cursor-not-allowed disabled:opacity-40">
+                    className="inline-flex items-center gap-1 rounded theme-btn-primary px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-40">
                     <ArrowRightLeft size={14} /> {inCart ? 'Swap' : 'Add'}
                   </button>
                 </div>
