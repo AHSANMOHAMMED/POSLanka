@@ -55,27 +55,28 @@ export const FEATURES: AppFeature[] = [
   { key: 'inventory', title: 'Stock ledger', subtitle: 'Stock movements', icon: 'cube-outline', tone: 'primary', anyOf: ['manageInventory'], route: '/inventory', group: 'stock' },
   { key: 'intake', title: 'Stock intake', subtitle: 'Scan goods received', icon: 'download-outline', tone: 'ok', anyOf: ['submitStockIntake'], route: '/intake', group: 'stock' },
   { key: 'purchase-orders', title: 'Purchase orders', subtitle: 'PO list & drafts', icon: 'clipboard-outline', tone: 'primary', anyOf: ['managePurchases', 'createPurchaseOrders', 'viewPurchases', 'manageInventory'], route: '/purchase-orders', flag: 'purchase', group: 'stock' },
-  { key: 'labels', title: 'Labels', subtitle: 'Print barcode labels', icon: 'pricetags-outline', tone: 'warn', anyOf: ['manageItems', 'manageInventory', 'submitStockIntake', 'createSales'], route: '/labels', group: 'stock' },
+  { key: 'labels', title: 'Labels', subtitle: 'Print barcode labels', icon: 'pricetags-outline', tone: 'warn', anyOf: ['manageItems', 'manageInventory', 'submitStockIntake', 'createSales'], route: '/labels', flag: 'barcode_labels', group: 'stock' },
 
   // Reports
   { key: 'summary', title: 'Today’s summary', subtitle: 'Store & shift figures', icon: 'stats-chart-outline', tone: 'primary', anyOf: ['viewReports', 'managePOS', 'createSales'], route: '/summary', group: 'reports' },
-  { key: 'web-reports', title: 'All reports', subtitle: 'Full reports on the web', icon: 'document-text-outline', tone: 'muted', anyOf: ['viewReports'], webPath: '/reports', group: 'reports' },
+  { key: 'web-reports', title: 'All reports', subtitle: 'Full reports on the web', icon: 'document-text-outline', tone: 'muted', anyOf: ['viewReports'], webPath: '/reports', flag: 'advanced_reports', group: 'reports' },
   { key: 'web-dashboard', title: 'Web dashboard', subtitle: 'Open the full dashboard', icon: 'desktop-outline', tone: 'muted', anyOf: [], webPath: '/dashboard', group: 'reports' },
 
   // Management
   { key: 'approvals', title: 'Approvals', subtitle: 'Requisitions & advances', icon: 'checkmark-done-outline', tone: 'ok', anyOf: ['approveRequisitions', 'approveAdvances'], route: '/approvals', group: 'manage' },
   { key: 'staff', title: 'Staff', subtitle: 'Accounts, PINs, roles', icon: 'people-outline', tone: 'primary', anyOf: ['manageUsers'], route: '/staff', group: 'manage' },
-  { key: 'attendance', title: 'Attendance', subtitle: 'Fingerprint & shifts', icon: 'finger-print-outline', tone: 'primary', anyOf: ['manageEmployees'], route: '/attendance', webPath: '/hr/attendance', group: 'manage' },
+  { key: 'attendance', title: 'Attendance', subtitle: 'Fingerprint & shifts', icon: 'finger-print-outline', tone: 'primary', anyOf: ['manageEmployees'], route: '/attendance', webPath: '/hr/attendance', flag: 'hr_attendance', group: 'manage' },
 
   // Business modules (read-only lists, details on the web)
   { key: 'quotations', title: 'Quotations', subtitle: 'Quotes to customers', icon: 'document-outline', tone: 'primary', anyOf: ['createSales'], route: '/module/quotations', flag: 'quotation', group: 'modules' },
-  { key: 'installments', title: 'Hire purchase', subtitle: 'Installment plans', icon: 'wallet-outline', tone: 'warn', anyOf: ['createSales', 'manageSales', 'viewReports', 'viewAccounting'], route: '/module/installments', businessTypes: ['electronics', 'hardware', 'retail'], group: 'modules' },
-  { key: 'deliveries', title: 'Deliveries', subtitle: 'Delivery & installation', icon: 'car-outline', tone: 'primary', anyOf: ['createSales', 'manageSales', 'manageWorkOrders', 'manageInventory', 'viewReports'], route: '/module/deliveries', businessTypes: ['electronics', 'hardware', 'retail', 'supermarket'], group: 'modules' },
-  { key: 'warranty-claims', title: 'Warranty claims', subtitle: 'Repairs & replacements', icon: 'shield-checkmark-outline', tone: 'ok', anyOf: ['createSales', 'manageSales', 'manageWorkOrders', 'viewReports'], route: '/module/warranty-claims', businessTypes: ['electronics', 'retail', 'hardware'], group: 'modules' },
-  { key: 'print-jobs', title: 'Print jobs', subtitle: 'Studio job tickets', icon: 'print-outline', tone: 'primary', anyOf: ['createSales'], route: '/module/print-jobs', businessTypes: ['print_studio'], group: 'modules' },
-  { key: 'recurring-invoices', title: 'Recurring invoices', subtitle: 'Scheduled billing', icon: 'repeat-outline', tone: 'primary', anyOf: ['createSales'], route: '/module/recurring-invoices', group: 'modules' },
+  { key: 'installments', title: 'Hire purchase', subtitle: 'Installment plans', icon: 'wallet-outline', tone: 'warn', anyOf: ['createSales', 'manageSales', 'viewReports', 'viewAccounting'], route: '/module/installments', businessTypes: ['electronics', 'hardware', 'retail'], flag: 'installments', group: 'modules' },
+  { key: 'deliveries', title: 'Deliveries', subtitle: 'Delivery & installation', icon: 'car-outline', tone: 'primary', anyOf: ['createSales', 'manageSales', 'manageWorkOrders', 'manageInventory', 'viewReports'], route: '/module/deliveries', businessTypes: ['electronics', 'hardware', 'retail', 'supermarket'], flag: 'deliveries', group: 'modules' },
+  { key: 'warranty-claims', title: 'Warranty claims', subtitle: 'Repairs & replacements', icon: 'shield-checkmark-outline', tone: 'ok', anyOf: ['createSales', 'manageSales', 'manageWorkOrders', 'viewReports'], route: '/module/warranty-claims', businessTypes: ['electronics', 'retail', 'hardware'], flag: 'warranty_claims', group: 'modules' },
+  { key: 'print-jobs', title: 'Print jobs', subtitle: 'Studio job tickets', icon: 'print-outline', tone: 'primary', anyOf: ['createSales'], route: '/module/print-jobs', businessTypes: ['print_studio'], flag: 'print_jobs', group: 'modules' },
+  { key: 'service-jobs', title: 'Service jobs', subtitle: 'Repairs, tailoring, tickets', icon: 'construct-outline', tone: 'primary', anyOf: ['createSales', 'manageSales', 'manageWorkOrders'], route: '/module/service-jobs', businessTypes: ['electronics', 'textile', 'office', 'retail', 'hardware'], flag: 'service_jobs', group: 'modules' },
+  { key: 'recurring-invoices', title: 'Recurring invoices', subtitle: 'Scheduled billing', icon: 'repeat-outline', tone: 'primary', anyOf: ['createSales'], route: '/module/recurring-invoices', flag: 'recurring_invoices', group: 'modules' },
   { key: 'payments-received', title: 'Payments received', subtitle: 'Customer receipts', icon: 'card-outline', tone: 'ok', anyOf: ['createSales'], route: '/module/payments-received', group: 'modules' },
-  { key: 'projects', title: 'Projects', subtitle: 'Projects & timesheets', icon: 'briefcase-outline', tone: 'primary', anyOf: ['createSales', 'manageSales', 'viewReports'], route: '/module/projects', group: 'modules' },
+  { key: 'projects', title: 'Projects', subtitle: 'Projects & timesheets', icon: 'briefcase-outline', tone: 'primary', anyOf: ['createSales', 'manageSales', 'viewReports'], route: '/module/projects', flag: 'projects', group: 'modules' },
 
   // Device
   { key: 'printer', title: 'Printers', subtitle: 'Receipt, label, kitchen', icon: 'print-outline', tone: 'muted', anyOf: [], route: '/printer', group: 'device' },
@@ -135,6 +136,7 @@ export const MODULE_LISTS: Record<string, ModuleListConfig> = {
   deliveries: { title: 'Deliveries', endpoint: '/api/deliveries', listKeys: ['data'], webPath: '/deliveries', search: true, paged: true, noDetailPage: true, icon: 'car-outline' },
   'warranty-claims': { title: 'Warranty claims', endpoint: '/api/warranty-claims', listKeys: ['data'], webPath: '/warranty-claims', search: true, paged: true, icon: 'shield-checkmark-outline' },
   'print-jobs': { title: 'Print jobs', endpoint: '/api/print-jobs', listKeys: ['data'], webPath: '/print-jobs', search: true, paged: true, icon: 'print-outline' },
+  'service-jobs': { title: 'Service jobs', endpoint: '/api/service-jobs', listKeys: ['data'], webPath: '/service-jobs', search: true, paged: true, icon: 'construct-outline' },
   'recurring-invoices': { title: 'Recurring invoices', endpoint: '/api/recurring-invoices', listKeys: ['data'], webPath: '/recurring-invoices', search: true, paged: true, icon: 'repeat-outline' },
   'payments-received': { title: 'Payments received', endpoint: '/api/payments-received', listKeys: ['data'], webPath: '/payments-received', search: true, paged: true, icon: 'card-outline' },
   projects: { title: 'Projects', endpoint: '/api/projects', listKeys: ['data'], webPath: '/projects', search: true, paged: true, icon: 'briefcase-outline' },

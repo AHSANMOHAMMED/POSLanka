@@ -20,6 +20,7 @@ import { setTestCookie, setTestHeader } from './i3-harness/next-headers-mock'
 import { closeAllPools, withTenant } from '@/lib/db'
 import { ownerDashboard } from '@/lib/dashboard/owner'
 import { periodDates, resolvePeriod } from '@/lib/admin/vendor-business'
+import { maskJsonSecrets } from '@/lib/admin/vendor-data'
 import { POST as createVendor } from '@/app/api/sys-control/vendors/route'
 import { GET as figuresGET } from '@/app/api/sys-control/vendors/figures/route'
 import { GET as businessGET } from '@/app/api/sys-control/vendors/[id]/business/route'
@@ -170,6 +171,19 @@ async function main() {
        ON CONFLICT (tenant_id) DO UPDATE SET smtp_password = EXCLUDED.smtp_password, sendgrid_api_key = EXCLUDED.sendgrid_api_key`,
       [vendorId, `smtp-pass-${tag}`, `sendgrid-key-${tag}`],
     )
+    await pg.query(
+      `INSERT INTO sms_settings (tenant_id, provider, generic_auth_type, generic_auth_value, generic_headers, generic_static_params)
+       VALUES ($1, 'generic_http', 'basic', $2, $3, $4)
+       ON CONFLICT (tenant_id) DO UPDATE SET generic_auth_value = EXCLUDED.generic_auth_value,
+         generic_headers = EXCLUDED.generic_headers, generic_static_params = EXCLUDED.generic_static_params`,
+      [vendorId, `sms-auth-${tag}`, JSON.stringify({ Authorization: `sms-header-${tag}` }), JSON.stringify([{ key: 'apikey', value: `sms-param-${tag}` }])],
+    )
+    const giftPin = String(100000 + randomBytes(3).readUIntBE(0, 3) % 900000)
+    await pg.query(
+      `INSERT INTO gift_cards (tenant_id, card_number, pin, initial_balance, current_balance, status) VALUES ($1, $2, $3, 100, 100, 'active')`,
+      [vendorId, `GC-${tag}`, giftPin],
+    )
+    const smsSecrets = [`sms-auth-${tag}`, `sms-header-${tag}`, `sms-param-${tag}`]
 
     await step('periods', async () => {
       const today = '2026-10-30'
@@ -292,6 +306,9 @@ async function main() {
 
       const everything = [...files.values()].join('\n')
       check('no secret value anywhere', !everything.includes(`smtp-pass-${tag}`) && !everything.includes(`sendgrid-key-${tag}`), 'secret found')
+      check('SMS gateway credentials not exported', smsSecrets.every((v) => !everything.includes(v)), 'sms secret found')
+      const giftCsv = [...files.entries()].find(([n]) => n.endsWith('/gift_cards.csv'))?.[1] ?? ''
+      check('gift card PINs not exported', giftCsv.includes(`GC-${tag}`) && !giftCsv.split('\r\n')[0].split(',').includes('pin') && !giftCsv.includes(`,${giftPin},`), giftCsv.slice(0, 300))
       const users = [...files.entries()].find(([n]) => n.endsWith('/users.csv'))?.[1] ?? ''
       check('password columns dropped', users.length > 0 && !/password_hash|pin_hash/.test(users.split('\r\n')[0]), users.slice(0, 200))
       check('no sign-in sessions', !names.some((n) => n.endsWith('/account_sessions.csv')), names)
@@ -326,6 +343,10 @@ async function main() {
       check('an empty table gives just the header', emptyText.split('\r\n').filter(Boolean).length === 1 && emptyText.includes('order_no'), emptyText.slice(0, 200))
       const secret = await tableExportGET(req('GET', `/api/sys-control/vendors/${vendorId}/data/email_settings/export`), ctxT(vendorId, 'email_settings'))
       const secretText = await secret.text()
+      const sms = await (await tableExportGET(req('GET', `/api/sys-control/vendors/${vendorId}/data/sms_settings/export`), ctxT(vendorId, 'sms_settings'))).text()
+      check('SMS credentials dropped from the table export', sms.includes('generic_http') && smsSecrets.every((v) => !sms.includes(v)), sms.slice(0, 300))
+      const masked = JSON.stringify(maskJsonSecrets({ apiKey: 'k1', privateKey: 'k2', commKey: 'k3', 'x-api-key': 'k4', Authorization: 'k5', pin: 'k6', name: 'shown' }))
+      check('camelCase and header-style secret keys masked in JSON', !/k[1-6]/.test(masked) && masked.includes('shown'), masked)
       check('secret columns dropped from a table too', !secretText.includes(`smtp-pass-${tag}`) && !secretText.split('\r\n')[0].includes('smtp_password'), secretText.slice(0, 300))
       const sessions = await tableExportGET(req('GET', `/api/sys-control/vendors/${vendorId}/data/account_sessions/export`), ctxT(vendorId, 'account_sessions'))
       check('sessions cannot be exported', sessions.status === 404, sessions.status)

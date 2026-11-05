@@ -1,7 +1,7 @@
 // Central registry defining how each entity exports/imports
 // Adapted from ERPNext's Data Import/Export pattern
 
-export type BusinessType = 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'pharmacy' | 'dealership' | 'electronics' | 'hardware' | 'print_studio' | 'office'
+export type BusinessType = 'retail' | 'restaurant' | 'supermarket' | 'auto_service' | 'pharmacy' | 'dealership' | 'electronics' | 'hardware' | 'print_studio' | 'office' | 'textile'
 
 export interface EntityFieldConfig {
   key: string              // DB column name (camelCase)

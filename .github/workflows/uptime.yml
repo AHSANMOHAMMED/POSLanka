@@ -1,0 +1,39 @@
+name: Uptime
+
+# Checks the live site every 15 minutes. A failed run is e-mailed by GitHub to whoever last
+# changed this schedule. Uses the same APP_URL repository secret as cron.yml (public base URL,
+# e.g. https://app.poslanka.lk); without it every run is skipped.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Health, database, tenant isolation and response time
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          # Alert when the health endpoint is slower than this (seconds)
+          MAX_SECONDS: '3'
+        run: |
+          if [ -z "$APP_URL" ]; then echo "APP_URL not set — skipping"; exit 0; fi
+          url="${APP_URL%/}/api/health"
+          for attempt in 1 2 3; do
+            out=$(curl -sS -m 20 -w '\n%{http_code} %{time_total}' "$url") && break
+            echo "attempt $attempt failed, retrying"; sleep 20
+          done
+          body=$(printf '%s' "$out" | head -n -1); read -r code secs <<< "$(printf '%s' "$out" | tail -n 1)"
+          echo "HTTP $code in ${secs}s: $body"
+          fail=0
+          [ "$code" = 200 ] || { echo "::error::health returned HTTP $code"; fail=1; }
+          echo "$body" | grep -q '"status":"ok"' || { echo "::error::status is not ok"; fail=1; }
+          echo "$body" | grep -q '"database":"ok"' || { echo "::error::database is not ok"; fail=1; }
+          echo "$body" | grep -q 'UNSAFE' && { echo "::error::tenant isolation is unsafe (app running as a database superuser)"; fail=1; }
+          awk -v s="$secs" -v m="$MAX_SECONDS" 'BEGIN { exit !(s > m) }' && { echo "::error::slow: ${secs}s (limit ${MAX_SECONDS}s)"; fail=1; }
+          exit $fail

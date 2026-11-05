@@ -213,7 +213,7 @@ volumes:
 > 1. Run `npm run build` on your local computer (<2 minutes with Turbopack).
 > 2. Sync `.next/` and `server.js` to `/opt/poslanka/retail-smart-erp-main/`.
 > 3. Build the runtime container with `Dockerfile.droplet` (which copies the pre-built `.next` artifacts with Node 20 and `tini`).
-> 4. Ensure `next@16.1.6` is installed.
+> 4. The image installs the packages pinned in `package-lock.json` (`npm ci`). `deploy-droplet.sh` (§6) does all of this.
 
 ---
 
@@ -265,26 +265,32 @@ docker compose exec app node -e '
 
 ## 6. How to Deploy Updates ("Update-Wise Guide")
 
-Whenever you push new code or bug fixes, update your running deployment with zero downtime:
+Use the deploy script from your laptop (needs your SSH key for the Droplet). It builds here, copies the
+code (the running app is untouched until the restart), dumps the database to
+`/opt/poslanka/backups/pre-deploy-*.dump` (last 10 kept), keeps the current image as `poslanka:rollback`,
+rebuilds the image on the Droplet (installs the exact locked packages, so a Next.js upgrade really
+reaches the server), runs `npm run db:migrate`, restarts the app and waits for `/api/health`. If the
+new version is not healthy within ~3 minutes it starts the previous image again.
 
 ```bash
-# 1. On your local machine: build fresh production bundle
-npm run build
-npx tsx scripts/generate-preview-props.ts   # creates preview-props.json
-
-# 2. Sync compiled bundle to Droplet
-rsync -avz --delete .next/ root@168.144.216.104:/opt/poslanka/retail-smart-erp-main/.next/
-rsync -avz server.js root@168.144.216.104:/opt/poslanka/retail-smart-erp-main/
-
-# 3. On the Droplet: run new migrations & restart app container
-ssh root@168.144.216.104
-cd /opt/poslanka
-docker compose exec app npx drizzle-kit migrate
-docker compose restart app
-
-# 4. Verify health
-curl -s http://127.0.0.1:3000/api/health
+cd retail-smart-erp-main
+CHECK_ONLY=1 ./deploy/digitalocean/deploy-droplet.sh   # first time: only checks SSH and the server layout
+./deploy/digitalocean/deploy-droplet.sh                # build, ship, back up, migrate, restart, verify
 ```
+
+On the $6 Droplet the image build runs `npm ci` with the 4 GB swap (slow but it works, as before). If it
+ever runs out of memory, use `BUILD_ON=laptop`: the image is built on your computer and uploaded, and the
+Droplet only loads it. The script stops before changing anything if the server has less than 3 GB of disk free.
+
+Options: `DEPLOY_HOST=root@host`, `REMOTE_DIR=/opt/poslanka`, `SKIP_BUILD=1` (reuse the last build), `BUILD_ON=laptop`,
+`SKIP_BACKUP=1` (only when the database is not the compose `db` service and is backed up elsewhere).
+
+> [!WARNING]
+> Do not copy only `.next/` to the server: a build made with newer packages (e.g. a Next.js security
+> upgrade) then runs on the server's old `node_modules`. Do not use `drizzle-kit migrate`: migrations
+> are applied by `npm run db:migrate` (`scripts/migrate.mjs`, reads `drizzle/meta/_journal.json`).
+
+Restore a backup into a new database with `deploy/backup/pg-restore.sh` (see `deploy/backup/README.md`).
 
 ---
 
@@ -382,6 +388,13 @@ Below is an exact spreadsheet layout with samples across all your store departme
 * **Database & Storage**: Internal PostgreSQL Docker container + Local file uploads.
 * **Monthly Cost**: **$6.00**.
 
+> [!NOTE]
+> Measured on the production build (2026-11-04): one cashier's checkout takes ~56 ms (p50) in the app;
+> 5 cashiers selling the same item at once ~1.05 s (p50). On a 1 GB Droplet with Postgres on the same
+> machine the server sets the speed customers feel. The $6 plan is the supported setup for the first
+> shops (Stage 1); resizing is optional and only worth it when the uptime check (`.github/workflows/uptime.yml`)
+> starts reporting slow responses.
+
 ### Stage 2: 5 to 30 Vendors ($12 to $24 / month total)
 When you add 10 to 20 retail stores with concurrent POS checkout counters:
 * **Action**: Do not buy complex architecture yet. Simply **1-Click Resize** the Droplet in DigitalOcean Dashboard:
@@ -409,3 +422,5 @@ When business scales to hundreds of concurrent stores:
 * **Stateless App Nodes**: skyERPOS uses stateless JWT sessions. Any Droplet can serve any cashier.
 * **Real-time Synchronization**: Cross-droplet POS transactions synchronize instantly using PostgreSQL `LISTEN/NOTIFY` on channel `ws_broadcast`.
 * **Zero Downtime Updates**: With a Load Balancer, deploy Droplet #1 while Droplet #2 handles checkout, then switch.
+* **Connection pooling**: each app instance keeps up to `DATABASE_POOL_MAX` (default 15) connections. Keep instances × pool below the database limit. Put PgBouncer in **session** mode in front only when that limit is reached — transaction mode breaks the realtime `LISTEN` connection and per-session settings.
+* **CDN**: once a real domain points at the server (§7), put Cloudflare in front (proxy on, "Cache static" for `/_next/static/*`; these files are content-hashed and safe to cache for a year). It does not work with the `sslip.io` address.

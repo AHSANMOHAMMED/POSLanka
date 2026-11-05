@@ -1,7 +1,15 @@
 'use client'
 
 import type { LabelElement, LabelItemData, DynamicField, LabelTemplate, LabelShape, TextElement } from './types'
-import { getBarcodeFallbackData, renderBarcodeElementHtml } from './barcode-renderer'
+import { getBarcodeFallbackData, LABEL_FONT_FAMILY, renderBarcodeElementHtml } from './barcode-renderer'
+
+/** Extra preview options (printer-font preview for the "fast text" raw mode). */
+export interface RenderLabelOptions {
+  /** CSS font family for text (default Arial, the font the exact print uses). */
+  fontFamily?: string
+  /** Cut text the way the printer's own fonts would (fast text mode). */
+  fitText?: (el: TextElement, text: string) => string
+}
 
 /**
  * Encode a numeric value using a 10-character code word.
@@ -49,7 +57,7 @@ export function calculateAutoFitFontSize(
 
   let fontSize = maxFontSize
   while (fontSize >= MIN_FONT) {
-    ctx.font = `${fontWeight} ${fontSize}pt sans-serif`
+    ctx.font = `${fontWeight} ${fontSize}pt ${LABEL_FONT_FAMILY}`
     // Convert pt to px for line height calculation: 1pt = 96/72 px
     const fontSizePx = fontSize * (96 / 72)
     const lineHeightPx = fontSizePx * 1.2
@@ -148,8 +156,11 @@ async function renderElement(
   tenantName?: string,
   codeWord?: string,
   labelWidthMm = 50,
-  dpi = 203
+  dpi = 203,
+  opts: RenderLabelOptions = {}
 ): Promise<string> {
+  // data-el-id lets the print page find the element a click landed on
+  const tag = `data-el-id="${escapeHtml(String(el.id ?? ''))}" `
   const baseStyle = `position:absolute;left:${el.x}mm;top:${el.y}mm;width:${el.width}mm;height:${el.height}mm;overflow:hidden;${el.rotation ? `transform:rotate(${el.rotation}deg);` : ''}`
 
   switch (el.type) {
@@ -159,13 +170,14 @@ async function renderElement(
       let raw = (resolveField(el.dataField, item, el.customValue, undefined, tenantName) || '').trim()
       if (!raw && item) raw = (item.barcode || item.sku || item.pluCode || '').trim()
       if (!raw && !item) raw = getBarcodeFallbackData(el.format)
-      return renderBarcodeElementHtml(el, raw, labelWidthMm, dpi)
+      return (await renderBarcodeElementHtml(el, raw, labelWidthMm, dpi)).replace('<div ', `<div ${tag}`)
     }
     case 'text': {
       const textEl = el as TextElement
       let text = resolveField(el.dataField, item, el.customValue, el.isCurrency ? currencySymbol : undefined, tenantName, codeWord)
       if (el.prefix) text = el.prefix + text
       if (el.suffix) text = text + el.suffix
+      if (opts.fitText) text = opts.fitText(textEl, text)
 
       const effectiveMaxLines = Math.max(1, el.maxLines || 1)
 
@@ -181,7 +193,8 @@ async function renderElement(
         : `word-break:break-word;display:-webkit-box;-webkit-line-clamp:${effectiveMaxLines};-webkit-box-orient:vertical;overflow:hidden;`
 
       const textStyle = `font-size:${fontSize}pt;font-weight:${el.fontWeight};text-align:${el.textAlign};line-height:1.2;${singleLineStyle}`
-      return `<div style="${baseStyle}z-index:${el.zIndex};${textStyle}">${escapeHtml(text)}</div>`
+      const family = opts.fontFamily ? `font-family:${opts.fontFamily};` : ''
+      return `<div ${tag}style="${baseStyle}z-index:${el.zIndex};${family}${textStyle}">${escapeHtml(text)}</div>`
     }
     case 'image': {
       let src = ''
@@ -191,20 +204,20 @@ async function renderElement(
         src = el.customUrl
       }
       if (src) {
-        return `<div style="${baseStyle}z-index:${el.zIndex};"><img src="${src}" style="width:100%;height:100%;object-fit:contain;" alt=""/></div>`
+        return `<div ${tag}style="${baseStyle}z-index:${el.zIndex};"><img src="${escapeHtml(src)}" style="width:100%;height:100%;object-fit:contain;" alt=""/></div>`
       }
-      return `<div style="${baseStyle}z-index:${el.zIndex};display:flex;align-items:center;justify-content:center;background:#f9fafb;border:1px dashed #d1d5db;font-size:8pt;color:#9ca3af;">Image</div>`
+      return `<div ${tag}style="${baseStyle}z-index:${el.zIndex};display:flex;align-items:center;justify-content:center;background:#f9fafb;border:1px dashed #d1d5db;font-size:8pt;color:#9ca3af;">Image</div>`
     }
     case 'shape': {
       const fill = el.fillColor || 'transparent'
       if (el.shape === 'line') {
-        return `<div style="${baseStyle}z-index:${el.zIndex};border-top:${el.borderWidth}px ${el.borderStyle} ${el.borderColor};height:0;margin-top:${el.height / 2}mm;"></div>`
+        return `<div ${tag}style="${baseStyle}z-index:${el.zIndex};border-top:${el.borderWidth}px ${el.borderStyle} ${el.borderColor};height:0;margin-top:${el.height / 2}mm;"></div>`
       }
       if (el.shape === 'ellipse') {
-        return `<div style="${baseStyle}z-index:${el.zIndex};border:${el.borderWidth}px ${el.borderStyle} ${el.borderColor};background:${fill};box-sizing:border-box;border-radius:50%;"></div>`
+        return `<div ${tag}style="${baseStyle}z-index:${el.zIndex};border:${el.borderWidth}px ${el.borderStyle} ${el.borderColor};background:${fill};box-sizing:border-box;border-radius:50%;"></div>`
       }
       const radius = el.shape === 'rounded-rectangle' && el.cornerRadius ? `border-radius:${el.cornerRadius}mm;` : ''
-      return `<div style="${baseStyle}z-index:${el.zIndex};border:${el.borderWidth}px ${el.borderStyle} ${el.borderColor};background:${fill};box-sizing:border-box;${radius}"></div>`
+      return `<div ${tag}style="${baseStyle}z-index:${el.zIndex};border:${el.borderWidth}px ${el.borderStyle} ${el.borderColor};background:${fill};box-sizing:border-box;${radius}"></div>`
     }
   }
 }
@@ -234,16 +247,17 @@ export async function renderLabelHtml(
   tenantName?: string,
   codeWord?: string,
   /** Printer resolution the barcode bars are aligned to (default 203 dpi). */
-  dpi: number = 203
+  dpi: number = 203,
+  opts: RenderLabelOptions = {}
 ): Promise<string> {
   const w = Number(template.widthMm)
   const elements = await Promise.all(
-    template.elements.map(el => renderElement(el, item, currencySymbol, tenantName, codeWord, w, dpi))
+    (template.elements || []).map(el => renderElement(el, item, currencySymbol, tenantName, codeWord, w, dpi, opts))
   )
 
   const h = Number(template.heightMm)
   const shapeStyle = getShapeBorderRadius(template.labelShape, template.cornerRadius)
-  return `<div style="position:relative;width:${w}mm;height:${h}mm;overflow:hidden;background:white;box-sizing:border-box;${shapeStyle}">${elements.join('')}</div>`
+  return `<div style="position:relative;width:${w}mm;height:${h}mm;overflow:hidden;background:white;color:#000;font-family:${LABEL_FONT_FAMILY};box-sizing:border-box;${shapeStyle}">${elements.join('')}</div>`
 }
 
 function escapeHtml(str: string): string {

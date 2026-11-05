@@ -17,6 +17,7 @@ import {
   type InvoiceDocLine,
   type InvoiceTemplateConfig,
 } from './invoice-template'
+import type { LetterHeadConfig } from './template-renderer'
 
 type Num = string | number | null | undefined
 const n = (v: Num): number => {
@@ -37,6 +38,7 @@ export interface PrintTemplateRow {
   showHeader?: boolean | null
   showFooter?: boolean | null
   customCss?: string | null
+  letterHeadId?: string | null
   config?: unknown
 }
 
@@ -44,6 +46,8 @@ export interface PrintTemplateRow {
 export const TEMPLATE_DOC_TYPES = {
   sale: ['invoice', 'sales_invoice'],
   quotation: ['quotation', 'estimate'],
+  credit_note: ['credit_note', 'invoice', 'sales_invoice'],
+  purchase_order: ['purchase_order'],
 } as const
 
 /** Active templates of the given document types (in the given type order, defaults first). */
@@ -61,10 +65,34 @@ export async function fetchPrintTemplates(documentTypes: readonly string[]): Pro
   return lists.flatMap((rows) => [...rows].sort((a, b) => Number(b.isDefault) - Number(a.isDefault)))
 }
 
+/** The template row to print with: the chosen template, else the default, else the first (or none). */
+export function pickTemplateRow(templates: PrintTemplateRow[], templateId?: string | null): PrintTemplateRow | undefined {
+  return (templateId && templates.find((t) => t.id === templateId)) || templates.find((t) => t.isDefault) || templates[0]
+}
+
 /** The template config to print with: the chosen template, else the default, else built-in defaults. */
 export function pickTemplateConfig(templates: PrintTemplateRow[], templateId?: string | null): InvoiceTemplateConfig {
-  const row = (templateId && templates.find((t) => t.id === templateId)) || templates.find((t) => t.isDefault) || templates[0]
-  return templateConfigFromRow(row)
+  return templateConfigFromRow(pickTemplateRow(templates, templateId))
+}
+
+const letterHeadCache = new Map<string, Promise<LetterHeadConfig | null>>()
+
+/** Letter head of a template (cached per page load); null when none / not found. */
+export function fetchLetterHead(id: string | null | undefined): Promise<LetterHeadConfig | null> {
+  if (!id) return Promise.resolve(null)
+  let p = letterHeadCache.get(id)
+  if (!p) {
+    p = fetch(`/api/letter-heads/${encodeURIComponent(id)}`)
+      .then(async (res) => {
+        if (!res.ok) return null
+        const lh = (await res.json()) as LetterHeadConfig & { isActive?: boolean }
+        return lh.isActive === false ? null : lh
+      })
+      .catch(() => null)
+    letterHeadCache.set(id, p)
+    setTimeout(() => letterHeadCache.delete(id), 60_000)
+  }
+  return p
 }
 
 export function companyFromTenant(t: TenantReceiptInfo | Record<string, unknown> | null | undefined): InvoiceCompany {
@@ -355,8 +383,98 @@ function openInWindow(html: string): boolean {
   return true
 }
 
-/** Load a sale, pick its template and print it on A4 (or the template's paper). */
+/** Load a sale, pick its template and print it on A4 (or the template's paper), with its letter head. */
 export async function printSaleInvoice(saleId: string, templateId?: string | null): Promise<boolean> {
   const [{ doc, company }, templates] = await Promise.all([loadSaleDocument(saleId), fetchPrintTemplates(TEMPLATE_DOC_TYPES.sale)])
-  return printHtmlDocument(renderInvoiceHtml(pickTemplateConfig(templates, templateId), doc, company))
+  const row = pickTemplateRow(templates, templateId)
+  return printHtmlDocument(renderInvoiceHtml(templateConfigFromRow(row), doc, company, { letterHead: await fetchLetterHead(row?.letterHeadId) }))
+}
+
+// ─── Credit note (credit_notes table) → InvoiceDoc ────────────────────────
+
+interface CreditNoteApi {
+  id: string
+  creditNoteNo: string
+  customerName?: string | null
+  status?: string | null
+  reason?: string | null
+  subtotal: Num
+  tax: Num
+  total: Num
+  postingDate?: string | null
+  createdAt: string
+  taxBreakdown?: Array<{ taxName?: string; rate?: number; amount?: number }> | null
+  customer?: SaleApi['customer']
+  sale?: { invoiceNo?: string | null } | null
+  items?: Array<{ itemName: string; quantity: Num; unitPrice: Num; taxRate?: Num; tax?: Num; total: Num }>
+}
+
+/** A credit note (GET /api/credit-notes/[id]: manageSales + K4 branch check) as a printable document. */
+export async function loadCreditNoteDocument(id: string): Promise<{ doc: InvoiceDoc; company: InvoiceCompany }> {
+  const [res, tenant] = await Promise.all([fetch(`/api/credit-notes/${encodeURIComponent(id)}`), fetchTenantInfo()])
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error((err as { error?: string }).error || 'Failed to load credit note')
+  }
+  const cn = (await res.json()) as CreditNoteApi
+  const c = cn.customer
+  const doc: InvoiceDoc = {
+    kind: 'credit_note',
+    number: cn.creditNoteNo,
+    date: cn.postingDate || cn.createdAt,
+    status: cn.status || null,
+    originalInvoiceNo: cn.sale?.invoiceNo || null,
+    customer: (cn.customerName || c)
+      ? { name: cn.customerName || c?.name || null, address: addressOf(c ?? null), phone: c?.phone || c?.mobilePhone || null, email: c?.email || null, taxId: c?.taxId || null }
+      : null,
+    lines: (cn.items || []).map((it) => ({
+      name: it.itemName, quantity: n(it.quantity), unitPrice: n(it.unitPrice), taxRate: n(it.taxRate), taxAmount: n(it.tax), amount: n(it.total),
+    })),
+    subtotal: n(cn.subtotal),
+    tax: n(cn.tax),
+    taxBreakdown: Array.isArray(cn.taxBreakdown)
+      ? cn.taxBreakdown.map((b) => ({ name: b.taxName || 'Tax', rate: b.rate ?? null, amount: n(b.amount) }))
+      : null,
+    total: n(cn.total),
+    notes: cn.reason || null,
+  }
+  return { doc, company: companyFromTenant(tenant) }
+}
+
+// ─── Purchase order → InvoiceDoc ──────────────────────────────────────────
+
+export interface PurchaseOrderLike {
+  orderNo: string
+  status?: string | null
+  supplierName?: string | null
+  warehouseName?: string | null
+  expectedDeliveryDate?: string | null
+  subtotal: Num
+  taxAmount?: Num
+  total: Num
+  notes?: string | null
+  createdByName?: string | null
+  createdAt: string
+  items: Array<{ itemName: string; itemSku?: string | null; quantity: Num; unitPrice: Num; tax?: Num; total: Num; uom?: string | null }>
+}
+
+export function purchaseOrderToDoc(po: PurchaseOrderLike): InvoiceDoc {
+  return {
+    kind: 'purchase_order',
+    number: po.orderNo,
+    date: po.createdAt,
+    deliveryDate: po.expectedDeliveryDate || null,
+    status: po.status || null,
+    salesperson: po.createdByName || null,
+    reference: po.warehouseName ? `Deliver to: ${po.warehouseName}` : null,
+    customer: po.supplierName ? { name: po.supplierName } : null,
+    lines: po.items.map((it) => ({
+      name: it.itemName, sku: it.itemSku || null, quantity: n(it.quantity), unit: it.uom || null, unitPrice: n(it.unitPrice),
+      taxAmount: n(it.tax), amount: n(it.total),
+    })),
+    subtotal: n(po.subtotal),
+    tax: n(po.taxAmount),
+    total: n(po.total),
+    notes: po.notes || null,
+  }
 }

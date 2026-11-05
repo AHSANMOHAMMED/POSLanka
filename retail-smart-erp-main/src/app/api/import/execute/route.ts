@@ -7,6 +7,7 @@ import { parseImportRequest } from '@/lib/import-export/import-request'
 import { validateImport } from '@/lib/import-export/import-validate'
 import { createImportJob, effectiveStatus } from '@/lib/import-export/import-job-store'
 import { startImportJobInBackground } from '@/lib/import-export/run-import-job'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
 
 // POST - Validate the file, persist the job + rows, then apply in the background.
 export async function POST(request: NextRequest) {
@@ -41,6 +42,18 @@ export async function POST(request: NextRequest) {
     }
     if (validation.counts.insert + validation.counts.update === 0) {
       return NextResponse.json({ error: 'No rows to import', actions: validation.counts }, { status: 400 })
+    }
+
+    // K4: stock (opening stock, min stock, per-branch stock columns) may only be written to the
+    // branches of a branch-restricted user; imports without stock are unaffected
+    const stockBranches = new Set<string>()
+    for (const row of validation.rows) {
+      if (row.status === 'error' || (row.action !== 'insert' && row.action !== 'update')) continue
+      for (const line of row.payload.stock || []) stockBranches.add(line.warehouseId)
+    }
+    if (stockBranches.size > 0) {
+      const branchDenied = await withTenant(tenantId, (db) => assertBranchAccess(session, [...stockBranches], db))
+      if (branchDenied) return branchDenied
     }
 
     const created = await createImportJob({

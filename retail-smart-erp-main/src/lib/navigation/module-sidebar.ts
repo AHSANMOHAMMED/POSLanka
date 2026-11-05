@@ -12,9 +12,9 @@ export function isServiceCapable(businessType?: string): boolean {
 }
 
 /** Shops selling goods over a counter: retail (clothing, footwear, bags, stationery, fancy …),
- * supermarket, pharmacy, electronics & appliances, hardware and print / photo studios share the
+ * supermarket, pharmacy, electronics & appliances, hardware, print / photo studios and textile shops share the
  * store features (departments, scales, velocity, category sales, variants). */
-export const STORE_BUSINESS_TYPES = ['retail', 'supermarket', 'pharmacy', 'electronics', 'hardware', 'print_studio'] as const
+export const STORE_BUSINESS_TYPES = ['retail', 'supermarket', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'textile'] as const
 export function isStoreBusiness(businessType?: string | null): boolean {
   return !!businessType && (STORE_BUSINESS_TYPES as readonly string[]).includes(businessType)
 }
@@ -65,7 +65,8 @@ export const MODULE_TABS: ModuleTab[] = [
   { key: 'barcode', label: 'Barcode & Labels', href: '/barcode', icon: 'Barcode', permission: 'manageItems' },
   { key: 'buying', label: 'Buying', href: '/buying', icon: 'Truck', permission: 'managePurchases' },
   { key: 'auto-service', label: 'Auto Service', href: '/auto-service', icon: 'Wrench', autoServiceOnly: true, permission: 'manageWorkOrders' },
-  { key: 'dealership', label: 'Dealership', href: '/dealership', icon: 'Car', dealershipOnly: true, permission: 'manageSales' },
+  // Dealer sales staff (manageDealers) work in this module without the general Manage Sales permission
+  { key: 'dealership', label: 'Dealership', href: '/dealership', icon: 'Car', dealershipOnly: true, permission: 'manageSales', altPermissions: ['manageDealers'] },
   { key: 'restaurant', label: 'Restaurant', href: '/restaurant', icon: 'UtensilsCrossed', restaurantOnly: true, permission: 'manageSales' },
   { key: 'hr', label: 'HR', href: '/hr', icon: 'Users', permission: 'manageEmployees' },
   { key: 'accounting', label: 'Accounting', href: '/accounting', icon: 'BookOpen', permission: 'manageAccounting' },
@@ -114,8 +115,14 @@ const ROUTE_MODULE_MAP: [string, string][] = [
   ['/deliveries', 'selling'],
   ['/warranty-claims', 'selling'],
   ['/print-jobs', 'selling'],
+  ['/service-jobs', 'selling'],
   ['/pharmacy/prescriptions', 'selling'],
+  ['/pharmacy/patients', 'selling'],
+  ['/pharmacy/dispensing', 'selling'],
   ['/pharmacy/expiry', 'stock'],
+  ['/pharmacy/return-list', 'stock'],
+  ['/pharmacy/controlled-register', 'stock'],
+  ['/pharmacy/reports', 'reports'],
 
   // Barcode & Labels
   ['/barcode/print', 'barcode'],
@@ -270,6 +277,7 @@ const DETAIL_PAGE_ROUTES = [
   '/layaways/',
   '/installments/',
   '/warranty-claims/',
+  '/service-jobs/',
   '/accounting/journal-entries/',
   '/accounting/recurring-entries/',
   '/accounting/payment-entries/',
@@ -361,6 +369,8 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/stock/temperature-zones', label: 'Temperature Zones', icon: 'Thermometer', supermarketOnly: true },
         { href: '/stock/departments', label: 'Departments', icon: 'Building', supermarketOnly: true },
         { href: '/pharmacy/expiry', label: 'Expiry Report', icon: 'CalendarClock', pharmacyOnly: true, permission: 'manageInventory' },
+        { href: '/pharmacy/return-list', label: 'Return to Supplier (Expiry)', icon: 'PackageX', pharmacyOnly: true, permission: 'manageInventory' },
+        { href: '/pharmacy/controlled-register', label: 'Controlled Drug Register', icon: 'BookOpenCheck', pharmacyOnly: true, permission: 'manageInventory' },
       ],
     },
     {
@@ -415,6 +425,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/layaways', label: 'Layaways', icon: 'PackageOpen', permission: 'createSales' },
         { href: '/installments', label: 'Hire Purchase / Installments', icon: 'CalendarClock', businessTypes: ['electronics', 'hardware', 'retail'], permission: 'createSales' },
         { href: '/pharmacy/prescriptions', label: 'Prescription Register', icon: 'Pill', pharmacyOnly: true, permission: 'createSales' },
+        { href: '/pharmacy/patients', label: 'Patient Medication History', icon: 'History', pharmacyOnly: true, permission: 'createSales' },
       ],
     },
     {
@@ -439,6 +450,9 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         // Drivers and technicians use these too: no menu permission, the API checks per action
         { href: '/deliveries', label: 'Deliveries & Installation', icon: 'Truck', businessTypes: ['electronics', 'hardware', 'retail', 'supermarket'] },
         { href: '/warranty-claims', label: 'Warranty Claims', icon: 'ShieldCheck', businessTypes: ['electronics', 'retail', 'hardware'] },
+        // 0193 job cards (label from terminology: Repair Jobs / Tailoring & Alterations / Service Tickets);
+        // counter staff and technicians both use it, the API checks per action
+        { href: '/service-jobs', label: 'Service Jobs', icon: 'Wrench', businessTypes: ['electronics', 'textile', 'office', 'retail', 'hardware'] },
       ],
     },
   ],
@@ -551,7 +565,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
     {
       title: 'Reports',
       items: [
-        { href: '/dealership/reports', label: 'Dealership Reports', icon: 'BarChart3' },
+        { href: '/dealership/reports', label: 'Dealership Reports', icon: 'BarChart3', permission: 'viewReports' },
       ],
     },
   ],
@@ -678,6 +692,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/accounting/reports/job-card-profitability', label: 'Job Card Profitability', icon: 'BadgeDollarSign', autoServiceOnly: true, permission: 'viewReports' },
         { href: '/accounting/reports/parts-usage', label: 'Parts Usage', icon: 'Cog', autoServiceOnly: true, permission: 'viewReports' },
         { href: '/accounting/reports/warranty-tracker', label: 'Warranty Tracker', icon: 'ShieldCheck', autoServiceOnly: true, permission: 'viewReports' },
+        { href: '/accounting/reports/warranty-tracker', label: 'Warranty Tracker', icon: 'ShieldCheck', businessTypes: ['electronics'], permission: 'viewReports' },
         { href: '/accounting/reports/table-turnover', label: 'Table Turnover', icon: 'RotateCw', restaurantOnly: true, permission: 'viewReports' },
         { href: '/accounting/reports/menu-performance', label: 'Menu Performance', icon: 'ChefHat', restaurantOnly: true, permission: 'viewReports' },
         { href: '/accounting/reports/food-cost-analysis', label: 'Food Cost Analysis', icon: 'Soup', restaurantOnly: true, permission: 'viewReports' },
@@ -786,6 +801,8 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/accounting/reports/promotions', label: 'Promotion Report', icon: 'BadgePercent', permission: 'viewReports' },
         { href: '/accounting/reports/tax-report', label: 'Tax Report', icon: 'Landmark', permission: 'viewReports' },
         { href: '/accounting/reports/vat-schedule', label: 'VAT Schedules', icon: 'Percent', permission: 'viewReports' },
+        { href: '/pharmacy/reports', label: 'Pharmacy Reports', icon: 'Pill', pharmacyOnly: true, permission: 'viewReports' },
+        { href: '/pharmacy/controlled-register', label: 'Controlled Drug Register', icon: 'BookOpenCheck', pharmacyOnly: true, permission: 'viewReports' },
       ],
     },
     {
@@ -828,6 +845,12 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
       ],
     },
     {
+      title: 'Electronics Reports',
+      items: [
+        { href: '/accounting/reports/warranty-tracker', label: 'Warranty Tracker', icon: 'ShieldCheck', businessTypes: ['electronics'], permission: 'viewReports' },
+      ],
+    },
+    {
       title: 'Supermarket Reports',
       items: [
         { href: '/accounting/reports/category-sales', label: 'Category Sales', icon: 'LayoutList', supermarketOnly: true, permission: 'viewReports' },
@@ -853,7 +876,7 @@ const MODULE_SIDEBARS: Record<string, SidebarSection[]> = {
         { href: '/settings/commissions', label: 'Commissions', icon: 'Coins', permission: 'manageCommissions' },
         { href: '/settings/notifications', label: 'Notifications', icon: 'Bell' },
         { href: '/files', label: 'File Manager', icon: 'FolderTree', permission: 'manageFiles' },
-        { href: '/settings/ai-logs', label: 'AI Intelligence', icon: 'Sparkles', permission: 'manageUsers' },
+        { href: '/settings/ai-logs', label: 'AI Intelligence', icon: 'Sparkles', permission: 'manageSettings' },
       ],
     },
     {
@@ -899,6 +922,7 @@ const LABEL_OVERRIDES: Record<string, string> = {
   'Categories': 'categories',
   'Customers': 'customers',
   'Sales Invoices': 'sales',
+  'Service Jobs': 'serviceJobs',
 }
 
 /**

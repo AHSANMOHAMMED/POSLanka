@@ -11,7 +11,7 @@ This guide covers everything required to deploy, secure, and operate **POSLanka*
 POSLanka uses a multi-tenant SaaS architecture on Next.js 16 (App Router), React 19, and PostgreSQL 15+.
 
 - **Subdomain-based tenant routing**: Each company accesses their system via `https://[company-slug].poslanka.lk`.
-- **Portal & Account Management**: Central signup and cross-company management live at `https://app.poslanka.lk`.
+- **Portal & Account Management**: Owners manage their businesses at `https://app.poslanka.lk`. New businesses and staff are created only by the super admin (`/sys-control` → New vendor); there is no self sign-up.
 - **Public Marketing Website**: Landing pages and pricing live at `https://poslanka.lk` (or `www.poslanka.lk`).
 - **Data Isolation**: Enforced via PostgreSQL **Row-Level Security (RLS)** (`tenant_id = current_setting('app.tenant_id', true)::uuid`).
 - **Real-Time Synchronisation**: In-process WebSocket server (`ws://.../ws`) with Server-Sent Events (SSE) fallback on `/_events`.
@@ -289,7 +289,7 @@ To support wildcards for multi-tenancy, configure your DNS provider (e.g. Cloudf
            proxy_set_header Connection "upgrade";
            proxy_set_header Host $host;
            proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-For $remote_addr;   # overwrite: the app trusts the first entry (rate limits, device IP lock)
            proxy_set_header X-Forwarded-Proto $scheme;
            proxy_read_timeout 86400s;
            proxy_send_timeout 86400s;

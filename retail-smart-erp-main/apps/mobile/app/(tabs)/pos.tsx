@@ -69,6 +69,7 @@ const SEARCH_PLACEHOLDER_BY_TYPE: Record<string, string> = {
   hardware: 'Scan barcode or search items, sizes',
   print_studio: 'Search prints, sizes, services',
   office: 'Search services & products',
+  textile: 'Scan barcode or search sizes, colours, fabric',
 }
 
 interface Item {

@@ -9,6 +9,7 @@ import {
   Hammer,
   Printer,
   Briefcase,
+  Shirt,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -66,7 +67,7 @@ export const BUSINESS_TYPES: BusinessType[] = [
     emoji: '📺',
     description: 'Fridges, TVs, washing machines, sewing machines, phones and other big-ticket items',
     color: 'bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400',
-    features: ['Hire purchase / installments', 'Serial & IMEI tracking', 'Delivery & installation', 'Warranty claims'],
+    features: ['Hire purchase / installments', 'Serial & IMEI tracking', 'Repair jobs & warranty', 'Delivery & installation'],
   },
   {
     value: 'hardware',
@@ -93,7 +94,16 @@ export const BUSINESS_TYPES: BusinessType[] = [
     emoji: '🏢',
     description: 'Offices, agencies and service businesses that mostly need staff, attendance and billing',
     color: 'bg-slate-100 text-slate-600 dark:bg-slate-800/50 dark:text-slate-300',
-    features: ['Fingerprint attendance', 'Leave & holidays', 'Payroll', 'Invoices & quotations'],
+    features: ['Service tickets', 'Fingerprint attendance', 'Leave & payroll', 'Invoices & quotations'],
+  },
+  {
+    value: 'textile',
+    label: 'Textile & Clothing',
+    icon: Shirt,
+    emoji: '👗',
+    description: 'Textile shops, saree houses, readymade garments, fabric by the metre and tailoring',
+    color: 'bg-pink-100 text-pink-600 dark:bg-pink-900/30 dark:text-pink-400',
+    features: ['Size / colour variants', 'Fabric by the metre', 'Tailoring & alterations', 'Exchanges & returns'],
   },
   {
     value: 'auto_service',

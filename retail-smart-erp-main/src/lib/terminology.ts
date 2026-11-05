@@ -43,6 +43,9 @@ export interface TerminologyMap {
   /** A customer order worked on before handover: "Job" for print & photo studios */
   job?: string
   jobs?: string
+  /** Service jobs module: "Repair Job" (electronics), "Tailoring Order" (textile), "Service Ticket" (office) */
+  serviceJob?: string
+  serviceJobs?: string
 }
 
 const TERMINOLOGY: Record<string, TerminologyMap> = {
@@ -171,6 +174,35 @@ const TERMINOLOGY: Record<string, TerminologyMap> = {
     saleCompleted: 'Sale completed',
     searchPlaceholder: 'Scan barcode / IMEI or search models...',
     serialNumber: 'Serial / IMEI',
+    serviceJob: 'Repair Job',
+    serviceJobs: 'Repair Jobs',
+  },
+  textile: {
+    item: 'Item',
+    items: 'Items',
+    addItem: 'Add Item',
+    newItem: 'New Item',
+    editItem: 'Edit Item',
+    category: 'Category',
+    categories: 'Categories',
+    addCategory: 'Add Category',
+    categoryPlaceholder: 'Select Category',
+    sale: 'Sale',
+    sales: 'Sales',
+    newSale: 'New Sale',
+    invoiceNo: 'Bill #',
+    customer: 'Customer',
+    customers: 'Customers',
+    newCustomer: 'New Customer',
+    stockModule: 'Inventory',
+    sellingModule: 'Selling',
+    currentSale: 'Current Bill',
+    walkInCustomer: 'Walk-in Customer',
+    payNow: 'Pay Now',
+    saleCompleted: 'Sale completed',
+    searchPlaceholder: 'Scan barcode or search sizes, colours, fabric...',
+    serviceJob: 'Tailoring Order',
+    serviceJobs: 'Tailoring & Alterations',
   },
   hardware: {
     item: 'Item',
@@ -250,6 +282,8 @@ const TERMINOLOGY: Record<string, TerminologyMap> = {
     searchPlaceholder: 'Search services...',
     job: 'Job',
     jobs: 'Jobs',
+    serviceJob: 'Service Ticket',
+    serviceJobs: 'Service Tickets',
   },
   auto_service: {
     item: 'Part',

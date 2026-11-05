@@ -1,15 +1,17 @@
 'use client'
 
 /**
- * "Direct to Zebra" label printing: the labels are encoded as ZPL here and sent RAW through the skyERPOS
+ * "Direct to label printer": the labels are encoded in the printer's language (ZPL / TSPL / EPL, the one
+ * the shop chose in Printer setup, else guessed from the printer name) and sent RAW through the skyERPOS
  * print helper (tools/print-agent, http://127.0.0.1:9123) to the installed printer, bypassing the Windows
- * driver, Chrome's preview and its paper size. The printer finds the gap before every row (^MNY), so rows
- * cannot drift. Chosen per PC (localStorage), next to the default Chrome print preview path.
+ * driver, Chrome's preview and its paper size. The printer finds the gap before every row, so rows
+ * cannot drift. The mode and the printer are chosen per PC (localStorage), next to the default Chrome
+ * print preview path.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { DEFAULT_AGENT_URL, PrintAgentTransport, type PrintAgentTarget } from '@/lib/print/escpos/transports'
-import { newPrinterProfile, type PrinterProfile } from '@/lib/print/printer-profiles'
-import { guessLabelPrinter, sortPrintersForLabels } from '@/lib/print/label/printer-detect'
+import { newPrinterProfile, type LabelLanguage, type PrinterProfile } from '@/lib/print/printer-profiles'
+import { guessLabelPrinter, isLikelyLabelPrinter, sortPrintersForLabels } from '@/lib/print/label/printer-detect'
 
 export type LabelPrintMode = 'chrome' | 'direct'
 
@@ -35,23 +37,29 @@ export function readLabelPrintMode(): LabelPrintMode {
   return read(MODE_KEY) === 'direct' ? 'direct' : 'chrome'
 }
 
-/** Printer profile for one raw print to an installed printer through the helper (ZPL unless the name says EPL). */
-export function directPrinterProfile(name: string, driver?: string | null): PrinterProfile {
+/** Language / dpi the shop chose in Printer setup (null = guess from the printer name). */
+export interface DirectPrinterPrefs {
+  language?: LabelLanguage | null
+  dpi?: 203 | 300 | 600 | null
+}
+
+/** Printer profile for one raw print to an installed printer through the helper (the chosen language, else guessed from the name). */
+export function directPrinterProfile(name: string, driver?: string | null, prefs: DirectPrinterPrefs = {}): PrinterProfile {
   const guess = guessLabelPrinter(name, driver)
-  const language = guess.language === 'epl' || guess.language === 'tspl' ? guess.language : 'zpl'
+  const language: LabelLanguage = prefs.language && prefs.language !== 'browser' ? prefs.language : guess.language === 'epl' || guess.language === 'tspl' ? guess.language : 'zpl'
   return newPrinterProfile('label', {
     id: `direct-${name}`,
     name,
     transport: 'agent',
     agentUrl: DEFAULT_AGENT_URL,
     agentTarget: name,
-    label: { widthMm: 80, heightMm: 25, gapMm: 2, dpi: guess.dpi, language },
+    label: { widthMm: 80, heightMm: 25, gapMm: 2, dpi: prefs.dpi === 300 || (!prefs.dpi && guess.dpi === 300) ? 300 : 203, language },
   })
 }
 
 export type DirectState = 'idle' | 'checking' | 'ready' | 'missing'
 
-export function useDirectZebra() {
+export function useDirectZebra(prefs: DirectPrinterPrefs = {}) {
   const [mode, setModeState] = useState<LabelPrintMode>(readLabelPrintMode)
   const [state, setState] = useState<DirectState>('idle')
   const [targets, setTargets] = useState<PrintAgentTarget[]>([])
@@ -78,7 +86,7 @@ export function useDirectZebra() {
     setState('ready')
     setPrinterState((cur) => {
       if (cur && installed.some((t) => t.name === cur)) return cur
-      const pick = installed.find((t) => /zebra|zdesigner|zd\d|zpl/i.test(`${t.name} ${t.driver || ''}`)) || installed[0]
+      const pick = installed.find((t) => isLikelyLabelPrinter(t.name, t.driver)) || installed[0]
       if (pick) write(PRINTER_KEY, pick.name)
       return pick?.name || ''
     })
@@ -96,6 +104,9 @@ export function useDirectZebra() {
   }, [mode, probe])
 
   const target = targets.find((t) => t.name === printer) || null
-  const profile = target ? directPrinterProfile(target.name, target.driver) : null
+  const profile = target ? directPrinterProfile(target.name, target.driver, prefs) : null
   return { mode, setMode, state, targets, printer, setPrinter, profile, check }
 }
+
+/** Same hook under the name the UI uses ("Direct to label printer": any brand, not only Zebra). */
+export const useDirectLabelPrinter = useDirectZebra

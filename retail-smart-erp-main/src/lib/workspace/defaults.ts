@@ -79,13 +79,18 @@ function getDashboardBlocks(businessType?: string): WorkspaceBlock[] {
           { label: 'Appointments', href: '/appointments', icon: 'Calendar' },
         ] : isBigTicket ? [
           { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
+          ...(businessType === 'electronics' ? [{ label: 'Repair Jobs', href: '/service-jobs', icon: 'Wrench' }] : []),
           { label: 'Hire Purchase', href: '/installments', icon: 'Wallet' },
           { label: 'Deliveries', href: '/deliveries', icon: 'Truck' },
+        ] : businessType === 'textile' ? [
+          { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
+          { label: 'Tailoring Orders', href: '/service-jobs', icon: 'Scissors' },
         ] : businessType === 'print_studio' ? [
           { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
           { label: 'Print Jobs', href: '/print-jobs', icon: 'Printer' },
         ] : businessType === 'office' ? [
           { label: 'Attendance', href: '/hr/attendance', icon: 'UserCheck' },
+          { label: 'Service Tickets', href: '/service-jobs', icon: 'ClipboardList' },
           { label: 'Invoices', href: '/sales', icon: 'Receipt' },
         ] : [
           { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
@@ -135,6 +140,7 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
   const isBigTicket = businessType === 'electronics' || businessType === 'hardware'
   const isPrintStudio = businessType === 'print_studio'
   const isOffice = businessType === 'office'
+  const isTextile = businessType === 'textile'
 
   // Number cards
   const numberCards: WorkspaceBlock[] = []
@@ -148,8 +154,17 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
     if (businessType === 'electronics') {
       numberCards.push(
         { id: 'nc5', type: 'number_card', colSpan: 3, data: { label: 'Open Warranty Claims', metricKey: 'open_warranty_claims', color: 'purple', href: '/warranty-claims', icon: 'ShieldCheck' } },
+        { id: 'nc6', type: 'number_card', colSpan: 3, data: { label: 'Open Repair Jobs', metricKey: 'service_jobs_open', color: 'blue', href: '/service-jobs', icon: 'Wrench' } },
+        { id: 'nc7', type: 'number_card', colSpan: 3, data: { label: 'Repairs Ready', metricKey: 'service_jobs_ready', color: 'emerald', href: '/service-jobs?status=ready', icon: 'PackageCheck' } },
       )
     }
+  } else if (isTextile) {
+    numberCards.push(
+      { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: "Today's Revenue", metricKey: 'today_sales_total', color: 'blue', href: '/sales', icon: 'DollarSign', prefix: 'Rs' } },
+      { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: 'Open Tailoring Orders', metricKey: 'service_jobs_open', color: 'amber', href: '/service-jobs', icon: 'Scissors' } },
+      { id: 'nc3', type: 'number_card', colSpan: 3, data: { label: 'Ready for Pickup', metricKey: 'service_jobs_ready', color: 'emerald', href: '/service-jobs?status=ready', icon: 'PackageCheck' } },
+      { id: 'nc4', type: 'number_card', colSpan: 3, data: { label: "Today's Sales", metricKey: 'today_sales_count', color: 'green', href: '/sales', icon: 'Receipt' } },
+    )
   } else if (isPrintStudio) {
     numberCards.push(
       { id: 'nc1', type: 'number_card', colSpan: 3, data: { label: "Today's Revenue", metricKey: 'today_sales_total', color: 'blue', href: '/sales', icon: 'DollarSign', prefix: 'Rs' } },
@@ -163,6 +178,7 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
       { id: 'nc2', type: 'number_card', colSpan: 3, data: { label: 'Month Revenue', metricKey: 'month_sales_total', color: 'purple', href: '/sales', icon: 'TrendingUp', prefix: 'Rs' } },
       { id: 'nc3', type: 'number_card', colSpan: 3, data: { label: 'Total Clients', metricKey: 'total_customers', color: 'amber', href: '/customers', icon: 'Users' } },
       { id: 'nc4', type: 'number_card', colSpan: 3, data: { label: "Today's Invoices", metricKey: 'today_sales_count', color: 'green', href: '/sales', icon: 'Receipt' } },
+      { id: 'nc5', type: 'number_card', colSpan: 3, data: { label: 'Open Service Tickets', metricKey: 'service_jobs_open', color: 'blue', href: '/service-jobs', icon: 'ClipboardList' } },
     )
   } else if (isAutoService) {
     numberCards.push(
@@ -202,7 +218,10 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
         { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
         { label: 'Hire Purchase', href: '/installments', icon: 'Wallet', countMetricKey: 'installments_overdue' },
         { label: 'Deliveries', href: '/deliveries', icon: 'Truck', countMetricKey: 'deliveries_today' },
-        ...(businessType === 'electronics' ? [{ label: 'Warranty Claims', href: '/warranty-claims', icon: 'ShieldCheck', countMetricKey: 'open_warranty_claims' }] : []),
+        ...(businessType === 'electronics' ? [
+          { label: 'Repair Jobs', href: '/service-jobs', icon: 'Wrench', countMetricKey: 'service_jobs_ready' },
+          { label: 'Warranty Claims', href: '/warranty-claims', icon: 'ShieldCheck', countMetricKey: 'open_warranty_claims' },
+        ] : []),
         { label: 'Quotations', href: '/quotations', icon: 'FileText' },
         { label: 'Sales History', href: '/sales', icon: 'Receipt' },
         { label: 'Customers', href: '/customers', icon: 'Users' },
@@ -212,8 +231,15 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
         { label: 'Quotations', href: '/quotations', icon: 'FileText' },
         { label: 'Sales History', href: '/sales', icon: 'Receipt' },
         { label: 'Customers', href: '/customers', icon: 'Users' },
+      ] : isTextile ? [
+        { label: 'Point of Sale', href: '/pos', icon: 'ShoppingCart' },
+        { label: 'Tailoring Orders', href: '/service-jobs', icon: 'Scissors', countMetricKey: 'service_jobs_ready' },
+        { label: 'Layaways', href: '/layaways', icon: 'PackageOpen' },
+        { label: 'Sales History', href: '/sales', icon: 'Receipt' },
+        { label: 'Customers', href: '/customers', icon: 'Users' },
       ] : isOffice ? [
         { label: 'Invoices', href: '/sales', icon: 'Receipt' },
+        { label: 'Service Tickets', href: '/service-jobs', icon: 'ClipboardList', countMetricKey: 'service_jobs_open' },
         { label: 'Quotations', href: '/quotations', icon: 'FileText' },
         { label: 'Clients', href: '/customers', icon: 'Users' },
         { label: 'Attendance', href: '/hr/attendance', icon: 'UserCheck' },
@@ -283,6 +309,7 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
       { label: 'Point of Sale', href: '/pos' },
       { label: 'Hire Purchase Plans', href: '/installments' },
       { label: 'Deliveries & Installation', href: '/deliveries' },
+      ...(businessType === 'electronics' ? [{ label: 'Repair Jobs', href: '/service-jobs' }] : []),
       { label: 'Warranty Claims', href: '/warranty-claims' },
       { label: 'Sales History', href: '/sales' },
     ] } },
@@ -304,11 +331,25 @@ function getSellingBlocks(businessType?: string): WorkspaceBlock[] {
     ] } },
     { id: 'c2', type: 'card', colSpan: 6, data: { title: 'Transactions', links: [
       { label: 'Invoices', href: '/sales' },
+      { label: 'Service Tickets', href: '/service-jobs' },
       { label: 'Recurring Invoices', href: '/recurring-invoices' },
       { label: 'Payments Received', href: '/payments-received' },
       { label: 'Quotations', href: '/quotations' },
       { label: 'Sales Orders', href: '/sales-orders' },
       { label: 'Projects & Timesheets', href: '/projects' },
+    ] } },
+  ] : isTextile ? [
+    { id: 'c1', type: 'card', colSpan: 6, data: { title: 'Masters', links: [
+      { label: 'Customer', href: '/customers' },
+      { label: 'Price Lists', href: '/price-lists' },
+      { label: 'Loyalty Program', href: '/settings/loyalty' },
+    ] } },
+    { id: 'c2', type: 'card', colSpan: 6, data: { title: 'Transactions', links: [
+      { label: 'Point of Sale', href: '/pos' },
+      { label: 'Tailoring & Alterations', href: '/service-jobs' },
+      { label: 'Layaways', href: '/layaways' },
+      { label: 'Credit Notes (returns)', href: '/credit-notes' },
+      { label: 'Sales History', href: '/sales' },
     ] } },
   ] : isAutoService ? [
     { id: 'c1', type: 'card', colSpan: 6, data: { title: 'Masters', links: [
@@ -367,7 +408,7 @@ function getReportsBlocks(businessType?: string): WorkspaceBlock[] {
   const isDealership = businessType === 'dealership'
   const isRestaurant = businessType === 'restaurant'
   const isSupermarket = businessType === 'supermarket' || businessType === 'retail' || businessType === 'pharmacy'
-    || businessType === 'electronics' || businessType === 'hardware' || businessType === 'print_studio'
+    || businessType === 'electronics' || businessType === 'hardware' || businessType === 'print_studio' || businessType === 'textile'
 
   // Top shortcuts - most used reports
   const shortcuts: WorkspaceBlock[] = [

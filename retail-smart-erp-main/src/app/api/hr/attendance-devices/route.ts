@@ -68,6 +68,7 @@ export async function POST(request: NextRequest) {
           warehouseId: branch.warehouseId,
           model: d.model || null,
           commKey: d.commKey || null,
+          allowedIps: d.allowedIps?.length ? d.allowedIps : null,
           timezone: safeTimezone(d.timezone),
           isActive: d.isActive ?? true,
           createdBy: auth.session.user.id,

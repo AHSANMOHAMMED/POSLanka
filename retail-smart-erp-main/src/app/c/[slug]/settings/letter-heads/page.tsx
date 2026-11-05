@@ -375,16 +375,16 @@ export default function LetterHeadsPage() {
               {/* Live Preview */}
               {(form.headerHtml || form.headerImage || form.footerHtml || form.footerImage) && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Preview</label>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Preview (half scale; heights are mm on paper)</label>
                   <div className="border dark:border-gray-600 rounded bg-white p-4" style={{ minHeight: 200 }}>
                     {/* Header */}
                     <div
                       className="border-b border-dashed border-gray-300 pb-2 mb-4"
-                      style={{ minHeight: form.headerHeight / 3, textAlign: form.alignment }}
+                      style={{ minHeight: `${form.headerHeight / 2}mm`, textAlign: form.alignment }}
                     >
                       {form.headerImage && (
                         /* eslint-disable-next-line @next/next/no-img-element */
-                        <img src={form.headerImage} alt="Header" className="max-h-16 inline-block" />
+                        <img src={form.headerImage} alt="Header" className="inline-block max-w-full" style={{ maxHeight: `${form.headerHeight / 2}mm` }} />
                       )}
                       {form.headerHtml && (
                         <div className="text-sm text-gray-700" dangerouslySetInnerHTML={{ __html: sanitizeHtml(form.headerHtml) }} />
@@ -397,11 +397,11 @@ export default function LetterHeadsPage() {
                     {/* Footer */}
                     <div
                       className="border-t border-dashed border-gray-300 pt-2 mt-4"
-                      style={{ minHeight: form.footerHeight / 3, textAlign: form.alignment }}
+                      style={{ minHeight: `${form.footerHeight / 2}mm`, textAlign: form.alignment }}
                     >
                       {form.footerImage && (
                         /* eslint-disable-next-line @next/next/no-img-element */
-                        <img src={form.footerImage} alt="Footer" className="max-h-12 inline-block" />
+                        <img src={form.footerImage} alt="Footer" className="inline-block max-w-full" style={{ maxHeight: `${form.footerHeight / 2}mm` }} />
                       )}
                       {form.footerHtml && (
                         <div className="text-xs text-gray-500" dangerouslySetInnerHTML={{ __html: sanitizeHtml(form.footerHtml) }} />

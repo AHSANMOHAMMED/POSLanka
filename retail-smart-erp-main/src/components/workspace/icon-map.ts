@@ -86,6 +86,7 @@ import {
   UsersRound,
   Zap,
   Palette,
+  Scissors,
 } from 'lucide-react'
 
 export const ICON_MAP: Record<string, LucideIcon> = {
@@ -244,6 +245,7 @@ export const ICON_MAP: Record<string, LucideIcon> = {
   UsersRound,
   Zap,
   Palette,
+  Scissors,
 }
 
 export function getIcon(name: string): LucideIcon {

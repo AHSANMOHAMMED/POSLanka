@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
 import { requireQuota } from '@/lib/db/storage-quota'
-import { dealerPayments } from '@/lib/db/schema'
+import { dealerPayments, dealers } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 import { validateParams } from '@/lib/validation/helpers'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 
@@ -32,6 +33,10 @@ export async function POST(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: scoped by the dealer's branch (missing record → the usual 404 below)
+      const [dealerRef] = await db.select({ dealerId: dealerPayments.dealerId }).from(dealerPayments).where(eq(dealerPayments.id, id)).limit(1)
+      const branchDenied = dealerRef ? await assertRecordBranch(session, db, dealers, dealerRef.dealerId) : null
+      if (branchDenied) return branchDenied
       const existing = await db.query.dealerPayments.findFirst({
         where: eq(dealerPayments.id, id),
         with: {

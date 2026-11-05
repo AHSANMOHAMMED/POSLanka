@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { notInRecycleBin } from '@/lib/recycle-bin'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
+import { branchFilter, getBranchScope, resolveRecordBranch } from '@/lib/auth/branch-access'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { dealersListSchema, createDealerSchema } from '@/lib/validation/schemas/dealership'
 
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
       }
       if (status) conditions.push(eq(dealers.status, status))
       if (type) conditions.push(eq(dealers.type, type))
+      // K4: branch-restricted staff only see dealers of their own branches
+      const inScope = branchFilter(await getBranchScope(session, db), dealers.warehouseId)
+      if (inScope) conditions.push(inScope)
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
       const [{ count: totalCount }] = await db
@@ -91,6 +95,14 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Dealer code already exists' }, { status: 400 })
       }
 
+      // K4: branch-restricted staff add dealers to their own branches (none given → their branch)
+      let warehouseId = body.warehouseId || null
+      if (await getBranchScope(session, db)) {
+        const branch = await resolveRecordBranch(session, db, warehouseId)
+        if (branch.error) return branch.error
+        warehouseId = branch.warehouseId
+      }
+
       const [dealer] = await db.insert(dealers).values({
         tenantId: session.user.tenantId,
         name: body.name,
@@ -100,7 +112,7 @@ export async function POST(request: NextRequest) {
         email: body.email || null,
         phone: body.phone || null,
         address: body.address || null,
-        warehouseId: body.warehouseId || null,
+        warehouseId,
         territory: body.territory || null,
         commissionRate: body.commissionRate != null ? String(body.commissionRate) : null,
         creditLimit: body.creditLimit != null ? String(body.creditLimit) : null,

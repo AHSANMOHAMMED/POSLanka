@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useRealtimeData, useDebouncedValue } from '@/hooks'
 import { Pagination } from '@/components/ui/pagination'
+import { SerialImeiEditor } from '@/components/service-jobs/SerialImeiEditor'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,6 +23,8 @@ import { Pagination } from '@/components/ui/pagination'
 interface SerialResult {
   id: string
   serialNumber: string
+  imei?: string | null
+  imei2?: string | null
   status: string
   itemId: string
   itemName: string
@@ -411,6 +414,11 @@ export default function SerialNumbersPage() {
                           <span className="text-sm font-mono font-medium text-gray-900 dark:text-white">
                             {serial.serialNumber}
                           </span>
+                          {(serial.imei || serial.imei2) && (
+                            <div className="text-xs font-mono text-gray-500 dark:text-gray-400">
+                              IMEI {serial.imei}{serial.imei2 ? ` / ${serial.imei2}` : ''}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           <div className="text-sm font-medium text-gray-900 dark:text-white">
@@ -444,6 +452,7 @@ export default function SerialNumbersPage() {
                             className="bg-gray-50 dark:bg-gray-900/40 px-4 py-0"
                           >
                             <div className="py-3 pl-8">
+                              <SerialImeiEditor serialId={serial.id} imei={serial.imei ?? null} imei2={serial.imei2 ?? null} sold={serial.status === 'sold'} onSaved={fetchData} />
                               <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
                                 Recent Movement History
                               </h4>

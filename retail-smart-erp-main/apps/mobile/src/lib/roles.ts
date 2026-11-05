@@ -108,6 +108,8 @@ const BUSINESS_TYPE_ROLES: Record<string, string[]> = {
   restaurant: ['chef', 'waiter'],
   auto_service: ['technician'],
   dealership: ['technician', 'dealer_sales'],
+  electronics: ['technician'],
+  textile: ['technician'],
 }
 
 /** Roles the actor may assign to new staff (business-type aware, never owner), highest first. */

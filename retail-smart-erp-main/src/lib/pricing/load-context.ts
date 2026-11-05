@@ -19,6 +19,7 @@ import {
   priceCart, localClock,
   type PricingContext, type PriceListRule, type PromotionRule, type PricingLineInput, type PricingResult, type PromotionType,
 } from './engine'
+import { normalizeFeatureFlags, type FeatureFlagsMap } from '@/lib/features/flags'
 
 function rowsOf<T>(res: unknown): T[] {
   return ((res as { rows?: T[] }).rows) || (Array.isArray(res) ? (res as T[]) : [])
@@ -26,6 +27,9 @@ function rowsOf<T>(res: unknown): T[] {
 const n = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number(v))
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const uuidOrNull = (v: string | null | undefined) => (v && UUID_RE.test(v) ? v : null)
+/** Feature switches (super admin → Features): price lists / promotions switched off never price a cart */
+const pricingSwitches = (raw: unknown): Pick<FeatureFlagsMap, 'price_lists' | 'promotions'> =>
+  normalizeFeatureFlags((raw && typeof raw === 'object' ? raw : null) as Partial<Record<string, boolean>> | null)
 
 interface PriceListRow {
   id: string; name: string; currency: string; priority: number; valid_from: string | null; valid_to: string | null
@@ -125,9 +129,10 @@ export interface LoadedPricingContext extends PricingContext {
 }
 
 export async function loadPricingContext(db: TenantDb, tenantId: string, opts: LoadPricingOptions = {}): Promise<LoadedPricingContext> {
-  const [tenant] = rowsOf<{ timezone: string | null; currency: string | null }>(await db.execute(sql`
-    SELECT timezone, currency FROM tenants WHERE id = ${tenantId}::uuid
+  const [tenant] = rowsOf<{ timezone: string | null; currency: string | null; feature_flags: unknown }>(await db.execute(sql`
+    SELECT timezone, currency, settings->'featureFlags' AS feature_flags FROM tenants WHERE id = ${tenantId}::uuid
   `))
+  const switches = pricingSwitches(tenant?.feature_flags)
   const timezone = tenant?.timezone || 'Asia/Colombo'
   const now = localClock(opts.at ?? new Date(), timezone)
 
@@ -141,7 +146,7 @@ export async function loadPricingContext(db: TenantDb, tenantId: string, opts: L
     customerType = c?.customer_type ?? null
   }
 
-  const lists = rowsOf<PriceListRow>(await db.execute(sql`
+  const lists = !switches.price_lists ? [] : rowsOf<PriceListRow>(await db.execute(sql`
     SELECT ${LIST_COLUMNS} FROM price_lists
     WHERE tenant_id = ${tenantId}::uuid AND is_active = true
       AND (valid_from IS NULL OR valid_from <= ${now.date}::date)
@@ -162,7 +167,7 @@ export async function loadPricingContext(db: TenantDb, tenantId: string, opts: L
 
   const coupons = (opts.couponCodes || []).map((c) => c.trim().toUpperCase()).filter(Boolean)
   // ends_on may be yesterday: an overnight window that started yesterday is still open
-  const promoRows = rowsOf<PromotionRow>(await db.execute(sql`
+  const promoRows = !switches.promotions ? [] : rowsOf<PromotionRow>(await db.execute(sql`
     SELECT ${PROMO_COLUMNS} FROM promotions
     WHERE tenant_id = ${tenantId}::uuid AND is_active = true
       AND (starts_on IS NULL OR starts_on <= ${now.date}::date)
@@ -298,11 +303,14 @@ export interface OfflinePricingBundle {
 }
 
 export async function loadPricingBundle(db: TenantDb, tenantId: string): Promise<OfflinePricingBundle> {
-  const [tenant] = rowsOf<{ timezone: string | null }>(await db.execute(sql`SELECT timezone FROM tenants WHERE id = ${tenantId}::uuid`))
+  const [tenant] = rowsOf<{ timezone: string | null; feature_flags: unknown }>(await db.execute(sql`
+    SELECT timezone, settings->'featureFlags' AS feature_flags FROM tenants WHERE id = ${tenantId}::uuid
+  `))
+  const switches = pricingSwitches(tenant?.feature_flags)
   const timezone = tenant?.timezone || 'Asia/Colombo'
   const today = localClock(new Date(), timezone).date
 
-  const lists = rowsOf<PriceListRow>(await db.execute(sql`
+  const lists = !switches.price_lists ? [] : rowsOf<PriceListRow>(await db.execute(sql`
     SELECT ${LIST_COLUMNS} FROM price_lists
     WHERE tenant_id = ${tenantId}::uuid AND is_active = true AND (valid_to IS NULL OR valid_to >= ${today}::date)
   `))
@@ -313,12 +321,12 @@ export async function loadPricingBundle(db: TenantDb, tenantId: string): Promise
     JOIN price_lists pl ON pl.id = pli.price_list_id
     WHERE pli.tenant_id = ${tenantId}::uuid AND pl.is_active = true AND (pl.valid_to IS NULL OR pl.valid_to >= ${today}::date)
   `))
-  const promos = rowsOf<PromotionRow>(await db.execute(sql`
+  const promos = (!switches.promotions ? [] : rowsOf<PromotionRow>(await db.execute(sql`
     SELECT ${PROMO_COLUMNS} FROM promotions
     WHERE tenant_id = ${tenantId}::uuid AND is_active = true
       AND (ends_on IS NULL OR ends_on >= ${today}::date - 1)
       AND (usage_limit IS NULL OR usage_count < usage_limit)
-  `)).map(toPromotionRule)
+  `))).map(toPromotionRule)
   const unitRows = rowsOf<{ code: string; name: string; allow_fraction: boolean }>(await db.execute(sql`
     SELECT code, name, allow_fraction FROM units WHERE tenant_id = ${tenantId}::uuid AND is_active = true ORDER BY code
   `))

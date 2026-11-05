@@ -9,8 +9,98 @@ import type { LabelElement, LabelItemData } from '@/lib/labels/types'
 import { FORMAT_TO_BWIP } from '@/lib/labels/types'
 import { getBarcodeFallbackData, validateBarcodeData } from '@/lib/labels/barcode-renderer'
 import type { PackedRaster } from '@/lib/print/escpos/encoder'
-import { mmToDots, ptToDots, pxToDots, resolveText, sortedElements, isDarkColor, type ElementRasterizer, type LabelRasterizer } from './common'
-import { resolveField } from '@/lib/labels/label-renderer'
+import { mmToDots, normDpi, pxToDots, resolveText, sortedElements, isDarkColor, type ElementRasterizer, type LabelRasterizer, type LabelTemplateLike } from './common'
+import { calculateAutoFitFontSize, resolveField } from '@/lib/labels/label-renderer'
+import { LABEL_FONT_FAMILY } from '@/lib/labels/barcode-renderer'
+import type { TextElement } from '@/lib/labels/types'
+
+/**
+ * Draw a text element the way the browser preview lays it out (renderLabelHtml):
+ * same font family and size (pt at the printer dpi), line height 1.2, one line
+ * cut with an ellipsis, or word-wrapped to maxLines with an ellipsis on the
+ * last line, auto-fit shrinking, clipped to the element box.
+ */
+function drawTextLikeCss(ctx: CanvasRenderingContext2D, el: TextElement, text: string, x: number, y: number, w: number, h: number, dpi: number) {
+  const maxLines = Math.max(1, el.maxLines || 1)
+  let pt = Number(el.fontSize) || 8
+  if (el.autoFit) pt = calculateAutoFitFontSize(text, el.width * (96 / 25.4), el.height * (96 / 25.4), el.fontWeight, pt, maxLines)
+  const size = Math.max(1, (pt * dpi) / 72)
+  ctx.font = `${el.fontWeight === 'bold' ? 'bold ' : ''}${size}px ${LABEL_FONT_FAMILY}`
+  const fits = (s: string) => ctx.measureText(s).width <= w
+  const ellipsize = (s: string) => {
+    if (fits(s)) return s
+    let t = s
+    while (t.length > 0 && !fits(`${t}\u2026`)) t = t.slice(0, -1)
+    return `${t.trimEnd()}\u2026`
+  }
+  let lines: string[]
+  if (maxLines === 1) {
+    lines = [ellipsize(text)]
+  } else {
+    lines = []
+    let cur = ''
+    for (const word of text.split(/\s+/).filter(Boolean)) {
+      const test = cur ? `${cur} ${word}` : word
+      if (fits(test)) {
+        cur = test
+        continue
+      }
+      if (cur) lines.push(cur)
+      // break-word: split a word longer than the line
+      let rest = word
+      while (!fits(rest) && rest.length > 1) {
+        let n = rest.length - 1
+        while (n > 1 && !fits(rest.slice(0, n))) n--
+        lines.push(rest.slice(0, n))
+        rest = rest.slice(n)
+      }
+      cur = rest
+    }
+    if (cur) lines.push(cur)
+    if (lines.length > maxLines) {
+      const kept = lines.slice(0, maxLines)
+      kept[maxLines - 1] = ellipsize(`${kept[maxLines - 1]} ${lines.slice(maxLines).join(' ')}`)
+      lines = kept
+    }
+  }
+  const lineH = size * 1.2
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x, y, w, h)
+  ctx.clip()
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = el.textAlign
+  const tx = el.textAlign === 'center' ? x + w / 2 : el.textAlign === 'right' ? x + w : x
+  lines.forEach((ln, i) => ctx.fillText(ln, tx, y + lineH * (i + 0.5)))
+  ctx.restore()
+}
+
+/**
+ * 1-bit picture of one label exactly as the exact (graphic) print sends it:
+ * barcodes on the printer's dot grid (driver-image) plus text / shapes / images
+ * from the canvas, at `dpi`. Returned as a PNG data URL for the preview.
+ */
+export async function rasterLabelPreviewDataUrl(
+  template: Pick<LabelTemplateLike, 'widthMm' | 'heightMm' | 'elements'>,
+  item: LabelItemData | null,
+  o: { dpi: number; currencySymbol?: string; tenantName?: string; codeWord?: string; logoUrl?: string | null }
+): Promise<{ url: string; widthDots: number; heightDots: number } | null> {
+  const { renderDriverRows, encodePng1Bit } = await import('./driver-image')
+  const dpi = normDpi(o.dpi)
+  const res = await renderDriverRows({ widthMm: template.widthMm, heightMm: template.heightMm, elements: template.elements }, [{ item, quantity: 1 }], {
+    dpi,
+    currencySymbol: o.currencySymbol,
+    tenantName: o.tenantName,
+    codeWord: o.codeWord,
+    rasterizeLabel: createCanvasLabelRasterizer(o.logoUrl),
+  })
+  const row = res.rows[0]
+  if (!row) return null
+  const png = await encodePng1Bit(row, res.widthDots, dpi)
+  let bin = ''
+  for (let i = 0; i < png.length; i += 0x8000) bin += String.fromCharCode(...png.subarray(i, i + 0x8000))
+  return { url: `data:image/png;base64,${btoa(bin)}`, widthDots: res.widthDots, heightDots: res.heightDots }
+}
 
 function newCanvas(w: number, h: number): HTMLCanvasElement {
   const c = document.createElement('canvas')
@@ -91,7 +181,7 @@ export function createCanvasLabelRasterizer(logoUrl?: string | null): LabelRaste
     ctx.strokeStyle = '#000'
     const opts = {
       language: 'escpos-raster' as const,
-      dpi: (dpi === 300 ? 300 : 203) as 203 | 300,
+      dpi: normDpi(dpi),
       currencySymbol: ctxInfo.currencySymbol,
       tenantName: ctxInfo.tenantName,
       codeWord: ctxInfo.codeWord,
@@ -111,24 +201,7 @@ export function createCanvasLabelRasterizer(logoUrl?: string | null): LabelRaste
       }
       if (el.type === 'text') {
         const text = resolveText(el, item, opts)
-        const size = ptToDots(el.fontSize, dpi) * 1.33
-        ctx.font = `${el.fontWeight === 'bold' ? 'bold ' : ''}${size}px sans-serif`
-        ctx.textBaseline = 'top'
-        ctx.textAlign = el.textAlign
-        const tx = el.textAlign === 'center' ? x + w / 2 : el.textAlign === 'right' ? x + w : x
-        // simple word wrap
-        const words = text.split(/\s+/)
-        const lines: string[] = []
-        let cur = ''
-        for (const wd of words) {
-          const test = cur ? `${cur} ${wd}` : wd
-          if (ctx.measureText(test).width > w && cur) {
-            lines.push(cur)
-            cur = wd
-          } else cur = test
-        }
-        if (cur) lines.push(cur)
-        lines.slice(0, Math.max(1, el.maxLines || 1)).forEach((ln, i) => ctx.fillText(ln, tx, y + i * size * 1.15, w))
+        if (text) drawTextLikeCss(ctx, el, text, x, y, w, h, dpi)
       } else if (el.type === 'barcode') {
         const raw = resolveField(el.dataField, item, el.customValue, undefined, ctxInfo.tenantName)
         const data = raw && !validateBarcodeData(el.format, raw) ? raw : getBarcodeFallbackData(el.format)

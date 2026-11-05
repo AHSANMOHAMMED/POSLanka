@@ -76,6 +76,7 @@ const BUSINESS_TYPES: Array<{ value: string; label: string }> = [
   { value: 'hardware', label: 'Hardware' },
   { value: 'print_studio', label: 'Print & photo studio' },
   { value: 'office', label: 'Office & services' },
+  { value: 'textile', label: 'Textile & clothing' },
 ]
 
 const PAYMENT_LABEL: Record<string, string> = {

@@ -347,7 +347,7 @@ function DirectConnectSection({
   const labelConfig = (lang: RawLang, base?: PrinterProfile['label']) => ({
     ...(base || {}),
     language: lang,
-    dpi: base?.dpi || setup?.dpi || 203,
+    dpi: base?.dpi || (setup?.dpi === 300 ? 300 : 203),
     widthMm: setup ? stickerRollWidthMm(setup) : base?.widthMm || 50,
     heightMm: setup?.labelHeightMm ?? base?.heightMm ?? 25,
     gapMm: setup?.rowGapMm ?? base?.gapMm ?? 2,

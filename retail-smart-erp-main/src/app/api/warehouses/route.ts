@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { notInRecycleBin } from '@/lib/recycle-bin'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { getTenantFeatureFlags } from '@/lib/features/check'
+import { FEATURE_FLAG_LABELS } from '@/lib/features/flags'
 import { withTenant } from '@/lib/db'
 import { warehouses, userWarehouses } from '@/lib/db/schema'
 import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
@@ -127,6 +129,21 @@ export async function POST(request: NextRequest) {
           error: 'Only the owner, or staff who work with every branch, can add a branch.',
           code: 'BRANCH_ACCESS_DENIED',
         }, { status: 403 })
+      }
+
+      // Multiple branches switched off (super admin → Features): a single-branch business cannot add
+      // a second one (its first can always be made). A business that already runs several branches
+      // (switch never turned on for older vendors) keeps adding them, so live shops are not cut off;
+      // the super admin's Features tab points the mismatch out.
+      if (!(await getTenantFeatureFlags(session!.user.tenantId)).multi_warehouse) {
+        const [{ n }] = await db.select({ n: sql<number>`count(*)::int` }).from(warehouses)
+          .where(notInRecycleBin('warehouse', warehouses.id))
+        if (n === 1) {
+          return NextResponse.json({
+            error: `${FEATURE_FLAG_LABELS.multi_warehouse} is turned off for this business. Contact skyERPOS support to turn it on.`,
+            code: 'FEATURE_DISABLED', feature: 'multi_warehouse',
+          }, { status: 403 })
+        }
       }
 
       // Check for duplicate warehouse code within tenant (RLS scopes the query)

@@ -9,6 +9,7 @@ import { Breadcrumb } from '@/components/ui/page-header'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
 import { AttendanceNav } from '@/components/hr/AttendanceNav'
+import { isIpOrCidr } from '@/lib/attendance/ip-allow'
 import { Copy, Edit2, Fingerprint, Link2, Loader2, Plus, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react'
 
 interface Device {
@@ -21,6 +22,7 @@ interface Device {
   timezone: string
   lastSeenAt: string | null
   lastIp: string | null
+  allowedIps: string[] | null
   isActive: boolean
   hasCommKey: boolean
   punches: number
@@ -184,7 +186,7 @@ export default function AttendanceDevicesPage() {
                   <td className="px-3 py-2">{d.warehouseName || '—'}</td>
                   <td className="px-3 py-2">
                     <div className={`flex items-center gap-1 text-xs font-medium ${d.online ? 'text-green-600' : 'text-gray-500'}`}>{d.online ? <Wifi size={14} /> : <WifiOff size={14} />}{!d.isActive ? 'Disabled' : d.online ? 'Online' : d.lastSeenAt ? 'Offline' : 'Waiting for first connection'}</div>
-                    <div className="text-xs text-gray-500">Last seen {ago(d.lastSeenAt)}{d.lastIp ? ` · ${d.lastIp}` : ''}</div>
+                    <div className="text-xs text-gray-500">Last seen {ago(d.lastSeenAt)}{d.lastIp ? ` · ${d.lastIp}` : ''}{d.allowedIps?.length ? ` · locked to ${d.allowedIps.length === 1 ? d.allowedIps[0] : `${d.allowedIps.length} addresses`}` : ''}</div>
                     {d.lastPunchAt && <div className="text-xs text-gray-500">Last punch {ago(d.lastPunchAt)}</div>}
                   </td>
                   <td className="px-3 py-2 text-center">{d.punches}</td>
@@ -247,6 +249,7 @@ function DeviceModal({ device, branches, onClose, onSaved }: { device: Device | 
   const [model, setModel] = useState(device?.model ?? '')
   const [timezone, setTz] = useState(device?.timezone ?? 'Asia/Colombo')
   const [isActive, setActive] = useState(device?.isActive ?? true)
+  const [allowedIps, setAllowedIps] = useState((device?.allowedIps ?? []).join(', '))
   const [saving, setSaving] = useState(false)
   const [seen, setSeen] = useState<string | null>(null)
 
@@ -262,9 +265,12 @@ function DeviceModal({ device, branches, onClose, onSaved }: { device: Device | 
 
   async function save() {
     if (!name.trim() || !serialNumber.trim()) { toast.error('Enter a name and the serial number'); return }
+    const ips = allowedIps.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean)
+    const badIp = ips.find((ip) => !isIpOrCidr(ip))
+    if (badIp) { toast.error(`"${badIp}" is not an IP address or range`); return }
     setSaving(true)
     try {
-      const body: Record<string, unknown> = { name, serialNumber: serialNumber.trim(), model: model || undefined, timezone, isActive }
+      const body: Record<string, unknown> = { name, serialNumber: serialNumber.trim(), model: model || undefined, timezone, isActive, allowedIps: ips }
       if (warehouseId) body.warehouseId = warehouseId
       await jsonOrError(await fetch(device ? `/api/hr/attendance-devices/${device.id}` : '/api/hr/attendance-devices', { method: device ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }))
       toast.success(device ? 'Device updated' : 'Device registered')
@@ -305,6 +311,14 @@ function DeviceModal({ device, branches, onClose, onSaved }: { device: Device | 
           <FormSelect value={timezone} onChange={(e) => setTz(e.target.value)}>
             {TIMEZONES.map((t) => <option key={t} value={t}>{t}</option>)}
           </FormSelect>
+        </FormField>
+        <FormField label="Allowed internet addresses (optional)" hint="Punches are accepted only from these addresses or ranges (e.g. 203.0.113.10 or 203.0.113.0/24). Leave empty to accept the device from anywhere. Use this when your shop has a fixed internet address.">
+          <div className="flex gap-2">
+            <FormInput value={allowedIps} onChange={(e) => setAllowedIps(e.target.value)} placeholder="Any address" className="font-mono" />
+            {device?.lastIp && (
+              <button type="button" className={btn} onClick={() => setAllowedIps((v) => (v.trim() ? `${v.trim()}, ${device.lastIp}` : device.lastIp!))}>Use {device.lastIp}</button>
+            )}
+          </div>
         </FormField>
         <FormCheckbox checked={isActive} onChange={(e) => setActive(e.target.checked)} label="Active (accept punches from this device)" />
       </div>

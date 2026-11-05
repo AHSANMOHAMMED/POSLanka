@@ -1,7 +1,7 @@
 /**
  * 0187 — money taken outside the POS sale screen that still goes into (or out of) the cashier's
- * drawer: print-job advances (and their refunds on cancel), the balance collected when a print
- * job or work order is invoiced, and layaway deposits / instalments.
+ * drawer: print-job and service-job advances (and their refunds on cancel), the balance collected
+ * when a print job, service job or work order is invoiced, and layaway deposits / instalments.
  *
  * Each such payment row carries the open shift (pos_opening_entries) of the user who took it, or
  * NULL when that user had no open shift (recorded without a shift, never an error). The shift
@@ -18,6 +18,9 @@ export type OutsideCollectionSource =
   | 'print_job_advance'
   | 'print_job_refund'
   | 'print_job_invoice'
+  | 'service_job_advance'
+  | 'service_job_refund'
+  | 'service_job_invoice'
   | 'work_order_invoice'
   | 'layaway_payment'
   | 'invoice_payment'
@@ -26,6 +29,9 @@ export const OUTSIDE_COLLECTION_SOURCE_LABELS: Record<OutsideCollectionSource, s
   print_job_advance: 'Print job advance',
   print_job_refund: 'Print job advance refund',
   print_job_invoice: 'Print job invoice',
+  service_job_advance: 'Service job advance',
+  service_job_refund: 'Service job advance refund',
+  service_job_invoice: 'Service job invoice',
   work_order_invoice: 'Work order invoice',
   layaway_payment: 'Layaway payment',
   invoice_payment: 'Invoice payment',
@@ -76,6 +82,15 @@ export async function shiftOutsideCollections(db: Db, openingEntryId: string): P
       FROM print_job_payments p JOIN print_jobs j ON j.id = p.print_job_id
      WHERE p.refund_pos_opening_entry_id = ${openingEntryId} AND p.refunded_at IS NOT NULL
     UNION ALL
+    -- 0193 service jobs (repairs / tailoring / tickets): advances and their refunds
+    SELECT 'service_job_advance', j.job_no, p.payment_method::text, p.amount, p.created_at
+      FROM service_job_payments p JOIN service_jobs j ON j.id = p.service_job_id
+     WHERE p.pos_opening_entry_id = ${openingEntryId}
+    UNION ALL
+    SELECT 'service_job_refund', j.job_no, p.payment_method::text, -p.amount, p.refunded_at
+      FROM service_job_payments p JOIN service_jobs j ON j.id = p.service_job_id
+     WHERE p.refund_pos_opening_entry_id = ${openingEntryId} AND p.refunded_at IS NOT NULL
+    UNION ALL
     SELECT 'layaway_payment', l.layaway_no, lp.payment_method::text, lp.amount, lp.created_at
       FROM layaway_payments lp JOIN layaways l ON l.id = lp.layaway_id
      WHERE lp.pos_opening_entry_id = ${openingEntryId}
@@ -83,6 +98,7 @@ export async function shiftOutsideCollections(db: Db, openingEntryId: string): P
     SELECT CASE
              WHEN EXISTS (SELECT 1 FROM print_jobs pj WHERE pj.sale_id = s.id) THEN 'print_job_invoice'
              WHEN EXISTS (SELECT 1 FROM work_orders wo WHERE wo.sale_id = s.id) THEN 'work_order_invoice'
+             WHEN EXISTS (SELECT 1 FROM service_jobs sj WHERE sj.sale_id = s.id) THEN 'service_job_invoice'
              ELSE 'invoice_payment'
            END,
            s.invoice_no, py.method::text, py.amount, py.created_at

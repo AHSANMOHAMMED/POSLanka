@@ -8,6 +8,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertRecordBranch, branchSqlFilter, getBranchScope } from '@/lib/auth/branch-access'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { dealerPaymentsListSchema, createDealerPaymentSchema } from '@/lib/validation/schemas/dealership'
 import { SAFE_USER } from '@/lib/db/safe-columns'
@@ -55,6 +56,9 @@ export async function GET(request: NextRequest) {
           )
         )
       }
+      // K4: branch-restricted staff only see records of dealers of their own branches
+      const scope = await getBranchScope(session, db)
+      if (scope) conditions.push(sql`${dealerPayments.dealerId} IN (SELECT bd.id FROM dealers bd WHERE TRUE${branchSqlFilter(scope, 'bd.warehouse_id')})`)
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
       // Get total count
@@ -123,6 +127,9 @@ export async function POST(request: NextRequest) {
     } = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: payments only for dealers of the user's own branches (missing dealer → 404 below)
+      const branchDenied = await assertRecordBranch(session, db, dealers, dealerId)
+      if (branchDenied) return branchDenied
       const result = await db.transaction(async (tx) => {
         // Lock dealer row to prevent stale balance reads (race condition fix)
         const [dealer] = await tx.select().from(dealers).where(eq(dealers.id, dealerId)).for('update')

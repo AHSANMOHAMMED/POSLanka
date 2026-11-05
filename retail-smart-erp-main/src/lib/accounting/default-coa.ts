@@ -266,6 +266,21 @@ export function getChartOfAccountsForBusinessType(businessType: string): Account
       )
       break
 
+    case 'textile':
+      addToGroup('2100',
+        leaf('2130', 'Gift Card Liability', 'liability', 'current_liability'),
+        leaf('2140', 'Tailoring Advances', 'liability', 'current_liability'),
+      )
+      addToGroup('4000',
+        leaf('4200', 'Tailoring & Alteration Income', 'income', 'income_account'),
+      )
+      addToGroup('5200',
+        leaf('5240', 'Tailoring Charges (outside tailors)', 'expense', 'expense_account'),
+        leaf('5250', 'Packing Materials', 'expense', 'expense_account'),
+        leaf('5260', 'Damaged & Shop-soiled Stock', 'expense', 'expense_account'),
+      )
+      break
+
     case 'auto_service':
       // Income
       addToGroup('4000',

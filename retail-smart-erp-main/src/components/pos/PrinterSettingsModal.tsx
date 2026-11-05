@@ -15,6 +15,7 @@ import {
   Tag,
   Receipt,
   ChefHat,
+  FileText,
 } from 'lucide-react'
 import { FormInput, FormSelect, FormCheckbox, FormField } from '@/components/ui/form-elements'
 import { toast } from '@/components/ui/toast'
@@ -31,6 +32,7 @@ import { defaultStickerSetup } from '@/lib/labels/sticker-stock'
 import { usePermission } from '@/hooks/usePermission'
 import { printLabelsRaw } from '@/lib/labels/label-print'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { DocumentPrinterSettings, testDocumentPrinter } from '@/components/print/DocumentPrinterSettings'
 
 export interface PrinterSettingsModalProps {
   isOpen: boolean
@@ -50,7 +52,7 @@ const TRANSPORTS: Array<{
   { kind: 'agent', label: 'Print agent', description: 'Helper app on this PC: pick any installed printer (with its driver), network or serial', icon: Server },
 ]
 
-const ROLE_ICONS: Record<PrinterRole, typeof Receipt> = { receipt: Receipt, label: Tag, kitchen: ChefHat }
+const ROLE_ICONS: Record<PrinterRole, typeof Receipt> = { receipt: Receipt, label: Tag, kitchen: ChefHat, document: FileText }
 
 export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSettingsModalProps) {
   const { printers, status, addPrinter, updatePrinter, removePrinter, printTo, pairDevice, forgetDevice, deviceNameOf } = usePrinters()
@@ -124,6 +126,7 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
   }
 
   const testPrint = async (p: PrinterProfile): Promise<boolean> => {
+    if (p.role === 'document') return testDocumentPrinter(p)
     if (p.role === 'label') {
       if (p.label.language === 'browser' || p.transport === 'browser') {
         toast.info('Browser label printing uses the print dialog on the barcode label page.')
@@ -197,7 +200,7 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
                     <div className="font-medium truncate">{p.name}</div>
                     <div className="text-[12px] text-gray-500 dark:text-gray-400 truncate">
                       {ROLE_LABELS[p.role]} · {TRANSPORTS.find((t) => t.kind === p.transport)?.label}
-                      {p.role === 'label' ? ` · ${p.label.language.toUpperCase()}` : ` · ${p.paperWidth}mm`}
+                      {p.role === 'label' ? ` · ${p.label.language.toUpperCase()}` : p.role === 'document' ? ` · ${p.document.mode === 'dotmatrix' ? 'dot matrix' : 'A4/A5'}` : ` · ${p.paperWidth}mm`}
                     </div>
                   </div>
                 </button>
@@ -205,7 +208,7 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
             })}
             <div className="pt-2 border-t border-gray-200 dark:border-gray-800 space-y-1">
               <p className="text-[12px] font-semibold uppercase tracking-wide text-gray-500">Add printer</p>
-              {(['receipt', 'label', 'kitchen'] as PrinterRole[]).map((role) => {
+              {(['receipt', 'label', 'kitchen', 'document'] as PrinterRole[]).map((role) => {
                 const Icon = ROLE_ICONS[role]
                 return (
                   <button
@@ -238,6 +241,7 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
                       <option value="receipt">Receipt (POS sales, Z report, drawer)</option>
                       <option value="label">Label (barcode labels)</option>
                       <option value="kitchen">Kitchen (orders)</option>
+                      <option value="document">Document (invoices, quotations, POs: A4 / A5 / dot matrix)</option>
                     </FormSelect>
                   </FormField>
                 </div>
@@ -416,7 +420,9 @@ export function PrinterSettingsModal({ isOpen, onClose, initialRole }: PrinterSe
                   </div>
                 )}
 
-                {isLabel ? (
+                {selected.role === 'document' ? (
+                  <DocumentPrinterSettings profile={selected} onChange={(patch) => update({ document: { ...selected.document, ...patch } })} />
+                ) : isLabel ? (
                   <div className="space-y-3">
                     {/* Quick Presets for Zebra ZD220/ZD230 and Desktop Label Printers */}
                     <div className="rounded-xl border border-teal-200 dark:border-teal-800 bg-teal-50/50 dark:bg-teal-950/20 p-3 space-y-2">

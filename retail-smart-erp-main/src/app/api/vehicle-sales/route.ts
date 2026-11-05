@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { vehicleSaleDetails, vehicleInventory, vehicleMakes, vehicleModels, sales, customers, financingOptions } from '@/lib/db/schema'
+import { vehicleSaleDetails, vehicleInventory, vehicleMakes, vehicleModels, sales, saleItems, payments, customers, financingOptions, users } from '@/lib/db/schema'
 import { eq, and, desc, sql, or, ilike } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -11,7 +11,11 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { vehicleSalesListSchema, createVehicleSaleSchema } from '@/lib/validation/schemas/vehicles'
 import { nextDocNo } from '@/lib/documents/numbering'
-import { roundCurrency } from '@/lib/utils/currency'
+import { roundCurrency, parseCurrency } from '@/lib/utils/currency'
+import { postSaleToGL } from '@/lib/accounting/auto-post'
+import { assertBranchAccess, branchFilter, getBranchScope, resolveRecordBranch } from '@/lib/auth/branch-access'
+import { currentOpenShiftId } from '@/lib/pos/shift-collections'
+import { tenantToday } from '@/lib/accounting/gl'
 
 // GET all vehicle sale details for the tenant (with pagination)
 export async function GET(request: NextRequest) {
@@ -23,12 +27,17 @@ export async function GET(request: NextRequest) {
 
     const parsed = validateSearchParams(request, vehicleSalesListSchema)
     if (!parsed.success) return parsed.response
-    const { search, customerId, vehicleInventoryId, page, pageSize, all } = parsed.data
+    const { search, customerId, vehicleInventoryId, status, page, pageSize, all } = parsed.data
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause (tenantId filter handled by RLS)
       const conditions = []
+      const scope = await getBranchScope(session, db)
+      const inBranch = branchFilter(scope, sales.warehouseId)
+      if (inBranch) conditions.push(inBranch)
+      if (status === 'active') conditions.push(sql`${sales.status} <> 'void'`)
+      if (status === 'cancelled') conditions.push(eq(sales.status, 'void'))
       if (vehicleInventoryId) {
         conditions.push(eq(vehicleSaleDetails.vehicleInventoryId, vehicleInventoryId))
       }
@@ -81,6 +90,9 @@ export async function GET(request: NextRequest) {
           customerName: customers.name,
           customerPhone: customers.phone,
           financingLenderName: financingOptions.lenderName,
+          salePaid: sales.paidAmount,
+          voidReason: sales.voidReason,
+          salespersonName: users.fullName,
         })
         .from(vehicleSaleDetails)
         .leftJoin(vehicleInventory, eq(vehicleSaleDetails.vehicleInventoryId, vehicleInventory.id))
@@ -89,6 +101,7 @@ export async function GET(request: NextRequest) {
         .leftJoin(sales, eq(vehicleSaleDetails.saleId, sales.id))
         .leftJoin(customers, eq(sales.customerId, customers.id))
         .leftJoin(financingOptions, eq(vehicleSaleDetails.financingOptionId, financingOptions.id))
+        .leftJoin(users, eq(vehicleSaleDetails.salespersonId, users.id))
         .where(whereClause)
         .orderBy(desc(vehicleSaleDetails.createdAt))
         .limit(limit)
@@ -108,6 +121,9 @@ export async function GET(request: NextRequest) {
         customerName: r.customerName,
         customerPhone: r.customerPhone,
         financingName: r.financingLenderName,
+        salePaid: r.salePaid,
+        voidReason: r.voidReason,
+        salespersonName: r.salespersonName,
       }))
 
       // Return paginated response
@@ -153,7 +169,7 @@ export async function POST(request: NextRequest) {
       salespersonId, commissionAmount,
       warrantyType, warrantyMonths, warrantyMileage, warrantyPrice,
       taxAmount,
-      notes, deliveryDate, deliveryNotes,
+      notes, deliveryDate, deliveryNotes, paymentMethod,
     } = parsed.data
 
     // Execute with RLS tenant context
@@ -189,7 +205,18 @@ export async function POST(request: NextRequest) {
           throw new Error('VEHICLE_INACTIVE')
         }
 
+        // K4: the vehicle's branch (else the user's branch) owns the sale
+        const branch = vehicle.warehouseId
+          ? { warehouseId: vehicle.warehouseId }
+          : await resolveRecordBranch(session, tx)
+        if (branch.error) return { error: branch.error }
+        if (vehicle.warehouseId) {
+          const denied = await assertBranchAccess(session, vehicle.warehouseId, tx)
+          if (denied) return { error: denied }
+        }
+
         // Validate customer if provided
+        let customerName: string | null = null
         if (customerId) {
           const customer = await tx.query.customers.findFirst({
             where: eq(customers.id, customerId),
@@ -197,6 +224,7 @@ export async function POST(request: NextRequest) {
           if (!customer) {
             throw new Error('CUSTOMER_NOT_FOUND')
           }
+          customerName = customer.name
         }
 
         // Validate financing option if provided
@@ -222,14 +250,21 @@ export async function POST(request: NextRequest) {
         if (downPayment > calculatedTotal) {
           throw new Error('DOWN_PAYMENT_EXCEEDS_TOTAL')
         }
+        // The balance (financed or owed) is a receivable: it needs a customer to be collected from
+        if (downPayment < calculatedTotal && !customerId) {
+          throw new Error('CUSTOMER_REQUIRED')
+        }
+        const vehicleDescription = `${vehicle.year} ${makeName || ''} ${modelName || ''}${vehicle.trim ? ' ' + vehicle.trim : ''}`.trim()
+        const method = paymentMethod || (financingOptionId ? 'bank_transfer' : 'cash')
 
         // Create the sale record
         const [newSale] = await tx.insert(sales).values({
           tenantId: session.user.tenantId,
           invoiceNo,
           customerId: customerId || null,
-          customerName: null,
-          vehicleDescription: `${vehicle.year} ${makeName || ''} ${modelName || ''}${vehicle.trim ? ' ' + vehicle.trim : ''}`.trim(),
+          customerName,
+          warehouseId: branch.warehouseId,
+          vehicleDescription,
           subtotal: String(askingPrice),
           discountAmount: String(tradeInAllowance),
           discountType: tradeInAllowance > 0 ? 'fixed' : null,
@@ -237,11 +272,59 @@ export async function POST(request: NextRequest) {
           taxAmount: String(taxAmount),
           total: String(calculatedTotal),
           paidAmount: String(downPayment),
-          paymentMethod: financingOptionId ? 'bank_transfer' : 'cash',
+          paymentMethod: method,
           status: 'completed',
           notes: notes || null,
           createdBy: userId,
         }).returning()
+
+        // One invoice line for the vehicle (receipts, sales and profit reports read sale lines).
+        // Cost = landed cost of an imported vehicle (else its purchase price) + capitalised expenses,
+        // the same basis as the dealership reports.
+        const acquisition = vehicle.landedCost ?? vehicle.purchasePrice
+        const unitCost = acquisition != null ? roundCurrency(parseCurrency(acquisition) + parseCurrency(vehicle.totalExpenses ?? '0')) : null
+        await tx.insert(saleItems).values({
+          tenantId: session.user.tenantId,
+          saleId: newSale.id,
+          itemId: null,
+          itemName: [vehicleDescription, vehicle.vin ? `VIN ${vehicle.vin}` : null].filter(Boolean).join(' · ').slice(0, 255),
+          quantity: '1',
+          unitPrice: String(askingPrice),
+          discount: String(tradeInAllowance),
+          discountType: tradeInAllowance > 0 ? 'fixed' : null,
+          taxAmount: String(taxAmount),
+          total: String(calculatedTotal),
+          unitCost: unitCost != null ? String(unitCost) : null,
+        })
+
+        if (downPayment > 0) {
+          await tx.insert(payments).values({
+            tenantId: session.user.tenantId,
+            saleId: newSale.id,
+            amount: String(downPayment),
+            method,
+            reference: 'Down payment',
+            receivedBy: userId,
+            posOpeningEntryId: await currentOpenShiftId(tx, userId),
+          })
+        }
+
+        // GL (no-op unless the vendor auto-posts sales). Vehicle purchases are not carried in the
+        // stock account, so no cost of goods entry: revenue, tax, receivable and the down payment.
+        await postSaleToGL(tx, session.user.tenantId, {
+          saleId: newSale.id,
+          invoiceNumber: invoiceNo,
+          saleDate: await tenantToday(session.user.tenantId),
+          subtotal: askingPrice,
+          tax: taxAmount,
+          discount: tradeInAllowance,
+          total: calculatedTotal,
+          amountPaid: downPayment,
+          creditAmount: 0,
+          costOfGoodsSold: 0,
+          paymentMethod: method,
+          customerId: customerId || null,
+        })
 
         // Create vehicle sale details
         const [newVehicleSale] = await tx.insert(vehicleSaleDetails).values({
@@ -281,6 +364,7 @@ export async function POST(request: NextRequest) {
           vehicleSaleDetails: newVehicleSale,
         }
       })
+      if ('error' in result) return result.error
 
       // Broadcast changes
       logAndBroadcast(session.user.tenantId, 'vehicle-sale', 'created', result.vehicleSaleDetails.id)
@@ -310,6 +394,12 @@ export async function POST(request: NextRequest) {
     }
     if (message === 'USER_NOT_FOUND') {
       return NextResponse.json({ error: 'User not found for this tenant. Please log out and log in again.' }, { status: 400 })
+    }
+    if (message === 'CUSTOMER_REQUIRED') {
+      return NextResponse.json({ error: 'Choose a customer: the balance after the down payment is owed by them (or their finance company).' }, { status: 400 })
+    }
+    if (message.startsWith('GL_ACCOUNTS_MISSING') || message.startsWith('No active fiscal year')) {
+      return NextResponse.json({ error: message.replace(/^GL_ACCOUNTS_MISSING:\s*/, '') }, { status: 400 })
     }
     if (message === 'CUSTOMER_NOT_FOUND') {
       return NextResponse.json({ error: 'Customer not found' }, { status: 400 })

@@ -14,6 +14,8 @@ import { logError } from '@/lib/ai/error-logger'
 import { clientIp, consumeRateLimit } from '@/lib/auth/rate-limit'
 import { cleanSerial } from './iclock'
 import { safeTimezone } from './time'
+import { ipAllowed } from './ip-allow'
+import { getTenantFeatureFlags } from '@/lib/features/check'
 
 export interface IclockDevice {
   id: string
@@ -23,6 +25,8 @@ export interface IclockDevice {
   attlogStamp: string | null
   deviceInfo: Record<string, unknown> | null
   lastSeenAt: Date | null
+  /** Optional network lock; empty = any address */
+  allowedIps: string[]
 }
 
 export const MAX_BODY_BYTES = 5 * 1024 * 1024
@@ -50,7 +54,7 @@ const deviceCache = new Map<string, { device: IclockDevice | null; at: number }>
 const DEVICE_TTL_MS = 30_000
 
 export function invalidateIclockDevice(serial?: string) {
-  if (!serial) deviceCache.clear()
+  if (!serial) { deviceCache.clear(); attendanceSwitch.clear() }
   else deviceCache.delete(serial.toUpperCase())
 }
 
@@ -60,7 +64,7 @@ export async function findDevice(sn: string): Promise<IclockDevice | null> {
   if (hit && Date.now() - hit.at < DEVICE_TTL_MS) return hit.device
   // Privileged lookup: a device has no session; the serial is the credential (registered + active)
   const res = await db.execute(sql`
-    SELECT id, tenant_id, serial_number, timezone, attlog_stamp, device_info, last_seen_at
+    SELECT id, tenant_id, serial_number, timezone, attlog_stamp, device_info, last_seen_at, allowed_ips
       FROM attendance_devices
      WHERE upper(serial_number) = ${key} AND is_active = true
      LIMIT 1`)
@@ -73,6 +77,7 @@ export async function findDevice(sn: string): Promise<IclockDevice | null> {
     attlogStamp: (row.attlog_stamp as string | null) ?? null,
     deviceInfo: (row.device_info as Record<string, unknown> | null) ?? null,
     lastSeenAt: row.last_seen_at ? new Date(row.last_seen_at as string) : null,
+    allowedIps: Array.isArray(row.allowed_ips) ? (row.allowed_ips as string[]) : [],
   } : null
   if (deviceCache.size > 5000) deviceCache.clear()
   deviceCache.set(key, { device, at: Date.now() })
@@ -83,6 +88,18 @@ export type DeviceResolution =
   | { kind: 'device'; sn: string; device: IclockDevice; ip: string }
   | { kind: 'unknown'; sn: string; ip: string }
   | { kind: 'reject'; response: NextResponse }
+
+// Attendance switch per tenant (super admin → Features), cached briefly: terminals poll every few seconds
+const ATTENDANCE_SWITCH_TTL_MS = 30_000
+const attendanceSwitch = new Map<string, { on: boolean; at: number }>()
+async function attendanceOn(tenantId: string): Promise<boolean> {
+  const hit = attendanceSwitch.get(tenantId)
+  if (hit && Date.now() - hit.at < ATTENDANCE_SWITCH_TTL_MS) return hit.on
+  const on = (await getTenantFeatureFlags(tenantId)).hr_attendance
+  if (attendanceSwitch.size > 2000) attendanceSwitch.clear()
+  attendanceSwitch.set(tenantId, { on, at: Date.now() })
+  return on
+}
 
 /** Validate ?SN=, rate-limit, and resolve the device (or record an unknown serial). */
 export async function resolveDevice(request: Request, info?: Record<string, unknown>): Promise<DeviceResolution> {
@@ -101,6 +118,21 @@ export async function resolveDevice(request: Request, info?: Record<string, unkn
 
   if (device) {
     if (deviceRateLimited(sn)) return { kind: 'reject', response: text('ERROR: too many requests', 429) }
+    // Refused (not "OK") so a real terminal on a new address keeps its punches and re-sends them
+    // once the owner adds the address; a forged upload from elsewhere is never stored.
+    if (!ipAllowed(ip, device.allowedIps)) {
+      console.warn(`[iclock] SN=${sn} refused from ip=${ip} (not in the device's allowed addresses)`)
+      return { kind: 'reject', response: text('ERROR: address not allowed', 403) }
+    }
+    // Attendance switched off for the business: refused (not "OK"), so the terminal keeps its
+    // punches and re-sends them once the feature is back on
+    try {
+      if (!(await attendanceOn(device.tenantId))) {
+        return { kind: 'reject', response: text('ERROR: attendance is turned off for this business', 403) }
+      }
+    } catch (err) {
+      logError('iclock/feature-switch', err) // fail open, like the API proxy
+    }
     return { kind: 'device', sn, device, ip }
   }
 

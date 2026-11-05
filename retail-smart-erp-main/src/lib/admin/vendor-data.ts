@@ -91,7 +91,9 @@ const DB_FILLED_COLUMNS: Record<string, ReadonlySet<string>> = {
   items: new Set(['item_code']),
 }
 
-const SECRET_RE = /(_hash$|^(?!must_change_).*password$|token|secret|api_key$|^otp|_otp$|private_key|^comm_key$)/i
+// Matches column names (snake_case) and JSON keys (camelCase / header names). The SMS gateway's
+// auth value, headers and static params carry credentials; gift_cards.pin is a redemption secret.
+const SECRET_RE = /(_hash$|^(?!must_change_).*password$|token|secret|api[_-]?key$|^otp|_otp$|private[_-]?key|^comm[_-]?key$|^pin$|auth_value$|^authorization$|^generic_headers$|^generic_static_params$)/i
 const SYSTEM_COLUMNS = new Set(['id', 'tenant_id', 'created_at', 'updated_at', 'is_super_admin'])
 /** business_profile columns that must go through vendor actions (lifecycle side effects) */
 const PROFILE_LOCKED = new Set(['id', 'business_id', 'slug', 'status', 'plan', 'plan_expires_at', 'locked_at', 'locked_reason',

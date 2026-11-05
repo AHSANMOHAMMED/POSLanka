@@ -16,6 +16,7 @@ export default function NewLabelTemplatePage({ params }: { params: Promise<{ slu
     return (
       <TemplatePresetPicker
         businessType={company?.businessType}
+        tenantSlug={slug}
         onSelect={(p) => setPreset(p)}
         onSkip={() => setPreset(null)}
       />

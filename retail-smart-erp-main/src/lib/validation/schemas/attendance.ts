@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isIpOrCidr } from '@/lib/attendance/ip-allow'
 
 // ==================== HR ATTENDANCE (/api/hr/*) ====================
 
@@ -116,6 +117,8 @@ export const attendanceDeviceSchema = z.object({
   warehouseId: optionalUuid,
   model: z.string().trim().max(100).nullish(),
   commKey: z.string().trim().max(100).nullish(),
+  /** Addresses (or IPv4 CIDR ranges) the device may push from; [] = any address */
+  allowedIps: z.array(z.string().trim().max(64).refine(isIpOrCidr, 'Enter an IP address such as 203.0.113.10 or a range such as 203.0.113.0/24')).max(20).optional(),
   timezone: z.string().trim().max(50).optional(),
   isActive: z.boolean().optional(),
   /** Ask the device to re-send its whole log on the next handshake */

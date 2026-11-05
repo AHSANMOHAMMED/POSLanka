@@ -25,6 +25,9 @@ import { unitAllowsFraction } from '@/lib/units/conversions'
 import { DocumentCommentsAndActivity } from '@/components/ui/document-comments'
 import { PrintPreview, PurchaseOrderTemplate } from '@/components/print'
 import { DEFAULT_PRINT_SETTINGS } from '@/lib/print/types'
+import { PrintDocumentButton } from '@/components/print/PrintA4Button'
+import { TEMPLATE_DOC_TYPES, companyFromTenant, purchaseOrderToDoc } from '@/lib/print/invoice-document'
+import { fetchTenantInfo } from '@/lib/print/receipt-loader'
 
 interface OrderItem {
   id: string
@@ -1048,6 +1051,17 @@ export default function PurchaseOrderDetailPage() {
             >
               <Heart size={16} fill={liked ? 'currentColor' : 'none'} />
             </button>
+
+            {/* Template / A5 / dot matrix printing (document printer of this terminal) */}
+            <PrintDocumentButton
+              documentTypes={TEMPLATE_DOC_TYPES.purchase_order}
+              settingKey="purchase_order"
+              label="Print"
+              loadDocument={async () => ({
+                doc: purchaseOrderToDoc({ ...order, items: order.items.map((it) => ({ ...it, uom: unitOf(it) || null })) }),
+                company: companyFromTenant(await fetchTenantInfo()),
+              })}
+            />
 
             <div className="relative">
               <button

@@ -10,7 +10,9 @@ import type { LabelItemData, LabelTemplate, LabelShape } from '@/lib/labels/type
 import { renderLabelHtml } from '@/lib/labels/label-renderer'
 import { packLabelRows } from '@/lib/print/label/common'
 import { stickerRollWidthMm, type StickerSetup } from '@/lib/labels/sticker-stock'
-import { sanitizeHtml } from '@/lib/utils/sanitize-html'
+import { sanitizeLabelHtml } from '@/lib/labels/sanitize-label-html'
+import { nativeFontFamily, nativeTextFit } from '@/lib/print/label/native-text'
+import type { LabelPreviewRender } from './LabelPreview'
 
 const PX_PER_MM = 96 / 25.4
 
@@ -32,6 +34,8 @@ export interface StickerRollPreviewProps {
   maxRows?: number
   /** Show the crosshair / border alignment overlay. */
   showGuides?: boolean
+  /** Browser HTML (default), the exact printer picture, or the printer-font look. */
+  render?: LabelPreviewRender
 }
 
 export function StickerRollPreview({
@@ -45,6 +49,7 @@ export function StickerRollPreview({
   zoom = 'fit',
   maxRows = 4,
   showGuides = false,
+  render,
 }: StickerRollPreviewProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [containerW, setContainerW] = useState(0)
@@ -82,27 +87,38 @@ export function StickerRollPreview({
   }, [drawRows])
 
   const elementsJson = JSON.stringify(template.elements)
+  const renderKey = JSON.stringify(render || { mode: 'html', dpi: setup.dpi })
   useEffect(() => {
     let cancelled = false
     ;(async () => {
+      const r: LabelPreviewRender = JSON.parse(renderKey)
+      const tpl = {
+        widthMm: template.widthMm,
+        heightMm: template.heightMm,
+        elements: template.elements,
+        labelShape: template.labelShape,
+        cornerRadius: template.cornerRadius,
+      }
       const next = new Map<string, string>()
-        for (const [key, item] of uniqueItems) {
-          const raw = await renderLabelHtml({
-            widthMm: template.widthMm,
-            heightMm: template.heightMm,
-            elements: template.elements,
-            labelShape: template.labelShape,
-            cornerRadius: template.cornerRadius,
-          }, item, currencySymbol, tenantName, codeWord)
-          next.set(key, sanitizeHtml(raw))
+      for (const [key, item] of uniqueItems) {
+        if (r.mode === 'raster') {
+          // the exact 1-bit picture the printer gets, shown at the label size
+          const { rasterLabelPreviewDataUrl } = await import('@/lib/print/label/canvas-raster')
+          const res = await rasterLabelPreviewDataUrl(tpl, item, { dpi: r.dpi, currencySymbol, tenantName, codeWord }).catch(() => null)
+          next.set(key, res ? `<img src="${res.url}" alt="" style="display:block;width:100%;height:100%"/>` : '')
+          continue
         }
+        const opts = r.mode === 'native' ? { fontFamily: nativeFontFamily(r.language), fitText: nativeTextFit(r.language, r.dpi) } : {}
+        const raw = await renderLabelHtml(tpl, item, currencySymbol, tenantName, codeWord, r.dpi || 203, opts)
+        next.set(key, sanitizeLabelHtml(raw))
+      }
       if (!cancelled) setHtmlByItem(next)
     })()
     return () => {
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uniqueItems, elementsJson, template.widthMm, template.heightMm, currencySymbol, tenantName, codeWord])
+  }, [uniqueItems, elementsJson, template.widthMm, template.heightMm, currencySymbol, tenantName, codeWord, renderKey])
 
   const rollW = stickerRollWidthMm(setup)
   const linerPadY = Math.max(1, setup.rowGapMm / 2)

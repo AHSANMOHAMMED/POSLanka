@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { getBranchScope } from '@/lib/auth/branch-access'
+import { assertEmployeeInScope, employeeIdInScopeSql } from '@/lib/attendance/api'
 import { withTenant } from '@/lib/db'
 import { employeeAdvances, employeeProfiles } from '@/lib/db/schema'
 import { eq, and, sql, ilike } from 'drizzle-orm'
@@ -33,6 +35,9 @@ export async function GET(request: NextRequest) {
       if (search) conditions.push(ilike(employeeAdvances.employeeName, `%${escapeLikePattern(search)}%`))
       if (status) conditions.push(eq(employeeAdvances.status, status))
       if (employeeProfileId) conditions.push(eq(employeeAdvances.employeeProfileId, employeeProfileId))
+      // K4: a branch-restricted manager only sees employees of their own branches
+      const inScope = employeeIdInScopeSql(await getBranchScope(session, db), employeeAdvances.employeeProfileId)
+      if (inScope) conditions.push(inScope)
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
       const [{ count }] = await db
@@ -91,6 +96,8 @@ export async function POST(request: NextRequest) {
       if (!profile) {
         return NextResponse.json({ error: 'Employee profile not found' }, { status: 404 })
       }
+      const branchDenied = await assertEmployeeInScope(session, db, employeeProfileId)
+      if (branchDenied) return branchDenied
 
       const installmentAmount = Math.round((requestedAmount / recoveryInstallments) * 100) / 100
 

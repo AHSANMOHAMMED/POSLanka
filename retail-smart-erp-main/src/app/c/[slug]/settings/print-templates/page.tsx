@@ -41,13 +41,14 @@ const DOCUMENT_TYPES = [
   { value: 'estimate', label: 'Estimate' },
   { value: 'invoice', label: 'Invoice' },
   { value: 'quotation', label: 'Quotation' },
+  { value: 'credit_note', label: 'Credit Note' },
   { value: 'purchase_order', label: 'Purchase Order' },
   { value: 'purchase_invoice', label: 'Purchase Invoice' },
   { value: 'stock_transfer', label: 'Stock Transfer' },
 ]
 
 /** Document types laid out by the A4 template designer (src/lib/print/invoice-template.ts). */
-const DESIGNER_DOC_TYPES = ['invoice', 'sales_invoice', 'quotation', 'estimate']
+const DESIGNER_DOC_TYPES = ['invoice', 'sales_invoice', 'quotation', 'estimate', 'credit_note', 'purchase_order']
 
 export default function PrintTemplatesPage() {
   const { tenantSlug, tenantName } = useCompany()

@@ -19,6 +19,7 @@ import { GET as iclockHandshake, POST as iclockUpload } from '@/app/iclock/cdata
 import { GET as iclockPoll } from '@/app/iclock/getrequest/route'
 import { POST as createShift } from '@/app/api/hr/shifts/route'
 import { POST as registerDevice, GET as listDevices } from '@/app/api/hr/attendance-devices/route'
+import { PUT as updateDevice } from '@/app/api/hr/attendance-devices/[id]/route'
 import { GET as checkDevice } from '@/app/api/hr/attendance-devices/check/route'
 import { GET as listUnmapped } from '@/app/api/hr/attendance-devices/unmapped/route'
 import { POST as mapUser } from '@/app/api/hr/attendance-devices/map/route'
@@ -66,8 +67,8 @@ function as(f: Fx, who: Who) {
 function req(method: string, url: string, body?: unknown): NextRequest {
   return new NextRequest(`http://localhost${url}`, { method, body: body === undefined ? undefined : JSON.stringify(body), headers: { 'content-type': 'application/json' } })
 }
-function textReq(method: string, url: string, body?: string): NextRequest {
-  return new NextRequest(`http://localhost${url}`, { method, body, headers: { 'content-type': 'text/plain', 'x-forwarded-for': '203.0.113.7' } })
+function textReq(method: string, url: string, body?: string, ip = '203.0.113.7'): NextRequest {
+  return new NextRequest(`http://localhost${url}`, { method, body, headers: { 'content-type': 'text/plain', 'x-forwarded-for': ip } })
 }
 async function json(res: Response | undefined): Promise<{ status: number; body: J }> {
   if (!res) return { status: 0, body: { error: 'no response' } }
@@ -203,6 +204,29 @@ async function main() {
       check('D2: late 30 min, no OT', d2?.status === 'present' && d2.late_minutes === 30 && d2.ot_minutes === 0, short(d2))
       const e2d1 = await dayRow(f.e2, D1)
       check('E2 (not OT eligible) single punch → missed check-out', e2d1?.missed_punch === true && e2d1.ot_minutes === 0, short(e2d1))
+    })
+
+    // ============================================================ optional network lock
+    await step('device network lock', async () => {
+      as(f, 'owner')
+      const ctx = { params: Promise.resolve({ id: deviceId }) }
+      const bad = await json(await updateDevice(req('PUT', `/api/hr/attendance-devices/${deviceId}`, { allowedIps: ['not-an-ip'] }), ctx))
+      check('invalid address refused → 400', bad.status === 400, short(bad.body))
+      const lock = await json(await updateDevice(req('PUT', `/api/hr/attendance-devices/${deviceId}`, { allowedIps: ['198.51.100.0/24'] }), ctx))
+      check('lock device to a range → 200', lock.status === 200 && lock.body.allowedIps?.[0] === '198.51.100.0/24', short(lock.body))
+      const before = (await admin.query(`SELECT count(*)::int n FROM attendance_punches WHERE tenant_id=$1`, [f.tenantId])).rows[0].n
+      const forged = await iclockUpload(textReq('POST', `/iclock/cdata?SN=${serial}&table=ATTLOG&Stamp=9002`, `102\t${D3} 08:00:00\t0\t1\t0\t0`))
+      check('upload from another address refused (device keeps its log) → 403', forged.status === 403, await forged.text())
+      const after = (await admin.query(`SELECT count(*)::int n FROM attendance_punches WHERE tenant_id=$1`, [f.tenantId])).rows[0].n
+      check('refused upload stores nothing', after === before, `${before} → ${after}`)
+      const hs = await iclockHandshake(textReq('GET', `/iclock/cdata?SN=${serial}&options=all`))
+      check('handshake from another address refused', hs.status === 403)
+      const ok = await iclockPoll(textReq('GET', `/iclock/getrequest?SN=${serial}`, undefined, '198.51.100.20'))
+      check('device inside the range accepted', ok.status === 200 && (await ok.text()) === 'OK')
+      const open = await json(await updateDevice(req('PUT', `/api/hr/attendance-devices/${deviceId}`, { allowedIps: [] }), ctx))
+      check('clearing the lock → any address again', open.status === 200 && open.body.allowedIps === null, short(open.body))
+      const anyAgain = await iclockPoll(textReq('GET', `/iclock/getrequest?SN=${serial}`))
+      check('unlocked device accepted from its old address', anyAgain.status === 200)
     })
 
     // ============================================================ boards, mapping, corrections

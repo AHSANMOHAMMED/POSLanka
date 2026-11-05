@@ -4,7 +4,7 @@
  * instead of silently printed.
  */
 import type { BarcodeElement, LabelItemData } from '@/lib/labels/types'
-import type { LabelTemplateLike } from './common'
+import type { LabelDpi, LabelTemplateLike } from './common'
 import { barcodeSourceValue } from './common'
 import { chooseSymbology, minModuleDots, planLinear, SYMBOLOGY_NAMES, TWO_D_FORMATS } from './barcode-fit'
 
@@ -27,7 +27,7 @@ export interface LabelPreflightResult {
 export function preflightLabels(
   template: LabelTemplateLike,
   items: { item: LabelItemData | null; quantity?: number }[],
-  o: { dpi: 203 | 300; labelWidthMm?: number; tenantName?: string }
+  o: { dpi: LabelDpi; labelWidthMm?: number; tenantName?: string }
 ): LabelPreflightResult {
   const issues: LabelPreflightIssue[] = []
   const encodes: Record<string, string> = {}

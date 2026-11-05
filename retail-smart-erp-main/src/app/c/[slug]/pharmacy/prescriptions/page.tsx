@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { useCurrency } from '@/hooks/useCurrency'
+import { Paperclip, Tag } from 'lucide-react'
+import { PrescriptionAttachmentsModal } from '@/components/pharmacy/PrescriptionAttachmentsModal'
 
 interface PrescriptionRow {
   id: string
@@ -24,6 +26,7 @@ interface PrescriptionRow {
   notes: string | null
   dispensedBy: string | null
   medicines: string | null
+  attachments: number
 }
 
 /** Prescription register: every sale that dispensed prescription / controlled medicines. */
@@ -39,7 +42,13 @@ export default function PrescriptionRegisterPage() {
   const [controlledOnly, setControlledOnly] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [scansFor, setScansFor] = useState<PrescriptionRow | null>(null)
   const pageSize = 50
+  const scansForId = scansFor?.id
+  const onScansChanged = useCallback((count: number) => {
+    if (!scansForId) return
+    setRows((list) => list.map((r) => (r.id === scansForId ? { ...r, attachments: count } : r)))
+  }, [scansForId])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -96,13 +105,14 @@ export default function PrescriptionRegisterPage() {
               <th className="px-3 py-2">Rx no. / date</th>
               <th className="px-3 py-2">Medicines</th>
               <th className="px-3 py-2">Dispensed by</th>
+              <th className="px-3 py-2">Scan / label</th>
             </tr>
           </thead>
           <tbody>
             {loading && rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-gray-500">Loading…</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-500">Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-8 text-center text-gray-500">No prescriptions recorded{search || from || to || controlledOnly ? ' for this filter' : ' yet'}.</td></tr>
+              <tr><td colSpan={8} className="px-3 py-8 text-center text-gray-500">No prescriptions recorded{search || from || to || controlledOnly ? ' for this filter' : ' yet'}.</td></tr>
             ) : rows.map((r) => (
               <tr key={r.id} className="border-t align-top dark:border-gray-700">
                 <td className="whitespace-nowrap px-3 py-2">{new Date(r.createdAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</td>
@@ -121,6 +131,16 @@ export default function PrescriptionRegisterPage() {
                   {r.medicines || '—'}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2">{r.dispensedBy || '—'}</td>
+                <td className="whitespace-nowrap px-3 py-2">
+                  <button type="button" onClick={() => setScansFor(r)} className="inline-flex items-center gap-1 text-blue-600 hover:underline" title="Photos / scans of the prescription">
+                    <Paperclip size={14} /> {r.attachments > 0 ? r.attachments : 'Add'}
+                  </button>
+                  {r.saleId && (
+                    <Link href={`/c/${slug}/pharmacy/dispensing/${r.saleId}`} className="ml-3 inline-flex items-center gap-1 text-blue-600 hover:underline" title="Dispensing labels with dose instructions">
+                      <Tag size={14} /> Labels
+                    </Link>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -134,6 +154,14 @@ export default function PrescriptionRegisterPage() {
             <button type="button" className="rounded border px-3 py-1 disabled:opacity-50" disabled={page * pageSize >= total} onClick={() => setPage((p) => p + 1)}>Next</button>
           </div>
         </div>
+      )}
+      {scansFor && (
+        <PrescriptionAttachmentsModal
+          prescriptionId={scansFor.id}
+          title={`Prescription — ${scansFor.patientName || scansFor.doctorName}${scansFor.invoiceNo ? ` (${scansFor.invoiceNo})` : ''}`}
+          onClose={() => setScansFor(null)}
+          onChanged={onScansChanged}
+        />
       )}
     </ListPageLayout>
   )

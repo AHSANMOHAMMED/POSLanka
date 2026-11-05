@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 import { withTenantTransaction } from '@/lib/db'
 import { payrollRuns, salarySlips, accountingSettings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -28,6 +29,9 @@ export async function POST(
 
     const permError = requirePermission(session, 'processPayroll')
     if (permError) return permError
+    // K4: a payroll run covers every branch's employees: refused to branch-restricted users
+    const branchError = await requireAllBranches(session)
+    if (branchError) return branchError
 
     const quotaError = await requireQuota(session.user.tenantId, 'essential')
     if (quotaError) return quotaError

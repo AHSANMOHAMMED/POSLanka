@@ -1,4 +1,4 @@
-import os, re
+import os, re, sys
 import json, uuid, time, subprocess, statistics, urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor
 BASE = os.environ.get('BASE_URL', 'http://127.0.0.1:3000')
@@ -25,7 +25,8 @@ def psql(sql):
 
 uid=uuid.uuid4().hex[:8]; slug=f'load{uid}'
 call('POST','/api/sys-control/auth/login',{'email':os.environ['ADMIN_EMAIL'],'password':os.environ['ADMIN_PASSWORD']})
-st,p,_=call('POST','/api/sys-control/vendors',{'name':f'Load Mart {uid}','slug':slug,'email':f'o{uid}@ex.com','businessType':'supermarket','plan':'trial','country':'LK','currency':'LKR','ownerName':'Owner','ownerPassword':'Owner@12345'})
+st,p,_=call('POST','/api/sys-control/vendors',{'name':f'Load Mart {uid}','slug':slug,'email':f'o{uid}@ex.com','phone':'+94771234567','address':'Colombo','businessType':'supermarket','plan':'trial','country':'LK','currency':'LKR','ownerName':'Owner','ownerPassword':'Owner@12345'})
+if st!=200: sys.exit(f'create vendor failed: {st} {p}')
 tenant_id=p['vendor']['id']; owner_email=p['owner']['email']
 st,p,_=call('POST','/api/auth/mobile-login',{'email':owner_email,'password':'Owner@12345','tenantSlug':slug}); otok=p['token']; owner_id=p['user']['id']
 st,p,_=call('GET','/api/pos-profiles',token=otok); prof=(p if isinstance(p,list) else p.get('profiles',[]))[0]; prof_id=prof['id']; wh_id=prof['warehouseId']
@@ -69,7 +70,12 @@ print('distinct invoices:', len(uniq), '(expected 101 = 100 sales + 1 for the 5 
 if bad: print('failures:', bad[:5])
 st,p,_=call('GET',f'/api/items/barcode-lookup?barcode=LOAD{uid}&warehouseId={wh_id}',token=otok); print('stock after:', p.get('availableStock'), '(expected 399 = 500 - 101 sales)')
 print('db sales rows:', psql(f"select count(*) from sales where tenant_id='{tenant_id}'"), 'distinct invoice_no:', psql(f"select count(distinct invoice_no) from sales where tenant_id='{tenant_id}'"), 'rows with dup clientSaleId:', psql(f"select count(*) from sales where tenant_id='{tenant_id}' and client_sale_id='{dup}'"))
+# One cashier ringing up sales one after another: the everyday billing speed (target: SINGLE_P50_MS, default 500)
+SEQ=20
+seq=[sale((users[0][0],users[0][1],n,str(uuid.uuid4()))) for n in range(SEQ)]
+slat=sorted(r[3] for r in seq); target=int(os.environ.get('SINGLE_P50_MS','500'))
+print(f'single cashier: {sum(1 for r in seq if r[1]==200)}/{SEQ} ok; p50 {statistics.median(slat)}ms p95 {slat[int(SEQ*0.95)-1]}ms → {"PASS" if statistics.median(slat)<=target else "SLOW"} (target p50 ≤ {target}ms)')
 for name,tok in users:
-    st,p,_=call('POST',f'/api/pos-opening-entries/{shifts[name]}/close',{'actualAmounts':[{'paymentMethod':'cash','amount':2000+480*(21 if name==users[0][0] else 20)}]},token=tok)  # owner (users[0]) also rang the de-duplicated sale
+    st,p,_=call('POST',f'/api/pos-opening-entries/{shifts[name]}/close',{'actualAmounts':[{'paymentMethod':'cash','amount':2000+480*(21+SEQ if name==users[0][0] else 20)}]},token=tok)  # owner (users[0]) also rang the de-duplicated sale and the single-cashier run
     summ=(p or {}).get('summary',{}) if isinstance(p,dict) else {}
     print(f'close {name}: status {st} sales {summ.get("totalSales")} variance {summ.get("totalVariance")}')

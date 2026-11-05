@@ -32,6 +32,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       if (d.serialNumber !== undefined) set.serialNumber = d.serialNumber.trim().toUpperCase()
       if (d.model !== undefined) set.model = d.model || null
       if (d.commKey !== undefined) set.commKey = d.commKey || null
+      if (d.allowedIps !== undefined) set.allowedIps = d.allowedIps.length ? d.allowedIps : null
       if (d.timezone !== undefined) set.timezone = safeTimezone(d.timezone)
       if (d.isActive !== undefined) set.isActive = d.isActive
       if (d.warehouseId !== undefined && d.warehouseId !== current.warehouseId) {

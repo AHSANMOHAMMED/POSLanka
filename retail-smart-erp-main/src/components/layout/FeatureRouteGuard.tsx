@@ -4,7 +4,8 @@ import Link from 'next/link'
 import { useParams, usePathname } from 'next/navigation'
 import { PowerOff } from 'lucide-react'
 import { useFeatureFlags } from '@/hooks/useFeatureFlag'
-import { FEATURE_FLAG_LABELS, featureForHref } from '@/lib/features/flags'
+import { FEATURE_FLAG_LABELS } from '@/lib/features/flags'
+import { featuresForPage, pageBlockedByFeature } from '@/lib/features/nav-gate'
 
 /**
  * Pages of a feature the platform turned off for this business show a notice instead of the page,
@@ -15,10 +16,12 @@ export function FeatureRouteGuard({ children }: { children: React.ReactNode }) {
   const { slug } = useParams<{ slug: string }>()
   const { flags, loading } = useFeatureFlags()
   const relative = pathname.replace(/^\/c\/[^/]+/, '') || '/'
-  const flag = featureForHref(relative)
-  if (!flag || (!loading && flags[flag])) return <>{children}</>
+  // Module landing pages follow the module's switches; other pages their most specific href
+  const switchable = featuresForPage(relative).length > 0
+  const flag = loading ? null : pageBlockedByFeature(relative, flags)
+  if (!switchable || (!loading && !flag)) return <>{children}</>
   // Wait for the switches before mounting a switchable page, so a switched-off page never calls its API
-  if (loading) return <div className="mx-auto mt-16 h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" aria-label="Loading" />
+  if (loading || !flag) return <div className="mx-auto mt-16 h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" aria-label="Loading" />
 
   return (
     <div className="mx-auto mt-16 max-w-md rounded-2xl border border-gray-200 bg-white p-8 text-center shadow-sm dark:border-gray-700 dark:bg-gray-800">

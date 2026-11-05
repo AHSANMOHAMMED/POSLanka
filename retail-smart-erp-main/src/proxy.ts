@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { edgeDb } from '@/lib/edge-db'
 import { isTrustedOrigin } from '@/lib/security/origin'
-import { FEATURE_FLAG_LABELS, featureForApiPath, type FeatureFlag } from '@/lib/features/flags'
+import { FEATURE_FLAG_LABELS, featuresForApiPath, type FeatureFlag } from '@/lib/features/flags'
 
 // Domain configuration from environment
 const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'retailsmarterp.com'
@@ -110,28 +110,35 @@ const FEATURE_CACHE_TTL_MS = 10_000
 const featureCache = new Map<string, { enabled: boolean; at: number }>()
 
 async function featureDisabled(request: NextRequest): Promise<FeatureFlag | null> {
-  const flag = featureForApiPath(request.nextUrl.pathname)
-  if (!flag) return null
+  // Several switches = refused only when all are off; writes-only rules depend on the method
+  const keys = featuresForApiPath(request.nextUrl.pathname, request.method)
+  if (keys.length === 0) return null
   const authorization = request.headers.get('authorization') || ''
   const cookie = request.headers.get('cookie') || ''
   if (!authorization && !cookie) return null // the route answers 401
-  const key = `${flag}|${authorization}|${cookie}`
+  const joined = keys.join(',')
+  const key = `${joined}|${authorization}|${cookie}`
   const hit = featureCache.get(key)
-  if (hit && Date.now() - hit.at < FEATURE_CACHE_TTL_MS) return hit.enabled ? null : flag
+  if (hit && Date.now() - hit.at < FEATURE_CACHE_TTL_MS) return hit.enabled ? null : keys[0]
   try {
     const base = process.env.NEXTAUTH_URL_INTERNAL || `http://127.0.0.1:${process.env.PORT || 3000}`
-    const res = await fetch(`${base}/api/features/check?flag=${flag}`, {
+    const res = await fetch(`${base}/api/features/check?flags=${joined}`, {
       headers: { ...(authorization ? { authorization } : {}), ...(cookie ? { cookie } : {}), 'x-internal-feature-check': '1' },
       cache: 'no-store',
       signal: AbortSignal.timeout(3000),
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(JSON.stringify({ level: 'warn', component: 'feature-switch', msg: 'feature check failed, allowing request', path: request.nextUrl.pathname, flags: joined, status: res.status }))
+      return null
+    }
     const body = (await res.json()) as { enabled?: boolean }
     if (featureCache.size > 5000) featureCache.clear()
     featureCache.set(key, { enabled: body.enabled !== false, at: Date.now() })
-    return body.enabled === false ? flag : null
-  } catch {
-    return null // fail open: the switch is a product limit, not a security boundary
+    return body.enabled === false ? keys[0] : null
+  } catch (err) {
+    // fail open: the switch is a product limit, not a security boundary (logged so outages show)
+    console.warn(JSON.stringify({ level: 'warn', component: 'feature-switch', msg: 'feature check unreachable, allowing request', path: request.nextUrl.pathname, flags: joined, error: err instanceof Error ? err.message : String(err) }))
+    return null
   }
 }
 

@@ -4,6 +4,7 @@ import { withAuthTenant } from '@/lib/db/with-auth-tenant'
 import { creditNotes, creditNoteItems, customers, sales } from '@/lib/db/schema'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertBranchAccess, branchSqlFilter, getBranchScope, requireAllBranches } from '@/lib/auth/branch-access'
 import { nextSequence } from '@/lib/inventory/item-codes'
 import { logError } from '@/lib/ai/error-logger'
 import { toApiError } from '@/lib/db/errors'
@@ -54,10 +55,19 @@ export async function GET(request: NextRequest) {
   const saleId = request.nextUrl.searchParams.get('saleId')
 
   const result = await withAuthTenant(async (session, db) => {
+    // K4: branch-restricted staff only see notes against invoices of their own branches
+    // (a note without an invoice has no branch: not shown to them)
+    const scope = await getBranchScope(session, db)
+    const branchCond = scope
+      ? sql`${creditNotes.saleId} IN (SELECT cs.id FROM sales cs WHERE TRUE${branchSqlFilter(scope, 'cs.warehouse_id')})`
+      : undefined
     const rows = await db.query.creditNotes.findMany({
-      where: saleId && /^[0-9a-f-]{36}$/i.test(saleId)
-        ? and(eq(creditNotes.tenantId, session.user.tenantId), eq(creditNotes.saleId, saleId))
-        : eq(creditNotes.tenantId, session.user.tenantId),
+      where: and(
+        saleId && /^[0-9a-f-]{36}$/i.test(saleId)
+          ? and(eq(creditNotes.tenantId, session.user.tenantId), eq(creditNotes.saleId, saleId))
+          : eq(creditNotes.tenantId, session.user.tenantId),
+        branchCond,
+      ),
       orderBy: [desc(creditNotes.createdAt)],
       limit: 100,
       with: { items: true },
@@ -76,6 +86,7 @@ export async function POST(request: NextRequest) {
   if (permError) return permError
 
   let result
+  let branchDenied = null as NextResponse | null
   try {
     result = await withAuthTenant(async (session, db) => {
       const parsed = await validateBody(request, createSchema)
@@ -90,18 +101,25 @@ export async function POST(request: NextRequest) {
       {
         // The referenced sale must belong to this tenant (RLS-scoped lookup); lock it so two
         // concurrent notes cannot both credit the same remaining amount.
-        let sale: { id: string; total: string; customerId: string | null; customerName: string | null; isReturn: boolean; status: string } | null = null
+        let sale: { id: string; total: string; customerId: string | null; customerName: string | null; isReturn: boolean; status: string; warehouseId: string | null } | null = null
         if (body.saleId) {
           const [row] = await tx.select({
             id: sales.id, total: sales.total, customerId: sales.customerId, customerName: sales.customerName,
-            isReturn: sales.isReturn, status: sales.status,
+            isReturn: sales.isReturn, status: sales.status, warehouseId: sales.warehouseId,
           }).from(sales).where(eq(sales.id, body.saleId)).for('update')
           if (!row) return { error: 'Sale not found', status: 400 as const }
+          // K4: an invoice of another branch is refused (same rule as opening the sale)
+          branchDenied = await assertBranchAccess(session, row.warehouseId, tx)
+          if (branchDenied) return { denied: true as const }
           if (row.isReturn || row.status === 'void') return { error: 'A credit note must reference a valid (non-void, non-return) invoice', status: 400 as const }
           if (body.customerId && row.customerId && body.customerId !== row.customerId) {
             return { error: 'Customer does not match the invoice', status: 400 as const }
           }
           sale = row
+        } else {
+          // K4: a note without an invoice has no branch: company-wide, refused to branch-restricted staff
+          branchDenied = await requireAllBranches(session)
+          if (branchDenied) return { denied: true as const }
         }
         const customerId = body.customerId || sale?.customerId || null
         let customer: { id: string; name: string; taxExempt: boolean | null } | null = null
@@ -218,6 +236,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if ('denied' in result) return branchDenied ?? NextResponse.json({ error: 'You do not have access to this branch.', code: 'BRANCH_ACCESS_DENIED' }, { status: 403 })
   if ('error' in result) {
     return NextResponse.json({ error: result.error }, { status: result.status })
   }

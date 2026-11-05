@@ -62,9 +62,40 @@ import { GET as listReqs, POST as createReq } from '@/app/api/purchase-requisiti
 import { GET as getReq } from '@/app/api/purchase-requisitions/[id]/route'
 import { GET as poAttachments } from '@/app/api/purchase-orders/[id]/attachments/route'
 import { GET as reqAttachments } from '@/app/api/purchase-requisitions/[id]/attachments/route'
+import { PUT as updateKitchenItem } from '@/app/api/kitchen-orders/[id]/items/[itemId]/route'
+import { GET as listEmployees, POST as createEmployee } from '@/app/api/employee-profiles/route'
+import { GET as getEmployee, PUT as updateEmployee, DELETE as deleteEmployee } from '@/app/api/employee-profiles/[id]/route'
+import { GET as listSlips, POST as createSlip } from '@/app/api/salary-slips/route'
+import { GET as getSlip, PUT as updateSlip } from '@/app/api/salary-slips/[id]/route'
+import { POST as submitSlip } from '@/app/api/salary-slips/[id]/submit/route'
+import { POST as cancelSlip } from '@/app/api/salary-slips/[id]/cancel/route'
+import { GET as listAdvances, POST as createAdvance } from '@/app/api/employee-advances/route'
+import { GET as getAdvance, PUT as updateAdvance } from '@/app/api/employee-advances/[id]/route'
+import { POST as approveAdvance } from '@/app/api/employee-advances/[id]/approve/route'
+import { POST as cancelAdvance } from '@/app/api/employee-advances/[id]/cancel/route'
+import { POST as disburseAdvance } from '@/app/api/employee-advances/[id]/disburse/route'
+import { GET as listPayrollRuns, POST as createPayrollRun } from '@/app/api/payroll-runs/route'
+import { GET as getPayrollRun } from '@/app/api/payroll-runs/[id]/route'
+import { POST as processPayrollRun } from '@/app/api/payroll-runs/[id]/process/route'
+import { POST as cancelPayrollRun } from '@/app/api/payroll-runs/[id]/cancel/route'
+import { POST as syncIntake } from '@/app/api/stock-intake/[id]/sync/route'
+import { POST as validateIntake } from '@/app/api/stock-intake/[id]/validate/route'
+import { POST as executeImport } from '@/app/api/import/execute/route'
+import { GET as listCreditNotes, POST as createCreditNote } from '@/app/api/credit-notes/route'
+import { GET as getCreditNote, PATCH as actCreditNote } from '@/app/api/credit-notes/[id]/route'
+import { GET as listRefunds } from '@/app/api/refunds/route'
+import { GET as listDealers, POST as createDealer } from '@/app/api/dealers/route'
+import { GET as getDealer, PUT as updateDealer, DELETE as deleteDealer } from '@/app/api/dealers/[id]/route'
+import { GET as dealerStatement } from '@/app/api/dealers/[id]/statement/route'
+import { GET as dealerBalance } from '@/app/api/dealers/[id]/balance/route'
+import { GET as listAllocations, POST as createAllocation } from '@/app/api/dealer-allocations/route'
+import { GET as getAllocation, PUT as updateAllocation } from '@/app/api/dealer-allocations/[id]/route'
+import { GET as listDealerPayments, POST as createDealerPayment } from '@/app/api/dealer-payments/route'
+import { GET as getDealerPayment, PUT as updateDealerPayment } from '@/app/api/dealer-payments/[id]/route'
+import { POST as confirmDealerPayment } from '@/app/api/dealer-payments/[id]/confirm/route'
 
 type J = Record<string, unknown> & { [k: string]: any } // eslint-disable-line @typescript-eslint/no-explicit-any
-type Who = 'owner' | 'cashierA' | 'keeperA' | 'keeperB' | 'managerA' | 'cashierFree' | 'waiterA' | 'techA' | 'sysA'
+type Who = 'owner' | 'cashierA' | 'keeperA' | 'keeperB' | 'managerA' | 'cashierFree' | 'waiterA' | 'techA' | 'sysA' | 'hrA'
 interface Fx {
   tenantId: string; slug: string; whA: string; whB: string; supplierId: string
   users: Record<Who, { id: string; role: string }>
@@ -115,7 +146,7 @@ async function makeTenant(admin: Client): Promise<Fx> {
   const users = {} as Fx['users']
   const roles: Record<Who, string> = {
     owner: 'owner', cashierA: 'cashier', keeperA: 'stock_manager', keeperB: 'stock_manager', managerA: 'manager', cashierFree: 'cashier',
-    waiterA: 'waiter', techA: 'technician', sysA: 'system_manager',
+    waiterA: 'waiter', techA: 'technician', sysA: 'system_manager', hrA: 'hr_manager',
   }
   for (const who of Object.keys(roles) as Who[]) users[who] = { id: randomUUID(), role: roles[who] }
   const f: Fx = { tenantId, slug, whA: randomUUID(), whB: randomUUID(), supplierId: randomUUID(), users, profileA: randomUUID(), profileB: randomUUID() }
@@ -128,7 +159,7 @@ async function makeTenant(admin: Client): Promise<Fx> {
       [users[who].id, tenantId, `${who.toLowerCase()}-${slug}@example.test`, who, roles[who]])
   }
   // Branch assignments: the A staff to Colombo, keeperB to Kandy; cashierFree and the owner none
-  for (const [who, wh] of [['cashierA', f.whA], ['keeperA', f.whA], ['managerA', f.whA], ['keeperB', f.whB], ['waiterA', f.whA], ['techA', f.whA], ['sysA', f.whA]] as Array<[Who, string]>) {
+  for (const [who, wh] of [['cashierA', f.whA], ['keeperA', f.whA], ['managerA', f.whA], ['keeperB', f.whB], ['waiterA', f.whA], ['techA', f.whA], ['sysA', f.whA], ['hrA', f.whA]] as Array<[Who, string]>) {
     await admin.query(`INSERT INTO user_warehouses (tenant_id, user_id, warehouse_id, is_active) VALUES ($1,$2,$3,true)`, [tenantId, users[who].id, wh])
   }
   // Counters: one per branch. cashierA is (wrongly) also on the Kandy counter: the branch rule still applies
@@ -494,6 +525,9 @@ async function main() {
       check('kitchen display of Colombo: no Kandy order', kitchen.status === 200 && kids.includes(take.body.id) && !kids.includes(oB.body.id), short(kids))
       const gk = await json(await getKitchen(req('GET', `/api/kitchen-orders/${kB}`), ctx(kB)))
       check('… opening the Kandy kitchen ticket → 403', denied(gk), short(gk.body))
+      const ki = randomUUID()
+      const pk = await json(await updateKitchenItem(req('PUT', `/api/kitchen-orders/${kB}/items/${ki}`, { status: 'ready' }), { params: Promise.resolve({ id: kB, itemId: ki }) }))
+      check('… changing a dish on the Kandy kitchen ticket → 403', denied(pk), short(pk.body))
 
       // reservations: a booking is in its table's branch
       const booking = { customerName: 'Guest', reservationDate: '2030-01-15', reservationTime: '19:00', partySize: 2 }
@@ -556,6 +590,251 @@ async function main() {
       const all = await json(await listAppointments(req('GET', '/api/appointments?all=true')))
       const allIds = listOf(all.body).map((a) => a.id)
       check('owner sees appointments of both branches', allIds.includes(idA) && allIds.includes(idB), short(allIds))
+    })
+
+    // ============================================================ HR: employees, salary slips, advances, payroll runs
+    await step('employees, payroll and advances', async () => {
+      // empA: cashierA (no branch of its own → follows the user's Colombo assignment); empB: Kandy
+      const empA = randomUUID(); const empB = randomUUID()
+      await admin.query(`INSERT INTO employee_profiles (id, tenant_id, user_id, base_salary) VALUES ($1,$2,$3,50000)`, [empA, f.tenantId, f.users.cashierA.id])
+      await admin.query(`INSERT INTO employee_profiles (id, tenant_id, user_id, base_salary, warehouse_id) VALUES ($1,$2,$3,60000,$4)`, [empB, f.tenantId, f.users.keeperB.id, f.whB])
+      const slip = async (emp: string, user: string, no: string) => {
+        const id = randomUUID()
+        await admin.query(`INSERT INTO salary_slips (id, tenant_id, slip_no, employee_profile_id, user_id, employee_name, payroll_month, payroll_year, start_date, end_date, base_salary)
+          VALUES ($1,$2,$3,$4,$5,'x',1,2030,'2030-01-01','2030-01-31',1000)`, [id, f.tenantId, no, emp, user])
+        return id
+      }
+      const advance = async (emp: string, user: string, no: string) => {
+        const id = randomUUID()
+        await admin.query(`INSERT INTO employee_advances (id, tenant_id, advance_no, employee_profile_id, user_id, employee_name, requested_amount, status)
+          VALUES ($1,$2,$3,$4,$5,'x',500,'pending_approval')`, [id, f.tenantId, no, emp, user])
+        return id
+      }
+      const slipA = await slip(empA, f.users.cashierA.id, 'SS-K4-A'); const slipB = await slip(empB, f.users.keeperB.id, 'SS-K4-B')
+      const advA = await advance(empA, f.users.cashierA.id, 'ADV-K4-A'); const advB = await advance(empB, f.users.keeperB.id, 'ADV-K4-B')
+      const runId = randomUUID()
+      await admin.query(`INSERT INTO payroll_runs (id, tenant_id, run_no, payroll_month, payroll_year) VALUES ($1,$2,'PR-K4',1,2030)`, [runId, f.tenantId])
+
+      as(f, 'hrA')
+      const all = await json(await listEmployees(req('GET', '/api/employee-profiles?all=true')))
+      const allIds = listOf(all.body).map((e) => e.id)
+      check('Colombo HR: employee dropdown has Colombo staff only', all.status === 200 && allIds.includes(empA) && !allIds.includes(empB), short(allIds))
+      const paged = await json(await listEmployees(req('GET', '/api/employee-profiles?page=1&pageSize=50')))
+      const pagedIds = listOf(paged.body).map((e) => e.id)
+      check('… paginated list too (total counts Colombo only)', paged.status === 200 && pagedIds.includes(empA) && !pagedIds.includes(empB) && paged.body.pagination?.total === pagedIds.length, short(paged.body.pagination))
+      check('… opening the Kandy employee → 403', denied(await json(await getEmployee(req('GET', `/api/employee-profiles/${empB}`), ctx(empB)))))
+      check('… opening their own employee → 200', (await json(await getEmployee(req('GET', `/api/employee-profiles/${empA}`), ctx(empA)))).status === 200)
+      const missing = randomUUID()
+      check('… a missing employee is still 404', (await json(await getEmployee(req('GET', `/api/employee-profiles/${missing}`), ctx(missing)))).status === 404)
+      check('… changing the Kandy employee → 403', denied(await json(await updateEmployee(req('PUT', `/api/employee-profiles/${empB}`, { department: 'x' }), ctx(empB)))))
+      check('… terminating the Kandy employee → 403', denied(await json(await deleteEmployee(req('DELETE', `/api/employee-profiles/${empB}`), ctx(empB)))))
+      const stillActive = (await admin.query(`SELECT employment_status, department FROM employee_profiles WHERE id=$1`, [empB])).rows[0]
+      check('… and the Kandy employee is untouched', stillActive?.employment_status === 'active' && stillActive?.department === null, JSON.stringify(stillActive))
+      const newB = await json(await createEmployee(req('POST', '/api/employee-profiles', { userId: f.users.keeperA.id, baseSalary: 1000, warehouseId: f.whB })))
+      check('… adding an employee at Kandy → 403', denied(newB), short(newB.body))
+      const newA = await json(await createEmployee(req('POST', '/api/employee-profiles', { userId: f.users.keeperA.id, baseSalary: 1000 })))
+      check('… adding a Colombo user without a branch → 200 (follows the user\'s branch)', newA.status === 200 && newA.body.warehouseId === null, short(newA.body))
+      const newFree = await json(await createEmployee(req('POST', '/api/employee-profiles', { userId: f.users.owner.id, baseSalary: 1000 })))
+      check('… adding a user of no branch → placed in Colombo so it stays in reach', newFree.status === 200 && newFree.body.warehouseId === f.whA, short(newFree.body))
+
+      const sl = await json(await listSlips(req('GET', '/api/salary-slips?pageSize=50')))
+      const slIds = listOf(sl.body).map((x) => x.id)
+      check('Colombo HR salary slips: Colombo only', sl.status === 200 && slIds.includes(slipA) && !slIds.includes(slipB) && sl.body.pagination?.total === slIds.length, short(slIds))
+      check('… opening the Kandy slip → 403', denied(await json(await getSlip(req('GET', `/api/salary-slips/${slipB}`), ctx(slipB)))))
+      check('… opening their own slip → 200', (await json(await getSlip(req('GET', `/api/salary-slips/${slipA}`), ctx(slipA)))).status === 200)
+      check('… editing the Kandy slip → 403', denied(await json(await updateSlip(req('PUT', `/api/salary-slips/${slipB}`, { paymentDays: 10 }), ctx(slipB)))))
+      check('… submitting the Kandy slip → 403', denied(await json(await submitSlip(req('POST', `/api/salary-slips/${slipB}/submit`, {}), ctx(slipB)))))
+      check('… cancelling the Kandy slip → 403', denied(await json(await cancelSlip(req('POST', `/api/salary-slips/${slipB}/cancel`, { cancellationReason: 'test' }), ctx(slipB)))))
+      check('… and the Kandy slip is still a draft', (await admin.query(`SELECT status FROM salary_slips WHERE id=$1`, [slipB])).rows[0]?.status === 'draft')
+      check('… creating a slip for the Kandy employee → 403', denied(await json(await createSlip(req('POST', '/api/salary-slips', { employeeProfileId: empB, payrollMonth: 2, payrollYear: 2030 })))))
+      const missingSlip = randomUUID()
+      check('… a missing slip is still 404', (await json(await getSlip(req('GET', `/api/salary-slips/${missingSlip}`), ctx(missingSlip)))).status === 404)
+
+      const al = await json(await listAdvances(req('GET', '/api/employee-advances?pageSize=50')))
+      const alIds = listOf(al.body).map((x) => x.id)
+      check('Colombo HR advances: Colombo only', al.status === 200 && alIds.includes(advA) && !alIds.includes(advB), short(alIds))
+      check('… opening the Kandy advance → 403', denied(await json(await getAdvance(req('GET', `/api/employee-advances/${advB}`), ctx(advB)))))
+      check('… editing the Kandy advance → 403', denied(await json(await updateAdvance(req('PUT', `/api/employee-advances/${advB}`, { notes: 'x' }), ctx(advB)))))
+      check('… approving the Kandy advance → 403', denied(await json(await approveAdvance(req('POST', `/api/employee-advances/${advB}/approve`, { approvedAmount: 500 }), ctx(advB)))))
+      check('… cancelling the Kandy advance → 403', denied(await json(await cancelAdvance(req('POST', `/api/employee-advances/${advB}/cancel`, { cancellationReason: 'test' }), ctx(advB)))))
+      check('… disbursing the Kandy advance → 403', denied(await json(await disburseAdvance(req('POST', `/api/employee-advances/${advB}/disburse`, { disbursementMethod: 'cash' }), ctx(advB)))))
+      check('… and the Kandy advance is still pending', (await admin.query(`SELECT status FROM employee_advances WHERE id=$1`, [advB])).rows[0]?.status === 'pending_approval')
+      check('… requesting an advance for the Kandy employee → 403', denied(await json(await createAdvance(req('POST', '/api/employee-advances', { employeeProfileId: empB, requestedAmount: 100 })))))
+      const advOwn = await json(await createAdvance(req('POST', '/api/employee-advances', { employeeProfileId: empA, requestedAmount: 100 })))
+      check('… for their own employee → 200', advOwn.status === 200 || advOwn.status === 201, short(advOwn.body))
+
+      check('payroll runs list → 403 for branch-restricted HR', denied(await json(await listPayrollRuns(req('GET', '/api/payroll-runs')))))
+      check('… opening a run → 403', denied(await json(await getPayrollRun(req('GET', `/api/payroll-runs/${runId}`), ctx(runId)))))
+      check('… creating a run → 403', denied(await json(await createPayrollRun(req('POST', '/api/payroll-runs', { payrollMonth: 3, payrollYear: 2030 })))))
+      check('… processing a run → 403', denied(await json(await processPayrollRun(req('POST', `/api/payroll-runs/${runId}/process`, {}), ctx(runId)))))
+      check('… cancelling a run → 403', denied(await json(await cancelPayrollRun(req('POST', `/api/payroll-runs/${runId}/cancel`, { cancellationReason: 'test' }), ctx(runId)))))
+
+      as(f, 'owner')
+      const oAll = listOf((await json(await listEmployees(req('GET', '/api/employee-profiles?all=true')))).body).map((e) => e.id)
+      check('owner sees employees of both branches', oAll.includes(empA) && oAll.includes(empB), short(oAll))
+      check('owner opens the Kandy employee → 200', (await json(await getEmployee(req('GET', `/api/employee-profiles/${empB}`), ctx(empB)))).status === 200)
+      const oSl = listOf((await json(await listSlips(req('GET', '/api/salary-slips?pageSize=50')))).body).map((x) => x.id)
+      check('owner sees slips of both branches', oSl.includes(slipA) && oSl.includes(slipB), short(oSl))
+      check('owner opens the Kandy slip → 200', (await json(await getSlip(req('GET', `/api/salary-slips/${slipB}`), ctx(slipB)))).status === 200)
+      const oAl = listOf((await json(await listAdvances(req('GET', '/api/employee-advances?pageSize=50')))).body).map((x) => x.id)
+      check('owner sees advances of both branches', oAl.includes(advA) && oAl.includes(advB), short(oAl))
+      check('owner opens the Kandy advance → 200', (await json(await getAdvance(req('GET', `/api/employee-advances/${advB}`), ctx(advB)))).status === 200)
+      const runs = await json(await listPayrollRuns(req('GET', '/api/payroll-runs')))
+      check('owner lists payroll runs → 200', runs.status === 200, short(runs.body))
+      check('owner opens a run → 200', (await json(await getPayrollRun(req('GET', `/api/payroll-runs/${runId}`), ctx(runId)))).status === 200)
+    })
+
+    // ============================================================ stock intake sync / validate, item import
+    await step('stock intake sync and item import', async () => {
+      as(f, 'owner')
+      const bB = await json(await createIntake(req('POST', '/api/stock-intake', { warehouseId: f.whB })))
+      const batchB = (bB.body.id || bB.body.batch?.id) as string
+      check('owner opens a Kandy intake batch → 201', bB.status === 201 && !!batchB, short(bB.body))
+      const lineId = randomUUID()
+      await admin.query(`INSERT INTO stock_intake_lines (id, tenant_id, batch_id, quantity) VALUES ($1,$2,$3,1)`, [lineId, f.tenantId, batchB])
+      as(f, 'managerA')
+      const sy = await json(await syncIntake(req('POST', `/api/stock-intake/${batchB}/sync`, { priceChanges: 'apply' }), ctx(batchB)))
+      check('Colombo manager syncing the Kandy batch → 403', denied(sy), short(sy.body))
+      const line = (await admin.query(`SELECT price_decision FROM stock_intake_lines WHERE id=$1`, [lineId])).rows[0]
+      const batch = (await admin.query(`SELECT status FROM stock_intake_batches WHERE id=$1`, [batchB])).rows[0]
+      check('… nothing written (price decision unset, batch still open)', line?.price_decision === null && batch?.status !== 'syncing' && batch?.status !== 'posted', JSON.stringify([line, batch]))
+      check('… validating the Kandy batch → 403', denied(await json(await validateIntake(req('POST', `/api/stock-intake/${batchB}/validate`), ctx(batchB)))))
+      as(f, 'owner')
+      const ov = await json(await validateIntake(req('POST', `/api/stock-intake/${batchB}/validate`), ctx(batchB)))
+      check('owner validates the Kandy batch → 200', ov.status === 200, short(ov.body))
+
+      const importCsv = (csv: string, name: string) => {
+        const fd = new FormData()
+        fd.append('file', new File([csv], name, { type: 'text/csv' }))
+        fd.append('entity', 'items')
+        fd.append('mode', 'insert')
+        return new NextRequest('http://localhost/api/import/execute', { method: 'POST', body: fd })
+      }
+      const waitJob = async (jobId: string) => {
+        for (let i = 0; i < 60; i++) {
+          const st = (await admin.query(`SELECT status FROM import_jobs WHERE id=$1`, [jobId])).rows[0]?.status
+          if (st && st !== 'queued' && st !== 'processing') return st as string
+          await new Promise((r) => setTimeout(r, 250))
+        }
+        return 'timeout'
+      }
+      as(f, 'managerA')
+      const toB = await json(await executeImport(importCsv('Item Code,Name,Selling Price,Warehouse,Opening Stock\nK4-IMP-B,Kandy import,100,KDY,5\n', 'k4-b.csv')))
+      check('Colombo manager importing opening stock into Kandy → 403', denied(toB), short(toB.body))
+      const col = await json(await executeImport(importCsv('Item Code,Name,Selling Price,Stock: CMB,Stock: KDY\nK4-IMP-C,Mixed import,100,5,5\n', 'k4-c.csv')))
+      check('… per-branch stock columns naming Kandy → 403', denied(col), short(col.body))
+      const plain = await json(await executeImport(importCsv('Item Code,Name,Selling Price\nK4-IMP-P,Plain import,100\n', 'k4-p.csv')))
+      check('… items without stock → 200 (unchanged)', plain.status === 200 && !!plain.body.jobId, short(plain.body))
+      if (plain.body.jobId) await waitJob(plain.body.jobId as string)
+      const own = await json(await executeImport(importCsv('Item Code,Name,Selling Price,Warehouse,Opening Stock\nK4-IMP-A,Colombo import,100,CMB,5\n', 'k4-a.csv')))
+      check('… opening stock into Colombo → 200', own.status === 200 && !!own.body.jobId, short(own.body))
+      if (own.body.jobId) await waitJob(own.body.jobId as string)
+      as(f, 'owner')
+      const ob = await json(await executeImport(importCsv('Item Code,Name,Selling Price,Warehouse,Opening Stock\nK4-IMP-O,Owner import,100,KDY,5\n', 'k4-o.csv')))
+      check('owner importing opening stock into Kandy → 200', ob.status === 200 && !!ob.body.jobId, short(ob.body))
+      if (ob.body.jobId) await waitJob(ob.body.jobId as string)
+    })
+
+    // ============================================================ credit notes + refunds
+    await step('credit notes and refunds', async () => {
+      const note = { items: [{ itemName: 'Allowance', quantity: 1, unitPrice: 100 }], status: 'draft', settlement: 'refund' }
+      as(f, 'owner')
+      const nB = await json(await createCreditNote(req('POST', '/api/credit-notes', { ...note, saleId: saleOwnerB })))
+      check('owner credits the Kandy sale → 201', nB.status === 201, short(nB.body))
+      const nFree = await json(await createCreditNote(req('POST', '/api/credit-notes', note)))
+      check('owner adds a credit note without an invoice → 201', nFree.status === 201, short(nFree.body))
+      await admin.query(`INSERT INTO refunds (tenant_id, sale_id, original_sale_id, amount, method) VALUES ($1,$2,$2,50,'cash'), ($1,$3,$3,60,'cash')`,
+        [f.tenantId, saleOwnerB, saleCashierA])
+
+      as(f, 'managerA')
+      const toB = await json(await createCreditNote(req('POST', '/api/credit-notes', { ...note, saleId: saleOwnerB })))
+      check('Colombo manager crediting the Kandy sale → 403', denied(toB), short(toB.body))
+      const free = await json(await createCreditNote(req('POST', '/api/credit-notes', note)))
+      check('… a credit note without an invoice (company-wide) → 403', denied(free), short(free.body))
+      const nA = await json(await createCreditNote(req('POST', '/api/credit-notes', { ...note, saleId: saleCashierA })))
+      check('… crediting a Colombo sale → 201', nA.status === 201, short(nA.body))
+      const cl = await json(await listCreditNotes(req('GET', '/api/credit-notes')))
+      const cids = (cl.body.creditNotes as J[] || []).map((n) => n.id)
+      check('… credit note list: Colombo only', cl.status === 200 && cids.includes(nA.body.id) && !cids.includes(nB.body.id) && !cids.includes(nFree.body.id), short(cids))
+      check('… opening the Kandy note → 403', denied(await json(await getCreditNote(req('GET', `/api/credit-notes/${nB.body.id}`), ctx(nB.body.id)))))
+      check('… issuing the Kandy note → 403', denied(await json(await actCreditNote(req('PATCH', `/api/credit-notes/${nB.body.id}`, { action: 'issue' }), ctx(nB.body.id)))))
+      check('… and it is still a draft', (await admin.query(`SELECT status FROM credit_notes WHERE id=$1`, [nB.body.id])).rows[0]?.status === 'draft')
+      check('… opening their own note → 200', (await json(await getCreditNote(req('GET', `/api/credit-notes/${nA.body.id}`), ctx(nA.body.id)))).status === 200)
+      const missingNote = randomUUID()
+      check('… a missing note is still 404', (await json(await getCreditNote(req('GET', `/api/credit-notes/${missingNote}`), ctx(missingNote)))).status === 404)
+
+      const rl = await json(await listRefunds(req('GET', '/api/refunds?pageSize=50')))
+      const rSales = listOf(rl.body).map((r) => r.saleId)
+      check('Colombo manager refunds list: Colombo sales only', rl.status === 200 && rSales.includes(saleCashierA) && !rSales.includes(saleOwnerB) && rl.body.pagination?.total === rSales.length, short(rSales))
+      check('… refunds of the Kandy sale → 403', denied(await json(await listRefunds(req('GET', `/api/refunds?saleId=${saleOwnerB}`)))))
+      as(f, 'cashierA')
+      const rOwn = await json(await listRefunds(req('GET', `/api/refunds?saleId=${saleCashierA}`)))
+      check('Colombo cashier: refunds of their own sale → 200', rOwn.status === 200 && listOf(rOwn.body).length === 1, short(rOwn.body))
+      check('… of the Kandy sale → 403', denied(await json(await listRefunds(req('GET', `/api/refunds?saleId=${saleOwnerB}`)))))
+
+      as(f, 'owner')
+      const ocl = ((await json(await listCreditNotes(req('GET', '/api/credit-notes')))).body.creditNotes as J[] || []).map((n) => n.id)
+      check('owner sees every credit note', ocl.includes(nA.body.id) && ocl.includes(nB.body.id) && ocl.includes(nFree.body.id), short(ocl))
+      const orl = await json(await listRefunds(req('GET', '/api/refunds?pageSize=50')))
+      check('owner sees refunds of both branches', listOf(orl.body).length === 2, short(orl.body))
+      check('owner opens the Kandy note → 200', (await json(await getCreditNote(req('GET', `/api/credit-notes/${nB.body.id}`), ctx(nB.body.id)))).status === 200)
+    })
+
+    // ============================================================ dealers, allocations, payments
+    await step('dealers, allocations and payments', async () => {
+      as(f, 'owner')
+      const dB = await json(await createDealer(req('POST', '/api/dealers', { name: 'Kandy Motors', code: 'K4-DB', warehouseId: f.whB })))
+      const dA = await json(await createDealer(req('POST', '/api/dealers', { name: 'Colombo Motors', code: 'K4-DA', warehouseId: f.whA })))
+      const dNone = await json(await createDealer(req('POST', '/api/dealers', { name: 'Island Motors', code: 'K4-DN' })))
+      check('owner adds dealers (Kandy, Colombo, no branch) → 201', dB.status === 201 && dA.status === 201 && dNone.status === 201 && dNone.body.warehouseId === null, short([dB.body, dNone.body]))
+      const vB = randomUUID(); const vA = randomUUID(); const allocB = randomUUID(); const payB = randomUUID()
+      await admin.query(`INSERT INTO vehicle_inventory (id, tenant_id) VALUES ($1,$2), ($3,$2)`, [vB, f.tenantId, vA])
+      await admin.query(`INSERT INTO dealer_allocations (id, tenant_id, dealer_id, vehicle_inventory_id) VALUES ($1,$2,$3,$4)`, [allocB, f.tenantId, dB.body.id, vB])
+      await admin.query(`INSERT INTO dealer_payments (id, tenant_id, dealer_id, payment_no, type, direction, amount) VALUES ($1,$2,$3,'DP-K4-B','advance','inbound',100)`, [payB, f.tenantId, dB.body.id])
+
+      as(f, 'managerA')
+      const dl = await json(await listDealers(req('GET', '/api/dealers?all=true')))
+      const dids = listOf(dl.body).map((d) => d.id)
+      check('Colombo manager dealers: Colombo only (no Kandy, no branchless)', dl.status === 200 && dids.includes(dA.body.id) && !dids.includes(dB.body.id) && !dids.includes(dNone.body.id), short(dids))
+      const dp = await json(await listDealers(req('GET', '/api/dealers?page=1&pageSize=50')))
+      check('… paginated total counts Colombo only', dp.body.pagination?.total === listOf(dp.body).length, short(dp.body.pagination))
+      check('… opening the Kandy dealer → 403', denied(await json(await getDealer(req('GET', `/api/dealers/${dB.body.id}`), ctx(dB.body.id)))))
+      check('… changing the Kandy dealer → 403', denied(await json(await updateDealer(req('PUT', `/api/dealers/${dB.body.id}`, { notes: 'x' }), ctx(dB.body.id)))))
+      check('… binning the Kandy dealer → 403', denied(await json(await deleteDealer(req('DELETE', `/api/dealers/${dB.body.id}`), ctx(dB.body.id)))))
+      check('… moving the Colombo dealer to Kandy → 403', denied(await json(await updateDealer(req('PUT', `/api/dealers/${dA.body.id}`, { warehouseId: f.whB }), ctx(dA.body.id)))))
+      check('… Kandy dealer statement → 403', denied(await json(await dealerStatement(req('GET', `/api/dealers/${dB.body.id}/statement`), ctx(dB.body.id)))))
+      check('… Kandy dealer balance → 403', denied(await json(await dealerBalance(req('GET', `/api/dealers/${dB.body.id}/balance`), ctx(dB.body.id)))))
+      check('… opening their own dealer → 200', (await json(await getDealer(req('GET', `/api/dealers/${dA.body.id}`), ctx(dA.body.id)))).status === 200)
+      const missingDealer = randomUUID()
+      check('… a missing dealer is still 404', (await json(await getDealer(req('GET', `/api/dealers/${missingDealer}`), ctx(missingDealer)))).status === 404)
+
+      const all = await json(await listAllocations(req('GET', '/api/dealer-allocations?all=true')))
+      check('… allocations: no Kandy dealer\'s', all.status === 200 && !listOf(all.body).some((a) => a.id === allocB), short(all.body))
+      check('… opening the Kandy allocation → 403', denied(await json(await getAllocation(req('GET', `/api/dealer-allocations/${allocB}`), ctx(allocB)))))
+      check('… changing the Kandy allocation → 403', denied(await json(await updateAllocation(req('PUT', `/api/dealer-allocations/${allocB}`, { notes: 'x' }), ctx(allocB)))))
+      check('… allocating a vehicle to the Kandy dealer → 403', denied(await json(await createAllocation(req('POST', '/api/dealer-allocations', { dealerId: dB.body.id, vehicleInventoryId: vA })))))
+      const pl = await json(await listDealerPayments(req('GET', '/api/dealer-payments?all=true')))
+      check('… dealer payments: no Kandy dealer\'s', pl.status === 200 && !listOf(pl.body).some((p) => p.id === payB), short(pl.body))
+      check('… opening the Kandy payment → 403', denied(await json(await getDealerPayment(req('GET', `/api/dealer-payments/${payB}`), ctx(payB)))))
+      check('… changing the Kandy payment → 403', denied(await json(await updateDealerPayment(req('PUT', `/api/dealer-payments/${payB}`, { notes: 'x' }), ctx(payB)))))
+      check('… confirming the Kandy payment → 403', denied(await json(await confirmDealerPayment(req('POST', `/api/dealer-payments/${payB}/confirm`, {}), ctx(payB)))))
+      check('… and it is still pending', (await admin.query(`SELECT status FROM dealer_payments WHERE id=$1`, [payB])).rows[0]?.status === 'pending')
+      check('… paying the Kandy dealer → 403', denied(await json(await createDealerPayment(req('POST', '/api/dealer-payments', { dealerId: dB.body.id, type: 'advance', direction: 'inbound', amount: 10 })))))
+
+      as(f, 'sysA')
+      const sB = await json(await createDealer(req('POST', '/api/dealers', { name: 'Kandy 2', code: 'K4-DB2', warehouseId: f.whB })))
+      check('Colombo settings user adding a Kandy dealer → 403', denied(sB), short(sB.body))
+      const sA = await json(await createDealer(req('POST', '/api/dealers', { name: 'Colombo 2', code: 'K4-DA2' })))
+      check('… adding one without a branch → Colombo', sA.status === 201 && sA.body.warehouseId === f.whA, short(sA.body))
+
+      as(f, 'owner')
+      const odl = listOf((await json(await listDealers(req('GET', '/api/dealers?all=true')))).body).map((d) => d.id)
+      check('owner sees every dealer', odl.includes(dA.body.id) && odl.includes(dB.body.id) && odl.includes(dNone.body.id), short(odl))
+      check('owner opens the Kandy dealer → 200', (await json(await getDealer(req('GET', `/api/dealers/${dB.body.id}`), ctx(dB.body.id)))).status === 200)
+      check('owner opens the Kandy allocation → 200', (await json(await getAllocation(req('GET', `/api/dealer-allocations/${allocB}`), ctx(allocB)))).status === 200)
+      check('owner opens the Kandy payment → 200', (await json(await getDealerPayment(req('GET', `/api/dealer-payments/${payB}`), ctx(payB)))).status === 200)
+      const opl = await json(await listDealerPayments(req('GET', '/api/dealer-payments?all=true')))
+      check('owner sees the Kandy payment in the list', listOf(opl.body).some((p) => p.id === payB), short(opl.body))
     })
 
     // ============================================================ requisitions + attachments + branch creation

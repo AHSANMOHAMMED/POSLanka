@@ -47,6 +47,7 @@ export type EntityType =
   | 'gift-card'
   | 'layaway'
   | 'print-job' // drizzle/0182 print studio job orders
+  | 'service-job' // drizzle/0193 repair jobs / tailoring orders / service tickets
   | 'installment-plan' // drizzle/0181 hire purchase
   | 'delivery' // drizzle/0181 deliveries & installation
   | 'warranty-claim' // drizzle/0181 warranty / service tickets
@@ -259,6 +260,10 @@ export const tableToEntityMap: Record<string, EntityType> = {
   warranty_claims: 'warranty-claim',
   print_job_items: 'print-job',
   print_job_payments: 'print-job',
+  service_jobs: 'service-job',
+  service_job_items: 'service-job',
+  service_job_payments: 'service-job',
+  service_job_history: 'service-job',
   restaurant_orders: 'restaurant-order',
   kitchen_orders: 'kitchen-order',
   commissions: 'commission',

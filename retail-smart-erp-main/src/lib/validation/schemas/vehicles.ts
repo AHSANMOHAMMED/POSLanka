@@ -389,6 +389,7 @@ export const updateVehicleWarrantySchema = z.object({
 export const vehicleSalesListSchema = paginatedSearchSchema.extend({
   customerId: z.string().uuid().optional(),
   vehicleInventoryId: z.string().uuid().optional(),
+  status: z.enum(['active', 'cancelled']).optional(),
 })
 
 // POST /api/vehicle-sales
@@ -413,6 +414,8 @@ export const createVehicleSaleSchema = z.object({
   notes: z.string().max(5000).nullish(),
   deliveryDate: z.string().nullish(),
   deliveryNotes: z.string().max(5000).nullish(),
+  /** How the down payment was received (default: bank transfer when financed, else cash) */
+  paymentMethod: z.enum(['cash', 'card', 'bank_transfer', 'cheque']).optional(),
 })
 
 // ==================== SERVICE VEHICLES ====================

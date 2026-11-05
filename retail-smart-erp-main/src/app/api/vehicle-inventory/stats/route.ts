@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { vehicleInventory } from '@/lib/db/schema'
 import { eq, sql } from 'drizzle-orm'
@@ -14,9 +13,7 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const permError = requirePermission(session, 'manageVehicles')
-    if (permError) return permError
-
+    // Same access as the vehicle list these counts summarise (GET /api/vehicle-inventory)
     return await withTenant(session.user.tenantId, async (db) => {
       // Get counts grouped by status in a single query
       const statusCounts = await db

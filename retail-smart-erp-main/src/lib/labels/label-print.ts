@@ -4,7 +4,7 @@ import type { LabelTemplate, LabelItemData, PrintLabelConfig } from './types'
 import { renderLabelHtml, getShapeBorderRadius } from './label-renderer'
 import { executePrint } from '@/lib/print/print-executor'
 import type { PrinterProfile } from '@/lib/print/printer-profiles'
-import { packLabelRows, type LabelPrintItem, type LabelTemplateLike } from '@/lib/print/label/common'
+import { normDpi, packLabelRows, type LabelDpi, type LabelPrintItem, type LabelTemplateLike, type RawLabelLanguage } from '@/lib/print/label/common'
 import { stickerLayout, stickerRollWidthMm, type StickerSetup } from './sticker-stock'
 
 const PAGE_SIZES: Record<string, { width: number; height: number }> = {
@@ -205,7 +205,7 @@ export async function buildRollPrintDocument(
   codeWord?: string,
   copies = 1
 ): Promise<RollPrintDocument> {
-  const dpi = setup.dpi === 300 ? 300 : 203
+  const dpi = normDpi(setup.dpi)
   const dpm = dpi / 25.4
   const snap = (mm: number) => r4(Math.round(mm * dpm) / dpm)
   const rollW = stickerRollWidthMm(setup)
@@ -266,7 +266,7 @@ export function rollPrintHtml(doc: Pick<RollPrintDocument, 'title' | 'styles' | 
  * Wrong paper size / order shows at once while wasting only 2 rows.
  */
 export function buildAlignmentTestDocument(setup: StickerSetup): RollPrintDocument {
-  const dpm = (setup.dpi === 300 ? 300 : 203) / 25.4
+  const dpm = normDpi(setup.dpi) / 25.4
   const snap = (mm: number) => r4(Math.round(mm * dpm) / dpm)
   const rollW = stickerRollWidthMm(setup)
   const w = setup.labelWidthMm
@@ -334,9 +334,21 @@ export function effectiveLabelLanguage(profile: PrinterProfile): PrinterProfile[
   return lang
 }
 
-/** Printer resolution for raw printing: 300 if the printer profile or the roll setup says so. */
-export function rawLabelDpi(profile: PrinterProfile, setup?: StickerSetup | null): 203 | 300 {
-  return profile.label?.dpi === 300 || setup?.dpi === 300 ? 300 : 203
+/** Printer resolution for raw printing: the roll setup's when it says more than 203, else the profile's. */
+export function rawLabelDpi(profile: PrinterProfile, setup?: StickerSetup | null): LabelDpi {
+  const s = normDpi(setup?.dpi)
+  return s !== 203 ? s : normDpi(profile.label?.dpi)
+}
+
+/** How raw label printers get the label: 'exact' = one graphic per row (prints the preview), 'fast' = printer fonts / native barcodes. */
+export type LabelRenderMode = 'exact' | 'fast'
+
+/** Options the user chose in Printer setup (override the printer profile / name guess). */
+export interface RawPrintOverrides {
+  /** Printer language chosen by the user (not guessed from the printer name). */
+  language?: RawLabelLanguage | 'driver' | null
+  dpi?: LabelDpi | null
+  renderMode?: LabelRenderMode
 }
 
 /**
@@ -356,18 +368,48 @@ export async function printLabelsRaw(
     copies?: number
     /** Sticker stock setup: columns, gaps, offsets, dpi, darkness, speed (overrides the profile's media). */
     setup?: StickerSetup | null
-  } = {}
+  } & RawPrintOverrides = {}
 ): Promise<RawLabelPrintResult> {
-  const language = effectiveLabelLanguage(profile)
+  // a language the user chose is used as is (no Zebra-name guess)
+  const language = opts.language || effectiveLabelLanguage(profile)
   const setup = opts.setup || null
+  const dpi = opts.dpi ? normDpi(opts.dpi) : rawLabelDpi(profile, setup)
   if (language === 'browser') return { ok: false, warnings: [], error: 'Printer is set to browser printing' }
-  if (language === 'driver') return printLabelsThroughDriver(profile, template, items, opts)
-  const { encodeLabels } = await import('@/lib/print/label')
+  if (language === 'driver') return printLabelsThroughDriver(profile, template, items, { ...opts, dpi })
   const { createCanvasLabelRasterizer, createImageElementRasterizer } = await import('@/lib/print/label/canvas-raster')
   const { sendToPrinter } = await import('@/lib/print/printer-profiles')
+  if (opts.renderMode === 'exact') {
+    // One graphic per row, rendered exactly like the preview: no printer fonts, no font substitution.
+    const { renderDriverRows } = await import('@/lib/print/label/driver-image')
+    const { encodeGraphicRows } = await import('@/lib/print/label/graphic')
+    const rows = await renderDriverRows(template, items, {
+      dpi,
+      copies: opts.copies ?? 1,
+      codeWord: opts.codeWord,
+      currencySymbol: opts.currencySymbol,
+      tenantName: opts.tenantName,
+      ...(setup ? { widthMm: setup.labelWidthMm, heightMm: setup.labelHeightMm, layout: stickerLayout(setup) } : {}),
+      rasterizeLabel: createCanvasLabelRasterizer(opts.logoUrl),
+    })
+    if (rows.rows.length === 0) return { ok: false, warnings: rows.warnings, error: 'Nothing to print' }
+    const enc = encodeGraphicRows(rows, {
+      language,
+      gapMm: setup?.rowGapMm ?? profile.label?.gapMm ?? 2,
+      darkness: setup?.darkness ?? profile.label?.darkness,
+      speed: setup?.speed ?? profile.label?.speed,
+      direction: setup?.direction,
+    })
+    try {
+      await sendToPrinter(profile, enc.bytes, { title: 'Labels' })
+      return { ok: true, warnings: rows.warnings }
+    } catch (e) {
+      return { ok: false, warnings: rows.warnings, error: e instanceof Error ? e.message : String(e) }
+    }
+  }
+  const { encodeLabels } = await import('@/lib/print/label')
   const res = await encodeLabels(template, items, {
     language,
-    dpi: rawLabelDpi(profile, setup),
+    dpi,
     copies: opts.copies ?? 1,
     codeWord: opts.codeWord,
     currencySymbol: opts.currencySymbol,
@@ -398,7 +440,7 @@ export async function printLabelsThroughDriver(
   profile: PrinterProfile,
   template: LabelTemplateLike,
   items: (LabelPrintItem | LabelItemData)[],
-  opts: { currencySymbol?: string; tenantName?: string; codeWord?: string; logoUrl?: string | null; copies?: number; setup?: StickerSetup | null } = {}
+  opts: { currencySymbol?: string; tenantName?: string; codeWord?: string; logoUrl?: string | null; copies?: number; setup?: StickerSetup | null; dpi?: LabelDpi | null } = {}
 ): Promise<RawLabelPrintResult> {
   if (profile.transport !== 'agent' || !profile.agentTarget) {
     return { ok: false, warnings: [], error: '"Through the driver" printing needs the skyERPOS print agent and an installed printer. Pick the printer under "Print directly".' }
@@ -408,7 +450,7 @@ export async function printLabelsThroughDriver(
   const { createCanvasLabelRasterizer } = await import('@/lib/print/label/canvas-raster')
   const { PrintAgentTransport } = await import('@/lib/print/escpos/transports')
   const job = await buildDriverImageJob(template, items, {
-    dpi: rawLabelDpi(profile, setup),
+    dpi: opts.dpi ? normDpi(opts.dpi) : rawLabelDpi(profile, setup),
     copies: opts.copies ?? 1,
     codeWord: opts.codeWord,
     currencySymbol: opts.currencySymbol,
@@ -430,7 +472,7 @@ export async function printLabelsThroughDriver(
  * roll) with a border 0.5 mm inside each label, so order, size and offsets
  * can be checked while wasting only two rows.
  */
-export async function printAlignmentTestRaw(profile: PrinterProfile, setup: StickerSetup): Promise<RawLabelPrintResult> {
+export async function printAlignmentTestRaw(profile: PrinterProfile, setup: StickerSetup, overrides: RawPrintOverrides = {}): Promise<RawLabelPrintResult> {
   const w = setup.labelWidthMm
   const h = setup.labelHeightMm
   const template: LabelTemplateLike = {
@@ -446,7 +488,7 @@ export async function printAlignmentTestRaw(profile: PrinterProfile, setup: Stic
     item: { id: `align-${i + 1}`, name: String(i + 1), sku: null, barcode: null, sellingPrice: '0', costPrice: '0', brand: null, oemPartNumber: null, pluCode: null, category: null, unit: '', weight: null, dimensions: null, imageUrl: null } as LabelItemData,
     quantity: 1,
   }))
-  return printLabelsRaw(profile, template, items, { setup })
+  return printLabelsRaw(profile, template, items, { setup, ...overrides })
 }
 
 /** Browser alignment test (2 numbered rows) through the print dialog. */

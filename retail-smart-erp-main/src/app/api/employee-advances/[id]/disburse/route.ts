@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
-import { withTenantTransaction } from '@/lib/db'
+import { assertRecordEmployeeInScope } from '@/lib/attendance/api'
+import { withTenantTransaction, withTenant } from '@/lib/db'
 import { employeeAdvances, accountingSettings } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -27,6 +28,10 @@ export async function POST(
 
     const permError = requirePermission(session, 'disburseAdvances')
     if (permError) return permError
+
+    // K4: a branch-restricted manager only works with employees of their own branches
+    const branchDenied = await withTenant(session.user.tenantId, (db) => assertRecordEmployeeInScope(session, db, employeeAdvances, employeeAdvances.employeeProfileId, id))
+    if (branchDenied) return branchDenied
 
     const quotaError = await requireQuota(session.user.tenantId, 'essential')
     if (quotaError) return quotaError

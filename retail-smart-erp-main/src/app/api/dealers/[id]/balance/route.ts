@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 import { withTenant } from '@/lib/db'
 import { dealers, dealerAllocations } from '@/lib/db/schema'
 import { eq, and, sql } from 'drizzle-orm'
@@ -27,6 +28,9 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: a dealer of another branch (or without one) is refused to branch-restricted staff
+      const branchDenied = await assertRecordBranch(session, db, dealers, id)
+      if (branchDenied) return branchDenied
       // Get dealer
       const dealer = await db.query.dealers.findFirst({
         where: eq(dealers.id, id),

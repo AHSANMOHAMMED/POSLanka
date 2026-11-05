@@ -9,11 +9,53 @@
  */
 import { DEFAULT_AGENT_URL, getTransport, TransportError, type TransportKind } from './escpos/transports'
 import type { CodePage, PaperWidth } from './escpos/encoder'
+import { ESCP_CPIS, type EscpCpi } from './escp'
+import { DOC_PAPER_SIZES, isDocPaperSize, type DocPaperSize } from './paper'
 
 export const PRINTERS_KEY = 'poslanka:printers'
 export const LEGACY_PRINTER_KEY = 'poslanka:printer'
 
-export type PrinterRole = 'receipt' | 'label' | 'kitchen'
+/** 'document' = A4 / A5 / dot matrix printer for invoices, quotations, credit notes, POs, job cards … */
+export type PrinterRole = 'receipt' | 'label' | 'kitchen' | 'document'
+
+/**
+ * Document printer of this terminal. `page` = laser / inkjet through the browser print dialog
+ * (templates, letter heads, pre-printed forms); `dotmatrix` = fixed-width ESC/P text (Epson
+ * LQ-310 …) sent raw through the print agent / USB, or printed as a monospace page in the browser.
+ */
+export type DocumentPrintMode = 'page' | 'dotmatrix'
+
+export interface DocumentDocSetting {
+  /** print_templates id ('' = the default template of the document type). */
+  templateId: string
+  /** Paper override for page mode ('' = the template's paper). */
+  paperSize: DocPaperSize | ''
+}
+
+export interface DocumentPrinterConfig {
+  mode: DocumentPrintMode
+  /** Dot matrix: characters per inch (10 = 80 col, 12 = 96, 17 = 136 condensed on an 8" carriage). */
+  cpi: EscpCpi
+  /** Dot matrix carriage width in inches (LQ-310 / LX-350: 8; wide-carriage LQ-590 / FX-2175: 13.6). */
+  carriageInches: number
+  /** Dot matrix: distance between perforations (11 = 9.5×11", 5.5 = half, 12 = 12" stock). */
+  pageLengthInches: number
+  /** Dot matrix paper width (mm) for the browser fallback page. */
+  paperWidthMm: number
+  letterQuality: boolean
+  /** Per document type (invoice, quotation, credit_note, purchase_order, job_card, warranty_card …). */
+  docs: Record<string, DocumentDocSetting>
+}
+
+export const DEFAULT_DOCUMENT_CONFIG: DocumentPrinterConfig = {
+  mode: 'page',
+  cpi: 10,
+  carriageInches: 8,
+  pageLengthInches: 11,
+  paperWidthMm: 241.3,
+  letterQuality: false,
+  docs: {},
+}
 /**
  * 'driver' = "Through the driver": each label row is sent as an exact-size
  * image to the print agent (POST /print-image), which prints it with the
@@ -52,6 +94,8 @@ export interface PrinterProfile {
   /** Receipt / kitchen paper width. */
   paperWidth: PaperWidth
   label: LabelPrinterConfig
+  /** Role 'document' only. */
+  document: DocumentPrinterConfig
   agentUrl: string
   agentTarget: string
   autoPrint: boolean
@@ -77,6 +121,7 @@ export const ROLE_LABELS: Record<PrinterRole, string> = {
   receipt: 'Receipt',
   label: 'Label',
   kitchen: 'Kitchen',
+  document: 'Document (A4 / A5 / dot matrix)',
 }
 
 function randomId(): string {
@@ -88,11 +133,12 @@ export function newPrinterProfile(role: PrinterRole, patch: Partial<PrinterProfi
   const id = patch.id || randomId()
   return sanitizePrinterProfile({
     id,
-    name: role === 'receipt' ? 'Receipt printer' : role === 'label' ? 'Label printer' : 'Kitchen printer',
+    name: role === 'receipt' ? 'Receipt printer' : role === 'label' ? 'Label printer' : role === 'document' ? 'Document printer' : 'Kitchen printer',
     role,
     transport: 'browser',
     paperWidth: 80,
     label: { ...DEFAULT_LABEL_CONFIG },
+    document: { ...DEFAULT_DOCUMENT_CONFIG, docs: {} },
     agentUrl: DEFAULT_AGENT_URL,
     agentTarget: '',
     autoPrint: role === 'receipt',
@@ -127,8 +173,35 @@ export function sanitizeLabelConfig(raw: Partial<LabelPrinterConfig> | null | un
   return out
 }
 
+export function sanitizeDocumentConfig(raw: Partial<DocumentPrinterConfig> | null | undefined): DocumentPrinterConfig {
+  const r = raw || {}
+  const docs: Record<string, DocumentDocSetting> = {}
+  if (r.docs && typeof r.docs === 'object' && !Array.isArray(r.docs)) {
+    for (const [k, v] of Object.entries(r.docs).slice(0, 30)) {
+      if (!/^[a-z][a-z0-9_]{0,39}$/.test(k) || !v || typeof v !== 'object') continue
+      const d = v as Partial<DocumentDocSetting>
+      docs[k] = {
+        templateId: typeof d.templateId === 'string' ? d.templateId.slice(0, 64) : '',
+        paperSize: isDocPaperSize(d.paperSize) && d.paperSize !== 'custom' ? d.paperSize : '',
+      }
+    }
+  }
+  return {
+    mode: r.mode === 'dotmatrix' ? 'dotmatrix' : 'page',
+    cpi: ESCP_CPIS.includes(Number(r.cpi) as EscpCpi) ? (Number(r.cpi) as EscpCpi) : DEFAULT_DOCUMENT_CONFIG.cpi,
+    carriageInches: clampNum(r.carriageInches, 3, 15, DEFAULT_DOCUMENT_CONFIG.carriageInches),
+    pageLengthInches: Math.round(clampNum(r.pageLengthInches, 2, 22, DEFAULT_DOCUMENT_CONFIG.pageLengthInches) * 2) / 2,
+    paperWidthMm: clampNum(r.paperWidthMm, 50, 420, DEFAULT_DOCUMENT_CONFIG.paperWidthMm),
+    letterQuality: !!r.letterQuality,
+    docs,
+  }
+}
+
+/** Paper sizes offered per document type (no custom: that is a template setting). */
+export const DOCUMENT_PAPER_CHOICES = DOC_PAPER_SIZES.filter((p) => p !== 'custom')
+
 export function sanitizePrinterProfile(raw: Partial<PrinterProfile>): PrinterProfile {
-  const role: PrinterRole = raw.role === 'label' || raw.role === 'kitchen' ? raw.role : 'receipt'
+  const role: PrinterRole = raw.role === 'label' || raw.role === 'kitchen' || raw.role === 'document' ? raw.role : 'receipt'
   const transport: TransportKind = (['browser', 'webusb', 'webbluetooth', 'agent'] as const).includes(raw.transport as TransportKind)
     ? (raw.transport as TransportKind)
     : 'browser'
@@ -140,6 +213,7 @@ export function sanitizePrinterProfile(raw: Partial<PrinterProfile>): PrinterPro
     transport,
     paperWidth: raw.paperWidth === 58 ? 58 : 80,
     label: sanitizeLabelConfig(raw.label),
+    document: sanitizeDocumentConfig(raw.document),
     agentUrl: (raw.agentUrl || DEFAULT_AGENT_URL).trim(),
     agentTarget: (raw.agentTarget || '').trim(),
     autoPrint: raw.autoPrint ?? role === 'receipt',
@@ -246,7 +320,9 @@ export function upsertPrinterProfile(profile: PrinterProfile): PrinterProfile[] 
 export function updatePrinterProfile(id: string, patch: Partial<PrinterProfile>): PrinterProfile[] {
   const list = getPrinterProfilesSnapshot()
   return savePrinterProfiles(
-    list.map((p) => (p.id === id ? { ...p, ...patch, label: patch.label ? { ...p.label, ...patch.label } : p.label } : p))
+    list.map((p) => (p.id === id
+      ? { ...p, ...patch, label: patch.label ? { ...p.label, ...patch.label } : p.label, document: patch.document ? { ...p.document, ...patch.document } : p.document }
+      : p))
   )
 }
 

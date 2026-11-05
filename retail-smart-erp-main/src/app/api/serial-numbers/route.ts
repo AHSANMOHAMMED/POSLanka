@@ -29,6 +29,8 @@ export async function GET(request: NextRequest) {
         const escaped = escapeLikePattern(search)
         conditions.push(or(
           ilike(itemSerialNumbers.serialNumber, `%${escaped}%`),
+          ilike(itemSerialNumbers.imei, `%${escaped}%`),
+          ilike(itemSerialNumbers.imei2, `%${escaped}%`),
           ilike(items.name, `%${escaped}%`)
         ))
       }
@@ -50,6 +52,8 @@ export async function GET(request: NextRequest) {
           itemId: itemSerialNumbers.itemId,
           itemName: items.name,
           serialNumber: itemSerialNumbers.serialNumber,
+          imei: itemSerialNumbers.imei,
+          imei2: itemSerialNumbers.imei2,
           status: itemSerialNumbers.status,
           warehouseId: itemSerialNumbers.warehouseId,
           warehouseName: warehouses.name,

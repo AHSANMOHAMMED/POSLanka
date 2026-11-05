@@ -6,6 +6,7 @@ import { withTenant } from '@/lib/db'
 import { prescriptions, sales, users } from '@/lib/db/schema'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logError } from '@/lib/ai/error-logger'
+import { getBranchScope, branchFilter } from '@/lib/auth/branch-access'
 
 /**
  * GET /api/prescriptions?q=&from=&to=&controlled=1&page=&pageSize= — the prescription register:
@@ -36,9 +37,12 @@ export async function GET(request: NextRequest) {
       where.push(sql`(${prescriptions.doctorName} ILIKE ${like} OR ${prescriptions.doctorRegNo} ILIKE ${like} OR ${prescriptions.patientName} ILIKE ${like}
         OR ${prescriptions.prescriptionNo} ILIKE ${like} OR ${sales.invoiceNo} ILIKE ${like})`)
     }
-    const cond = and(...where)
-
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: branch-restricted staff see the prescriptions of their own branches' bills
+      const scope = await getBranchScope(session, db)
+      const branchCond = branchFilter(scope, sales.warehouseId)
+      if (branchCond) where.push(branchCond)
+      const cond = and(...where)
       const [rows, [{ n }]] = await Promise.all([
         db.select({
           id: prescriptions.id, createdAt: prescriptions.createdAt, saleId: prescriptions.saleId, invoiceNo: sales.invoiceNo, total: sales.total,
@@ -49,6 +53,9 @@ export async function GET(request: NextRequest) {
           medicines: sql<string | null>`(SELECT string_agg(si.item_name || ' × ' || trim(to_char(si.quantity, 'FM999999990.###')), ', ' ORDER BY si.item_name)
             FROM sale_items si JOIN items it ON it.id = si.item_id
             WHERE si.sale_id = ${prescriptions.saleId} AND it.drug_schedule IN ('prescription', 'controlled'))`,
+          // 0194: photos / scans of the prescription (files attached_to_type = 'prescription')
+          attachments: sql<number>`(SELECT count(*)::int FROM files f WHERE f.tenant_id = ${prescriptions.tenantId}
+            AND f.attached_to_type = 'prescription' AND f.attached_to_id = ${prescriptions.id})`,
         })
           .from(prescriptions)
           .leftJoin(sales, eq(sales.id, prescriptions.saleId))

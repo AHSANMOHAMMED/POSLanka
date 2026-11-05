@@ -30,9 +30,18 @@ export type LabelRasterizer = (
   ctx: { dpi: number; widthDots: number; heightDots: number; currencySymbol?: string; tenantName?: string; codeWord?: string }
 ) => Promise<PackedRaster | null>
 
+/** Printer resolutions a label printer can have. */
+export type LabelDpi = 203 | 300 | 600
+
+/** Any value -> a supported printer resolution (default 203). */
+export function normDpi(v: unknown): LabelDpi {
+  const n = Number(v)
+  return n === 600 ? 600 : n === 300 ? 300 : 203
+}
+
 export interface EncodeLabelOptions {
   language: RawLabelLanguage
-  dpi: 203 | 300
+  dpi: LabelDpi
   /** Multiplies each item's quantity (default 1). */
   copies?: number
   codeWord?: string

@@ -14,6 +14,14 @@ import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateEmployeeProfileSchema } from '@/lib/validation/schemas/hr'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { SAFE_USER } from '@/lib/db/safe-columns'
+import { assertEmployeeInScope, type HrSession } from '@/lib/attendance/api'
+import type { TenantDb } from '@/lib/db'
+
+/** K4: refuse an existing employee outside a branch-restricted manager's branches (missing → null, the caller 404s). */
+async function existingEmployeeDenied(session: HrSession, db: TenantDb, id: string): Promise<NextResponse | null> {
+  const [row] = await db.select({ id: employeeProfiles.id }).from(employeeProfiles).where(eq(employeeProfiles.id, id)).limit(1)
+  return row ? assertEmployeeInScope(session, db, id) : null
+}
 
 // GET single employee profile
 export async function GET(
@@ -43,6 +51,8 @@ export async function GET(
       if (!profile) {
         return NextResponse.json({ error: 'Employee profile not found' }, { status: 404 })
       }
+      const denied = await assertEmployeeInScope(session, db, id)
+      if (denied) return denied
 
       return NextResponse.json(profile)
     })
@@ -85,6 +95,9 @@ export async function PUT(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      const denied = await existingEmployeeDenied(session, db, id)
+      if (denied) return denied
+
       // Use transaction with FOR UPDATE to prevent race conditions
       const result = await db.transaction(async (tx) => {
         // Lock and get current profile (RLS scopes the query)
@@ -212,6 +225,9 @@ export async function DELETE(
 
     // Execute with RLS tenant context
     return await withTenant(session.user.tenantId, async (db) => {
+      const denied = await existingEmployeeDenied(session, db, id)
+      if (denied) return denied
+
       const [updated] = await db.update(employeeProfiles)
         .set({
           employmentStatus: 'terminated',

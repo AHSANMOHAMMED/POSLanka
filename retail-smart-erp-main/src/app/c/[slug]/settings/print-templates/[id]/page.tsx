@@ -4,11 +4,13 @@
  * Print template designer (drizzle/0179): Zoho-style editor for invoice / quotation templates.
  * Left: icon rail + settings panel; right: live preview (iframe srcdoc of renderInvoiceHtml) of
  * sample data or a real recent sale / quotation. Saves print_templates.config via PUT /api/print-templates/[id].
+ * "Pre-printed form" tab: fields placed in mm over an uploaded scan of the user's own form (FormDesigner).
+ * Margins are edited in mm (templates saved with inch margins are converted on load: same printed size).
  */
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { Settings2, PanelTop, Building2, Table2, Calculator, StickyNote, RefreshCw, Save, X, Loader2, ImagePlus, Trash2 } from 'lucide-react'
+import { Settings2, PanelTop, Building2, Table2, Calculator, StickyNote, RefreshCw, Save, X, Loader2, ImagePlus, Trash2, FileImage, Printer } from 'lucide-react'
 import { toast } from '@/components/ui/toast'
 import {
   INVOICE_COLUMN_KEYS,
@@ -18,6 +20,7 @@ import {
   renderInvoiceHtml,
   sampleInvoiceDoc,
   templateConfigFromRow,
+  withMarginsInMm,
   type InvoiceColumnKey,
   type InvoiceCompany,
   type InvoiceDoc,
@@ -25,10 +28,13 @@ import {
   type InvoiceTemplateConfig,
   type LabeledToggle,
 } from '@/lib/print/invoice-template'
-import { companyFromTenant, loadSaleDocument, quotationToDoc, type PrintTemplateRow, type QuotationApi } from '@/lib/print/invoice-document'
+import { companyFromTenant, fetchLetterHead, loadSaleDocument, printHtmlDocument, quotationToDoc, type PrintTemplateRow, type QuotationApi } from '@/lib/print/invoice-document'
+import { printFormCalibration } from '@/lib/print/document-print'
+import type { LetterHeadConfig } from '@/lib/print/template-renderer'
+import { FormDesignerCanvas, FormDesignerPanel, type FormSelection } from '@/components/print/FormDesigner'
 import { fetchTenantInfo } from '@/lib/print/receipt-loader'
 
-type TabKey = 'general' | 'header' | 'details' | 'table' | 'totals' | 'other'
+type TabKey = 'general' | 'header' | 'details' | 'table' | 'totals' | 'other' | 'form'
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Settings2 }> = [
   { key: 'general', label: 'General', icon: Settings2 },
@@ -37,6 +43,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof Settings2 }> = [
   { key: 'table', label: 'Table', icon: Table2 },
   { key: 'totals', label: 'Total', icon: Calculator },
   { key: 'other', label: 'Other Details', icon: StickyNote },
+  { key: 'form', label: 'Pre-printed form', icon: FileImage },
 ]
 
 const COLUMN_LABELS: Record<InvoiceColumnKey, string> = {
@@ -175,6 +182,8 @@ export default function PrintTemplateDesignerPage() {
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [previewCfg, setPreviewCfg] = useState<InvoiceTemplateConfig | null>(null)
   const [previewNonce, setPreviewNonce] = useState(0)
+  const [letterHead, setLetterHead] = useState<LetterHeadConfig | null>(null)
+  const [formSel, setFormSel] = useState<FormSelection>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -184,8 +193,9 @@ export default function PrintTemplateDesignerPage() {
         const data = await res.json()
         if (!res.ok) { if (!cancelled) setLoadError(data.error || 'Template not found'); return }
         const t = data as PrintTemplateRow
-        const c = templateConfigFromRow(t)
+        const c = withMarginsInMm(templateConfigFromRow(t))
         if (cancelled) return
+        fetchLetterHead(t.letterHeadId).then((lh) => { if (!cancelled) setLetterHead(lh) })
         setRow(t)
         setName(t.name)
         setCfg(c)
@@ -237,11 +247,22 @@ export default function PrintTemplateDesignerPage() {
     return sampleInvoiceDoc((kind === 'sample' ? ref : 'invoice') as InvoiceDocKind)
   }, [source, realDoc])
   const html = useMemo(
-    () => (shownCfg ? renderInvoiceHtml(shownCfg, doc, company, { preview: true }) : ''),
+    () => (shownCfg ? renderInvoiceHtml(shownCfg, doc, company, { preview: true, letterHead }) : ''),
     // previewNonce forces a re-render on "Refresh Preview"
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [shownCfg, doc, company, previewNonce],
+    [shownCfg, doc, company, previewNonce, letterHead],
   )
+
+  async function printSample() {
+    if (!cfg) return
+    const ok = await printHtmlDocument(renderInvoiceHtml(cfg, doc, company, { letterHead: cfg.form.enabled ? null : letterHead }))
+    if (!ok) toast.error('Allow pop-ups to print')
+  }
+
+  async function printCalibration() {
+    if (!cfg) return
+    if (!(await printFormCalibration(cfg))) toast.error('Allow pop-ups to print')
+  }
 
   function refreshPreview() {
     setPreviewCfg(cfg)
@@ -367,13 +388,19 @@ export default function PrintTemplateDesignerPage() {
             {Sel('general.paperSize', 'Paper size', Object.entries(INVOICE_PAPER_MM).map(([value, p]) => ({ value, label: p.label })))}
             {Sel('general.orientation', 'Orientation', [{ value: 'portrait', label: 'Portrait' }, { value: 'landscape', label: 'Landscape' }])}
           </div>
+          {str('general.paperSize') === 'custom' && (
+            <div className="grid grid-cols-2 gap-2">
+              {Num('general.customWidthMm', 'Width (mm)', 1, 40, 1200)}
+              {Num('general.customHeightMm', 'Height (mm)', 1, 40, 1200)}
+            </div>
+          )}
         </Section>
-        <Section title="Margins (inches)">
+        <Section title="Margins (mm)">
           <div className="grid grid-cols-4 gap-2">
-            {Num('general.margins.top', 'Top', 0.05, 0, 3)}
-            {Num('general.margins.bottom', 'Bottom', 0.05, 0, 3)}
-            {Num('general.margins.left', 'Left', 0.05, 0, 3)}
-            {Num('general.margins.right', 'Right', 0.05, 0, 3)}
+            {Num('general.margins.top', 'Top', 0.5, 0, 80)}
+            {Num('general.margins.bottom', 'Bottom', 0.5, 0, 80)}
+            {Num('general.margins.left', 'Left', 0.5, 0, 80)}
+            {Num('general.margins.right', 'Right', 0.5, 0, 80)}
           </div>
         </Section>
         <Section title="Font & colours">
@@ -545,7 +572,19 @@ export default function PrintTemplateDesignerPage() {
         </Section>
       </>
     ),
+    form: (
+      <FormDesignerPanel
+        cfg={cfg}
+        update={update}
+        selection={formSel}
+        setSelection={setFormSel}
+        templateId={id}
+        onCalibrate={() => { void printCalibration() }}
+        onPrintSample={() => { void printSample() }}
+      />
+    ),
   }
+  const formCanvas = tab === 'form' && cfg.form.enabled
 
   return (
     <div className="flex flex-col h-[calc(100dvh-4rem)] min-h-[600px] bg-gray-50 dark:bg-gray-900">
@@ -560,6 +599,9 @@ export default function PrintTemplateDesignerPage() {
         <div className="flex items-center gap-2">
           <button type="button" onClick={refreshPreview} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700">
             <RefreshCw size={14} /> Refresh Preview
+          </button>
+          <button type="button" onClick={() => { void printSample() }} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700" title="Print the preview document with the current (unsaved) settings">
+            <Printer size={14} /> Print
           </button>
           <button type="button" onClick={save} disabled={saving} className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
             {saving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save
@@ -616,6 +658,9 @@ export default function PrintTemplateDesignerPage() {
             </select>
             <Toggle label="Live preview" checked={autoRefresh} onChange={(v) => { setAutoRefresh(v); if (!v) setPreviewCfg(cfg) }} />
           </div>
+          {formCanvas ? (
+            <FormDesignerCanvas cfg={cfg} doc={doc} company={company} update={update} selection={formSel} setSelection={setFormSel} />
+          ) : (
           <iframe
             key={previewNonce}
             title="Template preview"
@@ -625,6 +670,7 @@ export default function PrintTemplateDesignerPage() {
             ref={observePreview}
             className="flex-1 w-full border-0 bg-gray-200 min-h-[500px]"
           />
+          )}
         </div>
       </div>
     </div>

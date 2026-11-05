@@ -7,7 +7,8 @@ import { idParamSchema } from '@/lib/validation/schemas/common'
 import { syncIntakeBatch } from '@/lib/inventory/stock-intake-sync'
 import { syncStockIntakeSchema } from '@/lib/validation/schemas/stock-intake'
 import { withTenant } from '@/lib/db'
-import { stockIntakeLines } from '@/lib/db/schema'
+import { stockIntakeBatches, stockIntakeLines } from '@/lib/db/schema'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { intakeErrorResponse } from '@/lib/inventory/stock-intake-http'
 import { notify } from '@/lib/notifications/notify'
@@ -25,6 +26,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (permError) return permError
 
   try {
+    // K4: a batch of another branch is refused before anything is written (general branch rule,
+    // as on GET /api/stock-intake/[id]; a missing batch falls through to the sync's 404)
+    const branchDenied = await withTenant(session.user.tenantId, (db) => assertRecordBranch(session, db, stockIntakeBatches, p.data.id))
+    if (branchDenied) return branchDenied
     // Optional { priceChanges: 'apply' | 'keep' }: the user's answer for every undecided price change
     // eslint-disable-next-line custom-rules/no-direct-request-json -- the body is optional (older apps send none)
     const body = syncStockIntakeSchema.safeParse(await request.json().catch(() => ({})))

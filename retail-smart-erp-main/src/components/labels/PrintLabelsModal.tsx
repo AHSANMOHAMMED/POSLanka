@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui/modal'
 import { LabelPreview } from './LabelPreview'
 import { printLabels, printLabelsOnRoll, printLabelsRaw } from '@/lib/labels/label-print'
 import { useDirectZebra } from '@/hooks/useDirectZebra'
+import { sanitizePrintSetup, type LabelPrintSetup } from '@/lib/labels/print-setup'
 import { preflightLabels } from '@/lib/print/label/preflight'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
@@ -30,8 +31,10 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
   const [items, setItems] = useState<ItemWithQty[]>([])
   const [loading, setLoading] = useState(false)
   const [printing, setPrinting] = useState(false)
-  // Same per-PC choice as the Print Barcode Labels page: Chrome preview or Direct to Zebra
-  const direct = useDirectZebra()
+  // The shop's Printer setup (brand language / dpi / exact or fast) from Barcode → Print Labels
+  const [printPrefs, setPrintPrefs] = useState<LabelPrintSetup['printer'] | null>(null)
+  // Same per-PC choice as the Print Barcode Labels page: Chrome preview or Direct to label printer
+  const direct = useDirectZebra({ language: printPrefs?.language ?? null, dpi: printPrefs?.dpi ?? null })
   const [codeWord, setCodeWord] = useState<string>('')
   const [setups, setSetups] = useState<StickerSetup[]>([])
   // Manual sticker-roll override; null = tenant default
@@ -99,6 +102,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       .then(data => {
         setCodeWord(data.codeWord || '')
         setSetups(sanitizeStickerSetups(data.stickerSetups))
+        setPrintPrefs(data.printSetup ? sanitizePrintSetup(data.printSetup).printer : null)
       })
       .catch(() => {})
   }, [isOpen])
@@ -217,11 +221,17 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
       : shifted
     if (direct.mode === 'direct' && config.pageSize === 'Label') {
       if (!direct.profile) {
-        toast.error(direct.state === 'checking' ? 'Still looking for the print helper. Try again in a moment.' : 'Direct to Zebra is not ready on this PC. Open Barcode → Print Labels to set it up, or choose Chrome print preview there.')
+        toast.error(direct.state === 'checking' ? 'Still looking for the print helper. Try again in a moment.' : 'Direct to label printer is not ready on this PC. Open Barcode → Print Labels to set it up, or choose Chrome print preview there.')
         return
       }
       try {
-        const res = await printLabelsRaw(direct.profile, template, items, { currencySymbol, tenantName: company?.tenantName, codeWord, setup: shifted })
+        const res = await printLabelsRaw(direct.profile, template, items, {
+          currencySymbol,
+          tenantName: company?.tenantName,
+          codeWord,
+          setup: printPrefs ? { ...shifted, dpi: printPrefs.dpi ?? shifted.dpi, darkness: printPrefs.darkness ?? shifted.darkness, speed: printPrefs.speed ?? shifted.speed } : shifted,
+          ...(printPrefs ? { language: printPrefs.language, dpi: printPrefs.dpi, renderMode: printPrefs.renderMode } : {}),
+        })
         if (res.ok) toast.success(`Sent ${totalLabels} label${totalLabels === 1 ? '' : 's'} to ${direct.profile.name}`)
         else toast.error(`${direct.profile.name}: ${res.error || 'print failed'}. Check the printer before printing again.`)
       } catch (e) {
@@ -404,7 +414,7 @@ export function PrintLabelsModal({ isOpen, onClose, selectedItemIds }: PrintLabe
         <span className="text-sm text-gray-500">
           Total: {totalLabels} label{totalLabels !== 1 ? 's' : ''} for {items.length} item{items.length !== 1 ? 's' : ''}
           <span className="block text-xs text-gray-400">
-            {direct.mode === 'direct' ? `Sends straight to ${direct.printer || 'the Zebra'} (Direct to Zebra)` : 'Opens Chrome\u2019s print preview (choose the printer there)'}
+            {direct.mode === 'direct' ? `Sends straight to ${direct.printer || 'the label printer'} (Direct to label printer)` : 'Opens Chrome\u2019s print preview (choose the printer there)'}
           </span>
         </span>
         <div className="flex gap-2">

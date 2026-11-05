@@ -300,8 +300,9 @@ export async function POST(request: NextRequest) {
 
     // Feature switches (super admin → Features): credit sales, gift cards, loyalty, coupons.
     // Offline sales already happened at the counter: they sync whatever the switches say now.
+    const featureFlags = await getTenantFeatureFlags(session.user.tenantId)
     if (!isReturn && !offlineRef) {
-      const flags = await getTenantFeatureFlags(session.user.tenantId)
+      const flags = featureFlags
       const methods = new Set([paymentMethod, ...(paymentSplits ?? []).map((p) => p.method)])
       const off = (flag: FeatureFlag) => NextResponse.json({ error: `${FEATURE_FLAG_LABELS[flag]} is turned off for this business.`, code: 'FEATURE_DISABLED', feature: flag }, { status: 403 })
       if (!flags.credit_customer && (methods.has('credit') || (creditAmount ?? 0) > 0)) return off('credit_customer')
@@ -558,6 +559,10 @@ export async function POST(request: NextRequest) {
     // edited price), so compare against the distinct ids the query can return.
     if (tenantItems.length !== new Set(itemIds).size || cartItems.some((c) => !c.itemId)) {
       return NextResponse.json({ error: 'Invalid items in cart' }, { status: 400 })
+    }
+    // Gift cards switched off: no new cards are sold (offline sales already happened: they sync)
+    if (!isReturn && !offlineRef && !featureFlags.gift_cards && tenantItems.some((i) => i.isGiftCard)) {
+      return NextResponse.json({ error: `${FEATURE_FLAG_LABELS.gift_cards} is turned off for this business.`, code: 'FEATURE_DISABLED', feature: 'gift_cards' }, { status: 403 })
     }
 
     // H5: server-side pricing — catalog / unit base prices, price lists for this customer and
@@ -1587,7 +1592,9 @@ export async function POST(request: NextRequest) {
               const customerTier = tiers.find(t => t.tier === currentTier)
               const earnRate = customerTier ? (parseFloat(customerTier.earnRate) || 1) : 1
               const saleAmount = Math.abs(finalTotal)
-              const earnedPoints = Math.floor(saleAmount * collectionFactor * earnRate)
+              // Loyalty switched off (super admin → Features): no points are earned; points an
+              // offline till already redeemed above are still taken off the balance
+              const earnedPoints = featureFlags.loyalty ? Math.floor(saleAmount * collectionFactor * earnRate) : 0
 
               if (earnedPoints > 0) {
                 currentPoints += earnedPoints

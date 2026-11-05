@@ -48,6 +48,8 @@ export function TemplatePresetPicker({ businessType, tenantSlug, onSelect, onSki
     restaurant: 'Restaurant',
     auto_service: 'Auto Service',
     dealership: 'Dealership',
+    textile: 'Textile & Clothing',
+    electronics: 'Electronics',
   }
 
   return (

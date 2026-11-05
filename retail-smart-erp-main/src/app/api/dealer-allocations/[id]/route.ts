@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 import { withTenant } from '@/lib/db'
 import { SAFE_USER } from '@/lib/db/safe-columns'
-import { dealerAllocations } from '@/lib/db/schema'
+import { dealerAllocations, dealers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
@@ -27,6 +28,10 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: scoped by the dealer's branch (missing record → the usual 404 below)
+      const [dealerRef] = await db.select({ dealerId: dealerAllocations.dealerId }).from(dealerAllocations).where(eq(dealerAllocations.id, id)).limit(1)
+      const branchDenied = dealerRef ? await assertRecordBranch(session, db, dealers, dealerRef.dealerId) : null
+      if (branchDenied) return branchDenied
       const allocation = await db.query.dealerAllocations.findFirst({
         where: eq(dealerAllocations.id, id),
         with: {
@@ -72,6 +77,10 @@ export async function PUT(
     const body = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: scoped by the dealer's branch (missing record → the usual 404 below)
+      const [dealerRef] = await db.select({ dealerId: dealerAllocations.dealerId }).from(dealerAllocations).where(eq(dealerAllocations.id, id)).limit(1)
+      const branchDenied = dealerRef ? await assertRecordBranch(session, db, dealers, dealerRef.dealerId) : null
+      if (branchDenied) return branchDenied
       const existing = await db.query.dealerAllocations.findFirst({
         where: eq(dealerAllocations.id, id),
         with: {

@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { ShareDocumentButtons } from '@/components/shared/ShareDocumentButtons'
+import { PrintDocumentButton } from '@/components/print/PrintA4Button'
+import { TEMPLATE_DOC_TYPES, loadCreditNoteDocument } from '@/lib/print/invoice-document'
 
 type CreditNote = {
   id: string
@@ -68,11 +70,20 @@ export default function CreditNotesPage() {
                   <td className="px-3 py-2">{Number(n.total).toFixed(2)}</td>
                   <td className="px-3 py-2">{n.reason || '—'}</td>
                   <td className="px-3 py-2">
-                    <ShareDocumentButtons
-                      documentType="credit_note"
-                      documentId={n.id}
-                      label={n.creditNoteNo}
-                    />
+                    <div className="flex items-center gap-2">
+                      <PrintDocumentButton
+                        documentTypes={TEMPLATE_DOC_TYPES.credit_note}
+                        settingKey="credit_note"
+                        loadDocument={() => loadCreditNoteDocument(n.id)}
+                        label="Print"
+                        className="px-2 py-1 border border-gray-300 text-gray-700 text-xs font-medium rounded-l hover:bg-gray-50 flex items-center gap-1 disabled:opacity-50"
+                      />
+                      <ShareDocumentButtons
+                        documentType="credit_note"
+                        documentId={n.id}
+                        label={n.creditNoteNo}
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}

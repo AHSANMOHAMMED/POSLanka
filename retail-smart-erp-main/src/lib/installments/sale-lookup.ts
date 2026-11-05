@@ -136,12 +136,15 @@ export interface WarrantyLookupHit {
 }
 
 /**
- * Find units / sales by serial or IMEI (exact, case-insensitive), invoice no, or customer phone
+ * Find units / sales by serial or IMEI (exact, case-insensitive; item_serial_numbers.imei / imei2 too),
+ * invoice no, or customer phone
  * (last 9 digits, so 077… and +9477… match). Up to 10 hits.
  */
 export async function warrantyLookup(db: DbTx, q: string, scope: BranchScope): Promise<WarrantyLookupHit[]> {
   const term = q.trim()
   const hits: WarrantyLookupHit[] = []
+  // an IMEI is 14–16 digits (dashes / spaces allowed when typed)
+  const imeiDigits = /^[\d\s-]+$/.test(term) && term.replace(/\D/g, '').length >= 14 ? term.replace(/\D/g, '') : ''
 
   // 1. serial / IMEI
   const serials = rowsOf<{
@@ -155,6 +158,8 @@ export async function warrantyLookup(db: DbTx, q: string, scope: BranchScope): P
              ORDER BY s.created_at DESC LIMIT 1) AS sale_id
     FROM item_serial_numbers sn JOIN items i ON i.id = sn.item_id
     WHERE lower(sn.serial_number) = lower(${term})
+       -- 0193: either IMEI of a phone (stored as digits)
+       OR (${imeiDigits} <> '' AND (sn.imei = ${imeiDigits} OR sn.imei2 = ${imeiDigits}))
     LIMIT 10
   `))
   if (serials.length > 0) {
@@ -179,7 +184,7 @@ export async function warrantyLookup(db: DbTx, q: string, scope: BranchScope): P
 
   // 3. phone (digits only, last 9)
   const digits = term.replace(/\D/g, '')
-  if (digits.length >= 7) {
+  if (digits.length >= 7 && !imeiDigits) {
     const tail = digits.slice(-9)
     const ids = rowsOf<{ id: string }>(await db.execute(sql`
       SELECT s.id FROM sales s JOIN customers c ON c.id = s.customer_id

@@ -58,7 +58,7 @@ export function StepBusinessConfig({
         </p>
       </div>
 
-      {['electronics', 'hardware', 'print_studio', 'office'].includes(businessType) && (
+      {['electronics', 'hardware', 'print_studio', 'office', 'textile'].includes(businessType) && (
         <RetailConfig
           data={data}
           onChange={onChange}

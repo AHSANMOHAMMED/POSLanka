@@ -4,6 +4,7 @@ import { eq } from 'drizzle-orm'
 import {
   FeatureFlag,
   FeatureFlagsMap,
+  effectiveFeatureFlags,
   isFeatureEnabled,
   normalizeFeatureFlags,
 } from './flags'
@@ -22,6 +23,21 @@ export async function getTenantFeatureFlags(
   })
   const settings = (tenant?.settings || {}) as TenantSettings
   return normalizeFeatureFlags(settings.featureFlags)
+}
+
+/**
+ * The switches the business really gets (what menus, pages, the API and the POS go by): saved
+ * switches, missing keys at the global default, industry switches off for other business types.
+ */
+export async function getTenantEffectiveFeatureFlags(
+  tenantId: string
+): Promise<FeatureFlagsMap> {
+  const tenant = await db.query.tenants.findFirst({
+    where: eq(tenants.id, tenantId),
+    columns: { settings: true, businessType: true },
+  })
+  const settings = (tenant?.settings || {}) as TenantSettings
+  return effectiveFeatureFlags(settings.featureFlags, tenant?.businessType)
 }
 
 export async function requireTenantFeature(

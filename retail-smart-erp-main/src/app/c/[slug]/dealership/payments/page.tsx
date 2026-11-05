@@ -6,6 +6,8 @@ import { Plus, ArrowDownLeft, ArrowUpRight, CreditCard } from 'lucide-react'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { usePaginatedData } from '@/hooks'
+import { toast } from '@/components/ui/toast'
+import { NewDealerPaymentModal, cancelDealerPayment, confirmDealerPayment } from '../DealerForms'
 import { Pagination } from '@/components/ui/pagination'
 
 interface DealerPayment {
@@ -67,6 +69,7 @@ export default function DealerPaymentsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<string>('')
   const [directionFilter, setDirectionFilter] = useState<string>('')
+  const [showNew, setShowNew] = useState(false)
 
   const {
     data: payments,
@@ -112,13 +115,13 @@ export default function DealerPaymentsPage() {
       title="Dealer Payments"
       actionContent={
         <div className="flex items-center gap-2">
-          <Link
-            href={`/c/${tenantSlug}/dealership/payments/new`}
+          <button
+            onClick={() => setShowNew(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
           >
             <Plus size={16} />
             New Payment
-          </Link>
+          </button>
         </div>
       }
       search={search}
@@ -191,12 +194,13 @@ export default function DealerPaymentsPage() {
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Method</th>
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Status</th>
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Date</th>
+              <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-gray-600 dark:text-gray-400">Actions</th>
             </tr>
           </thead>
           <tbody>
             {payments.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={9} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                   {loading ? 'Loading...' : search ? 'No payments match your search' : 'No dealer payments yet. Record your first payment!'}
                 </td>
               </tr>
@@ -207,7 +211,7 @@ export default function DealerPaymentsPage() {
                   className="border-t border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
                 >
                   <td className="px-4 py-3 font-medium text-blue-600 dark:text-blue-400">
-                    <Link href={`/c/${tenantSlug}/dealership/payments/${payment.id}`}>
+                    <Link href={`/c/${tenantSlug}/dealership/dealers/${payment.dealerId}`}>
                       {payment.paymentNo}
                     </Link>
                   </td>
@@ -251,6 +255,42 @@ export default function DealerPaymentsPage() {
                   <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
                     {formatDate(payment.paymentDate || payment.createdAt)}
                   </td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    {payment.status === 'pending' && (
+                      <>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await confirmDealerPayment(payment.id)
+                              toast.success('Payment confirmed; dealer balance updated')
+                              refresh()
+                            } catch (e) {
+                              toast.error(e instanceof Error ? e.message : 'Failed to confirm')
+                            }
+                          }}
+                          className="px-2 py-1 text-xs text-green-700 hover:bg-green-50 dark:hover:bg-green-900/30 rounded"
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          onClick={async () => {
+                            const reason = window.prompt('Reason for cancelling this payment?')
+                            if (!reason?.trim()) return
+                            try {
+                              await cancelDealerPayment(payment.id, reason.trim())
+                              toast.success('Payment cancelled')
+                              refresh()
+                            } catch (e) {
+                              toast.error(e instanceof Error ? e.message : 'Failed to cancel')
+                            }
+                          }}
+                          className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
+                  </td>
                 </tr>
               ))
             )}
@@ -267,6 +307,7 @@ export default function DealerPaymentsPage() {
           className="border-t border-gray-200 dark:border-gray-700 px-4 pagination-sticky"
         />
       </div>
+      {showNew && <NewDealerPaymentModal onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); refresh() }} />}
     </ListPageLayout>
   )
 }

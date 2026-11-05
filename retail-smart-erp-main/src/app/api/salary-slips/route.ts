@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { getBranchScope } from '@/lib/auth/branch-access'
+import { assertEmployeeInScope, employeeIdInScopeSql } from '@/lib/attendance/api'
 import { withTenant } from '@/lib/db'
 import { salarySlips, salarySlipComponents, employeeProfiles } from '@/lib/db/schema'
 import { eq, and, sql, ilike, ne } from 'drizzle-orm'
@@ -36,6 +38,9 @@ export async function GET(request: NextRequest) {
       if (year) conditions.push(eq(salarySlips.payrollYear, year))
       if (status) conditions.push(eq(salarySlips.status, status))
       if (employeeProfileId) conditions.push(eq(salarySlips.employeeProfileId, employeeProfileId))
+      // K4: a branch-restricted manager only sees employees of their own branches
+      const inScope = employeeIdInScopeSql(await getBranchScope(session, db), salarySlips.employeeProfileId)
+      if (inScope) conditions.push(inScope)
       if (payrollRunId) conditions.push(eq(salarySlips.payrollRunId, payrollRunId))
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
@@ -100,6 +105,8 @@ export async function POST(request: NextRequest) {
       if (!profile) {
         return NextResponse.json({ error: 'Employee profile not found' }, { status: 404 })
       }
+      const branchDenied = await assertEmployeeInScope(session, db, employeeProfileId)
+      if (branchDenied) return branchDenied
 
       // Check for duplicate slip
       const existingSlip = await db.query.salarySlips.findFirst({

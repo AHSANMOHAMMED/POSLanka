@@ -19,8 +19,9 @@ export async function GET(request: NextRequest) {
     const branchError = await requireAllBranches(session)
     if (branchError) return branchError
 
-    if (session.user.businessType !== 'dealership') {
-      return NextResponse.json({ error: 'This report is only available for dealership businesses' }, { status: 403 })
+    const isElectronics = session.user.businessType === 'electronics'
+    if (session.user.businessType !== 'dealership' && !isElectronics) {
+      return NextResponse.json({ error: 'This report is only available for dealership and electronics businesses' }, { status: 403 })
     }
 
     const { searchParams } = new URL(request.url)
@@ -29,6 +30,69 @@ export async function GET(request: NextRequest) {
 
     if (!fromDate || !toDate) {
       return NextResponse.json({ error: 'fromDate and toDate are required' }, { status: 400 })
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate) || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)) {
+      return NextResponse.json({ error: 'Dates must be YYYY-MM-DD' }, { status: 400 })
+    }
+
+    // 0193: electronics — units / lines sold with a shop warranty in the period, with their
+    // serial / IMEI, warranty end, active / expired, and the warranty claims raised on them
+    if (isElectronics) {
+      return await withTenant(session.user.tenantId, async (db) => {
+        const rows = await db.execute(sql`
+          SELECT si.id || COALESCE(':' || sn.id::text, '') AS id,
+                 s.created_at AS "createdAt", s.invoice_no AS "invoiceNo", COALESCE(c.name, s.customer_name) AS "customerName",
+                 si.item_name AS "itemName", COALESCE(sn.serial_number, '') AS serial, COALESCE(sn.imei, '') AS imei,
+                 si.warranty_months AS "warrantyMonths",
+                 COALESCE(sn.warranty_end_date, si.warranty_until)::text AS "endDate",
+                 (s.created_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Colombo')::date::text AS "startDate",
+                 CAST(si.total AS numeric) AS price,
+                 (SELECT count(*)::int FROM warranty_claims wc
+                   WHERE wc.sale_item_id = si.id OR (sn.id IS NOT NULL AND wc.serial_number_id = sn.id)) AS claims
+          FROM sale_items si
+          JOIN sales s ON s.id = si.sale_id
+          LEFT JOIN customers c ON c.id = s.customer_id
+          LEFT JOIN LATERAL jsonb_array_elements_text(COALESCE(si.serial_number_ids, '[]'::jsonb)) AS sid(v) ON true
+          LEFT JOIN item_serial_numbers sn ON sn.id::text = sid.v
+          WHERE s.is_return = false AND s.status <> 'void'
+            AND (si.warranty_until IS NOT NULL OR sn.warranty_end_date IS NOT NULL)
+            AND s.created_at >= ${fromDate}::date
+            AND s.created_at < (${toDate}::date + interval '1 day')
+          ORDER BY s.created_at DESC
+          LIMIT 5000
+        `)
+        const today = new Date().toISOString().slice(0, 10)
+        const data = ((rows.rows || []) as Array<Record<string, unknown>>).map((r) => {
+          const end = (r.endDate as string | null) || null
+          const claims = Number(r.claims) || 0
+          return {
+            id: String(r.id),
+            warrantyType: r.warrantyMonths ? `${r.warrantyMonths} months` : 'Shop warranty',
+            provider: claims > 0 ? `${claims} claim${claims > 1 ? 's' : ''}` : '—',
+            policyNumber: String(r.imei || r.serial || ''),
+            startDate: r.startDate,
+            endDate: end,
+            mileageLimit: null,
+            coverageDetails: null,
+            price: Number(r.price) || 0,
+            status: claims > 0 ? 'claimed' : end && end >= today ? 'active' : 'expired',
+            createdAt: r.createdAt,
+            invoiceNo: r.invoiceNo,
+            customerName: (r.customerName as string) || 'Walk-in',
+            vehicleInfo: String(r.itemName || ''),
+            vin: String(r.imei || r.serial || ''),
+          }
+        })
+        const byType: Record<string, number> = {}
+        for (const d of data) byType[d.status] = (byType[d.status] || 0) + 1
+        const totalCost = data.reduce((s2, d) => s2 + d.price, 0)
+        return NextResponse.json({
+          kind: 'units',
+          summary: { totalClaims: data.length, totalCost, avgCostPerClaim: data.length ? totalCost / data.length : 0 },
+          byType,
+          data,
+        })
+      })
     }
 
     return await withTenant(session.user.tenantId, async (db) => {

@@ -9,6 +9,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertBranchAccess, branchSqlFilter, getBranchScope } from '@/lib/auth/branch-access'
 import { validateBody, validateSearchParams } from '@/lib/validation/helpers'
 import { dealerAllocationsListSchema, createDealerAllocationSchema } from '@/lib/validation/schemas/dealership'
 
@@ -43,6 +44,9 @@ export async function GET(request: NextRequest) {
           )
         )
       }
+      // K4: branch-restricted staff only see records of dealers of their own branches
+      const scope = await getBranchScope(session, db)
+      if (scope) conditions.push(sql`${dealerAllocations.dealerId} IN (SELECT bd.id FROM dealers bd WHERE TRUE${branchSqlFilter(scope, 'bd.warehouse_id')})`)
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
       // Get total count
@@ -113,6 +117,8 @@ export async function POST(request: NextRequest) {
       if (!dealer) {
         return NextResponse.json({ error: 'Dealer not found' }, { status: 404 })
       }
+      const branchDenied = await assertBranchAccess(session, dealer.warehouseId, db, { requireBranch: true })
+      if (branchDenied) return branchDenied
       if (!dealer.isActive || (dealer.status && dealer.status !== 'active')) {
         return NextResponse.json({ error: `Cannot allocate to a ${dealer.isActive ? dealer.status : 'inactive'} dealer` }, { status: 400 })
       }

@@ -67,7 +67,7 @@ import {
 } from '@/components/admin/console-helpers'
 import { formatBusinessId } from '@/lib/tenant/business-id-format'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
-import { FEATURE_DEFS, FEATURE_GROUPS, featureAppliesTo } from '@/lib/features/flags'
+import { FEATURE_DEFS, FEATURE_GROUPS, featureAppliesTo, isTypeScopedFeature, type FeatureDef } from '@/lib/features/flags'
 import { VendorImportCard } from './VendorImportCard'
 import { VendorBusinessTab } from './VendorBusinessTab'
 import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
@@ -112,6 +112,7 @@ interface Detail {
     createdAt: string
     setupCompletedAt: string | null
     featureFlags: Record<string, boolean>
+    featureFlagsSaved?: string[]
     branches: Array<{ id: string; name: string; code: string | null; isActive: boolean; isDefault: boolean }>
     counters: Array<{ id: string; name: string; code: string | null; status: string; isDefault: boolean }>
   }
@@ -719,7 +720,7 @@ export default function VendorDetailPage() {
         </div>
       )}
       {tab === 'billing' && <BillingTab data={data} />}
-      {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} businessType={v.businessType} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
+      {tab === 'features' && <FeaturesTab key={JSON.stringify(v.featureFlags)} vendorId={v.id} flags={v.featureFlags} savedKeys={v.featureFlagsSaved} branchCount={v.branches.length} businessType={v.businessType} onSaved={(t) => setFlash({ tone: 'success', text: t })} />}
       {tab === 'activity' && <ActivityTab activity={data.activity} />}
 
       <ActionDialogs key={dialog ?? 'none'} dialog={dialog} data={data} onClose={() => setDialog(null)} onDone={done} />
@@ -946,10 +947,23 @@ function BillingTab({ data }: { data: Detail }) {
   )
 }
 
-function FeaturesTab({ vendorId, flags, businessType, onSaved }: { vendorId: string; flags: Record<string, boolean>; businessType: string; onSaved: (text: string) => void }) {
+/** "Off: …" line under a switch — what the vendor loses (pages, modules, API, POS behaviour) */
+function featureOffSummary(d: FeatureDef): string {
+  const parts: string[] = []
+  if (d.modules?.length) parts.push(`the ${d.modules.map((m) => m.replace(/-/g, ' ')).join(' / ')} menu tab`)
+  const pages = d.hrefs?.length ?? 0
+  if (pages) parts.push(pages === 1 ? `its page (${d.hrefs![0]})` : `${pages} pages`)
+  if (d.api?.length || d.apiWrite?.length) parts.push(d.api?.length ? 'its API (403 “turned off”)' : 'changes through its API')
+  const hides = parts.length ? `Off hides ${parts.join(', ')} on web and app.` : ''
+  return [hides, d.offEffect].filter(Boolean).join(' ') || 'Off: the POS and the app stop offering it.'
+}
+
+function FeaturesTab({ vendorId, flags, savedKeys, branchCount, businessType, onSaved }: { vendorId: string; flags: Record<string, boolean>; savedKeys?: string[]; branchCount: number; businessType: string; onSaved: (text: string) => void }) {
   // What the server holds now. Starts from the loaded flags and follows each save, so a change can be
   // saved and then switched back and saved again (comparing with the stale prop disabled Save).
   const [saved, setSaved] = useState(flags)
+  // Keys never saved for this vendor run at the global default (a save stores every key)
+  const [storedKeys, setStoredKeys] = useState<Set<string> | null>(savedKeys ? new Set(savedKeys) : null)
   const [draft, setDraft] = useState(flags)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -967,7 +981,8 @@ function FeaturesTab({ vendorId, flags, businessType, onSaved }: { vendorId: str
       const res = await adminFetch<{ featureFlags: Record<string, boolean> }>(`/api/sys-control/vendors/${vendorId}/features`, { method: 'PUT', json: { featureFlags: draft } })
       setSaved(res.featureFlags)
       setDraft(res.featureFlags)
-      onSaved('Feature switches saved. Menus update on the vendor’s next page load; the server applies them within seconds.')
+      setStoredKeys(new Set(Object.keys(res.featureFlags)))
+      onSaved('Feature switches saved. The server applies them within about 10 seconds; the vendor’s open screens update within a minute or as soon as they return to the tab / app.')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not save')
     } finally {
@@ -976,11 +991,38 @@ function FeaturesTab({ vendorId, flags, businessType, onSaved }: { vendorId: str
   }
 
   const setGroup = (keys: string[], on: boolean) => setDraft((d) => ({ ...d, ...Object.fromEntries(keys.map((k) => [k, on])) }))
-  const renderGroup = (defs: typeof FEATURE_DEFS) => (
+  const renderGroup = (defs: typeof FEATURE_DEFS, forOtherTypes = false) => (
     <div className="grid grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-2">
-      {defs.map((d) => (
-        <Switch key={d.key} label={d.label} description={d.description} checked={!!draft[d.key]} disabled={!canEdit} onChange={(c) => setDraft((x) => ({ ...x, [d.key]: c }))} />
-      ))}
+      {defs.map((d) => {
+        const on = !!draft[d.key]
+        // Industry switches do nothing for other business types: the vendor never gets them
+        const inert = forOtherTypes && isTypeScopedFeature(d.key)
+        const state = inert ? 'Not available for this business type' : on ? 'On' : 'Off'
+        return (
+          <Switch
+            key={d.key}
+            label={
+              <span className="flex flex-wrap items-center gap-1.5">
+                {d.label}
+                <span className={`rounded px-1.5 py-px text-[11px] font-medium ${!inert && on ? 'bg-adm-success-soft text-adm-success' : 'bg-adm-surface-3 text-adm-subtle'}`}>{state}</span>
+                {storedKeys && !storedKeys.has(d.key) && <span className="rounded bg-adm-surface-3 px-1.5 py-px text-[11px] text-adm-subtle" title="Never saved for this vendor: it follows the global default">default</span>}
+              </span>
+            }
+            description={
+              <>
+                {d.description}
+                <span className="mt-0.5 block text-[12px] text-adm-subtle/80">{featureOffSummary(d)}</span>
+                {d.key === 'multi_warehouse' && !on && branchCount > 1 && (
+                  <span className="mt-0.5 block text-[12px] text-adm-warning">This vendor already runs {branchCount} branches: they keep working (and more can still be added), but stock cannot be transferred between them while this is off. Consider turning it on.</span>
+                )}
+              </>
+            }
+            checked={on}
+            disabled={!canEdit}
+            onChange={(c) => setDraft((x) => ({ ...x, [d.key]: c }))}
+          />
+        )
+      })}
     </div>
   )
 
@@ -1021,7 +1063,7 @@ function FeaturesTab({ vendorId, flags, businessType, onSaved }: { vendorId: str
             <button type="button" className="text-[13px] font-medium text-adm-primary hover:underline" onClick={() => setShowOther((v) => !v)}>
               {showOther ? 'Hide' : 'Show'} {other.length} feature{other.length === 1 ? '' : 's'} for other business types
             </button>
-            {showOther && <div className="mt-3">{renderGroup(other)}</div>}
+            {showOther && <div className="mt-3">{renderGroup(other, true)}</div>}
           </section>
         )}
       </div>

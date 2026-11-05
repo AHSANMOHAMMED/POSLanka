@@ -103,6 +103,8 @@ import { POS_ITEMS_LIMIT } from '@/components/pos/types'
 import { usePOSBusinessConfig } from '@/hooks/usePOSBusinessConfig'
 import { useFeatureFlags } from '@/hooks/useFeatureFlag'
 import { PrescriptionModal, prescriptionMissing, type PrescriptionForm, type RxLevel } from '@/components/pos/PrescriptionModal'
+import { PharmacySubstitutesModal } from '@/components/pos/PharmacySubstitutesModal'
+import { PatientAlertBanner } from '@/components/pos/PatientAlertBanner'
 import { useOfflinePos } from '@/hooks/useOfflinePos'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { formatItemLabel } from '@/lib/utils/item-display'
@@ -384,6 +386,8 @@ export default function POSPage() {
   const [couponCode, setCouponCode] = useState('')
   // Pharmacy: prescription captured for this sale, and the prompt asking for one
   const [prescription, setPrescription] = useState<PrescriptionForm | null>(null)
+  // Pharmacy: other brands of the same medicine (POS "Alt" on a tile)
+  const [substitutesFor, setSubstitutesFor] = useState<Item | null>(null)
   const [rxPrompt, setRxPrompt] = useState<{ level: Exclude<RxLevel, 'none'>; items: Array<{ id: string; name: string; drugSchedule: string }> } | null>(null)
   /** Quantities already on a kitchen ticket, per cart line, for the current restaurant order. */
   const kitchenSentRef = useRef<{ orderId: string | null; sent: KitchenSentMap }>({ orderId: null, sent: {} })
@@ -844,6 +848,11 @@ export default function POSPage() {
   // ─── Cart Functions ───────────────────────────────────────────
 
   function addToCart(item: Item, quantity = 1) {
+    // Gift cards switched off for the business: the server would refuse the sale
+    if ((item as Item & { isGiftCard?: boolean }).isGiftCard && !featureFlags.gift_cards && !isReturnMode) {
+      toast.info('Gift cards are switched off for this business')
+      return
+    }
     rememberItem(item)
     // Parent item with variants opens variant picker first
     if (item.hasVariants && !isReturnMode) {
@@ -1410,6 +1419,25 @@ export default function POSPage() {
       }
       return { ...c, quantity: newQty, total: roundCurrency(newQty * c.unitPrice) }
     }))
+  }
+
+  /** Pharmacy: put a substitute brand in the cart in place of the original (if it was there) */
+  async function swapToSubstitute(original: Item, substituteId: string) {
+    try {
+      const qs = new URLSearchParams({ ids: substituteId, pageSize: '1' })
+      if (posWarehouse?.id) qs.set('warehouseId', posWarehouse.id)
+      const res = await fetch(`/api/items?${qs.toString()}`)
+      const body = res.ok ? await res.json() : null
+      const sub = ((body?.data || body || []) as Item[]).find(i => i.id === substituteId)
+      if (!sub) { toast.error('Could not load that item'); return }
+      const qty = cart.filter(c => c.itemId === original.id).reduce((n, c) => n + c.quantity, 0)
+      setCart(prev => prev.filter(c => c.itemId !== original.id))
+      setSubstitutesFor(null)
+      addToCart(sub, qty > 0 ? qty : 1)
+      toast.success(qty > 0 ? `${original.name} replaced with ${sub.name}` : `${sub.name} added`)
+    } catch {
+      toast.error('Could not load that item')
+    }
   }
 
   function removeFromCart(cartLineId: string) {
@@ -3584,6 +3612,7 @@ export default function POSPage() {
           </div>
         </div>
       </div>
+      {company.businessType === 'pharmacy' && <PatientAlertBanner customerId={selectedCustomer?.id} slug={String(params.slug || '')} />}
       <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
       <ProductGrid
         items={items}
@@ -3605,6 +3634,7 @@ export default function POSPage() {
         config={config}
         businessType={company.businessType}
         onScanSubmit={handleScanSubmit}
+        onShowSubstitutes={company.businessType === 'pharmacy' && !isReturnMode ? setSubstitutesFor : undefined}
       />
 
       <CartPanel
@@ -3894,6 +3924,16 @@ export default function POSPage() {
           customerPhone={selectedCustomer?.phone}
           onClose={() => setRxPrompt(null)}
           onSave={(p) => { setPrescription(p); setRxPrompt(null); void openPaymentModal(p) }}
+        />
+      )}
+
+      {substitutesFor && (
+        <PharmacySubstitutesModal
+          item={substitutesFor}
+          warehouseId={posWarehouse?.id || null}
+          inCart={cart.some(c => c.itemId === substitutesFor.id)}
+          onClose={() => setSubstitutesFor(null)}
+          onPick={(id) => { void swapToSubstitute(substitutesFor, id) }}
         />
       )}
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany, resolveUserIdRequired } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertRecordBranch } from '@/lib/auth/branch-access'
 import { withTenant } from '@/lib/db'
 import { dealerPayments, dealers } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -27,6 +28,10 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: scoped by the dealer's branch (missing record → the usual 404 below)
+      const [dealerRef] = await db.select({ dealerId: dealerPayments.dealerId }).from(dealerPayments).where(eq(dealerPayments.id, id)).limit(1)
+      const branchDenied = dealerRef ? await assertRecordBranch(session, db, dealers, dealerRef.dealerId) : null
+      if (branchDenied) return branchDenied
       const payment = await db.query.dealerPayments.findFirst({
         where: eq(dealerPayments.id, id),
         with: {
@@ -74,6 +79,10 @@ export async function PUT(
     const body = parsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      // K4: scoped by the dealer's branch (missing record → the usual 404 below)
+      const [dealerRef] = await db.select({ dealerId: dealerPayments.dealerId }).from(dealerPayments).where(eq(dealerPayments.id, id)).limit(1)
+      const branchDenied = dealerRef ? await assertRecordBranch(session, db, dealers, dealerRef.dealerId) : null
+      if (branchDenied) return branchDenied
       // Lock the payment row: a pending payment has already moved the dealer balance, so a
       // cancel or a direction change must adjust that balance exactly once.
       const [existing] = await db.select().from(dealerPayments).where(eq(dealerPayments.id, id)).for('update')

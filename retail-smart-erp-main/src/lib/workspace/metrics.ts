@@ -312,6 +312,13 @@ const METRICS: Record<string, MetricFn> = {
   print_jobs_ready: async (db) => countIfTable(db, 'print_jobs', sql`
     SELECT COUNT(*)::int AS n FROM print_jobs WHERE status = 'ready'`),
 
+  // 0193 service jobs (repair jobs / tailoring orders / service tickets)
+  service_jobs_open: async (db) => countIfTable(db, 'service_jobs', sql`
+    SELECT COUNT(*)::int AS n FROM service_jobs WHERE status NOT IN ('delivered', 'cancelled')`),
+
+  service_jobs_ready: async (db) => countIfTable(db, 'service_jobs', sql`
+    SELECT COUNT(*)::int AS n FROM service_jobs WHERE status = 'ready'`),
+
   today_attendance: async (db) => countIfTable(db, 'attendance_punches', sql`
     SELECT COUNT(DISTINCT employee_profile_id)::int AS n FROM attendance_punches
     WHERE is_deleted = false AND employee_profile_id IS NOT NULL

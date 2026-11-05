@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant } from '@/lib/db'
-import { refunds } from '@/lib/db/schema'
+import { refunds, sales } from '@/lib/db/schema'
 import { eq, desc, sql, and, gte, lte } from 'drizzle-orm'
-import { requirePermission } from '@/lib/auth/roles'
+import { requireModule, requirePermission } from '@/lib/auth/roles'
+import { assertBranchAccess, branchSqlFilter, getBranchScope } from '@/lib/auth/branch-access'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { refundsListSchema } from '@/lib/validation/schemas/waste-log'
 
@@ -18,6 +19,15 @@ export async function GET(request: NextRequest) {
     if (!saleId) {
       const permError = requirePermission(session, 'viewReports')
       if (permError) return { error: permError }
+    } else {
+      // Same access as opening the sale (GET /api/sales/[id]): selling module + the sale's branch (K4)
+      const moduleError = requireModule(session, 'selling')
+      if (moduleError) return { error: moduleError }
+      const [sale] = await db.select({ warehouseId: sales.warehouseId }).from(sales).where(eq(sales.id, saleId)).limit(1)
+      if (sale) {
+        const branchDenied = await assertBranchAccess(session, sale.warehouseId, db)
+        if (branchDenied) return { error: branchDenied }
+      }
     }
 
     // Build where conditions - RLS handles tenant filtering
@@ -30,6 +40,11 @@ export async function GET(request: NextRequest) {
     }
     if (endDate) {
       conditions.push(lte(refunds.createdAt, new Date(endDate + 'T23:59:59')))
+    }
+    // K4: branch-restricted staff only see refunds of their own branches' sales
+    const scope = saleId ? null : await getBranchScope(session, db)
+    if (scope) {
+      conditions.push(sql`${refunds.saleId} IN (SELECT rs.id FROM sales rs WHERE TRUE${branchSqlFilter(scope, 'rs.warehouse_id')})`)
     }
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 

@@ -32,7 +32,7 @@ export interface StickerSetup {
   /** Calibration shift, + = right / down. */
   offsetXMm: number
   offsetYMm: number
-  dpi: 203 | 300
+  dpi: 203 | 300 | 600
   /** Preferred printer language ('browser' = print dialog). Null = use the printer profile's. */
   language: (typeof STICKER_LANGUAGES)[number] | null
   /** 0..15 (TSPL / EPL) or 0..30 (ZPL). Null = printer default. */
@@ -65,7 +65,7 @@ export const stickerSetupSchema = z.object({
   marginLeftMm: num(0, 30),
   offsetXMm: num(-20, 20),
   offsetYMm: num(-20, 20),
-  dpi: z.union([z.literal(203), z.literal(300)]),
+  dpi: z.union([z.literal(203), z.literal(300), z.literal(600)]),
   language: z.enum(STICKER_LANGUAGES).nullish(),
   darkness: optNum(0, 30),
   speed: optNum(1, 14),
@@ -174,7 +174,7 @@ export function sanitizeStickerSetup(raw: Partial<StickerSetup> | null | undefin
     marginLeftMm: round2(clamp(r.marginLeftMm, 0, 30, d.marginLeftMm)),
     offsetXMm: round2(clamp(r.offsetXMm, -20, 20, 0)),
     offsetYMm: round2(clamp(r.offsetYMm, -20, 20, 0)),
-    dpi: Number(r.dpi) === 300 ? 300 : 203,
+    dpi: Number(r.dpi) === 600 ? 600 : Number(r.dpi) === 300 ? 300 : 203,
     language: lang,
     darkness: opt(r.darkness, 0, 30),
     speed: opt(r.speed, 1, 14),

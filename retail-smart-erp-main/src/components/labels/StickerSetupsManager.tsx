@@ -200,9 +200,10 @@ export function StickerSetupsManager() {
                     </FormSelect>
                   </FormField>
                   <FormField label="Printer resolution">
-                    <FormSelect value={String(selected.dpi)} onChange={(e) => edit({ dpi: e.target.value === '300' ? 300 : 203 })} selectSize="sm">
+                    <FormSelect value={String(selected.dpi)} onChange={(e) => edit({ dpi: e.target.value === '600' ? 600 : e.target.value === '300' ? 300 : 203 })} selectSize="sm">
                       <option value="203">203 dpi</option>
                       <option value="300">300 dpi</option>
+                      <option value="600">600 dpi</option>
                     </FormSelect>
                   </FormField>
                   <FormField label="Label width (mm)">

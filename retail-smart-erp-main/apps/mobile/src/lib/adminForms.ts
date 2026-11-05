@@ -92,7 +92,7 @@ export function pickList<T = any>(body: any, ...keys: string[]): T[] {
 }
 
 export const BUSINESS_TYPES = [
-  'retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office',
+  'retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office', 'textile',
 ] as const
 
 export const BILLING_CYCLES = ['monthly', 'yearly', 'lifetime'] as const

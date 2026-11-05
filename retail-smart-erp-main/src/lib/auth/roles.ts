@@ -250,6 +250,9 @@ export const BUSINESS_TYPE_ROLES: Record<string, UserRole[]> = {
   restaurant: ['chef', 'waiter'],
   auto_service: ['technician'],
   dealership: ['technician', 'dealer_sales'],
+  // repair technicians (electronics) and tailors (textile) work on service jobs
+  electronics: ['technician'],
+  textile: ['technician'],
 }
 
 // Permission categories specific to certain business types

@@ -53,6 +53,13 @@ export const BUSINESS_TYPE_UNITS: Record<string, Array<{ code: string; name: str
   office: [
     { code: 'hour', name: 'Hour', allowFraction: true },
     { code: 'month', name: 'Month', allowFraction: false },
+  ],  // Textile & clothing: fabric by the metre / yard (decimals), readymade by the piece or set
+  textile: [
+    { code: 'm', name: 'Metre', allowFraction: true },
+    { code: 'yard', name: 'Yard', allowFraction: true },
+    { code: 'set', name: 'Set', allowFraction: false },
+    { code: 'pair', name: 'Pair', allowFraction: false },
+    { code: 'roll', name: 'Roll', allowFraction: false },
   ],
 }
 

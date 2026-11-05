@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { withAuthTenant } from '@/lib/db/with-auth-tenant'
-import { creditNotes, einvoiceOutbox } from '@/lib/db/schema'
+import { creditNotes, einvoiceOutbox, sales } from '@/lib/db/schema'
+import { branchDeniedResponse, getBranchScope } from '@/lib/auth/branch-access'
+import type { TenantDb } from '@/lib/db'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { logError } from '@/lib/ai/error-logger'
@@ -15,6 +17,20 @@ import type { TaxBreakdownItem } from '@/lib/utils/tax-template'
 
 type Ctx = { params: Promise<{ id: string }> }
 
+/**
+ * K4: a credit note is in the branch of the invoice it credits. Branch-restricted staff are
+ * refused a note of another branch, or one without an invoice (company-wide). Missing → null.
+ */
+async function noteBranchDenied(session: Parameters<typeof getBranchScope>[0], db: TenantDb, id: string): Promise<NextResponse | null> {
+  const scope = await getBranchScope(session, db)
+  if (scope === null) return null
+  const [row] = await db.select({ saleId: creditNotes.saleId, warehouseId: sales.warehouseId })
+    .from(creditNotes).leftJoin(sales, eq(sales.id, creditNotes.saleId))
+    .where(eq(creditNotes.id, id)).limit(1)
+  if (!row) return null
+  return row.warehouseId && scope.includes(row.warehouseId) ? null : branchDeniedResponse(scope, db)
+}
+
 export async function GET(_request: NextRequest, { params }: Ctx) {
   const authSession = await authWithCompany()
   if (!authSession) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -23,11 +39,18 @@ export async function GET(_request: NextRequest, { params }: Ctx) {
   const p = validateParams(await params, idParamSchema)
   if (!p.success) return p.response
 
-  const note = await withAuthTenant(async (_session, db) =>
-    db.query.creditNotes.findFirst({
-      where: eq(creditNotes.id, p.data.id),
-      with: { items: true, customer: true, sale: { columns: { id: true, invoiceNo: true, createdAt: true } } },
-    }))
+  const found = await withAuthTenant(async (session, db) => {
+    const denied = await noteBranchDenied(session, db, p.data.id)
+    if (denied) return { denied }
+    return {
+      note: await db.query.creditNotes.findFirst({
+        where: eq(creditNotes.id, p.data.id),
+        with: { items: true, customer: true, sale: { columns: { id: true, invoiceNo: true, createdAt: true } } },
+      }),
+    }
+  })
+  if (found && 'denied' in found) return found.denied
+  const note = found?.note
   if (!note) return NextResponse.json({ error: 'Credit note not found' }, { status: 404 })
   return NextResponse.json(note)
 }
@@ -50,6 +73,8 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       const tenantId = session.user.tenantId
       const [note] = await db.select().from(creditNotes).where(eq(creditNotes.id, p.data.id)).for('update')
       if (!note) return { error: 'Credit note not found', status: 404 as const }
+      const denied = await noteBranchDenied(session, db, note.id)
+      if (denied) return { denied }
       const today = await tenantToday(tenantId)
 
       if (parsed.data.action === 'issue') {
@@ -82,6 +107,7 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
       return { note: updated }
     })
     if (!result) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if ('denied' in result) return result.denied
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: result.status })
     return NextResponse.json(result.note)
   } catch (err) {

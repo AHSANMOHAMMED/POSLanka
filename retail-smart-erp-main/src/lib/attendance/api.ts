@@ -7,7 +7,8 @@
  * own branches.
  */
 import { NextResponse } from 'next/server'
-import { sql, type SQL } from 'drizzle-orm'
+import { eq, sql, type AnyColumn, type SQL } from 'drizzle-orm'
+import type { PgColumn, PgTable } from 'drizzle-orm/pg-core'
 import { authWithCompany } from '@/lib/auth'
 import { requireModule, requirePermission } from '@/lib/auth/roles'
 import type { Permission } from '@/lib/auth/roles'
@@ -59,4 +60,27 @@ export async function assertEmployeeInScope(session: HrSession, db: TenantDb, em
   const { ids } = await scopedEmployeeIds(session, db)
   if (!ids || ids.has(employeeProfileId)) return null
   return NextResponse.json({ error: 'You can only manage employees of your own branch.', code: 'BRANCH_ACCESS_DENIED' }, { status: 403 })
+}
+
+/**
+ * SQL condition `<column> IN (in-scope employee ids)` for rows keyed by an employee profile
+ * (salary slips, advances); undefined when unrestricted. `column` is a drizzle column.
+ */
+export function employeeIdInScopeSql(scope: BranchScope, column: AnyColumn): SQL | undefined {
+  if (!scope) return undefined
+  return sql`${column} IN (SELECT employee_profiles.id FROM employee_profiles WHERE ${employeeScopeSql(scope)})`
+}
+
+/**
+ * Refuse a record (salary slip, advance, ...) of an employee outside the session's branches.
+ * Reads `employeeColumn` of the row with this id; a missing row returns null (the caller 404s).
+ */
+export async function assertRecordEmployeeInScope(
+  session: HrSession, db: TenantDb, table: PgTable & { id: AnyColumn }, employeeColumn: PgColumn, id: string,
+): Promise<NextResponse | null> {
+  const scope = await getBranchScope(session, db)
+  if (!scope) return null
+  const [row] = await db.select({ employeeProfileId: employeeColumn }).from(table as PgTable).where(eq(table.id, id)).limit(1)
+  if (!row) return null
+  return assertEmployeeInScope(session, db, row.employeeProfileId as string)
 }

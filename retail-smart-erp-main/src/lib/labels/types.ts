@@ -100,6 +100,7 @@ export interface BarcodeElement extends BaseElement {
   showText: boolean         // show human-readable text below barcode
   barWidth: number          // bar module width multiplier (1-4)
   customValue?: string      // when dataField is 'custom'
+  textSizePt?: number       // size of the numbers below the bars (default: fits a 2.6 mm band)
 }
 
 export interface TextElement extends BaseElement {

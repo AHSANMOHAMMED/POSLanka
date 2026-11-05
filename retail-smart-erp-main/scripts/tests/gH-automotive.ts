@@ -30,6 +30,8 @@ import { GET as dealerStatement } from '@/app/api/dealers/[id]/statement/route'
 import { POST as allocate } from '@/app/api/dealer-allocations/route'
 import { POST as sellVehicle } from '@/app/api/vehicle-sales/route'
 import { PUT as updateVehicleSale } from '@/app/api/vehicle-sales/[id]/route'
+import { GET as vehicleSalesList } from '@/app/api/vehicle-sales/route'
+import { GET as dealershipReport } from '@/app/api/dealership/reports/route'
 import { PUT as updateVehicleInventory } from '@/app/api/vehicle-inventory/[id]/route'
 import { PUT as updateTradeIn } from '@/app/api/trade-ins/[id]/route'
 import { POST as createWarranty } from '@/app/api/vehicle-warranties/route'
@@ -407,6 +409,50 @@ async function main() {
         cn.status === 200 && srow.status === 'void' && vrow.status === 'available' && !vrow.sale_id, JSON.stringify({ cn: cn.status, srow, vrow }))
       const resell = await json(await sellVehicle(req('POST', '/api/vehicle-sales', { vehicleInventoryId: veh, customerId: A.customerId, askingPrice: 4800000 })))
       check('vehicle can be sold again after the cancel', resell.status === 200, JSON.stringify(resell.body).slice(0, 200))
+    })
+
+    // ================= vehicle sale: invoice line, payment, branch, GL, reports =================
+    await step('vehicle sale books like any sale', async () => {
+      setTestSession(session(T))
+      const veh = await newVehicleStock(admin, T, `VIN-GL-${randomUUID().slice(0, 6)}`)
+      await admin.query(`UPDATE vehicle_inventory SET total_expenses = 150000 WHERE id=$1`, [veh])
+      const noCust = await json(await sellVehicle(req('POST', '/api/vehicle-sales', { vehicleInventoryId: veh, askingPrice: 5000000, downPayment: 1000000 })))
+      check('balance due without a customer → 400', noCust.status === 400 && /customer/i.test(noCust.body.error), JSON.stringify(noCust.body))
+      const s = await json(await sellVehicle(req('POST', '/api/vehicle-sales', {
+        vehicleInventoryId: veh, customerId: T.customerId, askingPrice: 5000000, tradeInAllowance: 500000, downPayment: 1000000, paymentMethod: 'cash',
+      })))
+      check('sell vehicle → 200', s.status === 200, JSON.stringify(s.body).slice(0, 300))
+      const saleId = s.body.sale?.id
+      const sale = (await admin.query(`SELECT warehouse_id, customer_name, total::float, paid_amount::float FROM sales WHERE id=$1`, [saleId])).rows[0]
+      check('sale belongs to the default branch and names the customer', sale?.warehouse_id === T.wh && !!sale.customer_name, JSON.stringify(sale))
+      const lines = (await admin.query(`SELECT quantity::float q, total::float t, unit_cost::float c, item_name FROM sale_items WHERE sale_id=$1`, [saleId])).rows
+      check('one invoice line: total = invoice, cost = purchase + capitalised expenses', lines.length === 1 && lines[0].q === 1 && lines[0].t === 4500000 && lines[0].c === 4150000, JSON.stringify(lines))
+      const pays = (await admin.query(`SELECT amount::float a, method FROM payments WHERE sale_id=$1`, [saleId])).rows
+      check('down payment recorded as a cash payment', pays.length === 1 && pays[0].a === 1000000 && pays[0].method === 'cash', JSON.stringify(pays))
+      const gl = (await admin.query(`SELECT COALESCE(sum(debit),0)::float d, COALESCE(sum(credit),0)::float c, count(*)::int n FROM gl_entries WHERE voucher_type='sale' AND voucher_id=$1`, [saleId])).rows[0]
+      check('GL posted and balanced', gl.n > 0 && Math.abs(gl.d - gl.c) < 0.005 && gl.d >= 4500000, JSON.stringify(gl))
+
+      const list = await json(await vehicleSalesList(req('GET', '/api/vehicle-sales?status=active&pageSize=50')))
+      const row = (list.body.data as Array<Record<string, unknown>>)?.find((r) => r.saleId === saleId)
+      check('list shows invoice, total and paid', !!row && row.saleInvoiceNo === s.body.sale.invoiceNo && Number(row.saleTotal) === 4500000 && Number(row.salePaid) === 1000000, JSON.stringify(row).slice(0, 300))
+
+      const profit = await json(await dealershipReport(req('GET', '/api/dealership/reports?report=profit')))
+      const pr = (profit.body.rows as Array<Record<string, unknown>>)?.find((r) => r.saleId === saleId)
+      check('profit report: price without tax − cost', profit.status === 200 && pr?.revenue === 4500000 && pr.cost === 4150000 && pr.profit === 350000, JSON.stringify(pr))
+      for (const report of ['aging', 'import-tax', 'dealers', 'documents']) {
+        const r = await json(await dealershipReport(req('GET', `/api/dealership/reports?report=${report}`)))
+        check(`${report} report loads`, r.status === 200 && Array.isArray(r.body.rows), JSON.stringify(r.body).slice(0, 200))
+      }
+      const aged = await json(await dealershipReport(req('GET', '/api/dealership/reports?report=aging')))
+      check('sold vehicle is not in the aging report', !(aged.body.rows as Array<{ id: string }>).some((r) => r.id === veh))
+      const bad = await json(await dealershipReport(req('GET', '/api/dealership/reports?report=profit&fromDate=2026-02-02&toDate=2026-01-01')))
+      check('period ending before it starts → 400', bad.status === 400)
+
+      const detailId = s.body.vehicleSaleDetails.id
+      const cn = await json(await updateVehicleSale(req('PUT', `/api/vehicle-sales/${detailId}`, { status: 'cancelled', cancellationReason: 'customer changed mind' }), ctx(detailId)))
+      const net = (await admin.query(`SELECT account_id, sum(debit - credit)::float bal FROM gl_entries WHERE voucher_id=$1 GROUP BY account_id`, [saleId])).rows
+      check('cancel reverses the GL (every account nets to zero)', cn.status === 200 && net.every((r) => Math.abs(r.bal) < 0.005), JSON.stringify(net))
+      setTestSession(session(A))
     })
 
     // ================= trade-ins =================

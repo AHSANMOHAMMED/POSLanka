@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertRecordEmployeeInScope } from '@/lib/attendance/api'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { withTenant } from '@/lib/db'
 import { salarySlips, payrollRuns, accountingSettings, glEntries } from '@/lib/db/schema'
@@ -31,6 +32,10 @@ export async function POST(
 
     const permError = requirePermission(session, 'processPayroll')
     if (permError) return permError
+
+    // K4: a branch-restricted manager only works with employees of their own branches
+    const branchDenied = await withTenant(session.user.tenantId, (db) => assertRecordEmployeeInScope(session, db, salarySlips, salarySlips.employeeProfileId, id))
+    if (branchDenied) return branchDenied
 
     const quotaError = await requireQuota(session.user.tenantId, 'essential')
     if (quotaError) return quotaError

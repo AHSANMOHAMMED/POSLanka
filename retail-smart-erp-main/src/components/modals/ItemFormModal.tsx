@@ -579,7 +579,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
       base.push({ key: 'freshness', label: isPharmacy ? 'Storage & Expiry' : 'Freshness', icon: <Snowflake size={16} /> })
     }
     // Size / colour variants: shops, for a saved main product (not a variant itself)
-    if (editItem && !editItem.parentItemId && variantsOn && ['retail', 'supermarket', 'pharmacy'].includes(businessType || '')) {
+    if (editItem && !editItem.parentItemId && variantsOn && ['retail', 'supermarket', 'pharmacy', 'textile', 'hardware'].includes(businessType || '')) {
       base.push({ key: 'variants', label: 'Variants', icon: <Layers size={16} /> })
     }
     if (editItem) {

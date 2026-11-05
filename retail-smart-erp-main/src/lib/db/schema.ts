@@ -5,7 +5,7 @@ import { relations, sql } from 'drizzle-orm'
 
 export const planEnum = pgEnum('plan', ['trial', 'basic', 'standard', 'premium'])
 export const tenantStatusEnum = pgEnum('tenant_status', ['active', 'suspended', 'cancelled', 'locked'])
-export const businessTypeEnum = pgEnum('business_type', ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office'])
+export const businessTypeEnum = pgEnum('business_type', ['retail', 'restaurant', 'supermarket', 'auto_service', 'dealership', 'pharmacy', 'electronics', 'hardware', 'print_studio', 'office', 'textile'])
 export const userRoleEnum = pgEnum('user_role', [
   'owner', 'manager', 'cashier', 'technician', 'chef', 'waiter',
   'system_manager', 'accounts_manager', 'sales_manager', 'purchase_manager',
@@ -1254,6 +1254,10 @@ export const customers = pgTable('customers', {
 
   // Auto Service
   driverLicenseNumber: varchar('driver_license_number', { length: 50 }),
+
+  // Pharmacy (drizzle/0194): warning shown at the POS when this customer is picked
+  allergies: text('allergies'),
+  medicalNotes: text('medical_notes'),
 
   // Loyalty
   loyaltyTier: loyaltyTierEnum('loyalty_tier').default('bronze'),
@@ -2644,6 +2648,8 @@ export const saleItems = pgTable('sale_items', {
   // 0179: warranty captured at sale time (items.warranty_months; until = sale date + months)
   warrantyMonths: integer('warranty_months'),
   warrantyUntil: date('warranty_until'),
+  // Pharmacy (drizzle/0194): dose instructions for the dispensing label
+  dosageInstructions: varchar('dosage_instructions', { length: 255 }),
 })
 
 export const payments = pgTable('payments', {
@@ -3066,6 +3072,118 @@ export const printJobPayments = pgTable('print_job_payments', {
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
 
+// ==================== SERVICE JOBS (drizzle/0193) ====================
+// One job-card module worded per business type: repair jobs (electronics), tailoring /
+// alteration orders (textile), service tickets (office). Advances, parts & labour lines,
+// status history; "convert to invoice" turns the job into a sale.
+
+export type ServiceJobType = 'repair' | 'tailoring' | 'service'
+export type ServiceJobStatus = 'received' | 'diagnosing' | 'awaiting_approval' | 'in_progress' | 'ready' | 'delivered' | 'cancelled'
+export type ServiceJobEstimateStatus = 'none' | 'pending' | 'approved' | 'declined'
+export interface ServiceJobConditionItem { label: string; ok: boolean | null; note?: string | null }
+
+export const serviceJobs = pgTable('service_jobs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  jobNo: varchar('job_no', { length: 50 }).notNull(),
+  jobType: varchar('job_type', { length: 20 }).notNull().default('repair').$type<ServiceJobType>(),
+  warehouseId: uuid('warehouse_id').references(() => warehouses.id),
+  customerId: uuid('customer_id').references(() => customers.id, { onDelete: 'set null' }),
+  customerName: varchar('customer_name', { length: 255 }).notNull(),
+  customerPhone: varchar('customer_phone', { length: 50 }),
+  title: varchar('title', { length: 255 }).notNull(),
+  // repairs
+  deviceType: varchar('device_type', { length: 100 }),
+  brand: varchar('brand', { length: 100 }),
+  model: varchar('model', { length: 150 }),
+  serialNumber: varchar('serial_number', { length: 255 }),
+  imei: varchar('imei', { length: 20 }),
+  imei2: varchar('imei2', { length: 20 }),
+  serialNumberId: uuid('serial_number_id').references(() => itemSerialNumbers.id, { onDelete: 'set null' }),
+  itemId: uuid('item_id').references(() => items.id, { onDelete: 'set null' }),
+  passcode: varchar('passcode', { length: 100 }),
+  faultReported: text('fault_reported'),
+  accessoriesReceived: text('accessories_received'),
+  conditionChecklist: jsonb('condition_checklist').$type<ServiceJobConditionItem[]>().notNull().default([]),
+  conditionNotes: text('condition_notes'),
+  diagnosis: text('diagnosis'),
+  workDone: text('work_done'),
+  underWarranty: boolean('under_warranty').notNull().default(false),
+  warrantySaleId: uuid('warranty_sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  warrantyUntil: date('warranty_until'),
+  // tailoring
+  garment: varchar('garment', { length: 150 }),
+  measurements: jsonb('measurements').$type<Record<string, string>>().notNull().default({}),
+  fabricSupplied: boolean('fabric_supplied').notNull().default(false),
+  fittingDate: date('fitting_date'),
+  // common
+  receivedAt: timestamp('received_at').defaultNow().notNull(),
+  promisedAt: timestamp('promised_at'),
+  isUrgent: boolean('is_urgent').notNull().default(false),
+  assignedTo: uuid('assigned_to').references(() => users.id, { onDelete: 'set null' }),
+  status: varchar('status', { length: 20 }).notNull().default('received').$type<ServiceJobStatus>(),
+  estimateAmount: decimal('estimate_amount', { precision: 12, scale: 2 }),
+  estimateStatus: varchar('estimate_status', { length: 20 }).notNull().default('none').$type<ServiceJobEstimateStatus>(),
+  estimateRespondedAt: timestamp('estimate_responded_at'),
+  subtotal: decimal('subtotal', { precision: 12, scale: 2 }).notNull().default('0'),
+  discountAmount: decimal('discount_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxAmount: decimal('tax_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  taxBreakdown: jsonb('tax_breakdown'),
+  total: decimal('total', { precision: 12, scale: 2 }).notNull().default('0'),
+  paidAmount: decimal('paid_amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  balanceDue: decimal('balance_due', { precision: 12, scale: 2 }).notNull().default('0'),
+  repairWarrantyDays: integer('repair_warranty_days'),
+  repairWarrantyUntil: date('repair_warranty_until'),
+  notes: text('notes'),
+  saleId: uuid('sale_id').references(() => sales.id, { onDelete: 'set null' }),
+  deliveredAt: timestamp('delivered_at'),
+  cancelledAt: timestamp('cancelled_at'),
+  cancellationReason: text('cancellation_reason'),
+  notifiedAt: timestamp('notified_at'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at').defaultNow().notNull(),
+})
+
+export const serviceJobItems = pgTable('service_job_items', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  serviceJobId: uuid('service_job_id').notNull().references(() => serviceJobs.id, { onDelete: 'cascade' }),
+  sortOrder: integer('sort_order').notNull().default(0),
+  lineType: varchar('line_type', { length: 10 }).notNull().default('labour').$type<'part' | 'labour' | 'other'>(),
+  itemId: uuid('item_id').references(() => items.id, { onDelete: 'set null' }),
+  description: varchar('description', { length: 255 }).notNull(),
+  quantity: decimal('quantity', { precision: 14, scale: 4 }).notNull().default('1'),
+  unitPrice: decimal('unit_price', { precision: 12, scale: 2 }).notNull().default('0'),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull().default('0'),
+  notes: text('notes'),
+})
+
+export const serviceJobPayments = pgTable('service_job_payments', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  serviceJobId: uuid('service_job_id').notNull().references(() => serviceJobs.id),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+  paymentMethod: paymentMethodEnum('payment_method').notNull(),
+  reference: varchar('reference', { length: 255 }),
+  receivedBy: uuid('received_by').references(() => users.id, { onDelete: 'set null' }),
+  refundedAt: timestamp('refunded_at'),
+  posOpeningEntryId: uuid('pos_opening_entry_id').references(() => posOpeningEntries.id, { onDelete: 'set null' }),
+  refundPosOpeningEntryId: uuid('refund_pos_opening_entry_id').references(() => posOpeningEntries.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
+export const serviceJobHistory = pgTable('service_job_history', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id),
+  serviceJobId: uuid('service_job_id').notNull().references(() => serviceJobs.id, { onDelete: 'cascade' }),
+  fromStatus: varchar('from_status', { length: 20 }),
+  toStatus: varchar('to_status', { length: 20 }),
+  note: text('note'),
+  changedBy: uuid('changed_by').references(() => users.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+})
+
 // ==================== GIFT CARDS ====================
 
 export const giftCards = pgTable('gift_cards', {
@@ -3440,6 +3558,7 @@ export const attendanceDevices = pgTable('attendance_devices', {
   attlogStamp: varchar('attlog_stamp', { length: 50 }),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   lastIp: varchar('last_ip', { length: 64 }),
+  allowedIps: text('allowed_ips').array(),
   deviceInfo: jsonb('device_info'),
   isActive: boolean('is_active').notNull().default(true),
   createdBy: uuid('created_by'),
@@ -4123,6 +4242,9 @@ export const itemSerialNumbers = pgTable('item_serial_numbers', {
   itemId: uuid('item_id').notNull().references(() => items.id),
   warehouseId: uuid('warehouse_id').references(() => warehouses.id),
   serialNumber: varchar('serial_number', { length: 255 }).notNull(),
+  // 0193: phones carry one or two IMEIs besides the serial (searchable, warranty lookup)
+  imei: varchar('imei', { length: 20 }),
+  imei2: varchar('imei2', { length: 20 }),
   status: serialNumberStatusEnum('status').notNull().default('available'),
   warrantyStartDate: date('warranty_start_date'),
   warrantyEndDate: date('warranty_end_date'),

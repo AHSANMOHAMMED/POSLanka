@@ -21,6 +21,7 @@ import type { TenantDb } from '@/lib/db/tenant-context'
 import type { CompanySession } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { normalizeScaleConfig, type ScaleBarcodeConfig } from './barcode-parse'
+import { normalizeFeatureFlags } from '@/lib/features/flags'
 
 /** Sellers (createSales) and POS operators (managePOS) may download the catalog / offline bundle. */
 export function canSyncCatalog(session: CompanySession): boolean {
@@ -310,6 +311,9 @@ export async function buildOfflineBundle(db: TenantDb, opts: { tenantId: string;
   const scaleBarcode = normalizeScaleConfig(
     ((tenant?.settings || {}) as { scaleBarcode?: Partial<ScaleBarcodeConfig> }).scaleBarcode,
   )
+  // Weighing scale switched off (super admin → Features): offline tills / the app do not read scale labels
+  const tenantFlags = ((tenant?.settings || {}) as { featureFlags?: Partial<Record<string, boolean>> }).featureFlags
+  if (!normalizeFeatureFlags(tenantFlags).weighing_scale) scaleBarcode.enabled = false
 
   const shift = await db.query.posOpeningEntries.findFirst({
     where: (e, { and, eq }) => and(eq(e.userId, userId), eq(e.status, 'open')),

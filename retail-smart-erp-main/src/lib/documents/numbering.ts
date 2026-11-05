@@ -82,6 +82,7 @@ export const DOCUMENT_SERIES = {
   held_sale: simple('held_sale', 'held_sales', 'hold_number', 'HOLD-', 4),
   work_order: simple('work_order', 'work_orders', 'order_no', 'WO-', 6),
   print_job: simple('print_job', 'print_jobs', 'job_no', 'PJ-', 6), // drizzle/0182 print studio job orders
+  service_job: simple('service_job', 'service_jobs', 'job_no', 'SJ-', 6), // drizzle/0193 repair jobs / tailoring orders / service tickets
   insurance_estimate: simple('insurance_estimate', 'insurance_estimates', 'estimate_no', 'EST-', 6),
   installment_plan: simple('installment_plan', 'installment_plans', 'plan_no', 'HP-', 6), // drizzle/0181 hire purchase
   installment_receipt: simple('installment_receipt', 'installment_payments', 'receipt_no', 'HPR-', 6),

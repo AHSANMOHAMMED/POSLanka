@@ -73,7 +73,7 @@ async function labelTests() {
   const setup = setupFromPreset(p)
   check(stickerRollWidthMm(setup) === 80, '38x25x2 liner = 80 mm', String(stickerRollWidthMm(setup)))
   check(stickerRollWidthMm(setupFromPreset(STICKER_PRESETS.find((x) => x.id === '32x25x3')!)) === 102, '32x25x3 liner = 102 mm')
-  const bad = sanitizeStickerSetup({ columns: 9, offsetXMm: -99, dpi: 600 as never, labelWidthMm: 'x' as never, darkness: '' as never })
+  const bad = sanitizeStickerSetup({ columns: 9, offsetXMm: -99, dpi: 450 as never, labelWidthMm: 'x' as never, darkness: '' as never })
   check(bad.columns === 4 && bad.offsetXMm === -20 && bad.dpi === 203 && bad.labelWidthMm === 50 && bad.darkness === null, 'sanitize clamps values')
   const two = sanitizeStickerSetups([{ ...setup, isDefault: true }, { ...setup, id: 'x', isDefault: true }])
   check(two.filter((s) => s.isDefault).length === 1, 'only one default setup')

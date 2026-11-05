@@ -2,59 +2,51 @@
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
-import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3, Lock, Ruler, ArrowLeft, Layout, AlertTriangle } from 'lucide-react'
+import { Printer, Minus, Plus, X, Search, Tag, Eye, ChevronLeft, ChevronRight, Sliders, Edit3, Lock, Ruler, ArrowLeft, Layout, AlertTriangle, RotateCcw } from 'lucide-react'
 import { AsyncCreatableSelect } from '@/components/ui/async-creatable-select'
-import { LabelPreview } from '@/components/labels/LabelPreview'
-import { printLabels, printLabelsOnRoll, printLabelsRaw, printAlignmentTestRaw } from '@/lib/labels/label-print'
-import { useDirectZebra } from '@/hooks/useDirectZebra'
+import { LabelPreview, type LabelPreviewRender } from '@/components/labels/LabelPreview'
+import { ElementCustomizer } from '@/components/labels/ElementCustomizer'
+import { PrinterSetupPanel } from '@/components/labels/PrinterSetupPanel'
+import { useLabelPrintSetup } from '@/components/labels/useLabelPrintSetup'
+import { printLabels, printLabelsOnRoll, printLabelsRaw, printAlignmentTestRaw, printAlignmentTestDialog } from '@/lib/labels/label-print'
+import { useDirectLabelPrinter } from '@/hooks/useDirectZebra'
 import { PrintAgentInstallCommands } from '@/components/print/PrintAgentInstallCommands'
 import { preflightLabels } from '@/lib/print/label/preflight'
+import { guessLabelPrinter } from '@/lib/print/label/printer-detect'
 import { StickerRollPreview } from '@/components/labels/StickerRollPreview'
 import { useStickerSetups } from '@/hooks/useStickerSetups'
 import { usePermission } from '@/hooks/usePermission'
-import { defaultStickerSetup, setupsForBranch, stickerRollWidthMm, STICKER_PRESETS, setupFromPreset, type StickerSetup } from '@/lib/labels/sticker-stock'
+import {
+  DEFAULT_STICKER_SETUP,
+  defaultStickerSetup,
+  sanitizeStickerSetup,
+  setupsForBranch,
+  stickerRollWidthMm,
+  STICKER_PRESETS,
+  setupFromPreset,
+  type StickerSetup,
+} from '@/lib/labels/sticker-stock'
+import {
+  applyElementTweaks,
+  buildQuickLayout,
+  fieldsFromTemplate,
+  presetFields,
+  QUICK_PRESETS,
+  type ElementTweak,
+  type LabelPrintSetup,
+  type PrintLanguage,
+  type QuickFields,
+} from '@/lib/labels/print-setup'
 import { LABEL_PRESETS } from '@/lib/labels/presets'
 import { toast } from '@/components/ui/toast'
 import { useTenantCurrency } from '@/hooks'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
-import type { LabelTemplate, LabelItemData, PrintLabelConfig, LabelElement } from '@/lib/labels/types'
+import type { LabelTemplate, LabelItemData } from '@/lib/labels/types'
 import type { AsyncSelectOption } from '@/components/ui/async-creatable-select'
 
 interface ItemWithQty {
   item: LabelItemData
   quantity: number
-}
-
-interface VisibleBarcodeFields {
-  showName: boolean
-  nameLengthMode: 'initial' | 'autofit' | 'multiline'
-  nameFontSize: 'small' | 'normal' | 'large'
-  showBarcode: boolean
-  barcodeType: 'code128' | 'qrcode'
-  showBarcodeText: boolean
-  showPrice: boolean
-  showSku: boolean
-  showCompany: boolean
-  showVendor: boolean
-  showCategory: boolean
-  showUnit: boolean
-  showPriceCode: boolean
-}
-
-const DEFAULT_VISIBLE_FIELDS: VisibleBarcodeFields = {
-  showName: true,
-  nameLengthMode: 'initial',
-  nameFontSize: 'normal',
-  showBarcode: true,
-  barcodeType: 'code128',
-  showBarcodeText: true,
-  showPrice: true,
-  showSku: true,
-  showCompany: false,
-  showVendor: false,
-  showCategory: false,
-  showUnit: false,
-  showPriceCode: false,
 }
 
 /**
@@ -81,84 +73,72 @@ function pickTemplate(list: LabelTemplate[], ...preds: Array<(t: LabelTemplate) 
 
 const near = (a: unknown, b: number) => Math.abs(Number(a) - b) <= 0.5
 
+/** Built-in / seeded templates use the quick layout by default; the shop's own designs print as designed. */
+const isBuiltinTemplate = (t: LabelTemplate) => t.id.startsWith('preset-') || LABEL_PRESETS.some((p) => p.name === t.name)
+
+const readLocal = (key: string) => {
+  try {
+    return typeof window !== 'undefined' ? localStorage.getItem(key) : null
+  } catch {
+    return null
+  }
+}
+const writeLocal = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    /* private mode */
+  }
+}
+
+const FIELD_TOGGLES: { key: keyof QuickFields; label: string }[] = [
+  { key: 'showName', label: 'Product Name' },
+  { key: 'showVendor', label: 'Vendor / Supplier' },
+  { key: 'showBarcode', label: 'Barcode Graphic' },
+  { key: 'showPrice', label: 'Selling Price' },
+  { key: 'showSku', label: 'SKU / Code' },
+  { key: 'showCompany', label: 'Store Name' },
+  { key: 'showCategory', label: 'Category' },
+  { key: 'showUnit', label: 'Unit (pcs/kg)' },
+  { key: 'showPriceCode', label: 'Cost Code (*)' },
+]
+
 export default function BarcodePrintPage() {
-  const [templates, setTemplates] = useState<LabelTemplate[]>([])
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
+  const [templates, setTemplates] = useState<LabelTemplate[] | null>(null)
+  const [selectedTemplateIdLocal, setSelectedTemplateId] = useState<string>('')
   const [items, setItems] = useState<ItemWithQty[]>([])
   const [searchValue, setSearchValue] = useState('')
   const [codeWord, setCodeWord] = useState<string>('')
   const [previewIndex, setPreviewIndex] = useState(0)
   const [showFullPreview, setShowFullPreview] = useState(false)
-  const [previewMode, setPreviewMode] = useState<'roll' | 'single'>('roll')
-  const [visibleFields, setVisibleFields] = useState<VisibleBarcodeFields>(DEFAULT_VISIBLE_FIELDS)
-  const [config, setConfig] = useState<PrintLabelConfig>({
-    labelsPerRow: 3,
-    gapMm: 3,
-    pageSize: 'Label',
-  })
+  const [previewMode, setPreviewMode] = useState<'roll' | 'single'>('single')
+  const [selectedElementId, setSelectedElementId] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
 
   const { symbol: currencySymbol } = useTenantCurrency()
   const company = useCompanyOptional()
 
+  // The shop's print setup (printer, roll, layout, element tweaks, lock) - stored for the shop
+  const ps = useLabelPrintSetup()
+  const setup = ps.setup
+  const locked = setup.locked
+  const update = ps.update
+
   const [printing, setPrinting] = useState(false)
-  // Chrome print preview (default) or straight to the Zebra through the print helper (per PC)
-  const direct = useDirectZebra()
+  // Chrome print preview (default) or straight to the label printer through the print helper (per PC)
+  const direct = useDirectLabelPrinter({ language: setup.printer.language, dpi: setup.printer.dpi })
   // Set synchronously on click: a second click before React re-renders must not start a second job.
   const printLock = useRef(false)
-  // Printer can't find the gaps (FEED runs through many stickers, e.g. a fixed centre sensor under the gap of a
-  // multi-across roll): print as a continuous roll, one page = label height + row gap, so no gap sensing is needed.
-  const [noGapSensing, setNoGapSensing] = useState(() => {
-    try {
-      return typeof window !== 'undefined' && localStorage.getItem('sky_label_no_gap_sensing') === '1'
-    } catch {
-      return false
-    }
-  })
-  // Continuous roll: real distance between sticker rows (mm). Fine-tuned here when labels drift row after row.
-  const [rowGapOverride, setRowGapOverride] = useState<number | null>(() => {
-    try {
-      const v = typeof window !== 'undefined' ? localStorage.getItem('sky_label_row_gap_mm') : null
-      return v !== null && Number.isFinite(Number(v)) ? Number(v) : null
-    } catch {
-      return null
-    }
-  })
-  const changeRowGap = (mm: number) => {
-    const v = Math.max(0, Math.min(10, Math.round(mm * 2) / 2))
-    setRowGapOverride(v)
-    try {
-      localStorage.setItem('sky_label_row_gap_mm', String(v))
-    } catch {
-      /* private mode */
-    }
-  }
-  // Shift every sticker down (+) or up (-) on its page, mm. Fixes a constant offset (e.g. the first line in the gap).
-  const [offsetOverride, setOffsetOverride] = useState<number>(() => {
-    try {
-      const v = typeof window !== 'undefined' ? Number(localStorage.getItem('sky_label_offset_y_mm') || 0) : 0
-      return Number.isFinite(v) ? v : 0
-    } catch {
-      return 0
-    }
-  })
-  const changeOffset = (mm: number) => {
-    const v = Math.max(-10, Math.min(10, Math.round(mm * 2) / 2))
-    setOffsetOverride(v)
-    try {
-      localStorage.setItem('sky_label_offset_y_mm', String(v))
-    } catch {
-      /* private mode */
-    }
-  }
-  const toggleNoGapSensing = (on: boolean) => {
-    setNoGapSensing(on)
-    try {
-      if (on) localStorage.setItem('sky_label_no_gap_sensing', '1')
-      else localStorage.removeItem('sky_label_no_gap_sensing')
-    } catch {
-      /* private mode */
-    }
-  }
+
+  // Browser-dialog options (stored with the setup)
+  const noGapSensing = setup.chrome.noGapSensing
+  const rowGapOverride = setup.chrome.rowGapMm
+  const offsetOverride = setup.chrome.offsetYMm
+  const config = { labelsPerRow: 3, gapMm: setup.chrome.sheetGapMm, pageSize: setup.chrome.pageSize }
+  const setChrome = (patch: Partial<LabelPrintSetup['chrome']>) => update((s) => ({ ...s, chrome: { ...s.chrome, ...patch } }))
+  const changeRowGap = (mm: number) => setChrome({ rowGapMm: Math.max(0, Math.min(10, Math.round(mm * 2) / 2)) })
+  const changeOffset = (mm: number) => setChrome({ offsetYMm: Math.max(-10, Math.min(10, Math.round(mm * 2) / 2)) })
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
       // Auto-jump to HTTPS if accessing via HTTP on production host
@@ -195,19 +175,18 @@ export default function BarcodePrintPage() {
   }, [setups])
 
   const fallbackSetup = defaultStickerSetup(availableSetups)
-  // A locked default setup cannot be switched by cashiers
+  // A locked default roll cannot be switched by cashiers
   const forcedSetup = !isAdmin && fallbackSetup?.locked ? fallbackSetup : null
-  const [setupChoice, setSetupChoice] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      const savedSetupId = localStorage.getItem('sky_barcode_setup_id')
-      if (savedSetupId) return savedSetupId
-      const savedCols = localStorage.getItem('sky_barcode_roll_columns')
-      if (savedCols === '1') return '38x25x1'
-      if (savedCols === '3') return '32x25x3'
-      if (savedCols === '2') return '38x25x2'
-    }
+  const [setupChoiceLocal, setSetupChoice] = useState<string | null>(() => {
+    const savedSetupId = readLocal('sky_barcode_setup_id')
+    if (savedSetupId) return savedSetupId
+    const savedCols = readLocal('sky_barcode_roll_columns')
+    if (savedCols === '1') return '38x25x1'
+    if (savedCols === '3') return '32x25x3'
     return '38x25x2'
   })
+  // A locked print setup prints with its own roll
+  const setupChoice = locked && setup.layout.setupId ? setup.layout.setupId : setupChoiceLocal
   // A remembered built-in roll id (e.g. '38x25x2') is replaced in the list by the tenant's own saved copy of
   // that roll (same size and columns): resolve to that copy so its calibration (row gap, offsets) is used.
   const chosenSetup = (() => {
@@ -219,64 +198,45 @@ export default function BarcodePrintPage() {
       ? availableSetups.find((s) => s.columns === preset.columns && near(s.labelWidthMm, preset.labelWidthMm) && near(s.labelHeightMm, preset.labelHeightMm)) || null
       : null
   })()
-  const activeSetup = forcedSetup ?? (setupChoice !== null ? chosenSetup : fallbackSetup || availableSetups[0] || null)
+  // Roll typed in Printer setup
+  const mediaRoll = useMemo(
+    () => (setup.media ? sanitizeStickerSetup({ ...DEFAULT_STICKER_SETUP, ...setup.media, id: 'print-setup-roll', name: 'Typed roll (Printer setup)' }) : null),
+    [setup.media]
+  )
+  const baseRoll: StickerSetup | null = locked
+    ? mediaRoll ?? chosenSetup ?? fallbackSetup ?? null
+    : forcedSetup ?? mediaRoll ?? (setupChoice !== null ? chosenSetup : fallbackSetup || availableSetups[0] || null)
+  // Printer setup values (dpi, darkness, speed) win over the roll's
+  const activeSetup: StickerSetup | null = useMemo(
+    () =>
+      baseRoll
+        ? {
+            ...baseRoll,
+            dpi: setup.printer.dpi ?? baseRoll.dpi,
+            darkness: setup.printer.darkness ?? baseRoll.darkness,
+            speed: setup.printer.speed ?? baseRoll.speed,
+          }
+        : null,
+    [baseRoll, setup.printer.dpi, setup.printer.darkness, setup.printer.speed]
+  )
+  const dpi = activeSetup?.dpi ?? setup.printer.dpi ?? 203
 
-  // The template is picked once, on first load. Later refreshes (window focus, e.g. when Chrome's print
-  // dialog closes) only update the list, so the label size never changes between prints by itself.
-  const templatePicked = useRef(false)
+  // Fetch templates and label settings on mount, and re-fetch on window focus (the list only)
   const fetchTemplates = useCallback(async () => {
     try {
       const res = await fetch('/api/label-templates')
-      if (res.ok) {
-        const data = await res.json()
-        setTemplates(data)
-        if (templatePicked.current) return
-        templatePicked.current = true
-        const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null
-        const reqTplId = params?.get('templateId')
-        if (reqTplId) {
-          setSelectedTemplateId(reqTplId)
-        } else {
-          // Check saved preference first
-          const savedTplId = typeof window !== 'undefined' ? localStorage.getItem('sky_barcode_template_id') : null
-          const savedCols = typeof window !== 'undefined' ? localStorage.getItem('sky_barcode_roll_columns') : null
-
-          // Built-in presets (id "preset-...") are not in the API list but are valid saved choices
-          const savedExists = savedTplId
-            ? rankTemplates(data).find((t: LabelTemplate) => t.id === savedTplId) ||
-              (LABEL_PRESETS.some((p) => `preset-${p.id}` === savedTplId) ? { id: savedTplId } : null)
-            : null
-          if (savedExists) {
-            setSelectedTemplateId(savedExists.id)
-          } else if (savedCols === '1') {
-            const singleTpl = pickTemplate(data, (t) => (t.columns ?? 1) === 1 && near(t.widthMm, 38), (t) => near(t.widthMm, 38), (t) => (t.columns ?? 1) === 1) || data[0]
-            if (singleTpl) setSelectedTemplateId(singleTpl.id)
-          } else if (savedCols === '3') {
-            const tripleTpl = rankTemplates(data).find((t: LabelTemplate) => (t.columns ?? 1) === 3) || data[0]
-            if (tripleTpl) setSelectedTemplateId(tripleTpl.id)
-          } else {
-            // Default to Twin Stickers (2 Across on 80mm roll, 38x25 mm)
-            const twin38x25 = rankTemplates(data).find((t: LabelTemplate) => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5 && Math.abs(Number(t.heightMm) - 25) <= 0.5)
-            const twinAny = rankTemplates(data).find((t: LabelTemplate) => (t.columns ?? 1) === 2)
-            const defaultTpl = twin38x25 || twinAny || rankTemplates(data).find((t: LabelTemplate) => t.isDefault) || data[0]
-            if (defaultTpl) setSelectedTemplateId(defaultTpl.id)
-          }
-        }
-      }
+      if (res.ok) setTemplates(await res.json())
     } catch {
       toast.error('Failed to load templates')
     }
   }, [])
-
-  // Fetch templates and label settings on mount, and re-fetch on window focus
   useEffect(() => {
-    fetchTemplates()
-
+    // fetchTemplates() sets state after the request answers
+    void fetchTemplates()
     fetch('/api/label-settings')
       .then(r => { if (!r.ok) throw new Error('Failed'); return r.json() })
       .then(data => setCodeWord(data.codeWord || ''))
       .catch(() => {})
-
     const onFocus = () => fetchTemplates()
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
@@ -284,7 +244,7 @@ export default function BarcodePrintPage() {
 
   // Merge built-in presets if not yet saved in tenant database (e.g. 38x25 single / twin tag)
   const availableTemplates = useMemo(() => {
-    const list = [...templates]
+    const list = [...(templates || [])]
     for (const preset of LABEL_PRESETS) {
       if (!list.some(t => t.name === preset.name || (Math.abs(Number(t.widthMm) - preset.widthMm) <= 0.5 && Math.abs(Number(t.heightMm) - preset.heightMm) <= 0.5 && (t.columns ?? 1) === (preset.columns ?? 1)))) {
         list.push({
@@ -305,15 +265,56 @@ export default function BarcodePrintPage() {
     return list
   }, [templates])
 
+  // The template is picked once, when the templates and the shop's setup are loaded. Later refreshes (window
+  // focus, e.g. when Chrome's print dialog closes) only update the list, so the label never changes by itself.
+  const templatePicked = useRef(false)
+  useEffect(() => {
+    if (templatePicked.current || !templates || !ps.loaded) return
+    templatePicked.current = true
+    const data = templates
+    const params = new URLSearchParams(window.location.search)
+    const reqTplId = params.get('templateId')
+    const exists = (id: string | null) =>
+      !!id && (data.some((t) => t.id === id) || LABEL_PRESETS.some((p) => `preset-${p.id}` === id))
+    if (setup.layout.setupId) setSetupChoice(setup.layout.setupId)
+    let pick: string | undefined
+    if (reqTplId && !locked) pick = reqTplId
+    else if (exists(setup.layout.templateId)) pick = setup.layout.templateId!
+    else if (exists(readLocal('sky_barcode_template_id'))) pick = readLocal('sky_barcode_template_id')!
+    else {
+      const savedCols = readLocal('sky_barcode_roll_columns')
+      if (savedCols === '1') {
+        pick = (pickTemplate(data, (t) => (t.columns ?? 1) === 1 && near(t.widthMm, 38), (t) => near(t.widthMm, 38), (t) => (t.columns ?? 1) === 1) || data[0])?.id
+      } else if (savedCols === '3') {
+        pick = (rankTemplates(data).find((t) => (t.columns ?? 1) === 3) || data[0])?.id
+      } else {
+        // Default to Twin Stickers (2 Across on 80mm roll, 38x25 mm)
+        const twin38x25 = rankTemplates(data).find((t) => (t.columns ?? 1) === 2 && near(t.widthMm, 38) && near(t.heightMm, 25))
+        const twinAny = rankTemplates(data).find((t) => (t.columns ?? 1) === 2)
+        pick = (twin38x25 || twinAny || rankTemplates(data).find((t) => t.isDefault) || data[0])?.id
+      }
+    }
+    if (pick) setSelectedTemplateId(pick)
+  }, [templates, ps.loaded, setup.layout.setupId, setup.layout.templateId, locked])
+
+  const selectedTemplateId = locked && setup.layout.templateId ? setup.layout.templateId : selectedTemplateIdLocal
   const selectedTemplate = rankTemplates(availableTemplates).find(t => t.id === selectedTemplateId) ||
     rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === (activeSetup?.columns ?? 2) && Math.abs(Number(t.widthMm) - (activeSetup?.labelWidthMm ?? 38)) <= 0.5) ||
     rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === (activeSetup?.columns ?? 2)) ||
     availableTemplates[0] ||
     null
 
-  // Auto-sync roll setup when a template is selected
+  const chooseTemplate = (id: string) => {
+    if (locked) return
+    setSelectedTemplateId(id)
+    setSelectedElementId(null)
+    writeLocal('sky_barcode_template_id', id)
+    update((s) => ({ ...s, layout: { ...s.layout, templateId: id || null } }))
+  }
+
+  // Auto-sync roll setup when a template of another size is selected (not while locked or with a typed roll)
   useEffect(() => {
-    if (!selectedTemplate) return
+    if (!selectedTemplate || locked || setup.media) return
     const w = Number(selectedTemplate.widthMm)
     const h = Number(selectedTemplate.heightMm)
     const tCols = selectedTemplate.columns ?? 2
@@ -329,42 +330,56 @@ export default function BarcodePrintPage() {
       )
       if (match) {
         setSetupChoice(match.id)
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('sky_barcode_setup_id', match.id)
-          localStorage.setItem('sky_barcode_roll_columns', String(match.columns))
-        }
+        writeLocal('sky_barcode_setup_id', match.id)
+        writeLocal('sky_barcode_roll_columns', String(match.columns))
       }
     }
-  }, [selectedTemplate, availableSetups, activeSetup])
+  }, [selectedTemplate, availableSetups, activeSetup, locked, setup.media])
 
   // Handle switching roll layout: auto-switch template if dimension mismatches
   const handleSetupChange = (id: string) => {
+    if (locked) return
     setSetupChoice(id)
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('sky_barcode_setup_id', id)
-    }
-    if (!id) return
-    const chosen = availableSetups.find(s => s.id === id)
+    writeLocal('sky_barcode_setup_id', id)
+    let tplId: string | null = null
+    const chosen = id ? availableSetups.find(s => s.id === id) : null
     if (chosen) {
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('sky_barcode_roll_columns', String(chosen.columns))
-      }
+      writeLocal('sky_barcode_roll_columns', String(chosen.columns))
       // A template is one sticker: keep it while its size matches the roll (columns are the roll's)
       const currentMatches = selectedTemplate &&
         near(selectedTemplate.widthMm, chosen.labelWidthMm) &&
         near(selectedTemplate.heightMm, chosen.labelHeightMm)
-
       if (!currentMatches) {
         const sameSize = (t: LabelTemplate) => near(t.widthMm, chosen.labelWidthMm) && near(t.heightMm, chosen.labelHeightMm)
         const matchingTpl = pickTemplate(availableTemplates, (t) => sameSize(t) && (t.columns ?? 1) === chosen.columns, sameSize, (t) => (t.columns ?? 1) === chosen.columns)
         if (matchingTpl) {
+          tplId = matchingTpl.id
           setSelectedTemplateId(matchingTpl.id)
-          if (typeof window !== 'undefined') {
-            localStorage.setItem('sky_barcode_template_id', matchingTpl.id)
-          }
+          writeLocal('sky_barcode_template_id', matchingTpl.id)
         }
       }
     }
+    // picking a roll from the list replaces a roll typed in Printer setup
+    update((s) => ({ ...s, media: null, layout: { ...s.layout, setupId: id || null, ...(tplId ? { templateId: tplId } : {}) } }))
+  }
+
+  const quickRoll = (cols: 1 | 2 | 3) => {
+    if (locked) return
+    const roll =
+      cols === 1
+        ? availableSetups.find(s => s.columns === 1 && Math.abs(s.labelWidthMm - 38) <= 0.5) || availableSetups.find(s => s.columns === 1)
+        : cols === 2
+          ? availableSetups.find(s => s.columns === 2 && Math.abs(s.labelWidthMm - 38) <= 0.5) || availableSetups.find(s => s.columns === 2)
+          : availableSetups.find(s => s.columns === 3 && Math.abs(s.labelWidthMm - 32) <= 1) || availableSetups.find(s => s.columns === 3)
+    if (roll) handleSetupChange(roll.id)
+    const tpl =
+      cols === 1
+        ? pickTemplate(availableTemplates, (t) => (t.columns ?? 1) === 1 && near(t.widthMm, 38), (t) => near(t.widthMm, 38), (t) => (t.columns ?? 1) === 1)
+        : cols === 2
+          ? rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5) || rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 2)
+          : rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 3)
+    if (tpl) chooseTemplate(tpl.id)
+    writeLocal('sky_barcode_roll_columns', String(cols))
   }
 
   const searchItems = useCallback(async (search: string): Promise<AsyncSelectOption[]> => {
@@ -445,360 +460,101 @@ export default function BarcodePrintPage() {
 
   const totalLabels = items.reduce((sum, i) => sum + i.quantity, 0)
 
-  // Auto-sync toggles to match initial elements of the chosen template
-  useEffect(() => {
-    if (!selectedTemplate) return
-    const elements = selectedTemplate.elements || []
-    setVisibleFields(prev => ({
-      ...prev,
-      showName: elements.some(el => el.type === 'text' && el.dataField === 'item.name'),
-      showBarcode: elements.some(el => el.type === 'barcode'),
-      showBarcodeText: elements.find(el => el.type === 'barcode')?.showText ?? true,
-      showPrice: elements.some(el => el.type === 'text' && el.dataField === 'item.sellingPrice'),
-      showSku: elements.some(el => el.type === 'text' && el.dataField === 'item.sku'),
-      showCompany: elements.some(el => el.type === 'text' && el.dataField === 'tenant.name'),
-      showVendor: elements.some(el => el.type === 'text' && (el.dataField === 'item.supplier' || el.dataField === 'item.brand')),
-      showCategory: elements.some(el => el.type === 'text' && el.dataField === 'item.category'),
-      showUnit: elements.some(el => el.type === 'text' && el.dataField === 'item.unit'),
-      showPriceCode: elements.some(el => el.type === 'text' && el.dataField === 'item.priceCode'),
-    }))
-  }, [selectedTemplate])
+  // ── Layout: quick layout (fields) or the template as designed, plus the per-element tweaks ──
+  const preset = setup.layout.preset
+  const presetState = setup.layout.presets[preset]
+  const source: 'quick' | 'designed' = setup.layout.source ?? (selectedTemplate && !isBuiltinTemplate(selectedTemplate) ? 'designed' : 'quick')
+  const visibleFields: QuickFields = useMemo(
+    () => presetState?.fields ?? (preset === 'custom' ? fieldsFromTemplate(selectedTemplate) : presetFields(preset)),
+    [presetState, preset, selectedTemplate]
+  )
+  const setVisibleFields = (fn: (f: QuickFields) => QuickFields) =>
+    update((s) => {
+      const cur = s.layout.presets[s.layout.preset]
+      return { ...s, layout: { ...s.layout, presets: { ...s.layout.presets, [s.layout.preset]: { ...cur, fields: fn(cur?.fields ?? visibleFields) } } } }
+    })
+  const choosePreset = (id: string) => {
+    setSelectedElementId(null)
+    update((s) => ({ ...s, layout: { ...s.layout, preset: id, source: 'quick' } }))
+  }
+  const resetPreset = () =>
+    update((s) => {
+      const presets = { ...s.layout.presets }
+      delete presets[s.layout.preset]
+      return { ...s, layout: { ...s.layout, presets } }
+    })
 
-  // Dynamically compute activeTemplate based on enabled/disabled visibleFields
+  // Size the quick layout is built for: a roll typed in Printer setup wins over the template size
+  const labelW = setup.media ? setup.media.labelWidthMm : Number(selectedTemplate?.widthMm) || 50
+  const labelH = setup.media ? setup.media.labelHeightMm : Number(selectedTemplate?.heightMm) || 30
+  const baseElements = useMemo(
+    () => (!selectedTemplate ? [] : source === 'designed' ? selectedTemplate.elements || [] : buildQuickLayout(labelW, labelH, visibleFields)),
+    [selectedTemplate, source, labelW, labelH, visibleFields]
+  )
+  const tweaks = useMemo(
+    () => (source === 'designed' ? (selectedTemplate ? setup.layout.templateTweaks[selectedTemplate.id] : undefined) : presetState?.tweaks) || {},
+    [source, selectedTemplate, setup.layout.templateTweaks, presetState]
+  )
+  const setTweak = (id: string, t: ElementTweak | null) => {
+    if (!selectedTemplate) return
+    const tplId = selectedTemplate.id
+    update((s) => {
+      if (source === 'designed') {
+        const map = { ...(s.layout.templateTweaks[tplId] || {}) }
+        if (t) map[id] = t
+        else delete map[id]
+        return { ...s, layout: { ...s.layout, templateTweaks: { ...s.layout.templateTweaks, [tplId]: map } } }
+      }
+      const cur = s.layout.presets[s.layout.preset] || {}
+      const map = { ...(cur.tweaks || {}) }
+      if (t) map[id] = t
+      else delete map[id]
+      return { ...s, layout: { ...s.layout, presets: { ...s.layout.presets, [s.layout.preset]: { ...cur, tweaks: map } } } }
+    })
+  }
+
+  // What prints and what the preview shows
   const activeTemplate = useMemo<LabelTemplate | null>(() => {
     if (!selectedTemplate) return null
-
-    const widthMm = Number(selectedTemplate.widthMm) || 50
-    const heightMm = Number(selectedTemplate.heightMm) || 30
-
-    const hasCompany = visibleFields.showCompany
-    const hasVendor = visibleFields.showVendor
-    const hasName = visibleFields.showName
-    const hasBarcode = visibleFields.showBarcode
-    const hasPrice = visibleFields.showPrice
-    const hasSku = visibleFields.showSku
-    const hasPriceCode = visibleFields.showPriceCode
-    const hasCategory = visibleFields.showCategory
-    const hasUnit = visibleFields.showUnit
-
-    const resultElements: LabelElement[] = []
-    let currentY = 1.0
-
-    // ── 1. Top Header: Store Name & Vendor/Supplier Name ──
-    if (hasCompany && hasVendor) {
-      if (widthMm >= 48) {
-        // Wide sticker: side-by-side header
-        const halfW = (widthMm - 3) / 2
-        resultElements.push({
-          id: 'dyn-company',
-          type: 'text',
-          dataField: 'tenant.name',
-          x: 1,
-          y: currentY,
-          width: halfW,
-          height: 3.2,
-          fontSize: 6,
-          fontWeight: 'bold',
-          textAlign: 'left',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 1,
-        })
-        resultElements.push({
-          id: 'dyn-vendor',
-          type: 'text',
-          dataField: 'item.supplier',
-          prefix: 'Vendor: ',
-          x: halfW + 1.5,
-          y: currentY,
-          width: halfW,
-          height: 3.2,
-          fontSize: 5.5,
-          fontWeight: 'normal',
-          textAlign: 'right',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 1,
-        })
-        currentY += 3.8
-      } else {
-        // Compact sticker (38mm): 2 stacked micro-lines
-        resultElements.push({
-          id: 'dyn-company',
-          type: 'text',
-          dataField: 'tenant.name',
-          x: 1,
-          y: currentY,
-          width: widthMm - 2,
-          height: 2.8,
-          fontSize: 5.5,
-          fontWeight: 'bold',
-          textAlign: 'center',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 1,
-        })
-        currentY += 3.0
-        resultElements.push({
-          id: 'dyn-vendor',
-          type: 'text',
-          dataField: 'item.supplier',
-          prefix: 'By: ',
-          x: 1,
-          y: currentY,
-          width: widthMm - 2,
-          height: 2.4,
-          fontSize: 5.0,
-          fontWeight: 'normal',
-          textAlign: 'center',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 1,
-        })
-        currentY += 2.8
-      }
-    } else if (hasCompany) {
-      resultElements.push({
-        id: 'dyn-company',
-        type: 'text',
-        dataField: 'tenant.name',
-        x: 1,
-        y: currentY,
-        width: widthMm - 2,
-        height: 3.2,
-        fontSize: widthMm <= 40 ? 6 : 7,
-        fontWeight: 'bold',
-        textAlign: 'center',
-        maxLines: 1,
-        rotation: 0,
-        zIndex: 1,
-      })
-      currentY += 3.8
-    } else if (hasVendor) {
-      resultElements.push({
-        id: 'dyn-vendor',
-        type: 'text',
-        dataField: 'item.supplier',
-        prefix: 'Vendor: ',
-        x: 1,
-        y: currentY,
-        width: widthMm - 2,
-        height: 3.2,
-        fontSize: widthMm <= 40 ? 6 : 7,
-        fontWeight: 'normal',
-        textAlign: 'center',
-        maxLines: 1,
-        rotation: 0,
-        zIndex: 1,
-      })
-      currentY += 3.8
-    }
-
-    // ── 2. Product Name with Length / Font Size Optimization ──
-    if (hasName) {
-      const mode = visibleFields.nameLengthMode
-      const sizeOpt = visibleFields.nameFontSize
-      const isMulti = mode === 'multiline'
-      const isAutoFit = mode === 'autofit'
-      const nameH = isMulti ? (widthMm <= 40 ? 5.5 : 6.5) : (widthMm <= 40 ? 3.5 : 4.2)
-
-      const baseFont = sizeOpt === 'small'
-        ? 5.5
-        : sizeOpt === 'large'
-        ? (widthMm <= 40 ? 8.5 : 10)
-        : (widthMm <= 40 ? 6.5 : 8)
-
-      resultElements.push({
-        id: 'dyn-name',
-        type: 'text',
-        dataField: 'item.name',
-        x: 1,
-        y: currentY,
-        width: Math.max(10, widthMm - 2),
-        height: nameH,
-        fontSize: baseFont,
-        fontWeight: 'bold',
-        textAlign: 'center',
-        maxLines: isMulti ? 2 : 1,
-        autoFit: isAutoFit,
-        rotation: 0,
-        zIndex: 1,
-      })
-      currentY += nameH + 0.8
-    }
-
-    // ── 3. Footer Elements (Price, SKU, Price Code, Category, Unit) ──
-    const hasAnyFooter = hasPrice || hasSku || hasCategory || hasPriceCode || hasUnit
-    const footerH = widthMm <= 40 ? 5.0 : 6.0
-    const footerY = Math.max(currentY + 6, heightMm - footerH - 1.0)
-
-    if (hasAnyFooter) {
-      // Cost Code (Top right of sticker or above footer)
-      if (hasPriceCode) {
-        resultElements.push({
-          id: 'dyn-pricecode',
-          type: 'text',
-          dataField: 'item.priceCode',
-          x: Math.max(2, widthMm - 18),
-          y: 0.8,
-          width: 16,
-          height: 2.8,
-          fontSize: 5.5,
-          fontWeight: 'normal',
-          textAlign: 'right',
-          prefix: '*',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 3,
-        })
-      }
-
-      if (hasSku && hasPrice) {
-        const skuW = Math.min(22, Math.floor(widthMm * 0.42))
-        const priceX = skuW + 2
-        const priceW = widthMm - priceX - 1.5
-
-        resultElements.push({
-          id: 'dyn-sku',
-          type: 'text',
-          dataField: 'item.sku',
-          prefix: 'SKU: ',
-          x: 1.5,
-          y: footerY + 1.0,
-          width: skuW,
-          height: 3.5,
-          fontSize: 5.5,
-          fontWeight: 'normal',
-          textAlign: 'left',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 2,
-        })
-
-        resultElements.push({
-          id: 'dyn-price',
-          type: 'text',
-          dataField: 'item.sellingPrice',
-          isCurrency: true,
-          suffix: hasUnit ? ' ' : undefined,
-          x: priceX,
-          y: footerY,
-          width: priceW,
-          height: footerH,
-          fontSize: widthMm <= 40 ? 8.5 : 11,
-          fontWeight: 'bold',
-          textAlign: 'right',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 2,
-        })
-      } else if (hasPrice) {
-        resultElements.push({
-          id: 'dyn-price',
-          type: 'text',
-          dataField: 'item.sellingPrice',
-          isCurrency: true,
-          x: 1,
-          y: footerY,
-          width: widthMm - 2,
-          height: footerH,
-          fontSize: widthMm <= 40 ? 10.5 : 13,
-          fontWeight: 'bold',
-          textAlign: 'center',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 2,
-        })
-      } else if (hasSku) {
-        resultElements.push({
-          id: 'dyn-sku',
-          type: 'text',
-          dataField: 'item.sku',
-          prefix: 'SKU: ',
-          x: 1,
-          y: footerY,
-          width: widthMm - 2,
-          height: 4,
-          fontSize: 6.5,
-          fontWeight: 'normal',
-          textAlign: 'center',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 2,
-        })
-      }
-
-      if (hasCategory && !hasSku) {
-        resultElements.push({
-          id: 'dyn-category',
-          type: 'text',
-          dataField: 'item.category',
-          x: 1.5,
-          y: footerY + 1,
-          width: Math.floor(widthMm * 0.45),
-          height: 3,
-          fontSize: 5.5,
-          fontWeight: 'normal',
-          textAlign: 'left',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 2,
-        })
-      }
-
-      if (hasUnit && !hasPrice) {
-        resultElements.push({
-          id: 'dyn-unit',
-          type: 'text',
-          dataField: 'item.unit',
-          prefix: 'Unit: ',
-          x: Math.max(2, widthMm / 2 - 8),
-          y: footerY,
-          width: 16,
-          height: 3,
-          fontSize: 6,
-          fontWeight: 'normal',
-          textAlign: 'center',
-          maxLines: 1,
-          rotation: 0,
-          zIndex: 2,
-        })
-      }
-    }
-
-    // ── 4. Barcode Graphic (Fills remaining height) ──
-    if (hasBarcode) {
-      const isQr = visibleFields.barcodeType === 'qrcode'
-      const barcodeTopY = currentY
-      const bottomLimit = hasAnyFooter ? footerY - 0.5 : heightMm - 1.0
-      const availableBarcodeH = Math.max(6, bottomLimit - barcodeTopY)
-      const barcodeH = isQr
-        ? Math.min(availableBarcodeH, Math.min(widthMm - 4, 18))
-        : Math.min(22, availableBarcodeH)
-      const barcodeW = isQr ? barcodeH : Math.max(10, widthMm - 4)
-      const barcodeX = isQr ? Math.max(2, (widthMm - barcodeW) / 2) : 2
-
-      resultElements.push({
-        id: 'dyn-barcode',
-        type: 'barcode',
-        dataField: 'item.barcode',
-        format: isQr ? 'qrcode' : 'code128',
-        barWidth: 2,
-        showText: isQr ? false : visibleFields.showBarcodeText,
-        x: barcodeX,
-        y: barcodeTopY,
-        width: barcodeW,
-        height: barcodeH,
-        rotation: 0,
-        zIndex: 1,
-      })
-    }
-
     return {
       ...selectedTemplate,
-      elements: resultElements,
-    }
-  }, [selectedTemplate, visibleFields])
+      ...(source === 'quick' && setup.media ? { widthMm: String(labelW), heightMm: String(labelH) } : {}),
+      elements: applyElementTweaks(baseElements, tweaks),
+    } as LabelTemplate
+  }, [selectedTemplate, source, setup.media, labelW, labelH, baseElements, tweaks])
+
+  // ── Printer language and how the preview is drawn ──
+  const target = direct.targets.find((t) => t.name === direct.printer) || null
+  const guessedLanguage: PrintLanguage | null = target ? (() => {
+    const g = guessLabelPrinter(target.name, target.driver).language
+    return g === 'epl' || g === 'tspl' ? g : 'zpl'
+  })() : null
+  const rawLanguage: PrintLanguage = setup.printer.language ?? guessedLanguage ?? 'zpl'
+  const directOn = direct.mode === 'direct' && config.pageSize === 'Label'
+  const previewRender: LabelPreviewRender = directOn
+    ? rawLanguage === 'driver' || rawLanguage === 'escpos-raster' || setup.printer.renderMode === 'exact'
+      ? { mode: 'raster', dpi }
+      : { mode: 'native', dpi, language: rawLanguage }
+    : { mode: 'html', dpi }
+  const rawOverrides = { language: setup.printer.language, dpi: setup.printer.dpi, renderMode: setup.printer.renderMode }
+
+  function effectiveRoll(templateToPrint: LabelTemplate): StickerSetup {
+    const defaultCols = (Number(templateToPrint.widthMm) || 38) <= 40 ? 2 : 1
+    const tCols = templateToPrint.columns ?? (activeSetup?.columns ?? defaultCols)
+    return activeSetup || sanitizeStickerSetup({
+      id: `setup-auto-${tCols}`,
+      name: `Auto ${tCols} Across`,
+      labelWidthMm: Number(templateToPrint.widthMm) || 38,
+      labelHeightMm: Number(templateToPrint.heightMm) || 25,
+      columns: tCols,
+      columnGapMm: tCols > 1 ? 2 : 0,
+      rowGapMm: 2,
+      marginLeftMm: tCols > 1 ? 1 : 0,
+      dpi: setup.printer.dpi ?? 203,
+      darkness: setup.printer.darkness,
+      speed: setup.printer.speed,
+    })
+  }
 
   /** One print job per click: exactly the listed quantities, in list order, never sent twice. */
   async function handlePrint() {
@@ -823,30 +579,7 @@ export default function BarcodePrintPage() {
       toast.error('Please add items to print')
       return
     }
-
-    const defaultCols = (Number(templateToPrint.widthMm) || 38) <= 40 ? 2 : 1
-    const tCols = templateToPrint.columns ?? (activeSetup?.columns ?? defaultCols)
-    const effectiveSetup: StickerSetup = activeSetup || {
-      id: `setup-auto-${tCols}`,
-      name: `Auto ${tCols} Across`,
-      labelWidthMm: Number(templateToPrint.widthMm) || 38,
-      labelHeightMm: Number(templateToPrint.heightMm) || 25,
-      columns: tCols,
-      columnGapMm: tCols > 1 ? 2 : 0,
-      rowGapMm: 2,
-      marginLeftMm: tCols > 1 ? 1 : 0,
-      offsetXMm: 0,
-      offsetYMm: 0,
-      dpi: 203,
-      language: null,
-      darkness: null,
-      speed: null,
-      direction: 1,
-      warehouseId: null,
-      locked: false,
-      isDefault: false,
-    }
-
+    const effectiveSetup = effectiveRoll(templateToPrint)
     const printViaRoll = config.pageSize === 'Label'
 
     // Pre-print barcode check: never send an unscannable / unfindable barcode silently.
@@ -869,14 +602,14 @@ export default function BarcodePrintPage() {
     const dialogSetup: StickerSetup = noGapSensing
       ? { ...shifted, labelHeightMm: shifted.labelHeightMm + (rowGapOverride ?? shifted.rowGapMm), rowGapMm: 0 }
       : shifted
-    // Direct to Zebra: ZPL straight to the printer (gap sensing before every row), no driver / preview.
+    // Direct to label printer: printer commands straight to the printer (gap sensing before every row).
     if (direct.mode === 'direct' && printViaRoll) {
       if (!direct.profile) {
-        toast.error(direct.state === 'missing' ? 'The print helper is not running on this PC. Install or start it (see "Direct to Zebra"), or switch to Chrome print preview.' : 'Choose the printer under "Direct to Zebra" first.')
+        toast.error(direct.state === 'missing' ? 'The print helper is not running on this PC. Install or start it (see "Direct to label printer"), or switch to Chrome print preview.' : 'Choose the printer under "Direct to label printer" first.')
         return
       }
       try {
-        const res = await printLabelsRaw(direct.profile, templateToPrint, items, { currencySymbol, tenantName: company?.tenantName, codeWord, setup: shifted })
+        const res = await printLabelsRaw(direct.profile, templateToPrint, items, { currencySymbol, tenantName: company?.tenantName, codeWord, setup: shifted, ...rawOverrides })
         if (res.ok) {
           toast.success(`Sent ${totalLabels} label${totalLabels === 1 ? '' : 's'} to ${direct.profile.name}`)
           if (res.warnings.length) toast.warning(res.warnings.slice(0, 2).join('; '))
@@ -904,16 +637,57 @@ export default function BarcodePrintPage() {
     }
   }
 
+  async function testPrint() {
+    const tpl = activeTemplate || selectedTemplate
+    const roll = tpl ? effectiveRoll(tpl) : activeSetup
+    if (!roll) {
+      toast.error('Pick a label roll first')
+      return
+    }
+    const shifted: StickerSetup = { ...roll, offsetYMm: roll.offsetYMm + offsetOverride }
+    setTesting(true)
+    try {
+      if (direct.mode === 'direct') {
+        if (!direct.profile) {
+          toast.error('Choose the printer under "Direct to label printer" first.')
+          return
+        }
+        const res = await printAlignmentTestRaw(direct.profile, shifted, rawOverrides)
+        if (res.ok) toast.success('Test sent: boxes 1 2 / 3 4 should sit inside the stickers')
+        else toast.error(res.error || 'Test print failed')
+      } else {
+        const dialogSetup: StickerSetup = noGapSensing ? { ...shifted, labelHeightMm: shifted.labelHeightMm + (rowGapOverride ?? shifted.rowGapMm), rowGapMm: 0 } : shifted
+        if (!(await printAlignmentTestDialog(dialogSetup))) toast.error('Chrome did not open the print preview')
+      }
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const lockSetup = () =>
+    ps.lock((s) => ({
+      ...s,
+      layout: { ...s.layout, templateId: selectedTemplate?.id ?? s.layout.templateId, setupId: setup.media ? s.layout.setupId : activeSetup?.id ?? s.layout.setupId, source },
+    }))
+
   // Live barcode check of the current list (shown under the items table).
   const preflight = useMemo(() => {
     const t = activeTemplate || selectedTemplate
     if (!t || items.length === 0) return null
     return preflightLabels(t, items, {
-      dpi: activeSetup?.dpi === 300 ? 300 : 203,
+      dpi,
       labelWidthMm: Number(t.widthMm),
       tenantName: company?.tenantName,
     })
-  }, [activeTemplate, selectedTemplate, items, activeSetup, company?.tenantName])
+  }, [activeTemplate, selectedTemplate, items, dpi, company?.tenantName])
+
+  const previewTemplate = activeTemplate || selectedTemplate
+  const previewCaption =
+    previewRender.mode === 'raster'
+      ? `Exactly what the printer gets (${dpi} dpi picture)`
+      : previewRender.mode === 'native'
+        ? `Printer fonts (${rawLanguage.toUpperCase()}): long text is cut like on the printer`
+        : 'Chrome print preview'
 
   return (
     <div className="space-y-4">
@@ -929,6 +703,11 @@ export default function BarcodePrintPage() {
               <ArrowLeft size={18} />
             </Link>
             <h1 className="text-xl font-semibold text-gray-900">Print Barcode Labels</h1>
+            {locked && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1">
+                <Lock size={11} /> Setup locked
+              </span>
+            )}
           </div>
           <p className="text-sm text-gray-500 mt-0.5 ml-8">Search items, configure labels, and print</p>
         </div>
@@ -977,7 +756,7 @@ export default function BarcodePrintPage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Left: Items List */}
+        {/* Left: Items List + Preview */}
         <div className="lg:col-span-2 space-y-3">
           {/* Item search */}
           <div className="bg-white rounded-lg border p-4">
@@ -1090,14 +869,136 @@ export default function BarcodePrintPage() {
               </ul>
             </div>
           )}
+
+          {/* Preview + click-to-adjust */}
+          <div className="bg-white rounded-lg border p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+                <Eye size={15} className="text-blue-600" />
+                Label Preview
+              </h3>
+              {previewTemplate && (
+                <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
+                  {parseFloat(String(previewTemplate.widthMm))} × {parseFloat(String(previewTemplate.heightMm))} mm
+                  {activeSetup && activeSetup.columns > 1 ? ` (${activeSetup.columns} across roll)` : ''}
+                </span>
+              )}
+            </div>
+
+            {/* View Mode Toggle for Multi-column rolls (e.g. 38x25 twin stickers) */}
+            {activeSetup && activeSetup.columns > 1 && (
+              <div className="flex items-center bg-slate-100 p-1 rounded-md text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode('single')}
+                  className={`flex-1 py-1 px-2 rounded transition-colors text-center ${previewMode === 'single' ? 'bg-white text-blue-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  One sticker (click to adjust)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode('roll')}
+                  className={`flex-1 py-1 px-2 rounded transition-colors text-center ${previewMode === 'roll' ? 'bg-white text-blue-700 shadow-sm font-semibold' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  On the roll ({activeSetup.columns} across)
+                </button>
+              </div>
+            )}
+
+            {previewTemplate ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  {items.length > 1 && (
+                    <div className="flex items-center justify-between bg-slate-50 border rounded px-2.5 py-1.5 text-xs text-slate-700">
+                      <button
+                        type="button"
+                        onClick={() => setPreviewIndex((prev) => Math.max(0, prev - 1))}
+                        disabled={previewIndex <= 0}
+                        className="p-1 hover:bg-slate-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <span className="font-medium truncate max-w-[200px]">
+                        {previewIndex + 1}/{items.length}: {items[previewIndex]?.item.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewIndex((prev) => Math.min(items.length - 1, prev + 1))}
+                        disabled={previewIndex >= items.length - 1}
+                        className="p-1 hover:bg-slate-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  )}
+                  {activeSetup && activeSetup.columns > 1 && previewMode === 'roll' ? (
+                    <div className="p-3 bg-slate-100/80 dark:bg-slate-800/60 rounded-lg border border-dashed border-gray-300 dark:border-gray-700">
+                      <StickerRollPreview
+                        setup={activeSetup}
+                        template={previewTemplate}
+                        items={items}
+                        currencySymbol={currencySymbol}
+                        tenantName={company?.tenantName}
+                        codeWord={codeWord}
+                        maxRows={2}
+                        render={previewRender}
+                      />
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-slate-100/70 dark:bg-slate-800/50 rounded-lg flex flex-col items-center justify-center border border-dashed border-gray-200 dark:border-gray-700 min-h-[160px]">
+                      <LabelPreview
+                        template={previewTemplate}
+                        item={items[previewIndex]?.item || null}
+                        currencySymbol={currencySymbol}
+                        tenantName={company?.tenantName}
+                        codeWord={codeWord}
+                        maxWidth={340}
+                        render={previewRender}
+                        onElementClick={setSelectedElementId}
+                        selectedId={selectedElementId}
+                      />
+                      {items.length === 0 && (
+                        <p className="text-[11px] text-gray-400 mt-2 italic">Sample preview • Add items to preview real products</p>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between text-xs text-gray-500">
+                    <span>{previewCaption}</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowFullPreview(true)}
+                      className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                    >
+                      <Eye size={12} />
+                      Enlarge
+                    </button>
+                  </div>
+                </div>
+                <ElementCustomizer
+                  elements={baseElements}
+                  tweaks={tweaks}
+                  selectedId={selectedElementId}
+                  onSelect={(id) => {
+                    setSelectedElementId(id)
+                    if (id && activeSetup && activeSetup.columns > 1) setPreviewMode('single')
+                  }}
+                  onChange={setTweak}
+                  disabled={locked}
+                />
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-400 text-sm">
+                Select a template to see the preview
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Right: Template & Preview */}
+        {/* Right: how to print, roll, template, fields, printer setup */}
         <div className="space-y-3">
-          {/* Template selector */}
           <div className="bg-white rounded-lg border p-4 space-y-3">
             <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 rounded-lg text-xs" role="radiogroup" aria-label="How to print">
-              {([['chrome', 'Chrome print preview', 'Any printer, via its driver'], ['direct', 'Direct to Zebra', 'Exact, no preview (print helper)']] as const).map(([m, title, sub]) => (
+              {([['chrome', 'Chrome print preview', 'Any printer, via its driver'], ['direct', 'Direct to label printer', 'Exact, no preview (print helper)']] as const).map(([m, title, sub]) => (
                 <button
                   key={m}
                   type="button"
@@ -1119,7 +1020,7 @@ export default function BarcodePrintPage() {
                   <>
                     <div>
                       <b>One time on this PC:</b> install the skyERPOS print helper, then click <b>Check again</b>. It sends the labels straight to
-                      the Zebra (no Windows driver settings, no Chrome preview).
+                      the label printer (no Windows driver settings, no Chrome preview).
                     </div>
                     <PrintAgentInstallCommands downloadBase={`/c/${company?.tenantSlug || ''}`} />
                     <button type="button" onClick={() => direct.check()} className="px-2 py-1 rounded border border-blue-300 bg-white hover:bg-blue-100 font-medium">
@@ -1128,319 +1029,241 @@ export default function BarcodePrintPage() {
                   </>
                 ) : direct.targets.length === 0 ? (
                   <div>
-                    The print helper is running but sees no installed printer. Install the Zebra driver, then{' '}
+                    The print helper is running but sees no installed printer. Install the printer driver, then{' '}
                     <button type="button" onClick={() => direct.check()} className="underline font-semibold">check again</button>.
                   </div>
                 ) : (
                   <>
                     <label className="flex items-center gap-2">
-                      <span className="shrink-0">Printer:</span>
+                      <span className="shrink-0">Printer (this PC):</span>
                       <select value={direct.printer} onChange={(e) => direct.setPrinter(e.target.value)} className="flex-1 min-w-0 border rounded px-1.5 py-1 bg-white text-gray-900">
                         {direct.targets.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
                       </select>
                     </label>
                     <div>
-                      Print sends the labels straight to this printer. It finds the gap before every row, so no paper size, gap or
-                      &quot;can&apos;t find the gaps&quot; setting is needed. Use <b>Move print</b> only for a small shift.
+                      Sends the labels in <b>{setup.printer.language ? rawLanguage.toUpperCase() : `${rawLanguage.toUpperCase()} (auto)`}</b>. The printer finds
+                      the gap before every row. Wrong language or brand? Change it under <b>Printer setup</b> below.
                     </div>
-                    {activeSetup && direct.profile && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const res = await printAlignmentTestRaw(direct.profile!, { ...activeSetup, offsetYMm: activeSetup.offsetYMm + offsetOverride })
-                          if (res.ok) toast.success('Test sent: boxes 1 2 / 3 4 should sit inside the stickers')
-                          else toast.error(res.error || 'Test print failed')
-                        }}
-                        className="px-2 py-1 rounded border border-blue-300 bg-white hover:bg-blue-100 font-medium"
-                      >
-                        Print test (1 2 / 3 4)
-                      </button>
-                    )}
                   </>
                 )}
               </div>
             ) : (
-            <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
-              Print opens Chrome&apos;s print preview. One time only: install your printer model&apos;s driver and set its paper size to{' '}
-              <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? rowGapOverride ?? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
-              {noGapSensing ? <>, media type <b>Continuous</b></> : null}. In Chrome: More settings → that paper size, Margins None.{' '}
-              <Link href={`/c/${company?.tenantSlug || ''}/barcode/settings`} className="font-semibold underline">
-                Printer setup command
-              </Link>
-            </div>
+              <div className="p-2 bg-emerald-50 border border-emerald-200 rounded text-xs text-emerald-800">
+                Print opens Chrome&apos;s print preview. One time only: install your printer model&apos;s driver and set its paper size to{' '}
+                <b>{activeSetup ? `${stickerRollWidthMm(activeSetup)} x ${activeSetup.labelHeightMm + (noGapSensing ? rowGapOverride ?? activeSetup.rowGapMm : 0)} mm` : 'the label size'}</b>
+                {noGapSensing ? <>, media type <b>Continuous</b></> : null}. In Chrome: More settings → that paper size, Margins None.{' '}
+                <Link href={`/c/${company?.tenantSlug || ''}/barcode/settings`} className="font-semibold underline">
+                  Printer setup command
+                </Link>
+              </div>
             )}
-            {/* Quick Roll Type Selector: 1 Across, 2 Across (Twin), 3 Across */}
-            <div className="pt-1">
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-semibold text-gray-700 flex items-center gap-1">
-                  Sticker Roll Format:
-                  <span className="text-[10px] font-normal text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
-                    Auto-calibrated for OS default / idle printer
-                  </span>
-                </label>
-              </div>
-              <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-lg border text-xs">
-                {/* 1 Across: Single */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const singleSetup = availableSetups.find(s => s.columns === 1 && Math.abs(s.labelWidthMm - 38) <= 0.5) ||
-                      availableSetups.find(s => s.columns === 1)
-                    if (singleSetup) handleSetupChange(singleSetup.id)
-                    const singleTpl = pickTemplate(availableTemplates, (t) => (t.columns ?? 1) === 1 && near(t.widthMm, 38), (t) => near(t.widthMm, 38), (t) => (t.columns ?? 1) === 1)
-                    if (singleTpl) {
-                      setSelectedTemplateId(singleTpl.id)
-                      if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', singleTpl.id)
-                    }
-                    if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '1')
-                  }}
-                  className={`py-2 px-1 rounded-md text-center transition-all ${
-                    (activeSetup?.columns ?? 1) === 1
-                      ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
-                  }`}
-                  title="Single sticker roll: 1 sticker per row (38 mm or standard roll)"
-                >
-                  <span className="block font-semibold">1 Across</span>
-                  <span className="text-[10px] block opacity-80">Single · 38mm</span>
-                </button>
 
-                {/* 2 Across: Twin 80mm Roll */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const twinSetup = availableSetups.find(s => s.columns === 2 && Math.abs(s.labelWidthMm - 38) <= 0.5) ||
-                      availableSetups.find(s => s.columns === 2)
-                    if (twinSetup) handleSetupChange(twinSetup.id)
-                    const twinTpl = rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 2 && Math.abs(Number(t.widthMm) - 38) <= 0.5) ||
-                      rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 2)
-                    if (twinTpl) {
-                      setSelectedTemplateId(twinTpl.id)
-                      if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', twinTpl.id)
-                    }
-                    if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '2')
-                  }}
-                  className={`py-2 px-1 rounded-md text-center transition-all ${
-                    (activeSetup?.columns ?? 1) === 2
-                      ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
-                  }`}
-                  title="Twin stickers roll: 2 stickers side-by-side on 80 mm roll"
-                >
-                  <span className="block font-semibold">2 Across ★</span>
-                  <span className="text-[10px] block opacity-80">Twin · 80mm Roll</span>
-                </button>
-
-                {/* 3 Across: Triple */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const tripleSetup = availableSetups.find(s => s.columns === 3 && Math.abs(s.labelWidthMm - 32) <= 1) ||
-                      availableSetups.find(s => s.columns === 3)
-                    if (tripleSetup) handleSetupChange(tripleSetup.id)
-                    const tripleTpl = rankTemplates(availableTemplates).find(t => (t.columns ?? 1) === 3)
-                    if (tripleTpl) {
-                      setSelectedTemplateId(tripleTpl.id)
-                      if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_template_id', tripleTpl.id)
-                    }
-                    if (typeof window !== 'undefined') localStorage.setItem('sky_barcode_roll_columns', '3')
-                  }}
-                  className={`py-2 px-1 rounded-md text-center transition-all ${
-                    (activeSetup?.columns ?? 1) === 3
-                      ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
-                      : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
-                  }`}
-                  title="Triple stickers roll: 3 stickers side-by-side on 102-110 mm roll"
-                >
-                  <span className="block font-semibold">3 Across</span>
-                  <span className="text-[10px] block opacity-80">Triple · 105mm</span>
-                </button>
-              </div>
-              {direct.mode === 'chrome' && (
-              <label className="mt-2 flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
-                <input type="checkbox" className="mt-0.5" checked={noGapSensing} onChange={(e) => toggleNoGapSensing(e.target.checked)} />
-                <span>
-                  My printer can&apos;t find the gaps (pressing FEED runs through many stickers). Print as a continuous roll:{' '}
-                  {activeSetup ? `${activeSetup.labelHeightMm + (rowGapOverride ?? activeSetup.rowGapMm)} mm` : 'label + gap'} per row.
-                </span>
-              </label>
-              )}
-              {direct.mode === 'chrome' && noGapSensing && activeSetup && (
-                <div className="mt-1.5 ml-5 text-xs text-gray-700">
-                  <div className="flex items-center gap-2">
-                    <span>Gap between rows:</span>
+            <fieldset disabled={locked} className="space-y-3">
+              {/* Quick Roll Type Selector: 1 Across, 2 Across (Twin), 3 Across */}
+              <div className="pt-1">
+                <label className="text-xs font-semibold text-gray-700 block mb-1.5">Sticker Roll Format:</label>
+                <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-lg border text-xs">
+                  {([
+                    [1, '1 Across', 'Single · 38mm'],
+                    [2, '2 Across ★', 'Twin · 80mm Roll'],
+                    [3, '3 Across', 'Triple · 105mm'],
+                  ] as const).map(([cols, title, sub]) => (
                     <button
+                      key={cols}
                       type="button"
-                      onClick={() => changeRowGap((rowGapOverride ?? activeSetup.rowGapMm) - 0.5)}
-                      className="p-0.5 border rounded hover:bg-gray-100"
-                      aria-label="Smaller gap"
+                      onClick={() => quickRoll(cols)}
+                      className={`py-2 px-1 rounded-md text-center transition-all ${
+                        (activeSetup?.columns ?? 1) === cols
+                          ? 'bg-white text-blue-700 font-bold shadow-xs border border-blue-400 ring-1 ring-blue-300'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-200/50'
+                      }`}
                     >
-                      <Minus size={12} />
+                      <span className="block font-semibold">{title}</span>
+                      <span className="text-[10px] block opacity-80">{sub}</span>
                     </button>
-                    <b className="w-12 text-center">{(rowGapOverride ?? activeSetup.rowGapMm).toFixed(1)} mm</b>
-                    <button
-                      type="button"
-                      onClick={() => changeRowGap((rowGapOverride ?? activeSetup.rowGapMm) + 0.5)}
-                      className="p-0.5 border rounded hover:bg-gray-100"
-                      aria-label="Bigger gap"
-                    >
-                      <Plus size={12} />
-                    </button>
-                  </div>
-                  <div className="text-gray-500 mt-0.5">
-                    Later stickers print too high (into the gap above)? Make it bigger. Too low? Make it smaller. Change the printer&apos;s paper height to match:{' '}
-                    {activeSetup.labelHeightMm + (rowGapOverride ?? activeSetup.rowGapMm)} mm.
-                  </div>
+                  ))}
                 </div>
-              )}
-              {activeSetup && (
-                <div className="mt-1.5 ml-5 text-xs text-gray-700">
-                  <div className="flex items-center gap-2">
-                    <span>Move print:</span>
-                    <button type="button" onClick={() => changeOffset(offsetOverride - 0.5)} className="p-0.5 border rounded hover:bg-gray-100" aria-label="Move print up">
-                      <Minus size={12} />
-                    </button>
-                    <b className="w-20 text-center">
-                      {offsetOverride === 0 ? '0 mm' : `${Math.abs(offsetOverride).toFixed(1)} mm ${offsetOverride > 0 ? 'down' : 'up'}`}
-                    </b>
-                    <button type="button" onClick={() => changeOffset(offsetOverride + 0.5)} className="p-0.5 border rounded hover:bg-gray-100" aria-label="Move print down">
-                      <Plus size={12} />
-                    </button>
+                {direct.mode === 'chrome' && (
+                  <label className="mt-2 flex items-start gap-2 text-xs text-gray-700 cursor-pointer">
+                    <input type="checkbox" className="mt-0.5" checked={noGapSensing} onChange={(e) => setChrome({ noGapSensing: e.target.checked })} />
+                    <span>
+                      My printer can&apos;t find the gaps (pressing FEED runs through many stickers). Print as a continuous roll:{' '}
+                      {activeSetup ? `${activeSetup.labelHeightMm + (rowGapOverride ?? activeSetup.rowGapMm)} mm` : 'label + gap'} per row.
+                    </span>
+                  </label>
+                )}
+                {direct.mode === 'chrome' && noGapSensing && activeSetup && (
+                  <div className="mt-1.5 ml-5 text-xs text-gray-700">
+                    <div className="flex items-center gap-2">
+                      <span>Gap between rows:</span>
+                      <button type="button" onClick={() => changeRowGap((rowGapOverride ?? activeSetup.rowGapMm) - 0.5)} className="p-0.5 border rounded hover:bg-gray-100" aria-label="Smaller gap">
+                        <Minus size={12} />
+                      </button>
+                      <b className="w-12 text-center">{(rowGapOverride ?? activeSetup.rowGapMm).toFixed(1)} mm</b>
+                      <button type="button" onClick={() => changeRowGap((rowGapOverride ?? activeSetup.rowGapMm) + 0.5)} className="p-0.5 border rounded hover:bg-gray-100" aria-label="Bigger gap">
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                    <div className="text-gray-500 mt-0.5">
+                      Later stickers print too high (into the gap above)? Make it bigger. Too low? Make it smaller. Change the printer&apos;s paper height to match:{' '}
+                      {activeSetup.labelHeightMm + (rowGapOverride ?? activeSetup.rowGapMm)} mm.
+                    </div>
                   </div>
-                  <div className="text-gray-500 mt-0.5">Same shift on every sticker: top line cut off or in the gap? Press + (down). Bottom line cut off? Press – (up).</div>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
-                  <Ruler size={13} /> Label roll
-                </label>
-                {isAdmin && (
-                  <Link href={`/c/${company?.tenantSlug || ''}/barcode/settings`} className="text-xs text-blue-600 hover:underline">
-                    Set up rolls
-                  </Link>
+                )}
+                {activeSetup && (
+                  <div className="mt-1.5 ml-5 text-xs text-gray-700">
+                    <div className="flex items-center gap-2">
+                      <span>Move print:</span>
+                      <button type="button" onClick={() => changeOffset(offsetOverride - 0.5)} className="p-0.5 border rounded hover:bg-gray-100" aria-label="Move print up">
+                        <Minus size={12} />
+                      </button>
+                      <b className="w-20 text-center">
+                        {offsetOverride === 0 ? '0 mm' : `${Math.abs(offsetOverride).toFixed(1)} mm ${offsetOverride > 0 ? 'down' : 'up'}`}
+                      </b>
+                      <button type="button" onClick={() => changeOffset(offsetOverride + 0.5)} className="p-0.5 border rounded hover:bg-gray-100" aria-label="Move print down">
+                        <Plus size={12} />
+                      </button>
+                    </div>
+                    <div className="text-gray-500 mt-0.5">Same shift on every sticker: top line cut off or in the gap? Press + (down). Bottom line cut off? Press – (up).</div>
+                  </div>
                 )}
               </div>
-              <select
-                value={activeSetup?.id || ''}
-                onChange={(e) => handleSetupChange(e.target.value)}
-                disabled={!!forcedSetup}
-                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm disabled:bg-gray-50"
-              >
-                <option value="">Template size, auto columns</option>
-                <optgroup label="Twin Sticker Rolls (2 across · Standard 80mm Roll)">
-                  {availableSetups.filter(s => s.columns === 2).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x 2 across){s.locked ? ' [locked]' : ''}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Single Sticker Rolls (1 across · Single roll)">
-                  {availableSetups.filter(s => s.columns === 1).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm){s.locked ? ' [locked]' : ''}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Triple / Multi-across Rolls (3+ across · 105mm+)">
-                  {availableSetups.filter(s => s.columns >= 3).map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x {s.columns} across){s.locked ? ' [locked]' : ''}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
-              {activeSetup?.locked && (
-                <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
-                  <Lock size={11} /> Calibrated and locked by an admin{forcedSetup ? '' : ' (you can still pick another roll)'}
-                </p>
-              )}
-              {activeSetup && selectedTemplate &&
-                (Math.abs(Number(selectedTemplate.widthMm) - activeSetup.labelWidthMm) > 0.5 ||
-                  Math.abs(Number(selectedTemplate.heightMm) - activeSetup.labelHeightMm) > 0.5) && (
-                  <p className="text-xs text-red-600 mt-1">
-                    Template is {parseFloat(String(selectedTemplate.widthMm))} x {parseFloat(String(selectedTemplate.heightMm))} mm but the roll labels are{' '}
-                    {activeSetup.labelWidthMm} x {activeSetup.labelHeightMm} mm. Pick a matching template.
-                  </p>
-                )}
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-sm font-medium text-gray-700">Template</label>
-                <div className="flex items-center gap-2">
-                  <Link
-                    href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/new`}
-                    className="text-xs text-blue-600 hover:underline flex items-center gap-0.5"
-                  >
-                    <Plus size={11} /> New
-                  </Link>
-                  {selectedTemplate && (
-                    <Link
-                      href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/${selectedTemplate.id}`}
-                      className="text-xs text-blue-600 hover:underline flex items-center gap-0.5 font-medium"
-                    >
-                      <Edit3 size={11} /> Edit in Designer
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm font-medium text-gray-700 flex items-center gap-1">
+                    <Ruler size={13} /> Label roll
+                  </label>
+                  {isAdmin && (
+                    <Link href={`/c/${company?.tenantSlug || ''}/barcode/settings`} className="text-xs text-blue-600 hover:underline">
+                      Set up rolls
                     </Link>
                   )}
                 </div>
+                <select
+                  value={setup.media ? '__typed' : activeSetup?.id || ''}
+                  onChange={(e) => handleSetupChange(e.target.value)}
+                  disabled={!!forcedSetup}
+                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm disabled:bg-gray-50"
+                >
+                  {setup.media && (
+                    <option value="__typed" disabled>
+                      Typed in Printer setup ({setup.media.labelWidthMm} x {setup.media.labelHeightMm} mm x {setup.media.columns})
+                    </option>
+                  )}
+                  <option value="">Template size, auto columns</option>
+                  <optgroup label="Twin Sticker Rolls (2 across · Standard 80mm Roll)">
+                    {availableSetups.filter(s => s.columns === 2).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x 2 across){s.locked ? ' [locked]' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Single Sticker Rolls (1 across · Single roll)">
+                    {availableSetups.filter(s => s.columns === 1).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm){s.locked ? ' [locked]' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="Triple / Multi-across Rolls (3+ across · 105mm+)">
+                    {availableSetups.filter(s => s.columns >= 3).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.labelWidthMm} x {s.labelHeightMm} mm x {s.columns} across){s.locked ? ' [locked]' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+                {baseRoll?.locked && !setup.media && (
+                  <p className="text-xs text-amber-700 mt-1 flex items-center gap-1">
+                    <Lock size={11} /> Calibrated and locked by an admin{forcedSetup ? '' : ' (you can still pick another roll)'}
+                  </p>
+                )}
+                {activeSetup && previewTemplate &&
+                  (Math.abs(Number(previewTemplate.widthMm) - activeSetup.labelWidthMm) > 0.5 ||
+                    Math.abs(Number(previewTemplate.heightMm) - activeSetup.labelHeightMm) > 0.5) && (
+                    <p className="text-xs text-red-600 mt-1">
+                      Template is {parseFloat(String(previewTemplate.widthMm))} x {parseFloat(String(previewTemplate.heightMm))} mm but the roll labels are{' '}
+                      {activeSetup.labelWidthMm} x {activeSetup.labelHeightMm} mm. Pick a matching template.
+                    </p>
+                  )}
               </div>
-              <select
-                value={selectedTemplate?.id || selectedTemplateId}
-                onChange={(e) => setSelectedTemplateId(e.target.value)}
-                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
-              >
-                <option value="">Select a template</option>
-                {availableTemplates.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.name} ({parseFloat(String(t.widthMm))} x {parseFloat(String(t.heightMm))} mm)
-                    {t.isDefault ? ' (Default)' : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-gray-700 mb-1 block">Page Size</label>
-              <select
-                value={config.pageSize}
-                onChange={(e) => setConfig({ ...config, pageSize: e.target.value as 'Label' | 'A4' | 'Letter' })}
-                className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
-              >
-                <option value="Label">
-                  {activeSetup
-                    ? `Label roll (${activeSetup.columns} across)`
-                    : `Label${selectedTemplate ? ` (${parseFloat(String(selectedTemplate.widthMm))} x ${parseFloat(String(selectedTemplate.heightMm))} mm)` : ''}`}
-                </option>
-                <option value="A4">A4 (Sheet)</option>
-                <option value="Letter">Letter (Sheet)</option>
-              </select>
-            </div>
-            {config.pageSize !== 'Label' && (
               <div>
-                <label className="text-sm font-medium text-gray-700 mb-1 block">Gap (mm)</label>
-                <input
-                  type="number"
-                  value={config.gapMm}
-                  onChange={(e) => setConfig({ ...config, gapMm: Math.max(0, Math.min(20, Number(e.target.value))) })}
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-sm font-medium text-gray-700">Template</label>
+                  <div className="flex items-center gap-2">
+                    <Link
+                      href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/new`}
+                      className="text-xs text-blue-600 hover:underline flex items-center gap-0.5"
+                    >
+                      <Plus size={11} /> New
+                    </Link>
+                    {selectedTemplate && !selectedTemplate.id.startsWith('preset-') && (
+                      <Link
+                        href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/${selectedTemplate.id}`}
+                        className="text-xs text-blue-600 hover:underline flex items-center gap-0.5 font-medium"
+                      >
+                        <Edit3 size={11} /> Edit in Designer
+                      </Link>
+                    )}
+                  </div>
+                </div>
+                <select
+                  value={selectedTemplate?.id || selectedTemplateId}
+                  onChange={(e) => chooseTemplate(e.target.value)}
                   className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
-                  min={0}
-                  max={20}
-                />
+                >
+                  <option value="">Select a template</option>
+                  {availableTemplates.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({parseFloat(String(t.widthMm))} x {parseFloat(String(t.heightMm))} mm)
+                      {t.isDefault ? ' (Default)' : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
-            )}
+              <div>
+                <label className="text-sm font-medium text-gray-700 mb-1 block">Page Size</label>
+                <select
+                  value={config.pageSize}
+                  onChange={(e) => setChrome({ pageSize: e.target.value as 'Label' | 'A4' | 'Letter' })}
+                  className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
+                >
+                  <option value="Label">
+                    {activeSetup
+                      ? `Label roll (${activeSetup.columns} across)`
+                      : `Label${selectedTemplate ? ` (${parseFloat(String(selectedTemplate.widthMm))} x ${parseFloat(String(selectedTemplate.heightMm))} mm)` : ''}`}
+                  </option>
+                  <option value="A4">A4 (Sheet)</option>
+                  <option value="Letter">Letter (Sheet)</option>
+                </select>
+              </div>
+              {config.pageSize !== 'Label' && (
+                <div>
+                  <label className="text-sm font-medium text-gray-700 mb-1 block">Gap (mm)</label>
+                  <input
+                    type="number"
+                    value={config.gapMm}
+                    onChange={(e) => setChrome({ sheetGapMm: Math.max(0, Math.min(20, Number(e.target.value))) })}
+                    className="w-full px-3 py-2 border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 text-sm"
+                    min={0}
+                    max={20}
+                  />
+                </div>
+              )}
+            </fieldset>
           </div>
 
-          {/* Information on Label Customizer (Enable/Disable Fields & Length Optimizer) */}
+          {/* What prints on the label */}
           <div className="bg-white rounded-lg border p-4 space-y-3 shadow-sm">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 <Sliders size={16} className="text-blue-600" />
                 <span className="text-sm font-semibold text-gray-900">Customise Label Information</span>
               </div>
-              {selectedTemplateId && (
+              {selectedTemplate && !selectedTemplate.id.startsWith('preset-') && (
                 <Link
-                  href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/${selectedTemplateId}`}
+                  href={`/c/${company?.tenantSlug || ''}/barcode/label-templates/${selectedTemplate.id}`}
                   className="text-xs text-blue-600 hover:underline flex items-center gap-1 font-medium"
                   title="Open in full template drag-and-drop designer"
                 >
@@ -1450,510 +1273,175 @@ export default function BarcodePrintPage() {
               )}
             </div>
 
-            <p className="text-xs text-gray-500">
-              Click to choose which product details print on this sticker:
-            </p>
-
-            {/* Quick 1-Click Presets */}
-            <div>
-              <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider block mb-1">
-                Quick 1-Click Presets:
-              </span>
-              <div className="flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setVisibleFields(prev => ({
-                    ...prev,
-                    showName: true,
-                    nameLengthMode: 'initial',
-                    showBarcode: true,
-                    showBarcodeText: true,
-                    showPrice: true,
-                    showSku: true,
-                    showCompany: false,
-                    showVendor: false,
-                    showCategory: false,
-                    showUnit: false,
-                    showPriceCode: false,
-                  }))}
-                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
-                >
-                  Standard
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVisibleFields(prev => ({
-                    ...prev,
-                    showName: true,
-                    nameLengthMode: 'initial',
-                    showBarcode: true,
-                    showBarcodeText: true,
-                    showPrice: true,
-                    showSku: true,
-                    showCompany: false,
-                    showVendor: true,
-                    showCategory: false,
-                    showUnit: false,
-                    showPriceCode: false,
-                  }))}
-                  className="px-2 py-1 text-xs bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-md font-medium transition-colors"
-                >
-                  + Vendor Name
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVisibleFields(prev => ({
-                    ...prev,
-                    showName: true,
-                    nameLengthMode: 'initial',
-                    showBarcode: true,
-                    showBarcodeText: true,
-                    showPrice: true,
-                    showSku: false,
-                    showCompany: true,
-                    showVendor: true,
-                    showCategory: false,
-                    showUnit: false,
-                    showPriceCode: false,
-                  }))}
-                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
-                >
-                  Store + Vendor
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVisibleFields(prev => ({
-                    ...prev,
-                    showName: false,
-                    showBarcode: true,
-                    showBarcodeText: true,
-                    showPrice: true,
-                    showSku: false,
-                    showCompany: false,
-                    showVendor: false,
-                    showCategory: false,
-                    showUnit: false,
-                    showPriceCode: false,
-                  }))}
-                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
-                >
-                  Price + Barcode
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVisibleFields(prev => ({
-                    ...prev,
-                    showName: true,
-                    nameLengthMode: 'initial',
-                    nameFontSize: 'small',
-                    showBarcode: true,
-                    showBarcodeText: false,
-                    showPrice: true,
-                    showSku: false,
-                    showCompany: false,
-                    showVendor: false,
-                    showCategory: false,
-                    showUnit: false,
-                    showPriceCode: true,
-                  }))}
-                  className="px-2 py-1 text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 rounded-md font-medium transition-colors"
-                >
-                  Jewelry / Small Tag
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVisibleFields(prev => ({
-                    ...prev,
-                    showName: true,
-                    nameLengthMode: 'autofit',
-                    showBarcode: true,
-                    showBarcodeText: true,
-                    showPrice: true,
-                    showSku: true,
-                    showCompany: true,
-                    showVendor: true,
-                    showCategory: true,
-                    showUnit: true,
-                    showPriceCode: true,
-                  }))}
-                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
-                >
-                  All Details
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setVisibleFields(prev => ({
-                    ...prev,
-                    showName: false,
-                    showBarcode: true,
-                    showBarcodeText: false,
-                    showPrice: false,
-                    showSku: false,
-                    showCompany: false,
-                    showVendor: false,
-                    showCategory: false,
-                    showUnit: false,
-                    showPriceCode: false,
-                  }))}
-                  className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-md border font-medium transition-colors"
-                >
-                  Barcode Only
-                </button>
+            <fieldset disabled={locked} className="space-y-3">
+              <div className="grid grid-cols-2 gap-1 p-1 bg-gray-100 rounded-lg text-xs" role="radiogroup" aria-label="Layout">
+                {([
+                  ['quick', 'Quick layout', 'Tick the details below'],
+                  ['designed', 'As designed', 'The template from the designer'],
+                ] as const).map(([m, title, sub]) => (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={source === m}
+                    onClick={() => {
+                      setSelectedElementId(null)
+                      update((s) => ({ ...s, layout: { ...s.layout, source: m } }))
+                    }}
+                    className={`px-2 py-1.5 rounded-md text-left ${source === m ? 'bg-white text-blue-700 font-semibold shadow-xs border border-blue-400' : 'text-gray-600 hover:bg-gray-200/50'}`}
+                  >
+                    <span className="block">{title}</span>
+                    <span className="block text-[10px] font-normal opacity-80">{sub}</span>
+                  </button>
+                ))}
               </div>
-            </div>
 
-            {/* Product Name Length & Font Size Optimizer */}
-            {visibleFields.showName && (
-              <div className="p-2.5 bg-blue-50/60 rounded-md border border-blue-200 space-y-2 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-blue-900 flex items-center gap-1">
-                    ✏️ Item Name Optimization:
-                  </span>
-                  <div className="flex items-center gap-1 text-[11px]">
-                    <span className="text-gray-500">Size:</span>
-                    {(['small', 'normal', 'large'] as const).map(s => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => setVisibleFields(prev => ({ ...prev, nameFontSize: s }))}
-                        className={`px-1.5 py-0.5 rounded border capitalize transition-colors ${
-                          visibleFields.nameFontSize === s
-                            ? 'bg-blue-600 text-white border-blue-600 font-semibold'
-                            : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
-                        }`}
-                      >
-                        {s}
-                      </button>
+              {source === 'designed' ? (
+                <p className="text-xs text-gray-600">
+                  Prints <b>{selectedTemplate?.name || 'the template'}</b> exactly as designed (its barcode type, fields and positions). Click a part of the
+                  preview to fine-tune it here, or open the Full Designer.
+                </p>
+              ) : (
+                <>
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Quick 1-Click Presets:</span>
+                      {presetState && (
+                        <button type="button" onClick={resetPreset} className="text-[11px] text-gray-500 hover:text-gray-800 flex items-center gap-0.5" title="Back to this layout's defaults">
+                          <RotateCcw size={11} /> Reset
+                        </button>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {QUICK_PRESETS.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => choosePreset(p.id)}
+                          className={`px-2 py-1 text-xs rounded-md border font-medium transition-colors ${preset === p.id ? 'bg-blue-600 text-white border-blue-600' : 'bg-slate-100 hover:bg-slate-200 text-slate-800'}`}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-gray-500 mt-1">Each layout keeps its own ticks and adjustments.</p>
+                  </div>
+
+                  {/* Product Name Length & Font Size Optimizer */}
+                  {visibleFields.showName && (
+                    <div className="p-2.5 bg-blue-50/60 rounded-md border border-blue-200 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-blue-900">Item name:</span>
+                        <div className="flex items-center gap-1 text-[11px]">
+                          <span className="text-gray-500">Size:</span>
+                          {(['small', 'normal', 'large'] as const).map(s => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => setVisibleFields(prev => ({ ...prev, nameFontSize: s }))}
+                              className={`px-1.5 py-0.5 rounded border capitalize transition-colors ${visibleFields.nameFontSize === s ? 'bg-blue-600 text-white border-blue-600 font-semibold' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'}`}
+                            >
+                              {s}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {([
+                          ['initial', 'Initial Name (1 Line)', 'Keeps the name on 1 line - never overlaps the barcode below'],
+                          ['autofit', 'Auto-Shrink', 'Shrinks the font so the whole name fits on 1 line'],
+                          ['multiline', '2 Lines', 'Long names wrap onto 2 compact lines'],
+                        ] as const).map(([m, title, hint]) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setVisibleFields(prev => ({ ...prev, nameLengthMode: m }))}
+                            className={`flex-1 py-1 px-2 rounded text-xs font-medium border text-center transition-colors ${visibleFields.nameLengthMode === m ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'}`}
+                            title={hint}
+                          >
+                            {title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Barcode Options */}
+                  {visibleFields.showBarcode && (
+                    <div className="flex flex-col gap-2 p-2 bg-slate-50 rounded-md border text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-gray-700">Barcode Symbology:</span>
+                        <div className="flex rounded-md shadow-xs bg-slate-200 p-0.5">
+                          {([['code128', '1D Barcode (Code 128)'], ['qrcode', '2D QR Code']] as const).map(([v, l]) => (
+                            <button
+                              key={v}
+                              type="button"
+                              onClick={() => setVisibleFields(prev => ({ ...prev, barcodeType: v }))}
+                              className={`px-2 py-0.5 text-xs font-medium rounded ${(visibleFields.barcodeType === 'qrcode') === (v === 'qrcode') ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}
+                            >
+                              {l}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {visibleFields.barcodeType !== 'qrcode' && (
+                        <label className="flex items-center justify-between pt-1 border-t border-slate-200 cursor-pointer">
+                          <span className="text-gray-600">Print numbers below bars</span>
+                          <input
+                            type="checkbox"
+                            checked={visibleFields.showBarcodeText}
+                            onChange={(e) => setVisibleFields(prev => ({ ...prev, showBarcodeText: e.target.checked }))}
+                            className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Interactive Grid of Field Toggles */}
+                  <div className="grid grid-cols-2 gap-1.5 pt-2 border-t">
+                    {FIELD_TOGGLES.map(({ key, label }) => (
+                      <label key={key} className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
+                        <input
+                          type="checkbox"
+                          checked={!!visibleFields[key]}
+                          onChange={(e) => setVisibleFields((prev) => ({ ...prev, [key]: e.target.checked }))}
+                          className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                        />
+                        <span className="font-medium">{label}</span>
+                      </label>
                     ))}
                   </div>
-                </div>
-
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setVisibleFields(prev => ({ ...prev, nameLengthMode: 'initial' }))}
-                    className={`flex-1 py-1 px-2 rounded text-xs font-medium border text-center transition-colors ${
-                      visibleFields.nameLengthMode === 'initial'
-                        ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
-                    }`}
-                    title="Keeps initial name cleanly on 1 line - never overlaps barcode below"
-                  >
-                    Initial Name (1 Line)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setVisibleFields(prev => ({ ...prev, nameLengthMode: 'autofit' }))}
-                    className={`flex-1 py-1 px-2 rounded text-xs font-medium border text-center transition-colors ${
-                      visibleFields.nameLengthMode === 'autofit'
-                        ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
-                    }`}
-                    title="Automatically shrinks font so entire long product name fits on 1 line"
-                  >
-                    Auto-Shrink
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setVisibleFields(prev => ({ ...prev, nameLengthMode: 'multiline' }))}
-                    className={`flex-1 py-1 px-2 rounded text-xs font-medium border text-center transition-colors ${
-                      visibleFields.nameLengthMode === 'multiline'
-                        ? 'bg-blue-600 text-white border-blue-600 font-semibold shadow-xs'
-                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-100'
-                    }`}
-                    title="Allows long product names to wrap onto 2 compact lines"
-                  >
-                    2 Lines
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Barcode Options */}
-            {visibleFields.showBarcode && (
-              <div className="flex flex-col gap-2 p-2 bg-slate-50 rounded-md border text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-gray-700">Barcode Symbology:</span>
-                  <div className="flex rounded-md shadow-xs bg-slate-200 p-0.5">
-                    <button
-                      type="button"
-                      onClick={() => setVisibleFields(prev => ({ ...prev, barcodeType: 'code128' }))}
-                      className={`px-2 py-0.5 text-xs font-medium rounded ${visibleFields.barcodeType !== 'qrcode' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}
-                    >
-                      1D Barcode (Code 128)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setVisibleFields(prev => ({ ...prev, barcodeType: 'qrcode' }))}
-                      className={`px-2 py-0.5 text-xs font-medium rounded ${visibleFields.barcodeType === 'qrcode' ? 'bg-white shadow text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}
-                    >
-                      2D QR Code
-                    </button>
-                  </div>
-                </div>
-                {visibleFields.barcodeType !== 'qrcode' && (
-                  <div className="flex items-center justify-between pt-1 border-t border-slate-200">
-                    <span className="text-gray-600">Numbers Below Bars:</span>
-                    <label className="flex items-center gap-1.5 cursor-pointer text-gray-700 select-none">
-                      <input
-                        type="checkbox"
-                        checked={visibleFields.showBarcodeText}
-                        onChange={(e) => setVisibleFields(prev => ({ ...prev, showBarcodeText: e.target.checked }))}
-                        className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5 cursor-pointer"
-                      />
-                      <span>Print numbers below bars</span>
-                    </label>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Interactive Grid of Field Toggles */}
-            <div className="grid grid-cols-2 gap-1.5 pt-2 border-t">
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showName}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showName: e.target.checked }))}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-semibold text-gray-900">Product Name</span>
-              </label>
-
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showVendor}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showVendor: e.target.checked }))}
-                  className="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-semibold text-emerald-800 flex items-center gap-1">
-                  Vendor / Supplier
-                  <span className="px-1 py-0.2 text-[9px] bg-emerald-100 text-emerald-700 rounded font-bold">NEW</span>
-                </span>
-              </label>
-
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showBarcode}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showBarcode: e.target.checked }))}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-medium">Barcode Graphic</span>
-              </label>
-
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showPrice}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showPrice: e.target.checked }))}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-medium">Selling Price</span>
-              </label>
-
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showSku}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showSku: e.target.checked }))}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-medium">SKU / Code</span>
-              </label>
-
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showCompany}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showCompany: e.target.checked }))}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-medium">Store Name</span>
-              </label>
-
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showCategory}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showCategory: e.target.checked }))}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-medium">Category</span>
-              </label>
-
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showUnit}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showUnit: e.target.checked }))}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-medium">Unit (pcs/kg)</span>
-              </label>
-
-              <label className="flex items-center gap-2 p-1.5 rounded hover:bg-slate-50 cursor-pointer text-xs text-gray-700 select-none">
-                <input
-                  type="checkbox"
-                  checked={visibleFields.showPriceCode}
-                  onChange={(e) => setVisibleFields((prev) => ({ ...prev, showPriceCode: e.target.checked }))}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
-                />
-                <span className="font-medium">Cost Code (*)</span>
-              </label>
-            </div>
-          </div>
-
-          {/* Preview */}
-          <div className="bg-white rounded-lg border p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
-                <Eye size={15} className="text-blue-600" />
-                Label Preview
-              </h3>
-              {selectedTemplate && (
-                <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                  {parseFloat(String(selectedTemplate.widthMm))} × {parseFloat(String(selectedTemplate.heightMm))} mm
-                  {activeSetup && activeSetup.columns > 1 ? ` (${activeSetup.columns} across roll)` : ''}
-                </span>
+                </>
               )}
-            </div>
-
-            {/* View Mode Toggle for Multi-column rolls (e.g. 38x25 twin stickers) */}
-            {activeSetup && activeSetup.columns > 1 && (
-              <div className="flex items-center bg-slate-100 p-1 rounded-md text-xs font-medium">
-                <button
-                  type="button"
-                  onClick={() => setPreviewMode('roll')}
-                  className={`flex-1 py-1 px-2 rounded transition-colors text-center ${
-                    previewMode === 'roll'
-                      ? 'bg-white text-blue-700 shadow-sm font-semibold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Twin Roll View ({activeSetup.columns} across)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPreviewMode('single')}
-                  className={`flex-1 py-1 px-2 rounded transition-colors text-center ${
-                    previewMode === 'single'
-                      ? 'bg-white text-blue-700 shadow-sm font-semibold'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  Single Sticker ({parseFloat(String(selectedTemplate?.widthMm || activeSetup.labelWidthMm))} × {parseFloat(String(selectedTemplate?.heightMm || activeSetup.labelHeightMm))} mm)
-                </button>
-              </div>
-            )}
-
-            {selectedTemplate ? (
-              <div className="space-y-3">
-                {items.length > 1 && (
-                  <div className="flex items-center justify-between bg-slate-50 border rounded px-2.5 py-1.5 text-xs text-slate-700">
-                    <button
-                      type="button"
-                      onClick={() => setPreviewIndex((prev) => Math.max(0, prev - 1))}
-                      disabled={previewIndex <= 0}
-                      className="p-1 hover:bg-slate-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-                    <span className="font-medium truncate max-w-[200px]">
-                      {previewIndex + 1}/{items.length}: {items[previewIndex]?.item.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setPreviewIndex((prev) => Math.min(items.length - 1, prev + 1))}
-                      disabled={previewIndex >= items.length - 1}
-                      className="p-1 hover:bg-slate-200 rounded disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-                )}
-
-                {/* Main Preview Box */}
-                {activeSetup && activeSetup.columns > 1 && previewMode === 'roll' ? (
-                  <div className="p-3 bg-slate-100/80 dark:bg-slate-800/60 rounded-lg flex flex-col items-center justify-center border border-dashed border-gray-300 dark:border-gray-700">
-                    <div className="w-full">
-                      <StickerRollPreview
-                        setup={activeSetup}
-                        template={activeTemplate || selectedTemplate}
-                        items={items}
-                        currencySymbol={currencySymbol}
-                        tenantName={company?.tenantName}
-                        codeWord={codeWord}
-                        maxRows={2}
-                      />
-                    </div>
-                    <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-2 font-medium text-center">
-                      Twin-sticker roll: 2 stickers print side-by-side in each line (80 mm roll)
-                    </p>
-                  </div>
-                ) : (
-                  <div className="p-4 bg-slate-100/70 dark:bg-slate-800/50 rounded-lg flex flex-col items-center justify-center border border-dashed border-gray-200 dark:border-gray-700 min-h-[160px]">
-                    <LabelPreview
-                      template={activeTemplate || selectedTemplate}
-                      item={items[previewIndex]?.item || null}
-                      currencySymbol={currencySymbol}
-                      tenantName={company?.tenantName}
-                      codeWord={codeWord}
-                      maxWidth={320}
-                    />
-                    {items.length === 0 && (
-                      <p className="text-[11px] text-gray-400 mt-2 italic">Sample preview • Add items on left to preview actual products</p>
-                    )}
-                  </div>
-                )}
-
-                {/* Secondary Roll Preview if single sticker mode is chosen */}
-                {activeSetup && (previewMode === 'single' || activeSetup.columns === 1) && (
-                  <div className="space-y-1">
-                    <div className="text-xs font-medium text-gray-600">On the roll layout:</div>
-                    <StickerRollPreview
-                      setup={activeSetup}
-                      template={activeTemplate || selectedTemplate}
-                      items={items}
-                      currencySymbol={currencySymbol}
-                      tenantName={company?.tenantName}
-                      codeWord={codeWord}
-                      maxRows={2}
-                    />
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between text-xs text-gray-500 pt-1">
-                  <span>Target: <strong className="text-gray-700">Chrome print preview</strong></span>
-                  <button
-                    type="button"
-                    onClick={() => setShowFullPreview(true)}
-                    className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
-                  >
-                    <Eye size={12} />
-                    Enlarge preview
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-8 text-gray-400 text-sm">
-                Select a template above to see preview
-              </div>
-            )}
+            </fieldset>
           </div>
+
+          <PrinterSetupPanel
+            setup={setup}
+            roll={activeSetup}
+            update={update}
+            canManage={ps.canManage}
+            mode={direct.mode}
+            guessedLanguage={guessedLanguage}
+            onTestPrint={testPrint}
+            testing={testing}
+            onLock={lockSetup}
+            onUnlock={ps.unlock}
+            saveState={ps.saveState}
+          />
         </div>
       </div>
 
       {/* Full Preview Modal */}
-      {showFullPreview && selectedTemplate && (
+      {showFullPreview && previewTemplate && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
           <div className={`bg-white dark:bg-gray-900 rounded-xl ${activeSetup ? 'max-w-3xl' : 'max-w-lg'} w-full p-6 shadow-2xl space-y-4`}>
             <div className="flex items-center justify-between border-b pb-3">
               <div>
                 <h3 className="font-semibold text-gray-900 dark:text-white">Label Preview (100% scale)</h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  {selectedTemplate.name} ({parseFloat(String(selectedTemplate.widthMm))} × {parseFloat(String(selectedTemplate.heightMm))} mm)
+                  {previewTemplate.name} ({parseFloat(String(previewTemplate.widthMm))} × {parseFloat(String(previewTemplate.heightMm))} mm) · {previewCaption}
                 </p>
               </div>
               <button
@@ -1968,25 +1456,27 @@ export default function BarcodePrintPage() {
               {activeSetup ? (
                 <StickerRollPreview
                   setup={activeSetup}
-                  template={activeTemplate || selectedTemplate}
+                  template={previewTemplate}
                   items={items}
                   currencySymbol={currencySymbol}
                   tenantName={company?.tenantName}
                   codeWord={codeWord}
                   zoom="true"
                   maxRows={6}
+                  render={previewRender}
                 />
               ) : (
-              <div className="shadow-md bg-white p-2 rounded">
-                <LabelPreview
-                  template={activeTemplate || selectedTemplate}
-                  item={items[previewIndex]?.item || null}
-                  currencySymbol={currencySymbol}
-                  tenantName={company?.tenantName}
-                  codeWord={codeWord}
-                  maxWidth={450}
-                />
-              </div>
+                <div className="shadow-md bg-white p-2 rounded">
+                  <LabelPreview
+                    template={previewTemplate}
+                    item={items[previewIndex]?.item || null}
+                    currencySymbol={currencySymbol}
+                    tenantName={company?.tenantName}
+                    codeWord={codeWord}
+                    maxWidth={450}
+                    render={previewRender}
+                  />
+                </div>
               )}
             </div>
 
@@ -2019,7 +1509,6 @@ export default function BarcodePrintPage() {
           </div>
         </div>
       )}
-
     </div>
   )
 }

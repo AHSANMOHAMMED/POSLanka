@@ -149,8 +149,32 @@ export function quietZoneModules(format: BarcodeFormat): number {
   return format === 'ean13' || format === 'upca' ? 11 : 10
 }
 
-export const minModuleDots = (dpi: number) => (dpi >= 300 ? 3 : 2)
-export const maxModuleDots = (dpi: number) => (dpi >= 300 ? 6 : 4)
+export const minModuleDots = (dpi: number) => (dpi >= 600 ? 5 : dpi >= 300 ? 3 : 2)
+export const maxModuleDots = (dpi: number) => (dpi >= 600 ? 12 : dpi >= 300 ? 6 : 4)
+
+/** Default size of the numbers printed below the bars (pt). */
+export const DEFAULT_HRI_PT = 6
+
+/**
+ * Human-readable line below linear bars, in printer dots: the band reserved
+ * under the bars and the font height. Shared by the browser renderer, the
+ * driver / exact raster and the preview, so the numbers look the same
+ * everywhere. `textSizePt` = the user's own size (else ~85 % of a 2.6 mm band).
+ */
+export function hriLayout(dpi: number, textSizePt?: number | null): { band: number; font: number } {
+  const base = Math.round((2.6 * dpi) / 25.4)
+  const pt = Number(textSizePt)
+  if (!Number.isFinite(pt) || pt <= 0) return { band: base, font: Math.max(6, Math.round(base * 0.85)) }
+  const font = Math.max(4, Math.round((Math.min(20, pt) * dpi) / 72))
+  return { band: Math.max(Math.round(font * 1.15), Math.round(base * 0.6)), font }
+}
+
+/** HRI font height (dots) for a value under a symbol `widthDots` wide (auto size shrinks long values to fit). */
+export function hriFontDots(dpi: number, textSizePt: number | null | undefined, widthDots: number, value: string): number {
+  const hl = hriLayout(dpi, textSizePt)
+  if (Number(textSizePt) > 0) return hl.font
+  return Math.max(6, Math.min(hl.font, Math.floor(widthDots / Math.max(1, value.length * 0.62))))
+}
 
 export interface LinearPlan {
   /** Narrow bar width (dots). */

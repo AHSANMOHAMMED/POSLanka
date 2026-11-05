@@ -3,7 +3,7 @@ import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
 import { itemSerialNumbers, items, warehouses } from '@/lib/db/schema'
-import { eq, and, sql, ilike, desc } from 'drizzle-orm'
+import { eq, and, or, sql, ilike, desc } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logError } from '@/lib/ai/error-logger'
 import { validateSearchParams } from '@/lib/validation/helpers'
@@ -27,8 +27,10 @@ export async function GET(request: NextRequest) {
 
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions (tenantId filter handled by RLS)
+      // serial or either IMEI (0193)
+      const like = `%${escapeLikePattern(search)}%`
       const conditions = [
-        ilike(itemSerialNumbers.serialNumber, `%${escapeLikePattern(search)}%`),
+        or(ilike(itemSerialNumbers.serialNumber, like), ilike(itemSerialNumbers.imei, like), ilike(itemSerialNumbers.imei2, like))!,
       ]
 
       if (status) {
@@ -56,6 +58,8 @@ export async function GET(request: NextRequest) {
         .select({
           id: itemSerialNumbers.id,
           serialNumber: itemSerialNumbers.serialNumber,
+          imei: itemSerialNumbers.imei,
+          imei2: itemSerialNumbers.imei2,
           status: itemSerialNumbers.status,
           itemId: itemSerialNumbers.itemId,
           itemName: items.name,

@@ -6,6 +6,8 @@ import { Plus, Car, Filter } from 'lucide-react'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { usePaginatedData } from '@/hooks'
+import { toast } from '@/components/ui/toast'
+import { NewAllocationModal, returnAllocation } from '../DealerForms'
 import { Pagination } from '@/components/ui/pagination'
 
 interface DealerAllocation {
@@ -50,6 +52,7 @@ export default function DealerAllocationsPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [dealerFilter, setDealerFilter] = useState<string>('')
   const [dealerOptions, setDealerOptions] = useState<DealerOption[]>([])
+  const [showNew, setShowNew] = useState(false)
 
   const {
     data: allocations,
@@ -113,13 +116,13 @@ export default function DealerAllocationsPage() {
       title="Dealer Allocations"
       actionContent={
         <div className="flex items-center gap-2">
-          <Link
-            href={`/c/${tenantSlug}/dealership/allocations/new`}
+          <button
+            onClick={() => setShowNew(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
           >
             <Plus size={16} />
             New Allocation
-          </Link>
+          </button>
         </div>
       }
       search={search}
@@ -180,12 +183,13 @@ export default function DealerAllocationsPage() {
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Allocated Date</th>
               <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-gray-600 dark:text-gray-400">Asking Price</th>
               <th scope="col" className="px-4 py-3 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Status</th>
+              <th scope="col" className="px-4 py-3 text-right text-sm font-medium text-gray-600 dark:text-gray-400">Actions</th>
             </tr>
           </thead>
           <tbody>
             {allocations.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                <td colSpan={6} className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                   {loading ? 'Loading...' : search ? 'No allocations match your search' : 'No dealer allocations yet. Create your first allocation!'}
                 </td>
               </tr>
@@ -233,6 +237,26 @@ export default function DealerAllocationsPage() {
                       </div>
                     )}
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    {alloc.status === 'allocated' && (
+                      <button
+                        onClick={async () => {
+                          const reason = window.prompt('Why is the dealer returning this vehicle?')
+                          if (!reason?.trim()) return
+                          try {
+                            await returnAllocation(alloc.id, reason.trim())
+                            toast.success('Vehicle returned to stock')
+                            refresh()
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : 'Failed to return the vehicle')
+                          }
+                        }}
+                        className="px-2 py-1 text-xs text-amber-700 hover:bg-amber-50 dark:hover:bg-amber-900/30 rounded"
+                      >
+                        Return
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))
             )}
@@ -249,6 +273,7 @@ export default function DealerAllocationsPage() {
           className="border-t border-gray-200 dark:border-gray-700 px-4 pagination-sticky"
         />
       </div>
+      {showNew && <NewAllocationModal onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); refresh() }} />}
     </ListPageLayout>
   )
 }

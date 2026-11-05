@@ -12,6 +12,7 @@ import { AIInsightsWidget } from '@/components/dashboard/AIInsightsWidget'
 import { OnboardingChecklist } from '@/components/account/OnboardingChecklist'
 import { OwnerDashboardWidgets } from '@/components/dashboard/OwnerDashboardWidgets'
 import { PermissionGuard } from '@/components/auth/PermissionGuard'
+import { PharmacyExpiryWidget } from '@/components/dashboard/PharmacyExpiryWidget'
 
 interface ExpiringItem {
   id: string
@@ -173,7 +174,14 @@ export default function DashboardPage() {
         </ErrorBoundary>
       </PermissionGuard>
       <AIInsightsWidget />
-      {(businessType === 'supermarket' || businessType === 'pharmacy') && <ExpiringItemsWidget />}
+      {businessType === 'supermarket' && <ExpiringItemsWidget />}
+      {businessType === 'pharmacy' && (
+        <PermissionGuard permission="manageInventory" fallback={<ExpiringItemsWidget />}>
+          <ErrorBoundary>
+            <PharmacyExpiryWidget />
+          </ErrorBoundary>
+        </PermissionGuard>
+      )}
     </div>
   )
 }

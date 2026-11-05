@@ -94,3 +94,4 @@ export function labelAlignmentTemplate(widthMm: number, heightMm: number): Label
 export * from './barcode-fit'
 export * from './printer-detect'
 export * from './preflight'
+export * from './graphic'

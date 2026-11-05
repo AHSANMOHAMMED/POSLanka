@@ -147,6 +147,25 @@ export const printStudioCategories: CategorySeed[] = [
   { name: 'Design Services', selected: true },
 ]
 
+// ==================== TEXTILE & CLOTHING ====================
+
+// Textile shops / saree houses: readymade by size & colour, fabric by the metre, tailoring.
+export const textileCategories: CategorySeed[] = [
+  { name: 'Sarees', selected: true },
+  { name: 'Shirts', selected: true },
+  { name: 'Trousers', selected: true },
+  { name: 'Frocks & Dresses', selected: true },
+  { name: 'Kids Wear', selected: true },
+  { name: 'Fabric by Metre', selected: true },
+  { name: 'Suiting & Shirting', selected: true },
+  { name: 'Sarongs & Verti', selected: true },
+  { name: 'Innerwear', selected: true },
+  { name: 'School Uniforms', selected: false },
+  { name: 'Bridal Wear', selected: false },
+  { name: 'Accessories', selected: true },
+  { name: 'Tailoring Services', selected: true },
+]
+
 // ==================== OFFICE & SERVICES ====================
 
 export const officeCategories: CategorySeed[] = [
@@ -325,6 +344,14 @@ export function getCancellationReasonsForBusinessType(businessType: string): Can
       {
         const salesInvoice = base.find(b => b.documentType === 'sales_invoice')!
         salesInvoice.reasons.push('Service not delivered', 'Billing dispute')
+      }
+      break
+    case 'textile':
+      {
+        const salesInvoice = base.find(b => b.documentType === 'sales_invoice')!
+        salesInvoice.reasons.push('Wrong size / colour', 'Short measure (fabric)', 'Exchanged for another size')
+        const salesOrder = base.find(b => b.documentType === 'sales_order')!
+        salesOrder.reasons.push('Tailoring order cancelled', 'Fabric not available')
       }
       break
     case 'dealership':
@@ -635,6 +662,8 @@ export function getCategoriesForBusinessType(businessType: string): CategorySeed
       return printStudioCategories
     case 'office':
       return officeCategories
+    case 'textile':
+      return textileCategories
     case 'auto_service':
       return autoServicePartCategories
     case 'dealership':

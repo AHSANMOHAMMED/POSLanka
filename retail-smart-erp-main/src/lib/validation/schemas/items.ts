@@ -227,6 +227,10 @@ export const updateSerialNumberSchema = z.object({
   warrantyEndDate: z.string().nullish(),
   warrantyNotes: z.string().max(5000).nullish(),
   notes: z.string().max(5000).nullish(),
+  // 0193: phone IMEIs (digits only are stored; '' / null clears)
+  imei: z.string().trim().max(30).nullish(),
+  imei2: z.string().trim().max(30).nullish(),
+  clearImei: z.boolean().optional(),
 })
 
 // GET /api/items/barcode-lookup

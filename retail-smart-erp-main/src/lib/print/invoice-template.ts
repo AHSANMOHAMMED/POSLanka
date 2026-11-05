@@ -7,13 +7,35 @@
  * old / wrongly-typed data). renderInvoiceHtml() turns config + document + company into a full,
  * self-contained HTML page with print CSS (used by the designer preview iframe and print popups).
  *
+ * Paper (paper.ts): A4 / A5 / A6 / Letter / Legal / Half letter, 9.5" continuous dot-matrix stock and
+ * custom W × H mm, portrait or landscape. Margins: `general.marginUnit` 'in' (stored by the first
+ * designer version — rendered exactly as before) or 'mm' (what the designer saves now).
+ * `form` (form-layout.ts): pre-printed form mode — fields at exact mm positions over an uploaded
+ * scan of the user's own form. `opts.letterHead`: the template's letter head, printed on every page.
+ *
  * Pure module (no DOM / server imports).
  */
+import { DOC_PAPER_MM, DOC_PAPER_SIZES, inchesToMm, resolvePageMm, roundMm, type DocPaperSize } from './paper'
+import {
+  DEFAULT_FORM_LAYOUT,
+  FORM_FIELD_LABELS,
+  FORM_LINE_HEIGHT,
+  fieldOnPage,
+  formBoxCss,
+  formRowTop,
+  paginateRows,
+  sanitizeFormColumns,
+  sanitizeFormFields,
+  type FormColumnKey,
+  type FormField,
+  type FormLayoutConfig,
+} from './form-layout'
+import { LETTER_HEAD_CSS, letterHeadBlockHtml, type LetterHeadConfig } from './template-renderer'
 
 // ─── Config model ─────────────────────────────────────────────────────────
 
-export const INVOICE_PAPER_SIZES = ['a4', 'a5', 'letter', 'legal'] as const
-export type InvoicePaperSize = (typeof INVOICE_PAPER_SIZES)[number]
+export const INVOICE_PAPER_SIZES = DOC_PAPER_SIZES
+export type InvoicePaperSize = DocPaperSize
 export const INVOICE_ORIENTATIONS = ['portrait', 'landscape'] as const
 export type InvoiceOrientation = (typeof INVOICE_ORIENTATIONS)[number]
 export const INVOICE_FONT_FAMILIES = ['sans', 'serif', 'mono', 'roboto', 'georgia', 'verdana'] as const
@@ -26,12 +48,9 @@ export const INVOICE_ALIGNS = ['left', 'center', 'right'] as const
 export type InvoiceAlign = (typeof INVOICE_ALIGNS)[number]
 
 /** Paper size in millimetres (portrait). */
-export const INVOICE_PAPER_MM: Record<InvoicePaperSize, { width: number; height: number; label: string }> = {
-  a4: { width: 210, height: 297, label: 'A4' },
-  a5: { width: 148, height: 210, label: 'A5' },
-  letter: { width: 215.9, height: 279.4, label: 'Letter' },
-  legal: { width: 215.9, height: 355.6, label: 'Legal' },
-}
+export const INVOICE_PAPER_MM: Record<InvoicePaperSize, { width: number; height: number; label: string }> = DOC_PAPER_MM
+export const INVOICE_MARGIN_UNITS = ['in', 'mm'] as const
+export type InvoiceMarginUnit = (typeof INVOICE_MARGIN_UNITS)[number]
 
 export const INVOICE_FONT_STACKS: Record<InvoiceFontFamily, { label: string; css: string }> = {
   sans: { label: 'Helvetica / Arial', css: "'Helvetica Neue', Helvetica, Arial, 'Noto Sans Sinhala', 'Noto Sans Tamil', sans-serif" },
@@ -81,8 +100,12 @@ export interface InvoiceTemplateConfig {
   general: {
     paperSize: InvoicePaperSize
     orientation: InvoiceOrientation
-    /** Page margins in inches. */
+    /** paperSize 'custom': width × height in mm (portrait). */
+    customWidthMm: number
+    customHeightMm: number
+    /** Page margins, in `marginUnit` ('in' = templates saved before mm support). */
     margins: { top: number; bottom: number; left: number; right: number }
+    marginUnit: InvoiceMarginUnit
     fontFamily: InvoiceFontFamily
     /** Base font size in pt. */
     fontSize: number
@@ -100,6 +123,7 @@ export interface InvoiceTemplateConfig {
     taxInvoice: string
     quotation: string
     creditNote: string
+    purchaseOrder: string
     fontSize: number
     color: string
   }
@@ -124,6 +148,8 @@ export interface InvoiceTemplateConfig {
     billToLabel: string
     showShipTo: boolean
     shipToLabel: string
+    /** Party label on purchase orders. */
+    vendorLabel: string
     showPhone: boolean
     showEmail: boolean
     showTaxId: boolean
@@ -134,6 +160,7 @@ export interface InvoiceTemplateConfig {
     date: LabeledToggle
     terms: LabeledToggle
     dueDate: LabeledToggle
+    deliveryDate: LabeledToggle
     validUntil: LabeledToggle
     reference: LabeledToggle
     salesperson: LabeledToggle
@@ -176,6 +203,8 @@ export interface InvoiceTemplateConfig {
     signature: { show: boolean; label: string; imageUrl: string; name: string }
     annexure: { show: boolean; label: string; text: string }
   }
+  /** Pre-printed form / uploaded template mode (fields at exact mm positions). */
+  form: FormLayoutConfig
   /** Advanced: extra CSS appended last. */
   customCss: string
 }
@@ -204,7 +233,10 @@ export const DEFAULT_INVOICE_TEMPLATE: InvoiceTemplateConfig = {
   general: {
     paperSize: 'a4',
     orientation: 'portrait',
+    customWidthMm: 210,
+    customHeightMm: 297,
     margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 },
+    marginUnit: 'in',
     fontFamily: 'sans',
     fontSize: 9,
     textColor: '#1f2937',
@@ -220,6 +252,7 @@ export const DEFAULT_INVOICE_TEMPLATE: InvoiceTemplateConfig = {
     taxInvoice: 'TAX INVOICE',
     quotation: 'QUOTATION',
     creditNote: 'CREDIT NOTE',
+    purchaseOrder: 'PURCHASE ORDER',
     fontSize: 22,
     color: '',
   },
@@ -241,6 +274,7 @@ export const DEFAULT_INVOICE_TEMPLATE: InvoiceTemplateConfig = {
     billToLabel: 'Bill To',
     showShipTo: false,
     shipToLabel: 'Ship To',
+    vendorLabel: 'Vendor',
     showPhone: true,
     showEmail: true,
     showTaxId: true,
@@ -251,6 +285,7 @@ export const DEFAULT_INVOICE_TEMPLATE: InvoiceTemplateConfig = {
     date: lt(true, 'Date'),
     terms: lt(true, 'Terms'),
     dueDate: lt(true, 'Due Date'),
+    deliveryDate: lt(true, 'Delivery Date'),
     validUntil: lt(true, 'Valid Until'),
     reference: lt(true, 'Reference#'),
     salesperson: lt(true, 'Sales Person'),
@@ -304,6 +339,7 @@ export const DEFAULT_INVOICE_TEMPLATE: InvoiceTemplateConfig = {
     signature: { show: true, label: 'Authorized Signature', imageUrl: '', name: '' },
     annexure: { show: false, label: 'Annexure', text: '' },
   },
+  form: DEFAULT_FORM_LAYOUT,
   customCss: '',
 }
 
@@ -312,6 +348,7 @@ export const DEFAULT_INVOICE_TEMPLATE: InvoiceTemplateConfig = {
 const ENUMS: Record<string, readonly string[]> = {
   'general.paperSize': INVOICE_PAPER_SIZES,
   'general.orientation': INVOICE_ORIENTATIONS,
+  'general.marginUnit': INVOICE_MARGIN_UNITS,
   'general.fontFamily': INVOICE_FONT_FAMILIES,
   'general.dateFormat': INVOICE_DATE_FORMATS,
   'header.imagePosition': INVOICE_IMAGE_POSITIONS,
@@ -327,6 +364,21 @@ const NUM_LIMITS: Record<string, [number, number]> = {
   fontSize: [5, 40], nameFontSize: [6, 48], logoHeight: [10, 300], width: [0, 100], height: [0, 6],
 }
 
+/** Limits by full path (checked before NUM_LIMITS). Margins: up to 80 mm; inch margins are capped at 3 after the merge. */
+const PATH_LIMITS: Record<string, [number, number]> = {
+  'general.margins.top': [0, 80], 'general.margins.bottom': [0, 80], 'general.margins.left': [0, 80], 'general.margins.right': [0, 80],
+  'general.customWidthMm': [40, 1200], 'general.customHeightMm': [40, 1200],
+  'form.offsetX': [-50, 50], 'form.offsetY': [-50, 50],
+  'form.items.x': [0, 1200], 'form.items.y': [0, 1200], 'form.items.width': [0, 1200],
+  'form.items.rowHeight': [2, 60], 'form.items.maxRows': [1, 300], 'form.items.fontSize': [4, 40],
+}
+
+/** Array-valued settings: tolerant parsers by path. */
+const ARRAY_SANITIZERS: Partial<Record<string, (raw: unknown) => unknown[]>> = {
+  'form.fields': sanitizeFormFields,
+  'form.columns': sanitizeFormColumns,
+}
+
 const MAX_TEXT = 1_500_000 // data-URL images fit; plain text fields are far smaller in practice
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -334,6 +386,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function mergeNode(def: unknown, raw: unknown, path: string): unknown {
+  if (Array.isArray(def)) {
+    const sanitize = ARRAY_SANITIZERS[path]
+    return sanitize && Array.isArray(raw) ? sanitize(raw) : [...def]
+  }
   if (isPlainObject(def)) {
     const src = isPlainObject(raw) ? raw : {}
     const out: Record<string, unknown> = {}
@@ -346,7 +402,7 @@ function mergeNode(def: unknown, raw: unknown, path: string): unknown {
     const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN
     if (!Number.isFinite(n)) return def
     const key = path.split('.').pop() || ''
-    const lim = NUM_LIMITS[key]
+    const lim = PATH_LIMITS[path] || NUM_LIMITS[key]
     return lim ? Math.min(lim[1], Math.max(lim[0], n)) : n
   }
   if (typeof def === 'string') {
@@ -362,7 +418,30 @@ function mergeNode(def: unknown, raw: unknown, path: string): unknown {
 export function mergeTemplateConfig(partial: unknown): InvoiceTemplateConfig {
   const merged = mergeNode(DEFAULT_INVOICE_TEMPLATE, partial, '') as InvoiceTemplateConfig
   merged.version = 1
+  if (merged.general.marginUnit === 'in') {
+    const m = merged.general.margins
+    m.top = Math.min(3, m.top); m.bottom = Math.min(3, m.bottom); m.left = Math.min(3, m.left); m.right = Math.min(3, m.right)
+  }
   return merged
+}
+
+/** The config with its page margins in mm (the designer edits mm; same printed size). */
+export function withMarginsInMm(c: InvoiceTemplateConfig): InvoiceTemplateConfig {
+  if (c.general.marginUnit === 'mm') return c
+  const m = c.general.margins
+  return {
+    ...c,
+    general: {
+      ...c.general,
+      marginUnit: 'mm',
+      margins: { top: inchesToMm(m.top), bottom: inchesToMm(m.bottom), left: inchesToMm(m.left), right: inchesToMm(m.right) },
+    },
+  }
+}
+
+/** Page size (mm, after orientation) of a template config. */
+export function templatePageMm(c: InvoiceTemplateConfig): { width: number; height: number } {
+  return resolvePageMm(c.general.paperSize, c.general.orientation, { widthMm: c.general.customWidthMm, heightMm: c.general.customHeightMm })
 }
 
 /**
@@ -401,7 +480,7 @@ export function templateConfigFromRow(row: {
 
 // ─── Document model ───────────────────────────────────────────────────────
 
-export type InvoiceDocKind = 'invoice' | 'tax_invoice' | 'quotation' | 'credit_note'
+export type InvoiceDocKind = 'invoice' | 'tax_invoice' | 'quotation' | 'credit_note' | 'purchase_order'
 
 export interface InvoiceDocParty {
   name?: string | null
@@ -435,6 +514,8 @@ export interface InvoiceDoc {
   /** ISO date / date-time */
   date: string
   dueDate?: string | null
+  /** Purchase orders: expected delivery date. */
+  deliveryDate?: string | null
   validUntil?: string | null
   terms?: string | null
   reference?: string | null
@@ -616,6 +697,7 @@ function docTitle(c: InvoiceTemplateConfig, kind: InvoiceDocKind): string {
     case 'tax_invoice': return c.titles.taxInvoice
     case 'quotation': return c.titles.quotation
     case 'credit_note': return c.titles.creditNote
+    case 'purchase_order': return c.titles.purchaseOrder
     default: return c.titles.invoice
   }
 }
@@ -670,17 +752,26 @@ function partyHtml(label: string, p: InvoiceDocParty, c: InvoiceTemplateConfig):
   return `<div class="party"><div class="party-label">${escapeHtml(label)}</div>${rows.join('')}</div>`
 }
 
+export interface RenderOptions {
+  /** Screen-only sheet look (grey backdrop, paper-sized white page) for the designer iframe. */
+  preview?: boolean
+  autoPrint?: boolean
+  /** The template's letter head: header / footer printed on every page (heights in mm). */
+  letterHead?: LetterHeadConfig | null
+}
+
 /**
- * Full HTML page (with print CSS) for a document. `opts.preview` adds a screen-only sheet look
- * (grey backdrop, paper-sized white page) for the designer iframe.
+ * Full HTML page (with print CSS) for a document. Templates in pre-printed form mode
+ * (`form.enabled`) are rendered by renderFormHtml (fields at exact mm positions).
  */
 export function renderInvoiceHtml(
   configInput: InvoiceTemplateConfig | DeepPartial<InvoiceTemplateConfig> | null | undefined,
   doc: InvoiceDoc,
   company: InvoiceCompany,
-  opts: { preview?: boolean; autoPrint?: boolean } = {},
+  opts: RenderOptions = {},
 ): string {
   const c = mergeTemplateConfig(configInput ?? {})
+  if (c.form.enabled) return renderFormHtml(c, doc, company, opts)
   const g = c.general
   const currency = (company.currency || 'LKR').toUpperCase()
   const sym = c.totals.currencySymbol.trim() || currency
@@ -690,11 +781,9 @@ export function renderInvoiceHtml(
   const isQuote = doc.kind === 'quotation'
   const isInvoice = doc.kind === 'invoice' || doc.kind === 'tax_invoice'
 
-  const paper = INVOICE_PAPER_MM[g.paperSize] || INVOICE_PAPER_MM.a4
-  const landscape = g.orientation === 'landscape'
-  const pageW = landscape ? paper.height : paper.width
-  const pageH = landscape ? paper.width : paper.height
+  const { width: pageW, height: pageH } = templatePageMm(c)
   const m = g.margins
+  const u = g.marginUnit
   const font = INVOICE_FONT_STACKS[g.fontFamily]?.css || INVOICE_FONT_STACKS.sans.css
   const accent = safeColor(g.accentColor, '#1d4ed8')
   const textColor = safeColor(g.textColor, '#1f2937')
@@ -730,6 +819,7 @@ export function renderInvoiceHtml(
   if (isQuote) add(dd.validUntil, date(doc.validUntil), true)
   else add(dd.terms, doc.terms)
   if (!isQuote) add(dd.dueDate, date(doc.dueDate), true)
+  add(dd.deliveryDate, date(doc.deliveryDate), true)
   add(dd.reference, doc.reference)
   add(dd.salesperson, doc.salesperson)
   if (doc.kind === 'credit_note') add(dd.originalInvoice, doc.originalInvoiceNo)
@@ -746,7 +836,7 @@ export function renderInvoiceHtml(
 
   // Parties
   const parties: string[] = []
-  if (c.customer.showBillTo && doc.customer) parties.push(partyHtml(c.customer.billToLabel, doc.customer, c))
+  if (c.customer.showBillTo && doc.customer) parties.push(partyHtml(doc.kind === 'purchase_order' ? c.customer.vendorLabel : c.customer.billToLabel, doc.customer, c))
   if (c.customer.showShipTo && (doc.shipTo || doc.customer)) parties.push(partyHtml(c.customer.shipToLabel, doc.shipTo || doc.customer || {}, c))
   const detailsHtml = details.length
     ? `<table class="details">${details.map(([k, v]) => `<tr><td class="dk">${k}${/[:#]$/.test(k) ? '' : ' :'}</td><td class="dv">${v}</td></tr>`).join('')}</table>`
@@ -886,7 +976,7 @@ export function renderInvoiceHtml(
     ${footerBand && !repeatFooter ? footerBand : ''}`
 
   const css = `
-@page { size: ${pageW}mm ${pageH}mm; margin: ${m.top}in ${m.right}in ${m.bottom}in ${m.left}in; }
+@page { size: ${pageW}mm ${pageH}mm; margin: ${m.top}${u} ${m.right}${u} ${m.bottom}${u} ${m.left}${u}; }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body { font-family: ${font}; font-size: ${g.fontSize}pt; line-height: 1.4; color: ${textColor}; background: ${bgColor};
@@ -953,13 +1043,16 @@ table.stub-table td { padding: 4px 0; }
 .page-no::after { content: counter(page); }
 @media screen {
   body { background: ${opts.preview ? '#e5e7eb' : bgColor}; }
-  ${opts.preview ? `.sheet { width: ${pageW}mm; min-height: ${pageH}mm; margin: 16px auto; padding: ${m.top}in ${m.right}in ${m.bottom}in ${m.left}in; box-shadow: 0 2px 12px rgba(0,0,0,.18); }` : `.sheet { max-width: ${pageW}mm; margin: 0 auto; padding: 12px; }`}
+  ${opts.preview ? `.sheet { width: ${pageW}mm; min-height: ${pageH}mm; margin: 16px auto; padding: ${m.top}${u} ${m.right}${u} ${m.bottom}${u} ${m.left}${u}; box-shadow: 0 2px 12px rgba(0,0,0,.18); }` : `.sheet { max-width: ${pageW}mm; margin: 0 auto; padding: 12px; }`}
 }
 @media print { .sheet { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; } }
-${c.customCss.replace(/<\/?style/gi, '')}`
+${opts.letterHead ? `${LETTER_HEAD_CSS}\n` : ''}${c.customCss.replace(/<\/?style/gi, '')}`
 
-  const content = repeatHeader || repeatFooter
-    ? `<table class="page">${repeatHeader ? `<thead><tr><td>${headerBand}</td></tr></thead>` : ''}${repeatFooter ? `<tfoot><tr><td>${footerBand}</td></tr></tfoot>` : ''}<tbody><tr><td>${body}</td></tr></tbody></table>`
+  // Letter head (if any) above the repeated header band / below the repeated footer band
+  const headHtml = `${letterHeadBlockHtml(opts.letterHead, 'header')}${repeatHeader ? headerBand : ''}`
+  const footHtml = `${repeatFooter ? footerBand : ''}${letterHeadBlockHtml(opts.letterHead, 'footer')}`
+  const content = headHtml || footHtml
+    ? `<table class="page">${headHtml ? `<thead><tr><td>${headHtml}</td></tr></thead>` : ''}${footHtml ? `<tfoot><tr><td>${footHtml}</td></tr></tfoot>` : ''}<tbody><tr><td>${body}</td></tr></tbody></table>`
     : body
 
   const autoPrint = opts.autoPrint
@@ -967,6 +1060,216 @@ ${c.customCss.replace(/<\/?style/gi, '')}`
     : ''
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(`${docTitle(c, doc.kind)} ${doc.number}`)}</title><style>${css}</style></head><body><div class="sheet">${content}</div>${autoPrint}</body></html>`
+}
+
+// ─── Pre-printed form renderer ─────────────────────────────────────────────
+
+function plainAddress(p: InvoiceDocParty | InvoiceCompany | null | undefined): string {
+  return (p?.address || '').trim()
+}
+
+/** Text of a form field (unescaped). */
+export function formFieldText(
+  f: Pick<FormField, 'key' | 'text'>,
+  c: InvoiceTemplateConfig,
+  doc: InvoiceDoc,
+  company: InvoiceCompany,
+  page = 0,
+  pages = 1,
+): string {
+  const fmt = c.general.dateFormat
+  const currency = (company.currency || 'LKR').toUpperCase()
+  const amt = (v: number | null | undefined, skipZero = false) => (v == null || (skipZero && Math.abs(num(v)) < 0.005) ? '' : formatAmount(num(v)))
+  const cust = doc.customer
+  let v = ''
+  switch (f.key) {
+    case 'company.name': v = company.name || ''; break
+    case 'company.address': v = plainAddress(company); break
+    case 'company.phone': v = company.phone || ''; break
+    case 'company.taxId': v = company.taxId || ''; break
+    case 'doc.title': v = docTitle(c, doc.kind); break
+    case 'doc.number': v = doc.number || ''; break
+    case 'doc.date': v = formatDocDate(doc.date, fmt); break
+    case 'doc.dueDate': v = formatDocDate(doc.dueDate, fmt); break
+    case 'doc.validUntil': v = formatDocDate(doc.validUntil, fmt); break
+    case 'doc.deliveryDate': v = formatDocDate(doc.deliveryDate, fmt); break
+    case 'doc.reference': v = doc.reference || ''; break
+    case 'doc.salesperson': v = doc.salesperson || ''; break
+    case 'doc.terms': v = doc.terms || ''; break
+    case 'doc.originalInvoice': v = doc.originalInvoiceNo || ''; break
+    case 'doc.status': v = (doc.status || '').replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase()); break
+    case 'customer.name': v = cust?.name || ''; break
+    case 'customer.address': v = plainAddress(cust); break
+    case 'customer.phone': v = cust?.phone || ''; break
+    case 'customer.email': v = cust?.email || ''; break
+    case 'customer.taxId': v = cust?.taxId || ''; break
+    case 'totals.subtotal': v = amt(doc.subtotal); break
+    case 'totals.discount': v = amt(doc.discount, true); break
+    case 'totals.tax': v = amt(doc.tax, true); break
+    case 'totals.total': v = amt(doc.total); break
+    case 'totals.paid': v = amt(doc.paid, true); break
+    case 'totals.balance': v = amt(doc.balanceDue); break
+    case 'totals.words': v = amountInWords(doc.total, currency); break
+    case 'notes': v = doc.notes || ''; break
+    case 'serials':
+      v = doc.lines
+        .map((l) => {
+          const sn = (l.serialNumbers || []).filter(Boolean)
+          const w = warrantyText(l.warrantyMonths, l.warrantyUntil, fmt)
+          if (!sn.length && !w) return ''
+          return `${l.name}: ${[sn.length ? `S/N ${sn.join(', ')}` : '', w ? `Warranty ${w}` : ''].filter(Boolean).join(' · ')}`
+        })
+        .filter(Boolean)
+        .join('\n')
+      break
+    case 'page': v = `Page ${page + 1} of ${pages}`; break
+    case 'continued': v = page < pages - 1 ? 'Continued…' : ''; break
+    case 'text': return f.text
+  }
+  return v ? `${f.text}${v}` : ''
+}
+
+interface FormRow { cells: Partial<Record<FormColumnKey, string>> }
+
+/** Item rows of a form (one per line, plus a serial / warranty row when enabled). */
+export function formItemRows(c: InvoiceTemplateConfig, doc: InvoiceDoc): FormRow[] {
+  const fmt = c.general.dateFormat
+  const hasUnitCol = c.form.columns.some((col) => col.key === 'unit')
+  const rows: FormRow[] = []
+  doc.lines.forEach((l, i) => {
+    const serials = (l.serialNumbers || []).filter(Boolean)
+    const warranty = warrantyText(l.warrantyMonths, l.warrantyUntil, fmt)
+    rows.push({
+      cells: {
+        lineNo: String(i + 1),
+        item: l.name,
+        description: l.description || '',
+        sku: l.sku || '',
+        serial: serials.join(', '),
+        warranty,
+        qty: `${formatQty(l.quantity)}${!hasUnitCol && l.unit ? ` ${l.unit}` : ''}`,
+        unit: l.unit || '',
+        rate: formatAmount(l.unitPrice),
+        discount: num(l.discount) ? formatAmount(num(l.discount)) : '',
+        taxAmount: num(l.taxAmount) ? formatAmount(num(l.taxAmount)) : '',
+        amount: formatAmount(l.amount),
+      },
+    })
+    if (c.form.items.serialRow && (serials.length || warranty)) {
+      rows.push({ cells: { item: [serials.length ? `S/N: ${serials.join(', ')}` : '', warranty ? `Warranty: ${warranty}` : ''].filter(Boolean).join('   ') } })
+    }
+  })
+  return rows
+}
+
+function formPageCss(c: InvoiceTemplateConfig, pageW: number, pageH: number, preview: boolean): string {
+  const f = c.form
+  const font = INVOICE_FONT_STACKS[c.general.fontFamily]?.css || INVOICE_FONT_STACKS.sans.css
+  return `
+@page { size: ${pageW}mm ${pageH}mm; margin: 0; }
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: ${font}; color: ${safeColor(c.general.textColor, '#000000')}; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.fpage { position: relative; width: ${pageW}mm; height: ${pageH}mm; overflow: hidden; background: #fff; page-break-after: always; break-after: page; }
+.fpage:last-child { page-break-after: auto; break-after: auto; }
+.flayer { position: absolute; left: ${roundMm(f.offsetX)}mm; top: ${roundMm(f.offsetY)}mm; width: ${pageW}mm; height: ${pageH}mm; }
+.fbg { position: absolute; left: 0; top: 0; width: ${pageW}mm; height: ${pageH}mm; object-fit: fill; }
+.ff { position: absolute; line-height: ${FORM_LINE_HEIGHT}; overflow: hidden; text-overflow: clip; }
+@media screen {
+  body { background: ${preview ? '#e5e7eb' : '#fff'}; }
+  .sheet { width: ${pageW}mm; margin: 0 auto; }
+  .fpage { margin: 16px auto; box-shadow: 0 2px 12px rgba(0,0,0,.18); }
+  .screen-only.fbg { opacity: .45; }
+}
+@media print { .screen-only { display: none !important; } }
+${c.customCss.replace(/<\/?style/gi, '')}`
+}
+
+function formBackgroundHtml(c: InvoiceTemplateConfig, preview: boolean): string {
+  const bg = safeImageUrl(c.form.backgroundImage)
+  if (!bg || (!c.form.printBackground && !preview)) return ''
+  return `<img class="fbg${c.form.printBackground ? '' : ' screen-only'}" src="${escapeHtml(bg)}" alt="">`
+}
+
+/**
+ * Pre-printed form mode: every page is exactly the paper size (@page margin 0) and each field is
+ * absolutely positioned in mm from the paper's top-left corner (+ calibration offset). Items beyond
+ * `form.items.maxRows` continue on further pages; fields marked 'last' (totals) print on the last
+ * page only.
+ */
+export function renderFormHtml(
+  configInput: InvoiceTemplateConfig | DeepPartial<InvoiceTemplateConfig> | null | undefined,
+  doc: InvoiceDoc,
+  company: InvoiceCompany,
+  opts: RenderOptions = {},
+): string {
+  const c = mergeTemplateConfig(configInput ?? {})
+  const { width: pageW, height: pageH } = templatePageMm(c)
+  const f = c.form
+  const pages = f.items.show ? paginateRows(formItemRows(c, doc), f.items.maxRows) : [[]]
+  const bg = formBackgroundHtml(c, !!opts.preview)
+  const pageHtml = pages.map((rows, p) => {
+    const fields = f.fields
+      .filter((fl) => fieldOnPage(fl, p, pages.length))
+      .map((fl) => {
+        const text = formFieldText(fl, c, doc, company, p, pages.length)
+        return text ? `<div class="ff" data-key="${escapeHtml(fl.key)}" style="${formBoxCss(fl)}">${escapeHtml(text)}</div>` : ''
+      })
+      .join('')
+    const items = f.items.show
+      ? rows.map((row, i) => f.columns.map((col) => {
+        const v = row.cells[col.key]
+        if (!v) return ''
+        const box = { x: f.items.x + col.x, y: formRowTop(f.items, i), width: col.width, fontSize: f.items.fontSize, align: col.align }
+        return `<div class="ff fi" style="${formBoxCss(box)}">${escapeHtml(v)}</div>`
+      }).join('')).join('')
+      : ''
+    return `<div class="fpage"><div class="flayer">${bg}${fields}${items}</div></div>`
+  }).join('')
+  const autoPrint = opts.autoPrint
+    ? `<script>window.addEventListener('load',function(){setTimeout(function(){window.focus();window.print()},300)})</script>`
+    : ''
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(`${docTitle(c, doc.kind)} ${doc.number}`)}</title><style>${formPageCss(c, pageW, pageH, !!opts.preview)}</style></head><body><div class="sheet">${pageHtml}</div>${autoPrint}</body></html>`
+}
+
+/**
+ * Calibration test page for a form template: a mm grid (fine line every 5 mm, numbered every
+ * 10 mm) plus the outline of every field and the items region, all shifted by the calibration
+ * offset. Print it on the pre-printed form (or plain paper held against it) and adjust
+ * offset X / Y until the boxes land on the form's boxes.
+ */
+export function renderFormCalibrationHtml(configInput: InvoiceTemplateConfig | DeepPartial<InvoiceTemplateConfig> | null | undefined): string {
+  const c = mergeTemplateConfig(configInput ?? {})
+  const { width: W, height: H } = templatePageMm(c)
+  const f = c.form
+  const lines: string[] = []
+  for (let x = 0; x <= W; x += 5) {
+    const major = x % 10 === 0
+    lines.push(`<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke="${major ? '#666' : '#bbb'}" stroke-width="${major ? 0.2 : 0.1}"/>`)
+    if (major && x > 0) lines.push(`<text x="${x + 0.6}" y="3" font-size="2.4">${x}</text>`)
+  }
+  for (let y = 0; y <= H; y += 5) {
+    const major = y % 10 === 0
+    lines.push(`<line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${major ? '#666' : '#bbb'}" stroke-width="${major ? 0.2 : 0.1}"/>`)
+    if (major && y > 0) lines.push(`<text x="0.6" y="${y - 0.6}" font-size="2.4">${y}</text>`)
+  }
+  const boxes: string[] = []
+  const box = (x: number, y: number, w: number, h: number, label: string, color: string) => {
+    boxes.push(`<rect x="${roundMm(x)}" y="${roundMm(y)}" width="${roundMm(w)}" height="${roundMm(h)}" fill="none" stroke="${color}" stroke-width="0.3" stroke-dasharray="1.2 0.8"/>`)
+    boxes.push(`<text x="${roundMm(x + 0.5)}" y="${roundMm(y + 2.6)}" font-size="2.2" fill="${color}">${escapeHtml(label)}</text>`)
+  }
+  const ptToMm = 25.4 / 72
+  for (const fl of f.fields) {
+    box(fl.x, fl.y, fl.width, Math.max(2, fl.lines * fl.fontSize * FORM_LINE_HEIGHT * ptToMm), fl.key === 'text' ? `"${fl.text.slice(0, 30)}"` : FORM_FIELD_LABELS[fl.key], '#dc2626')
+  }
+  if (f.items.show) {
+    box(f.items.x, f.items.y, Math.max(f.items.width, 10), f.items.maxRows * f.items.rowHeight, `Items (${f.items.maxRows} rows × ${f.items.rowHeight} mm)`, '#2563eb')
+    for (const col of f.columns) box(f.items.x + col.x, f.items.y, col.width, f.items.rowHeight, col.key, '#2563eb')
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}" style="position:absolute;left:0;top:0" font-family="Arial, sans-serif">${lines.join('')}${boxes.join('')}</svg>`
+  const note = `<div class="ff" style="left:${roundMm(W * 0.15)}mm;top:${roundMm(H * 0.45)}mm;width:${roundMm(W * 0.7)}mm;font-size:9pt;white-space:pre-wrap;background:#fff;border:0.3mm solid #111;padding:2mm">CALIBRATION PAGE — ${escapeHtml(INVOICE_PAPER_MM[c.general.paperSize]?.label || '')} ${roundMm(W)} × ${roundMm(H)} mm, offset X ${roundMm(f.offsetX)} mm / Y ${roundMm(f.offsetY)} mm.
+Print at 100 % scale (no "fit to page"). The 10 mm grid lines must be exactly 10 mm apart; if the red boxes land too far right / down on your form, make the offset smaller (negative moves left / up).</div>`
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Form calibration</title><style>${formPageCss(c, W, H, false)}</style></head><body><div class="sheet"><div class="fpage"><div class="flayer">${formBackgroundHtml({ ...c, form: { ...f, printBackground: false } }, true)}${svg}${note}</div></div></div></body></html>`
 }
 
 // ─── Sample data (designer preview) ───────────────────────────────────────

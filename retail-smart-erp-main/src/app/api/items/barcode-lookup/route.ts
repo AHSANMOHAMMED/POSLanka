@@ -6,6 +6,7 @@ import { eq, and, inArray, or, sql } from 'drizzle-orm'
 import { findExtraBarcodes, type ExtraBarcodeMatch } from '@/lib/pricing/catalog'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { barcodeLookupSchema } from '@/lib/validation/schemas/items'
+import { isFeatureEnabled, normalizeFeatureFlags } from '@/lib/features/flags'
 import { analyseScan, codesMatch, normalizeScaleConfig, type ScaleBarcodeConfig } from '@/lib/inventory/barcode-parse'
 import { logError } from '@/lib/ai/error-logger'
 import { requireModule } from '@/lib/auth/roles'
@@ -38,7 +39,10 @@ export async function GET(request: NextRequest) {
         where: eq(tenants.id, session.user.tenantId),
         columns: { settings: true },
       })
-      const scaleConfig = normalizeScaleConfig(((tenant?.settings || {}) as { scaleBarcode?: Partial<ScaleBarcodeConfig> }).scaleBarcode)
+      const tenantSettings = (tenant?.settings || {}) as { scaleBarcode?: Partial<ScaleBarcodeConfig>; featureFlags?: Partial<Record<string, boolean>> }
+      const scaleConfig = normalizeScaleConfig(tenantSettings.scaleBarcode)
+      // Weighing scale switched off (super admin → Features): scale labels are not read
+      if (!isFeatureEnabled(normalizeFeatureFlags(tenantSettings.featureFlags), 'weighing_scale')) scaleConfig.enabled = false
       const scan = analyseScan(barcode, scaleConfig)
 
       const barcodeValues = scan.candidates.filter((c) => c.field === 'barcode').map((c) => c.lookup)

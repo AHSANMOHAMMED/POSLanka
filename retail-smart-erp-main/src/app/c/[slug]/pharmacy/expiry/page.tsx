@@ -1,6 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useParams } from 'next/navigation'
+import { toast } from '@/components/ui/toast'
 import { ListPageLayout } from '@/components/layout/ListPageLayout'
 import { useCurrency } from '@/hooks/useCurrency'
 
@@ -20,8 +23,11 @@ interface ExpiryRow {
 
 /** Expired and short-dated batches in stock, soonest first. */
 export default function ExpiryReportPage() {
+  const { slug } = useParams<{ slug: string }>()
   const { fCurrency } = useCurrency()
   const [days, setDays] = useState(90)
+  // Dashboard alert window (tenants.settings.pharmacy.expiryAlertDays)
+  const [alertDays, setAlertDays] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [rows, setRows] = useState<ExpiryRow[]>([])
   const [summary, setSummary] = useState<{ batches: number; expiredBatches: number; expiredValue: number; expiringValue: number } | null>(null)
@@ -46,6 +52,20 @@ export default function ExpiryReportPage() {
 
   useEffect(() => { load() }, [load])
 
+  useEffect(() => {
+    fetch('/api/pharmacy/settings').then((r) => (r.ok ? r.json() : null)).then((s) => {
+      if (s?.expiryAlertDays) { setAlertDays(s.expiryAlertDays); setDays(s.expiryAlertDays) }
+    }).catch(() => undefined)
+  }, [])
+
+  async function saveAlertDays() {
+    const res = await fetch('/api/pharmacy/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expiryAlertDays: days }) })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok) { toast.error(body.error || 'Could not save'); return }
+    setAlertDays(body.expiryAlertDays)
+    toast.success(`Dashboard expiry alert now warns ${body.expiryAlertDays} days ahead`)
+  }
+
   const q = search.trim().toLowerCase()
   const shown = q ? rows.filter((r) => `${r.itemName} ${r.genericName ?? ''} ${r.batchNumber}`.toLowerCase().includes(q)) : rows
 
@@ -59,9 +79,15 @@ export default function ExpiryReportPage() {
       searchPlaceholder="Medicine, generic name or batch"
       onRefresh={load}
       filterContent={
-        <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="rounded border px-2 py-1 text-sm dark:bg-gray-700" aria-label="Expiring within">
-          {[30, 60, 90, 180, 365].map((d) => <option key={d} value={d}>Expired or expiring in {d} days</option>)}
-        </select>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="rounded border px-2 py-1 text-sm dark:bg-gray-700" aria-label="Expiring within">
+            {Array.from(new Set([30, 60, 90, 180, 365, ...(alertDays ? [alertDays] : [])])).sort((a, b) => a - b).map((d) => <option key={d} value={d}>Expired or expiring in {d} days</option>)}
+          </select>
+          {alertDays !== null && alertDays !== days && (
+            <button type="button" onClick={saveAlertDays} className="rounded border px-2 py-1 hover:bg-gray-50 dark:hover:bg-gray-700">Use {days} days for the dashboard alert</button>
+          )}
+          <Link href={`/c/${slug}/pharmacy/return-list?days=${days}`} className="rounded border px-2 py-1 text-blue-600 hover:bg-gray-50 dark:hover:bg-gray-700">Return to supplier list</Link>
+        </div>
       }
     >
       {summary && (

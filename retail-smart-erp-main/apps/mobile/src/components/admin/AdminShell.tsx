@@ -213,6 +213,8 @@ export function businessTypeLabel(t: string | null | undefined): string {
       return 'Printing & photo studio'
     case 'office':
       return 'Office & services'
+    case 'textile':
+      return 'Textile & clothing'
     default:
       return t ? t.replace(/_/g, ' ') : 'Unknown'
   }

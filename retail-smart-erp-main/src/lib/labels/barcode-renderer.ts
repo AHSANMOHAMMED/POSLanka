@@ -1,7 +1,10 @@
 'use client'
 
 import { FORMAT_TO_BWIP, type BarcodeElement, type BarcodeFormat } from './types'
-import { chooseSymbology, planLinear, TWO_D_FORMATS, type SymbolChoice } from '@/lib/print/label/barcode-fit'
+import { chooseSymbology, hriFontDots, hriLayout, planLinear, TWO_D_FORMATS, type SymbolChoice } from '@/lib/print/label/barcode-fit'
+
+/** Font of every label text (preview, browser print and the exact raster print use the same one). */
+export const LABEL_FONT_FAMILY = 'Arial, Helvetica, sans-serif'
 
 /**
  * Render a barcode as a data URL (SVG base64) using bwip-js.
@@ -188,7 +191,8 @@ export async function renderBarcodeElementHtml(
   const plan = planLinear(choice.format, choice.data, dpi, Math.round(el.x * dpm), Math.max(1, Math.round(el.width * dpm)), labelW, modules)
   const m = plan.module
   const hDots = Math.max(8, Math.round(el.height * dpm))
-  const hri = el.showText ? Math.round(2.6 * dpm) : 0
+  const hl = hriLayout(dpi, el.textSizePt)
+  const hri = el.showText ? hl.band : 0
   const barH = Math.max(8, hDots - hri)
   const W = plan.symbolDots + 2 * plan.quietDots
   const left = plan.x - plan.quietDots
@@ -201,8 +205,9 @@ export async function renderBarcodeElementHtml(
   }
   let text = ''
   if (el.showText) {
-    const fs = Math.max(6, Math.min(Math.round(hri * 0.9), Math.floor(W / Math.max(1, choice.value.length * 0.62))))
-    text = `<text x="${W / 2}" y="${hDots - Math.max(1, Math.round((hri - fs) / 2))}" font-size="${fs}" font-family="Arial, Helvetica, sans-serif" text-anchor="middle" fill="#000">${escXml(choice.value)}</text>`
+    // Same font / size / position as the exact (raster) print: centred in the band below the bars.
+    const fs = hriFontDots(dpi, el.textSizePt, W, choice.value)
+    text = `<text x="${W / 2}" y="${barH + Math.round((hri + fs * 0.72) / 2)}" font-size="${fs}" font-family="${LABEL_FONT_FAMILY}" text-anchor="middle" fill="#000">${escXml(choice.value)}</text>`
   }
   const mm = (d: number) => Math.round((d / dpm) * 10000) / 10000
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${mm(W)}mm" height="${mm(hDots)}mm" viewBox="0 0 ${W} ${hDots}" preserveAspectRatio="none" shape-rendering="crispEdges" style="display:block"><rect width="${W}" height="${hDots}" fill="#fff"/><g fill="#000">${rects}</g>${text}</svg>`

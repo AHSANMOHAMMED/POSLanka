@@ -287,6 +287,73 @@ export const LABEL_PRESETS: LabelPreset[] = [
     ],
   },
 
+  // ─── Textile & Clothing ──────────────────────────────────
+  {
+    // Variant items carry their size / colour in the name ("Linen Shirt - M / Blue")
+    id: 'textile-garment-tag',
+    name: 'Garment Tag (size / colour)',
+    description: 'Shop + item with size & colour + barcode + price (40 x 50 mm)',
+    businessTypes: ['textile'],
+    widthMm: 40,
+    heightMm: 50,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 2, y: 2, width: 36, height: 5, rotation: 0, zIndex: 10, dataField: 'tenant.name', fontSize: 7, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'text', x: 2, y: 8, width: 36, height: 9, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 8, fontWeight: 'bold', textAlign: 'center', maxLines: 2 },
+      { id: elId(), type: 'text', x: 2, y: 17, width: 36, height: 4, rotation: 0, zIndex: 10, dataField: 'item.category', fontSize: 6, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'barcode', x: 4, y: 22, width: 32, height: 14, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
+      { id: elId(), type: 'text', x: 2, y: 39, width: 36, height: 8, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 14, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
+    ],
+  },
+  {
+    id: 'textile-fabric-roll',
+    name: 'Fabric Roll Label (per metre)',
+    description: 'Fabric name + price per unit + barcode (50 x 30 mm)',
+    businessTypes: ['textile'],
+    widthMm: 50,
+    heightMm: 30,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 1, y: 1, width: 48, height: 5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 8, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'barcode', x: 4, y: 7, width: 42, height: 12, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
+      { id: elId(), type: 'text', x: 1, y: 21, width: 32, height: 7, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 12, fontWeight: 'bold', textAlign: 'right', maxLines: 1, isCurrency: true },
+      { id: elId(), type: 'text', x: 34, y: 22, width: 15, height: 6, rotation: 0, zIndex: 10, dataField: 'item.unit', fontSize: 8, fontWeight: 'normal', textAlign: 'left', maxLines: 1, prefix: '/ ' },
+    ],
+  },
+
+  // ─── Electronics & Appliances ────────────────────────────
+  {
+    id: 'electronics-product',
+    name: 'Product Label (brand / model)',
+    description: 'Brand + model + barcode + price (50 x 25 mm)',
+    businessTypes: ['electronics'],
+    widthMm: 50,
+    heightMm: 25,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 1, y: 1, width: 24, height: 4, rotation: 0, zIndex: 10, dataField: 'item.brand', fontSize: 6, fontWeight: 'bold', textAlign: 'left', maxLines: 1 },
+      { id: elId(), type: 'text', x: 25, y: 1, width: 24, height: 4, rotation: 0, zIndex: 10, dataField: 'item.sku', fontSize: 6, fontWeight: 'normal', textAlign: 'right', maxLines: 1 },
+      { id: elId(), type: 'text', x: 1, y: 5, width: 48, height: 5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 7, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'barcode', x: 3, y: 10, width: 44, height: 9, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
+      { id: elId(), type: 'text', x: 1, y: 19.5, width: 48, height: 5, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 10, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
+    ],
+  },
+  {
+    id: 'electronics-shelf-card',
+    name: 'Showroom Price Card',
+    description: 'Large model name + price + barcode for display units (80 x 50 mm)',
+    businessTypes: ['electronics'],
+    widthMm: 80,
+    heightMm: 50,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 2, y: 2, width: 76, height: 6, rotation: 0, zIndex: 10, dataField: 'item.brand', fontSize: 10, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'text', x: 2, y: 9, width: 76, height: 10, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 11, fontWeight: 'bold', textAlign: 'center', maxLines: 2 },
+      { id: elId(), type: 'text', x: 2, y: 21, width: 76, height: 11, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 22, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
+      { id: elId(), type: 'barcode', x: 15, y: 34, width: 50, height: 13, rotation: 0, zIndex: 10, format: 'code128', dataField: 'item.barcode', showText: true, barWidth: 2 },
+    ],
+  },
+
   // ─── Special Shapes ──────────────────────────────────────
   {
     id: 'circle-price',
@@ -299,6 +366,27 @@ export const LABEL_PRESETS: LabelPreset[] = [
     elements: [
       { id: elId(), type: 'text', x: 4, y: 6, width: 30, height: 6, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 6, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
       { id: elId(), type: 'text', x: 4, y: 15, width: 30, height: 10, rotation: 0, zIndex: 10, dataField: 'item.sellingPrice', fontSize: 14, fontWeight: 'bold', textAlign: 'center', maxLines: 1, isCurrency: true },
+    ],
+  },
+
+  // ─── Pharmacy (kept last so earlier presets' element ids do not shift) ───
+  {
+    id: 'pharmacy-dispensing-70x40',
+    name: 'Pharmacy Dispensing Label (70 x 40 mm)',
+    description: 'Pharmacy name, patient, medicine, dose instructions, qty and date (fill in by hand; Prescription Register → Labels prints them filled)',
+    businessTypes: ['pharmacy'],
+    widthMm: 70,
+    heightMm: 40,
+    labelShape: 'rectangle',
+    elements: [
+      { id: elId(), type: 'text', x: 2, y: 1.5, width: 66, height: 4.5, rotation: 0, zIndex: 10, dataField: 'tenant.name', fontSize: 8, fontWeight: 'bold', textAlign: 'center', maxLines: 1 },
+      { id: elId(), type: 'shape', x: 2, y: 6.5, width: 66, height: 0.5, rotation: 0, zIndex: 5, shape: 'line', borderWidth: 1, borderColor: '#000000', borderStyle: 'solid' },
+      { id: elId(), type: 'text', x: 2, y: 8, width: 66, height: 4.5, rotation: 0, zIndex: 10, dataField: 'custom', customValue: 'Patient: ______________________', fontSize: 7, fontWeight: 'normal', textAlign: 'left', maxLines: 1 },
+      { id: elId(), type: 'text', x: 2, y: 13, width: 66, height: 5, rotation: 0, zIndex: 10, dataField: 'item.name', fontSize: 9, fontWeight: 'bold', textAlign: 'left', maxLines: 1 },
+      { id: elId(), type: 'text', x: 2, y: 19, width: 66, height: 9.5, rotation: 0, zIndex: 10, dataField: 'custom', customValue: 'Dose: ____ tablet(s) ____ times a day, before / after meals', fontSize: 7, fontWeight: 'normal', textAlign: 'left', maxLines: 2 },
+      { id: elId(), type: 'text', x: 2, y: 30, width: 32, height: 4.5, rotation: 0, zIndex: 10, dataField: 'custom', customValue: 'Qty: ______', fontSize: 7, fontWeight: 'normal', textAlign: 'left', maxLines: 1 },
+      { id: elId(), type: 'text', x: 36, y: 30, width: 32, height: 4.5, rotation: 0, zIndex: 10, dataField: 'custom', customValue: 'Date: ___/___/____', fontSize: 7, fontWeight: 'normal', textAlign: 'right', maxLines: 1 },
+      { id: elId(), type: 'text', x: 2, y: 35, width: 66, height: 4, rotation: 0, zIndex: 10, dataField: 'custom', customValue: 'Keep out of reach of children', fontSize: 6, fontWeight: 'normal', textAlign: 'center', maxLines: 1 },
     ],
   },
 ]

@@ -9,6 +9,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation'
 import { updateLabelSettingsSchema } from '@/lib/validation/schemas/label-templates'
 import { sanitizeStickerSetups } from '@/lib/labels/sticker-stock'
+import { sanitizePrintSetup } from '@/lib/labels/print-setup'
 
 const LABEL_SETTINGS_KEY = 'label_settings'
 
@@ -34,6 +35,7 @@ export async function GET() {
             ...DEFAULT_LABEL_SETTINGS,
             ...parsed,
             stickerSetups: sanitizeStickerSetups(parsed?.stickerSetups),
+            ...(parsed?.printSetup ? { printSetup: sanitizePrintSetup(parsed.printSetup) } : {}),
           })
         } catch {
           return NextResponse.json(DEFAULT_LABEL_SETTINGS)

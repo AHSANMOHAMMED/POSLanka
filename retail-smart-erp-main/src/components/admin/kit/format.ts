@@ -50,6 +50,7 @@ export const BUSINESS_TYPE_LABELS: Record<string, string> = {
   hardware: 'Hardware',
   print_studio: 'Printing & photo studio',
   office: 'Office & services',
+  textile: 'Textile & clothing',
 }
 
 export function businessTypeLabel(t: string | null | undefined): string {

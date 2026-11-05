@@ -26,6 +26,8 @@ interface WarrantyRow {
 }
 
 interface WarrantyData {
+  /** 'units' = electronics: sold units / lines under the shop's warranty (0193) */
+  kind?: 'units'
   summary: {
     totalClaims: number
     totalCost: number
@@ -58,6 +60,19 @@ const exportColumns: ExportColumn[] = [
   { key: 'status', header: 'Status', width: 12 },
 ]
 
+const unitExportColumns: ExportColumn[] = [
+  { key: 'createdAt', header: 'Sale date', format: 'date', width: 15 },
+  { key: 'invoiceNo', header: 'Invoice', width: 15 },
+  { key: 'customerName', header: 'Customer', width: 20 },
+  { key: 'vehicleInfo', header: 'Product', width: 28 },
+  { key: 'vin', header: 'Serial / IMEI', width: 20 },
+  { key: 'warrantyType', header: 'Warranty', width: 14 },
+  { key: 'endDate', header: 'Valid until', width: 14 },
+  { key: 'provider', header: 'Claims', width: 10 },
+  { key: 'price', header: 'Value', format: 'currency', width: 12 },
+  { key: 'status', header: 'Status', width: 12 },
+]
+
 export default function WarrantyTrackerPage() {
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
@@ -78,6 +93,8 @@ export default function WarrantyTrackerPage() {
 
   const inputClass = 'w-full border border-gray-300 dark:border-gray-600 rounded px-3 py-2 text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500'
 
+  // Electronics: rows are sold units (product, serial / IMEI, warranty until, claims)
+  const units = data?.kind === 'units'
   const chartLabels = data ? Object.keys(data.byType) : []
   const chartValues = data ? Object.values(data.byType) : []
 
@@ -106,16 +123,20 @@ export default function WarrantyTrackerPage() {
       emptyMessage="Select a date range to view warranty claims."
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       exportData={data?.data as any}
-      exportColumns={exportColumns}
+      exportColumns={units ? unitExportColumns : exportColumns}
       exportName="Warranty Tracker"
       summaryCards={data ? <>
-        <SummaryCard label="Total Claims" value={data.summary.totalClaims.toString()} color="blue" />
-        <SummaryCard label="Total Cost" value={formatCurrency(data.summary.totalCost)} color="red" />
-        <SummaryCard label="Avg Cost / Claim" value={formatCurrency(data.summary.avgCostPerClaim)} color="amber" />
-        <SummaryCard label="Warranty Types" value={Object.keys(data.byType).length.toString()} color="purple" />
+        <SummaryCard label={units ? 'Units under warranty' : 'Total Claims'} value={data.summary.totalClaims.toString()} color="blue" />
+        <SummaryCard label={units ? 'Sales value' : 'Total Cost'} value={formatCurrency(data.summary.totalCost)} color="red" />
+        {units ? (
+          <SummaryCard label="Active" value={String(data.byType.active || 0)} color="amber" />
+        ) : (
+          <SummaryCard label="Avg Cost / Claim" value={formatCurrency(data.summary.avgCostPerClaim)} color="amber" />
+        )}
+        <SummaryCard label={units ? 'With claims' : 'Warranty Types'} value={units ? String(data.byType.claimed || 0) : Object.keys(data.byType).length.toString()} color="purple" />
       </> : undefined}
       chart={chartLabels.length > 0 ? (
-        <BarChart labels={chartLabels} datasets={[{ label: 'Claims by Type', data: chartValues }]} height={250} color="blue" />
+        <BarChart labels={chartLabels} datasets={[{ label: units ? 'Units by status' : 'Claims by Type', data: chartValues }]} height={250} color="blue" />
       ) : undefined}
     >
       {data && (
@@ -126,10 +147,10 @@ export default function WarrantyTrackerPage() {
                 <tr>
                   <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Date</th>
                   <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Customer</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Vehicle</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Type</th>
-                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Provider</th>
-                  <th className="px-4 py-2 text-right text-sm font-medium text-gray-600 dark:text-gray-400">Cost</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">{units ? 'Product · Serial / IMEI' : 'Vehicle'}</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">{units ? 'Warranty' : 'Type'}</th>
+                  <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">{units ? 'Valid until' : 'Provider'}</th>
+                  <th className="px-4 py-2 text-right text-sm font-medium text-gray-600 dark:text-gray-400">{units ? 'Value' : 'Cost'}</th>
                   <th className="px-4 py-2 text-left text-sm font-medium text-gray-600 dark:text-gray-400">Status</th>
                 </tr>
               </thead>
@@ -146,7 +167,9 @@ export default function WarrantyTrackerPage() {
                       {row.vin && <span className="ml-2 text-xs text-gray-500 font-mono">{row.vin}</span>}
                     </td>
                     <td className="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300 capitalize">{row.warrantyType.replace(/_/g, ' ')}</td>
-                    <td className="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">{row.provider}</td>
+                    <td className="px-4 py-2.5 text-sm text-gray-700 dark:text-gray-300">
+                      {units ? <>{row.endDate || '—'}{row.provider !== '—' ? <span className="ml-2 text-xs text-amber-600">{row.provider}</span> : null}</> : row.provider}
+                    </td>
                     <td className="px-4 py-2.5 text-sm text-right font-mono tabular-nums text-gray-900 dark:text-white">{formatCurrency(row.price)}</td>
                     <td className="px-4 py-2.5">
                       <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${STATUS_COLORS[row.status] || ''}`}>

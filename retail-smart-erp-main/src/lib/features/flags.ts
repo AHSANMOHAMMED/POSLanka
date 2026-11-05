@@ -49,6 +49,7 @@ export const FEATURE_FLAGS = [
   'deliveries',
   'warranty_claims',
   'print_jobs',
+  'service_jobs',
   'hr_attendance',
   // Communication & platform
   'whatsapp',
@@ -75,24 +76,46 @@ export interface FeatureDef {
   modules?: string[]
   /** '/api/x' = that path and everything under it; a RegExp for anything finer */
   api?: Array<string | RegExp>
+  /** Like `api`, but only writes (POST / PUT / PATCH / DELETE) are refused: reads the POS or other
+   * modules need while the switch is off (tax templates, modes of payment …) keep working */
+  apiWrite?: Array<string | RegExp>
+  /** What switching it off does beyond hiding pages / refusing the API (super admin → Features) */
+  offEffect?: string
 }
+
+/**
+ * Analysis reports under /accounting/reports/<x> (API /api/reports/<x>) that follow
+ * advanced_reports. The basic ones stay with the switch off: daily-sales, sales-summary,
+ * payment-collection, stock-balance, tax-report / vat-schedule (and /pos/daily-summary).
+ */
+const ADVANCED_REPORT_PAGES = [
+  'sales-by-item', 'sales-by-customer', 'stock-movement', 'purchase-summary', 'purchase-by-supplier', 'item-profitability',
+  'shrinkage-report', 'margin-analysis', 'expense-report', 'category-sales', 'item-velocity', 'service-revenue',
+  'technician-performance', 'job-card-profitability', 'parts-usage', 'warranty-tracker', 'table-turnover',
+  'menu-performance', 'food-cost-analysis', 'waste-analysis', 'peak-hours', 'vehicle-aging', 'sales-pipeline', 'saved',
+]
 
 export const FEATURE_DEFS: FeatureDef[] = [
   // ------------------------------------------------------------------ Sales & POS
   { key: 'credit_customer', group: 'Sales & POS', default: true, label: 'Credit sales (pay later)',
-    description: 'Sell on credit to customers with a credit limit; “Credit” payment at the POS.' },
+    description: 'Sell on credit to customers with a credit limit; “Credit” payment at the POS.',
+    offEffect: 'The POS and the app refuse “Credit” payments.' },
   { key: 'loyalty', group: 'Sales & POS', default: true, label: 'Loyalty points',
     description: 'Earn and redeem points at the POS; loyalty programmes and tiers.',
-    hrefs: ['/settings/loyalty'], api: ['/api/loyalty-programs', '/api/loyalty-transactions'] },
+    hrefs: ['/settings/loyalty'], api: ['/api/loyalty-programs', '/api/loyalty-transactions'],
+    offEffect: 'Sales no longer earn points and points cannot be redeemed (balances are kept).' },
   { key: 'gift_cards', group: 'Sales & POS', default: true, label: 'Gift cards',
     description: 'Sell and redeem gift cards.',
-    hrefs: ['/settings/gift-cards'], api: ['/api/gift-cards'] },
+    hrefs: ['/settings/gift-cards'], api: ['/api/gift-cards'],
+    offEffect: 'Gift-card items cannot be sold and cards cannot pay at the POS.' },
   { key: 'promotions', group: 'Sales & POS', default: true, label: 'Promotions & coupons',
     description: 'Discount rules, buy-x-get-y, coupon codes applied at the POS.',
-    hrefs: ['/promotions', '/accounting/reports/promotions'], api: ['/api/promotions'] },
+    hrefs: ['/promotions', '/accounting/reports/promotions'], api: ['/api/promotions', '/api/reports/promotions'],
+    offEffect: 'Automatic promotions stop applying to sales and coupons are refused.' },
   { key: 'price_lists', group: 'Sales & POS', default: true, label: 'Price lists',
     description: 'Wholesale / customer-group prices.',
-    hrefs: ['/price-lists'], api: ['/api/price-lists'] },
+    hrefs: ['/price-lists'], api: ['/api/price-lists'],
+    offEffect: 'Sales are priced at the catalog price; price lists stop applying.' },
   { key: 'quotation', group: 'Sales & POS', default: true, label: 'Quotations',
     description: 'Quotations that convert to sales orders or invoices.',
     hrefs: ['/quotations'], api: ['/api/quotations'] },
@@ -121,7 +144,8 @@ export const FEATURE_DEFS: FeatureDef[] = [
   // ------------------------------------------------------------------ Stock
   { key: 'multi_warehouse', group: 'Stock', default: false, label: 'Multiple branches / warehouses',
     description: 'Transfers between branches and per-branch stock.',
-    hrefs: ['/stock-transfers'], api: ['/api/stock-transfers'] },
+    hrefs: ['/stock-transfers'], api: ['/api/stock-transfers'],
+    offEffect: 'A single-branch business cannot add a second branch / warehouse (existing branches keep working).' },
   { key: 'stock_takes', group: 'Stock', default: true, label: 'Stock takes',
     description: 'Count stock and post the differences.',
     hrefs: ['/stock-takes'], api: ['/api/stock-takes'] },
@@ -135,7 +159,8 @@ export const FEATURE_DEFS: FeatureDef[] = [
     description: 'Track each unit by serial number (electronics, phones).',
     hrefs: ['/serial-numbers'], api: ['/api/serial-numbers', /^\/api\/items\/[^/]+\/serial-numbers(\/|$)/] },
   { key: 'weighing_scale', group: 'Stock', default: true, label: 'Weighing scale & loose items',
-    description: 'Sell by weight; scale barcodes with weight or price.', businessTypes: ['retail', 'supermarket', 'pharmacy'] },
+    description: 'Sell by weight; scale barcodes with weight or price.', businessTypes: ['retail', 'supermarket', 'pharmacy', 'hardware'],
+    offEffect: 'Scale labels are no longer read (weight / price in the barcode) on the web POS and the app.' },
   { key: 'barcode_labels', group: 'Stock', default: true, label: 'Barcode & shelf labels',
     description: 'Design and print barcode labels.',
     hrefs: ['/barcode'], modules: ['barcode'], api: ['/api/label-templates', '/api/label-settings'] },
@@ -152,8 +177,18 @@ export const FEATURE_DEFS: FeatureDef[] = [
       '/accounting/payment-reconciliation', '/accounting/payment-requests', '/accounting/dunning', '/accounting/journal-entries',
       '/accounting/recurring-entries', '/accounting/general-ledger', '/accounting/bank-accounts', '/accounting/budgets',
       '/accounting/reports/trial-balance', '/accounting/reports/profit-and-loss', '/accounting/reports/balance-sheet',
-      '/accounting/reports/cash-flow', '/accounting/reports/general-ledger'],
-    api: ['/api/accounting/accounts', '/api/accounting/bank-accounts', '/api/accounting/budgets', '/api/accounting/cost-centers',
+      '/accounting/reports/cash-flow', '/accounting/reports/general-ledger',
+      '/accounting/opening-balances', '/accounting/period-closing', '/accounting/audit', '/accounting/settings',
+      '/accounting/tax-templates', '/accounting/modes-of-payment', '/accounting/payment-terms', '/accounting/dunning-types',
+      '/accounting/reports/accounts-receivable', '/accounting/reports/accounts-payable', '/accounting/reports/day-book'],
+    // The POS, items, quotations and the app read tax templates, modes of payment, payment terms
+    // and the accounting settings (default tax): only changing them is refused.
+    apiWrite: ['/api/accounting/tax-templates', '/api/accounting/modes-of-payment', '/api/accounting/payment-terms',
+      '/api/accounting/payment-terms-templates', '/api/accounting/settings'],
+    offEffect: 'Sales and purchases still post to the books in the background, so turning it back on loses nothing.',
+    api: ['/api/accounting/audit', '/api/accounting/setup', '/api/accounting/reports/accounts-receivable',
+      '/api/accounting/reports/accounts-payable', '/api/reports/day-book', '/api/reports/general-ledger',
+      '/api/accounting/accounts', '/api/accounting/bank-accounts', '/api/accounting/budgets', '/api/accounting/cost-centers',
       '/api/accounting/dunning-types', '/api/accounting/dunnings', '/api/accounting/fiscal-years', '/api/accounting/gl-entries',
       '/api/accounting/journal-entries', '/api/accounting/opening-balances', '/api/accounting/payment-entries',
       '/api/accounting/payment-reconciliation', '/api/accounting/payment-requests', '/api/accounting/period-closing',
@@ -164,10 +199,16 @@ export const FEATURE_DEFS: FeatureDef[] = [
     hrefs: ['/accounting/e-invoicing'], api: ['/api/einvoice'] },
   { key: 'hr_payroll', group: 'Buying & finance', default: true, label: 'HR & payroll',
     description: 'Employees, salary structures, payroll runs, advances.',
+    // Employees (/hr/employees, /api/employee-profiles) are shared with attendance: SHARED_FEATURE_RULES
     modules: ['hr'], hrefs: ['/hr'],
-    api: ['/api/employee-profiles', '/api/employee-advances', '/api/salary-components', '/api/salary-structures', '/api/salary-slips', '/api/payroll-runs'] },
+    api: ['/api/employee-advances', '/api/salary-components', '/api/salary-structures', '/api/salary-slips', '/api/payroll-runs',
+      '/api/hr/salary-components'] },
   { key: 'advanced_reports', group: 'Buying & finance', default: true, label: 'Advanced reports',
-    description: 'The Reports module (analysis beyond the daily summary).', modules: ['reports'], hrefs: ['/reports'] },
+    description: 'The Reports module and analysis reports (by item / customer, margins, stock movement, purchases, industry reports). Daily sales, sales summary, payment collection, stock balance and tax reports stay.',
+    modules: ['reports'], hrefs: ['/reports', ...ADVANCED_REPORT_PAGES.map((r) => `/accounting/reports/${r}`)],
+    api: ['/api/reports/aged-payables', '/api/reports/supplier-performance', '/api/reports/adjustments-by-reason',
+      '/api/reports/inventory-valuation-reconciliation', '/api/reports/staff-performance',
+      ...ADVANCED_REPORT_PAGES.map((r) => `/api/reports/${r}`)] },
 
   // ------------------------------------------------------------------ Industry
   { key: 'pharmacy', group: 'Industry', default: true, label: 'Pharmacy (prescriptions & drug register)',
@@ -188,11 +229,15 @@ export const FEATURE_DEFS: FeatureDef[] = [
   { key: 'print_jobs', group: 'Industry', default: true, label: 'Print & photo job orders',
     description: 'Job orders by size and quantity with advance payments, due dates and ready-for-pickup tracking.',
     businessTypes: ['print_studio'], hrefs: ['/print-jobs'], api: ['/api/print-jobs'] },
+  { key: 'service_jobs', group: 'Industry', default: true, label: 'Service jobs (repairs, tailoring, tickets)',
+    description: 'Job cards: repair jobs (device, serial / IMEI, fault, warranty check), tailoring & alteration orders (measurements, fitting date) or service tickets; estimate, advance, parts & labour, status flow, ready SMS, convert to invoice, job card print.',
+    businessTypes: ['electronics', 'textile', 'office', 'retail', 'hardware'], hrefs: ['/service-jobs'], api: ['/api/service-jobs'] },
   { key: 'hr_attendance', group: 'Industry', default: true, label: 'Attendance, shifts & leave',
     description: 'Staff attendance (fingerprint devices or manual), work shifts, leave and holidays.',
-    hrefs: ['/hr/attendance', '/hr/shifts', '/hr/attendance-devices', '/hr/leave', '/hr/holidays'],
+    modules: ['hr'], hrefs: ['/hr/attendance', '/hr/shifts', '/hr/attendance-devices', '/hr/leave', '/hr/holidays'],
     api: ['/api/hr/attendance', '/api/hr/attendance-devices', '/api/hr/shifts', '/api/hr/shift-assignments', '/api/hr/holidays',
-      '/api/hr/leave-types', '/api/hr/leave-requests', '/api/hr/leave-balances'] },
+      '/api/hr/leave-types', '/api/hr/leave-requests', '/api/hr/leave-balances', '/api/hr/settings'],
+    offEffect: 'Fingerprint devices are refused (they keep their punches and re-send them once it is back on).' },
 
   // ------------------------------------------------------------------ Communication & platform
   // Both also gate the paid messaging add-on (src/lib/messaging): sending refuses while the switch is
@@ -220,14 +265,14 @@ export const DEFAULT_VENDOR_FEATURE_FLAGS = Object.fromEntries(FEATURE_DEFS.map(
  */
 export const BUSINESS_TYPE_FEATURE_PRESETS: Record<string, Partial<FeatureFlagsMap>> = {
   retail: { print_jobs: false },
-  supermarket: { installments: false, warranty_claims: false, print_jobs: false },
-  pharmacy: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, variants: false },
-  restaurant: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, serial_numbers: false, weighing_scale: false, layaways: false },
-  auto_service: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, weighing_scale: false },
-  dealership: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, weighing_scale: false },
+  supermarket: { installments: false, warranty_claims: false, print_jobs: false, service_jobs: false },
+  pharmacy: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, service_jobs: false, variants: false },
+  restaurant: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, service_jobs: false, serial_numbers: false, weighing_scale: false, layaways: false },
+  auto_service: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, service_jobs: false, weighing_scale: false },
+  dealership: { installments: false, deliveries: false, warranty_claims: false, print_jobs: false, service_jobs: false, weighing_scale: false },
   // Big-ticket appliance / phone shops: hire purchase, delivery & installation, serial / IMEI warranty
   electronics: {
-    installments: true, deliveries: true, warranty_claims: true, serial_numbers: true,
+    installments: true, deliveries: true, warranty_claims: true, serial_numbers: true, service_jobs: true,
     weighing_scale: false, batches_expiry: false, print_jobs: false,
   },
   // Hardware: loose goods by weight / length, credit customers, site deliveries
@@ -236,15 +281,21 @@ export const BUSINESS_TYPE_FEATURE_PRESETS: Record<string, Partial<FeatureFlagsM
     batches_expiry: false, print_jobs: false,
   },
   print_studio: {
-    print_jobs: true, installments: false, deliveries: false, warranty_claims: false,
+    print_jobs: true, installments: false, deliveries: false, warranty_claims: false, service_jobs: false,
     weighing_scale: false, batches_expiry: false, serial_numbers: false, layaways: false,
   },
   // Offices: staff, attendance, payroll and billing; no counter-retail extras
   office: {
-    hr_payroll: true, hr_attendance: true,
+    hr_payroll: true, hr_attendance: true, service_jobs: true,
     installments: false, deliveries: false, warranty_claims: false, print_jobs: false,
     weighing_scale: false, batches_expiry: false, serial_numbers: false, variants: false, layaways: false,
     customer_display: false, loyalty: false, gift_cards: false, promotions: false, barcode_labels: false,
+  },
+  // Textile & clothing: size / colour variants, fabric by the metre, tailoring & alteration orders
+  textile: {
+    variants: true, barcode_labels: true, service_jobs: true, layaways: true,
+    installments: false, deliveries: false, warranty_claims: false, print_jobs: false,
+    weighing_scale: false, batches_expiry: false, serial_numbers: false,
   },
 }
 
@@ -276,33 +327,101 @@ export function isFeatureEnabled(flags: Partial<FeatureFlagsMap> | null | undefi
   return normalizeFeatureFlags(flags)[flag]
 }
 
+/**
+ * Switches that only exist for their business types (featureAppliesTo): for any other type they
+ * count as off everywhere (menus, pages, API), the same way the POS already treats the industry
+ * modules. Not for customer_display / weighing_scale: the POS offers those to every type when on.
+ */
+const TYPE_SCOPE_EXEMPT: ReadonlySet<string> = new Set(['customer_display', 'weighing_scale'])
+export function isTypeScopedFeature(flag: FeatureFlag): boolean {
+  return !!DEF_BY_KEY.get(flag)?.businessTypes && !TYPE_SCOPE_EXEMPT.has(flag)
+}
+
+/**
+ * What the business really gets: the saved switches (missing keys = the global default) with
+ * type-scoped industry switches turned off for business types they are not meant for.
+ */
+export function effectiveFeatureFlags(
+  input: Partial<Record<string, boolean>> | null | undefined,
+  businessType: string | null | undefined,
+): FeatureFlagsMap {
+  const flags = normalizeFeatureFlags(input)
+  if (!businessType) return flags
+  for (const key of FEATURE_FLAGS) {
+    if (flags[key] && isTypeScopedFeature(key) && !featureAppliesTo(key, businessType)) flags[key] = false
+  }
+  return flags
+}
+
+/**
+ * Pages / APIs that belong to more than one switch: refused only while ALL of them are off.
+ * The attendance pages pick employees from the employee list, so employees stay while either HR
+ * switch is on.
+ */
+export const SHARED_FEATURE_RULES: Array<{ flags: FeatureFlag[]; hrefs?: string[]; api?: Array<string | RegExp> }> = [
+  { flags: ['hr_payroll', 'hr_attendance'], hrefs: ['/hr/employees'], api: ['/api/employee-profiles'] },
+]
+
 function apiMatches(rule: string | RegExp, path: string): boolean {
   return typeof rule === 'string' ? path === rule || path.startsWith(`${rule}/`) : rule.test(path)
 }
 
-/** The switch that guards an API path, if any (used by the proxy) */
-export function featureForApiPath(path: string): FeatureFlag | null {
-  if (!path.startsWith('/api/') || path.startsWith('/api/sys-control/') || path.startsWith('/api/features')) return null
-  for (const d of FEATURE_DEFS) {
-    if (d.api?.some((r) => apiMatches(r, path))) return d.key
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/**
+ * The switches that guard an API path (used by the proxy): the request is refused when every one
+ * of them is off. Empty = not switchable. `method` matters for `apiWrite` rules (default GET).
+ */
+export function featuresForApiPath(path: string, method = 'GET'): FeatureFlag[] {
+  if (!path.startsWith('/api/') || path.startsWith('/api/sys-control/') || path.startsWith('/api/features')) return []
+  for (const r of SHARED_FEATURE_RULES) {
+    if (r.api?.some((a) => apiMatches(a, path))) return [...r.flags]
   }
-  return null
+  const write = !READ_METHODS.has(method.toUpperCase())
+  for (const d of FEATURE_DEFS) {
+    if (d.api?.some((r) => apiMatches(r, path))) return [d.key]
+    if (write && d.apiWrite?.some((r) => apiMatches(r, path))) return [d.key]
+  }
+  return []
 }
 
-/** The switch that hides a page (relative href, query ignored), if any. The most specific href
- * wins, so /hr/attendance follows hr_attendance while the rest of /hr follows hr_payroll. */
-export function featureForHref(href: string): FeatureFlag | null {
+/** The (first) switch that guards an API path, if any */
+export function featureForApiPath(path: string, method = 'GET'): FeatureFlag | null {
+  return featuresForApiPath(path, method)[0] ?? null
+}
+
+/** The switches that hide a page (relative href, query ignored): hidden when all are off. The
+ * most specific href wins, so /hr/attendance follows hr_attendance while the rest of /hr follows
+ * hr_payroll. */
+export function featuresForHref(href: string): FeatureFlag[] {
   const path = href.split('?')[0]
-  let best: { key: FeatureFlag; len: number } | null = null
-  for (const d of FEATURE_DEFS) {
-    for (const h of d.hrefs || []) {
-      if ((path === h || path.startsWith(`${h}/`)) && (!best || h.length > best.len)) best = { key: d.key, len: h.length }
-    }
+  let best: { keys: FeatureFlag[]; len: number } | null = null
+  const consider = (h: string, keys: FeatureFlag[]) => {
+    if ((path === h || path.startsWith(`${h}/`)) && (!best || h.length > best.len)) best = { keys, len: h.length }
   }
-  return best?.key ?? null
+  for (const r of SHARED_FEATURE_RULES) for (const h of r.hrefs || []) consider(h, r.flags)
+  for (const d of FEATURE_DEFS) for (const h of d.hrefs || []) consider(h, [d.key])
+  return best ? [...(best as { keys: FeatureFlag[] }).keys] : []
 }
 
-/** The switch that hides a whole module (navbar tab), if any */
+/** The (first) switch that hides a page, if any */
+export function featureForHref(href: string): FeatureFlag | null {
+  return featuresForHref(href)[0] ?? null
+}
+
+/** The switches that own a whole module (navbar tab): hidden when all are off */
+export function featuresForModule(moduleKey: string): FeatureFlag[] {
+  return FEATURE_DEFS.filter((d) => d.modules?.includes(moduleKey)).map((d) => d.key)
+}
+
+/** The (first) switch that owns a whole module, if any */
 export function featureForModule(moduleKey: string): FeatureFlag | null {
-  return FEATURE_DEFS.find((d) => d.modules?.includes(moduleKey))?.key ?? null
+  return featuresForModule(moduleKey)[0] ?? null
+}
+
+/** Any of these switches on (no switches = not switchable, so allowed) */
+export function anyFeatureEnabled(flags: Partial<FeatureFlagsMap> | null | undefined, keys: FeatureFlag[]): boolean {
+  if (keys.length === 0) return true
+  const all = normalizeFeatureFlags(flags)
+  return keys.some((k) => all[k])
 }

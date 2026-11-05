@@ -1275,6 +1275,34 @@
       "when": 1771446435033,
       "tag": "0190_lifetime_pricing",
       "breakpoints": true
+    },
+    {
+      "idx": 191,
+      "version": "7",
+      "when": 1771446436033,
+      "tag": "0191_attendance_device_allowed_ips",
+      "breakpoints": true
+    },
+    {
+      "idx": 192,
+      "version": "7",
+      "when": 1771446437033,
+      "tag": "0192_business_type_textile",
+      "breakpoints": true
+    },
+    {
+      "idx": 193,
+      "version": "7",
+      "when": 1771446438033,
+      "tag": "0193_service_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 194,
+      "version": "7",
+      "when": 1771446439033,
+      "tag": "0194_pharmacy_completion",
+      "breakpoints": true
     }
   ]
 }

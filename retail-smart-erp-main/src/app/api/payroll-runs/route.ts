@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { payrollRuns, salarySlips, salarySlipComponents, employeeProfiles } from '@/lib/db/schema'
 import { eq, and, sql, inArray, ne } from 'drizzle-orm'
@@ -26,6 +27,9 @@ export async function GET(request: NextRequest) {
 
     const permError = requirePermission(session, 'viewPayroll')
     if (permError) return permError
+    // K4: a payroll run covers every branch's employees: refused to branch-restricted users
+    const branchError = await requireAllBranches(session)
+    if (branchError) return branchError
 
     const parsed = validateSearchParams(request, payrollRunsListSchema)
     if (!parsed.success) return parsed.response
@@ -73,6 +77,9 @@ export async function POST(request: NextRequest) {
 
     const permError = requirePermission(session, 'processPayroll')
     if (permError) return permError
+    // K4: a payroll run covers every branch's employees: refused to branch-restricted users
+    const branchError = await requireAllBranches(session)
+    if (branchError) return branchError
 
     const quotaError = await requireQuota(session.user.tenantId, 'standard')
     if (quotaError) return quotaError

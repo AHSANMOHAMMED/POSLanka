@@ -19,7 +19,7 @@ import type { BarcodeElement, LabelElement, LabelItemData, TextElement } from '@
 import { FORMAT_TO_BWIP } from '@/lib/labels/types'
 import { linearBarsAndSpaces } from '@/lib/labels/barcode-renderer'
 import type { PackedRaster } from '@/lib/print/escpos/encoder'
-import { planLinear, TWO_D_FORMATS } from './barcode-fit'
+import { hriFontDots, hriLayout, planLinear, TWO_D_FORMATS } from './barcode-fit'
 import {
   blitPacked,
   columnOrigins,
@@ -27,10 +27,12 @@ import {
   mmToDots,
   normalizeItems,
   normalizeLayout,
+  normDpi,
   packLabelRows,
   resolveBarcodeData,
   rightAngle,
   type EncodeLabelOptions,
+  type LabelDpi,
   type LabelPrintItem,
   type LabelRasterizer,
   type LabelTemplateLike,
@@ -50,21 +52,18 @@ export interface DriverRows {
   /** Page size the driver gets (liner width x label height). */
   widthMm: number
   heightMm: number
-  dpi: 203 | 300
+  dpi: LabelDpi
   warnings: string[]
 }
 
 export interface DriverImageJob {
   widthMm: number
   heightMm: number
-  dpi: 203 | 300
+  dpi: LabelDpi
   /** One PNG per physical row, in order. */
   pages: Uint8Array[]
   warnings: string[]
 }
-
-/** HRI band below linear bars (same as the browser renderer). */
-const hriDots = (dpi: number) => Math.round((2.6 * dpi) / 25.4)
 
 const blank = (w: number, h: number): PackedRaster => ({ width: w, height: h, data: new Uint8Array(Math.ceil(w / 8) * h) })
 
@@ -159,7 +158,7 @@ async function drawBarcode(dst: PackedRaster, mask: PackedRaster, el: BarcodeEle
   }
   const modules = sbs.reduce((a, b) => a + b, 0)
   const labelW = mmToDots(labelWmm, dpi)
-  const hri = el.showText && rot === 0 ? hriDots(dpi) : 0
+  const hri = el.showText && rot === 0 ? hriLayout(dpi, el.textSizePt).band : 0
   const barH = Math.max(8, box.h - hri)
   if (rot === 0) {
     const plan = planLinear(choice.format, choice.data, dpi, box.x, box.w, labelW, modules)
@@ -178,8 +177,8 @@ async function drawBarcode(dst: PackedRaster, mask: PackedRaster, el: BarcodeEle
     }
     if (!hri) return null
     const dpm = dpi / 25.4
-    // Canvas renderer: px = ptToDots(pt) * 1.33 -> aim for ~85 % of the HRI band.
-    const fontPt = Math.max(4, Math.round(((hri * 0.85) / 1.33 / dpm) * (72 / 25.4) * 10) / 10)
+    // Canvas renderer draws pt at the printer dpi (pt * dpi / 72 dots): same font height as the preview.
+    const fontPt = Math.round(((hriFontDots(dpi, el.textSizePt, plan.symbolDots + 2 * plan.quietDots, choice.value) * 72) / dpi) * 100) / 100
     return {
       id: `${el.id}-hri`,
       type: 'text',
@@ -255,7 +254,7 @@ async function renderLabel(template: LabelTemplateLike, item: LabelItemData | nu
  */
 export async function renderDriverRows(template: LabelTemplateLike, items: (LabelPrintItem | LabelItemData)[], o: DriverImageOptions): Promise<DriverRows> {
   const warnings: string[] = []
-  const dpi: 203 | 300 = o.dpi === 300 ? 300 : 203
+  const dpi: LabelDpi = normDpi(o.dpi)
   const opts: DriverImageOptions = { ...o, dpi }
   const labelWmm = o.widthMm ?? Number(template.widthMm)
   const labelHmm = o.heightMm ?? Number(template.heightMm)

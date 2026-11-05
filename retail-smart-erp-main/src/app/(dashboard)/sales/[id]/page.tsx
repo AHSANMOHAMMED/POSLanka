@@ -8,6 +8,7 @@ import {
   ChevronDown, ChevronUp, CreditCard, RotateCcw, ExternalLink, Info
 } from 'lucide-react'
 import { useRealtimeData } from '@/hooks'
+import { WarrantyCardButton } from '@/components/service-jobs/WarrantyCardButton'
 import { CancellationReasonModal, ItemModal, CustomerFormModal } from '@/components/modals'
 import { ConfirmDialog } from '@/components/ui/dialog'
 import { toast } from '@/components/ui/toast'
@@ -913,6 +914,10 @@ export default function SalesInvoiceDetailPage() {
             loadDocument={() => loadSaleDocument(sale.id)}
             label={sale.isReturn ? 'Print credit note' : 'Print A4 invoice'}
           />
+          {/* 0193: warranty card per sold unit (serial / IMEI, warranty until) */}
+          {!sale.isReturn && !isVoid && ['electronics', 'hardware', 'retail'].includes(businessType || '') && (
+            <WarrantyCardButton saleId={sale.id} />
+          )}
           {/* Customer's WhatsApp chat with the receipt PDF link, or the PDF itself */}
           <BillShareButtons compact saleId={sale.id} phone={sale.customer?.phone ?? null} />
           {isVoid && (

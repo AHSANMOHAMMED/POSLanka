@@ -11,6 +11,19 @@ import { updateVehicleSaleDetailSchema } from '@/lib/validation/schemas/vehicles
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
 import { planBlockMessage, planOnSale } from '@/lib/installments/sale-guard'
+import { postVoidToGL } from '@/lib/accounting/auto-post'
+import { assertBranchAccess } from '@/lib/auth/branch-access'
+import type { TenantDb } from '@/lib/db'
+
+type Session = NonNullable<Awaited<ReturnType<typeof authWithCompany>>>
+
+/** K4: a vehicle sale belongs to its invoice's branch (null for sales made before it was stored). */
+async function assertVehicleSaleBranch(session: Session, db: TenantDb, id: string) {
+  const [row] = await db.select({ warehouseId: sales.warehouseId }).from(vehicleSaleDetails)
+    .innerJoin(sales, eq(sales.id, vehicleSaleDetails.saleId))
+    .where(eq(vehicleSaleDetails.id, id)).limit(1)
+  return row ? assertBranchAccess(session, row.warehouseId, db) : null
+}
 
 export async function GET(
   _request: NextRequest,
@@ -27,6 +40,8 @@ export async function GET(
     const { id } = paramsParsed.data
 
     return await withTenant(session.user.tenantId, async (db) => {
+      const denied = await assertVehicleSaleBranch(session, db, id)
+      if (denied) return denied
       const result = await db
         .select({
           vehicleSale: vehicleSaleDetails,
@@ -110,6 +125,8 @@ export async function PUT(
     }
 
     return await withTenant(session!.user.tenantId, async (db) => {
+      const denied = await assertVehicleSaleBranch(session!, db, id)
+      if (denied) return denied
       const [existing] = await db.select().from(vehicleSaleDetails).where(eq(vehicleSaleDetails.id, id)).for('update')
 
       if (!existing) {
@@ -130,6 +147,8 @@ export async function PUT(
         await db.update(sales)
           .set({ status: 'void', voidReason: cancellationReason || 'Vehicle sale cancelled', voidedAt: new Date() })
           .where(eq(sales.id, sale.id))
+        // Reverse the invoice's ledger entries (none for sales made before vehicle sales posted to the GL)
+        await postVoidToGL(db, session!.user.tenantId, 'sale', sale.id)
 
         const [vehicle] = await db.select().from(vehicleInventory).where(eq(vehicleInventory.id, existing.vehicleInventoryId)).for('update')
         // Only release the vehicle if it is still recorded as sold on THIS invoice
@@ -189,6 +208,8 @@ export async function DELETE(
     const { id } = paramsParsed.data
 
     return await withTenant(session!.user.tenantId, async (db) => {
+      const denied = await assertVehicleSaleBranch(session!, db, id)
+      if (denied) return denied
       const existing = await db.query.vehicleSaleDetails.findFirst({
         where: eq(vehicleSaleDetails.id, id),
         with: { sale: true },

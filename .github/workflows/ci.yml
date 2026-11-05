@@ -115,7 +115,9 @@ jobs:
           npx tsx scripts/tests/l7-print-agent-install.ts
           npx tsx scripts/tests/l8-driver-image.ts
           npx tsx scripts/tests/l10-printer-setup-script.ts
+          npx tsx scripts/tests/l18-label-print-setup.ts
           npx tsx scripts/tests/l12-receipt-pdf.ts
+          npx tsx scripts/tests/l18-document-print.ts
           npx tsx scripts/tests/l13-split-tenders.ts
           npx tsx scripts/tests/l16-mobile-pay.ts
 
@@ -164,7 +166,7 @@ jobs:
           npx tsx scripts/tests/gG-mobile.ts
       - name: POS cash controls, Sri Lanka VAT, procure-to-pay, pricing & catalog, pharmacy & feature switches
         run: |
-          for t in h1-pos-controls h2-tax h3-inventory-purchasing h5-pricing-catalog j1-pharmacy-features k1-cheques-expenses; do
+          for t in h1-pos-controls h2-tax h3-inventory-purchasing h5-pricing-catalog j1-pharmacy-features j2-pharmacy-complete k1-cheques-expenses m1-feature-switches; do
             npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
           done
       - name: Branch isolation (staff of one branch cannot see or change another)
@@ -172,7 +174,7 @@ jobs:
       - name: Attendance & payroll, hire purchase, document units, recurring/projects, shift collections, labels, measure units
         run: |
           npx tsx scripts/tests/print-size-pricing.ts
-          for t in l1-attendance l2-installments l3-document-units l4-recurring-projects l5-loose-ends l6-label-roll l6-label-browser-pdf l11-sticker-setups-save l15-measure-units; do
+          for t in l1-attendance l2-installments l3-document-units l4-recurring-projects l5-loose-ends l6-label-roll l6-label-browser-pdf l11-sticker-setups-save l18-label-lock l15-measure-units; do
             npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
           done
       - name: Platform (offline sync, backup, API keys, dashboard, read permissions)
@@ -181,7 +183,7 @@ jobs:
         run: |
           npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/i2-roles.ts
           npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/i5-nonfunctional.ts
-      - name: Super-admin console (vendors, staff, vendor data, vendor stock, vendor reports & export, platform, roles, coupons, refunds, push)
+      - name: Super-admin console (vendors, staff, vendor data, vendor stock, vendor reports & export, platform, roles, coupons, refunds, push), textile & service jobs
         env:
           NEXTAUTH_SECRET: i3-test-secret
           PAYHERE_MERCHANT_ID: '1211111'
@@ -196,6 +198,7 @@ jobs:
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l9-admin-stock.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l17-admin-business.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l14-item-create.ts
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/n1-service-jobs.ts
 
   build:
     name: Production build

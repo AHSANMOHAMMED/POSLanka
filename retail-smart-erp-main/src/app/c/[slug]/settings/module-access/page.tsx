@@ -9,6 +9,8 @@ import { Breadcrumb } from '@/components/ui/page-header'
 import { Loader2, Shield, Save } from 'lucide-react'
 import { getRolesForBusinessType, ROLE_HIERARCHY, type UserRole } from '@/lib/auth/roles'
 import { invalidateShared } from '@/lib/client/shared-fetch'
+import { useFeatureFlags } from '@/hooks/useFeatureFlag'
+import { isModuleAllowedByFeatures } from '@/lib/features/nav-gate'
 
 interface ModuleAccessRow {
   moduleKey: string
@@ -62,6 +64,10 @@ export default function ModuleAccessPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  // Modules the platform switched off for this business (super admin → Features): nobody gets
+  // them whatever is ticked here, so their row is shown greyed out
+  const { flags } = useFeatureFlags()
+  const isPlatformOff = useCallback((moduleKey: string) => !isModuleAllowedByFeatures(moduleKey, flags), [flags])
 
   // Filter roles and modules by business type
   // Owner is never restricted (the server ignores owner rows), so no owner column
@@ -179,26 +185,33 @@ export default function ModuleAccessPage() {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {visibleModuleKeys.map((moduleKey) => (
-                <tr key={moduleKey} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                  <td className="px-4 py-3 text-sm font-medium flex items-center gap-2">
-                    <Shield className="w-4 h-4 text-gray-400" />
-                    {MODULE_LABELS[moduleKey]}
+              {visibleModuleKeys.map((moduleKey) => {
+                const off = isPlatformOff(moduleKey)
+                return (
+                <tr key={moduleKey} className={off ? 'bg-gray-50 dark:bg-gray-800/40' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'}>
+                  <td className="px-4 py-3 text-sm font-medium">
+                    <div className={`flex items-center gap-2 ${off ? 'text-gray-400' : ''}`}>
+                      <Shield className="w-4 h-4 text-gray-400" />
+                      {MODULE_LABELS[moduleKey]}
+                    </div>
+                    {off && <div className="mt-0.5 text-[11px] font-normal text-gray-500">Turned off for your business</div>}
                   </td>
                   {visibleRoles.map((role) => (
                     <td key={role} className="px-4 py-3 text-center">
-                      <label className="inline-flex items-center">
+                      <label className="inline-flex items-center" title={off ? 'This module is turned off for your business' : undefined}>
                         <input
                           type="checkbox"
-                          checked={isEnabled(moduleKey, role)}
+                          checked={!off && isEnabled(moduleKey, role)}
+                          disabled={off}
                           onChange={() => toggle(moduleKey, role)}
-                          className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                          className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500 disabled:opacity-40"
                         />
                       </label>
                     </td>
                   ))}
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -208,6 +221,13 @@ export default function ModuleAccessPage() {
           (e.g. Selling off for Cashier blocks sales and shifts, Stock off blocks stock intake). Role permissions still apply
           inside enabled modules. Modules default to enabled.
         </div>
+        {visibleModuleKeys.some(isPlatformOff) && (
+          <div className="text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 border rounded p-3">
+            Greyed-out modules ({visibleModuleKeys.filter(isPlatformOff).map((k) => MODULE_LABELS[k]).join(', ')}) are not
+            part of your skyERPOS plan, so no role can use them. Contact skyERPOS support to turn them on; your ticks here are
+            kept and apply once a module is on.
+          </div>
+        )}
       </div>
     </PermissionGuard>
   )

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { employeeProfiles, users } from '@/lib/db/schema'
-import { ilike, sql, eq, and, or } from 'drizzle-orm'
+import { employeeProfiles, users, userWarehouses } from '@/lib/db/schema'
+import { ilike, sql, eq, and, or, inArray } from 'drizzle-orm'
 import { escapeLikePattern } from '@/lib/utils/sql'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { toApiError } from '@/lib/db/errors'
@@ -13,6 +13,8 @@ import { logError } from '@/lib/ai/error-logger'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { validateSearchParams, validateBody } from '@/lib/validation/helpers'
 import { employeeProfilesListSchema, createEmployeeProfileSchema } from '@/lib/validation/schemas/hr'
+import { branchDeniedResponse, canAccessBranch, getBranchScope } from '@/lib/auth/branch-access'
+import { employeeScopeSql } from '@/lib/attendance/api'
 
 // GET all employee profiles for the tenant (with pagination support)
 export async function GET(request: NextRequest) {
@@ -33,6 +35,10 @@ export async function GET(request: NextRequest) {
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where clause conditions
       const conditions = []
+
+      // K4: a branch-restricted manager only sees employees of their own branches
+      const scope = await getBranchScope(session, db)
+      if (scope) conditions.push(employeeScopeSql(scope))
 
       if (status) {
         conditions.push(eq(employeeProfiles.employmentStatus, status))
@@ -181,6 +187,21 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'An employee profile already exists for this user' }, { status: 400 })
       }
 
+      // K4: a branch-restricted manager adds employees to their own branches only. Without a
+      // branch the employee follows their user's branches; if none of those is the manager's,
+      // the employee is placed in the manager's first branch so they stay in reach.
+      let branchId = warehouseId || null
+      const scope = await getBranchScope(session, db)
+      if (scope) {
+        if (branchId && !canAccessBranch(scope, branchId)) return branchDeniedResponse(scope, db)
+        if (!branchId) {
+          const [shared] = await db.select({ id: userWarehouses.id }).from(userWarehouses)
+            .where(and(eq(userWarehouses.userId, userId), eq(userWarehouses.isActive, true), inArray(userWarehouses.warehouseId, scope)))
+            .limit(1)
+          if (!shared) branchId = scope[0]
+        }
+      }
+
       const [newProfile] = await db.insert(employeeProfiles).values({
         tenantId: session.user.tenantId,
         userId,
@@ -213,7 +234,7 @@ export async function POST(request: NextRequest) {
         // Attendance (drizzle/0183)
         biometricUserId: normalizeBiometricId(biometricUserId),
         defaultShiftId: defaultShiftId || null,
-        warehouseId: warehouseId || null,
+        warehouseId: branchId,
         otEligible: otEligible ?? false,
         ...(otRateMultiplier !== undefined ? { otRateMultiplier: String(otRateMultiplier) } : {}),
         hourlyRate: hourlyRate === '' || hourlyRate == null ? null : String(hourlyRate),

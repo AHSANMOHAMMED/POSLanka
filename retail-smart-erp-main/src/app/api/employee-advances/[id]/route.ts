@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { assertRecordEmployeeInScope } from '@/lib/attendance/api'
 import { withTenant } from '@/lib/db'
 import { employeeAdvances } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -26,6 +27,10 @@ export async function GET(
 
     const permError = requirePermission(session, 'approveAdvances')
     if (permError) return permError
+
+    // K4: a branch-restricted manager only works with employees of their own branches
+    const branchDenied = await withTenant(session.user.tenantId, (db) => assertRecordEmployeeInScope(session, db, employeeAdvances, employeeAdvances.employeeProfileId, id))
+    if (branchDenied) return branchDenied
 
     return await withTenant(session.user.tenantId, async (db) => {
       const advance = await db.query.employeeAdvances.findFirst({
@@ -63,6 +68,10 @@ export async function PUT(
 
     const permError = requirePermission(session, 'approveAdvances')
     if (permError) return permError
+
+    // K4: a branch-restricted manager only works with employees of their own branches
+    const branchDenied = await withTenant(session.user.tenantId, (db) => assertRecordEmployeeInScope(session, db, employeeAdvances, employeeAdvances.employeeProfileId, id))
+    if (branchDenied) return branchDenied
 
     const parsed = await validateBody(request, updateEmployeeAdvanceSchema)
     if (!parsed.success) return parsed.response

@@ -101,7 +101,7 @@ async function emitElements(
   oy = 0
 ) {
   const dpi = o.dpi
-  const fonts = EPL_FONTS[dpi === 300 ? 300 : 203]
+  const fonts = EPL_FONTS[dpi >= 300 ? 300 : 203]
   for (const el of sortedElements(template)) {
     const x = Math.max(0, ox + mmToDots(el.x, dpi))
     const y = Math.max(0, oy + mmToDots(el.y, dpi))

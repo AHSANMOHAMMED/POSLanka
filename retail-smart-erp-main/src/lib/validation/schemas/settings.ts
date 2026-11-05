@@ -14,6 +14,9 @@ const printTemplateMarginsSchema = z.object({
   left: z.coerce.number().min(0).max(100),
 })
 
+// Paper sizes of print templates (src/lib/print/paper.ts DOC_PAPER_SIZES + legacy 'receipt')
+const printTemplatePaperSchema = z.enum(['a4', 'a5', 'a6', 'letter', 'legal', 'half_letter', 'cont_9_5x11', 'cont_9_5x5_5', 'custom', 'receipt'])
+
 // GET /api/print-templates
 export const printTemplatesListSchema = z.object({
   documentType: z.string().max(50).optional(),
@@ -40,7 +43,7 @@ export const createPrintTemplateSchema = z.object({
   name: shortTextSchema,
   documentType: z.string().trim().min(1, 'Document type is required').max(50),
   letterHeadId: optionalUuid,
-  paperSize: z.enum(['a4', 'a5', 'letter', 'legal', 'receipt']).default('a4'),
+  paperSize: printTemplatePaperSchema.default('a4'),
   orientation: z.enum(['portrait', 'landscape']).default('portrait'),
   margins: printTemplateMarginsSchema.optional(),
   showLogo: z.boolean().default(true),
@@ -59,7 +62,7 @@ export const updatePrintTemplateSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   documentType: z.string().trim().max(50).optional(),
   letterHeadId: optionalUuid,
-  paperSize: z.enum(['a4', 'a5', 'letter', 'legal', 'receipt']).optional(),
+  paperSize: printTemplatePaperSchema.optional(),
   orientation: z.enum(['portrait', 'landscape']).optional(),
   margins: printTemplateMarginsSchema.optional(),
   showLogo: z.boolean().optional(),

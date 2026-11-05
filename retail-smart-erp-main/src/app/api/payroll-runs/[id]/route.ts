@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
+import { requireAllBranches } from '@/lib/auth/branch-access'
 import { withTenant } from '@/lib/db'
 import { payrollRuns, salarySlips } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
@@ -23,6 +24,9 @@ export async function GET(
 
     const permError = requirePermission(session, 'viewPayroll')
     if (permError) return permError
+    // K4: a payroll run covers every branch's employees: refused to branch-restricted users
+    const branchError = await requireAllBranches(session)
+    if (branchError) return branchError
 
     return await withTenant(session.user.tenantId, async (db) => {
       const run = await db.query.payrollRuns.findFirst({

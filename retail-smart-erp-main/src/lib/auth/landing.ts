@@ -14,7 +14,8 @@ export function landingPathForRole(role: string | null | undefined, businessType
       return businessType === 'restaurant' ? '/restaurant/kitchen' : '/dashboard'
     case 'technician':
       if (businessType === 'auto_service' || businessType === 'dealership') return '/work-orders'
-      if (businessType === 'electronics') return '/warranty-claims'
+      // repair technicians / tailors open their job list (service jobs, 0193)
+      if (businessType === 'electronics' || businessType === 'textile') return '/service-jobs'
       if (businessType === 'print_studio') return '/print-jobs'
       return '/dashboard'
     case 'dealer_sales':

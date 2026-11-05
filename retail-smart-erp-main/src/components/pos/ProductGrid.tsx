@@ -38,6 +38,8 @@ interface ProductGridProps {
   onScanSubmit?: (code: string) => Promise<boolean> | boolean
   /** Quick-Add item directly from POS (F4); omit to hide the header button */
   onOpenQuickAdd?: () => void
+  /** Pharmacy: "Alt" button on medicines with a generic name → other brands (substitutes) */
+  onShowSubstitutes?: (item: Item) => void
 }
 
 /** DOM id of the POS search box so keyboard shortcuts can focus it */
@@ -141,6 +143,7 @@ export function ProductGrid({
   businessType,
   onScanSubmit,
   onOpenQuickAdd,
+  onShowSubstitutes,
 }: ProductGridProps) {
   const [scanBusy, setScanBusy] = useState(false)
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
@@ -345,13 +348,13 @@ export function ProductGrid({
               const isOutOfStock = item.trackStock && stock <= 0
 
               return (
+                <div key={item.id} className="relative flex">
                 <button
-                  key={item.id}
                   onClick={() => onAddToCart(item)}
                   disabled={isOutOfStock && !isReturnMode}
                   data-pos-tile="1"
                   title={`${item.name} — click or Enter to add 1`}
-                  className={`bg-white dark:bg-gray-800 rounded-xl border p-3.5 min-[1920px]:p-4 text-left flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 transition-all hover:shadow-md hover:border-teal-600 group relative ${
+                  className={`flex-1 min-w-0 bg-white dark:bg-gray-800 rounded-xl border p-3.5 min-[1920px]:p-4 text-left flex flex-col focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-600 transition-all hover:shadow-md hover:border-teal-600 group relative ${
                     isOutOfStock && !isReturnMode
                       ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-gray-700'
                       : 'border-slate-200 dark:border-gray-700 hover:-translate-y-0.5'
@@ -428,6 +431,17 @@ export function ProductGrid({
                     </span>
                   </div>
                 </button>
+                {onShowSubstitutes && item.genericName && (
+                  <button
+                    type="button"
+                    onClick={() => onShowSubstitutes(item)}
+                    title="Other brands of this medicine (same generic & strength)"
+                    className="absolute bottom-2.5 right-2.5 rounded-md border border-teal-600 bg-white px-1.5 py-0.5 text-[11px] font-bold text-teal-700 hover:bg-teal-50 dark:bg-gray-800 dark:text-teal-400"
+                  >
+                    Alt
+                  </button>
+                )}
+                </div>
               )
             })}
           </div>
@@ -440,12 +454,12 @@ export function ProductGrid({
               const isOutOfStock = item.trackStock && stock <= 0
 
               return (
+                <div key={item.id} className="flex items-stretch gap-1.5">
                 <button
-                  key={item.id}
                   onClick={() => onAddToCart(item)}
                   disabled={isOutOfStock && !isReturnMode}
                   data-pos-tile="1"
-                  className={`w-full bg-white dark:bg-gray-800 rounded-xl border px-3.5 py-2.5 min-[1920px]:py-3 text-left focus:outline-none focus-visible:ring-2 theme-ring-primary transition-all hover:shadow-xs flex items-center justify-between gap-3 group ${
+                  className={`flex-1 min-w-0 w-full bg-white dark:bg-gray-800 rounded-xl border px-3.5 py-2.5 min-[1920px]:py-3 text-left focus:outline-none focus-visible:ring-2 theme-ring-primary transition-all hover:shadow-xs flex items-center justify-between gap-3 group ${
                     isOutOfStock && !isReturnMode
                       ? 'opacity-50 cursor-not-allowed border-slate-200 dark:border-gray-700'
                       : 'border-slate-200 dark:border-gray-700 hover:theme-bg-subtle'
@@ -482,6 +496,17 @@ export function ProductGrid({
                     </span>
                   </div>
                 </button>
+                {onShowSubstitutes && item.genericName && (
+                  <button
+                    type="button"
+                    onClick={() => onShowSubstitutes(item)}
+                    title="Other brands of this medicine (same generic & strength)"
+                    className="rounded-xl border border-teal-600 bg-white px-2 text-xs font-bold text-teal-700 hover:bg-teal-50 dark:bg-gray-800 dark:text-teal-400"
+                  >
+                    Alt
+                  </button>
+                )}
+                </div>
               )
             })}
           </div>

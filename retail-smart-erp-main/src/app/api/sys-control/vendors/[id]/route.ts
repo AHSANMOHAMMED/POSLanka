@@ -178,6 +178,8 @@ export async function GET(
         ...vendor,
         vatRegistered: settings.vatRegistered === true,
         featureFlags: flags,
+        /** Switches saved for this vendor; the others run at the global default (FeaturesTab marks them) */
+        featureFlagsSaved: Object.keys((settings.featureFlags || {}) as Record<string, unknown>),
         userCount: staff.length,
         subscription: sub || null,
         branches: vendorBranches || [],

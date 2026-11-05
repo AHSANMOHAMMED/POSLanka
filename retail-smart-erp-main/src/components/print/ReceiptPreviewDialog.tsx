@@ -131,7 +131,7 @@ export interface ReceiptPreviewDialogProps extends ReceiptPreviewRequest {
 
 export function ReceiptPreviewDialog({ bytes: initialBytes, title, profile: initialProfile, rebuild, onPrint, onCancel }: ReceiptPreviewDialogProps) {
   const printers = useMemo(() => {
-    const list = getPrinterProfilesSnapshot().filter((p) => p.role !== 'label')
+    const list = getPrinterProfilesSnapshot().filter((p) => p.role !== 'label' && p.role !== 'document')
     return list.some((p) => p.id === initialProfile.id) ? list : [initialProfile, ...list]
   }, [initialProfile])
   const [profileId, setProfileId] = useState(initialProfile.id)

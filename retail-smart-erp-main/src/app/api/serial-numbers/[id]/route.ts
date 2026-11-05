@@ -15,6 +15,7 @@ import { logError } from '@/lib/ai/error-logger'
 import { createSerialMovement } from '@/lib/inventory/serial-numbers'
 import { validateBody, validateParams } from '@/lib/validation/helpers'
 import { updateSerialNumberSchema } from '@/lib/validation/schemas/items'
+import { normalizeImei } from '@/lib/utils/imei'
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { assertRecordBranch, assertBranchAccess } from '@/lib/auth/branch-access'
 
@@ -47,6 +48,8 @@ export async function GET(
           itemId: itemSerialNumbers.itemId,
           itemName: items.name,
           serialNumber: itemSerialNumbers.serialNumber,
+          imei: itemSerialNumbers.imei,
+          imei2: itemSerialNumbers.imei2,
           status: itemSerialNumbers.status,
           warehouseId: itemSerialNumbers.warehouseId,
           warehouseName: warehouses.name,
@@ -164,6 +167,10 @@ export async function PUT(
         if (body.notes !== undefined) {
           updateData.notes = body.notes || null
         }
+        // 0193: IMEIs stored as digits (the form warns on a bad check digit, the unit still saves)
+        if (body.imei !== undefined) updateData.imei = normalizeImei(body.imei).slice(0, 20) || null
+        if (body.imei2 !== undefined) updateData.imei2 = normalizeImei(body.imei2).slice(0, 20) || null
+        if (body.clearImei) { updateData.imei = null; updateData.imei2 = null }
 
         const statusChanged = body.status && body.status !== current.status
         const warehouseChanged =
