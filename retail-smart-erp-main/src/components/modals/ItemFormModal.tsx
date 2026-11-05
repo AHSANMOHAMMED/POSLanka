@@ -840,7 +840,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                             const generated = Math.floor(100000000000 + Math.random() * 900000000000).toString()
                             setFormData((prev) => ({ ...prev, barcode: generated }))
                           }}
-                          className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline"
+                          className="text-[11px] theme-text-primary hover:underline font-semibold"
                         >
                           Auto Generate
                         </button>

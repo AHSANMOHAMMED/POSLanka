@@ -89,7 +89,7 @@ export function BarcodePreview({
 
   return (
     <div
-      className={`relative group bg-white dark:bg-gray-900 border border-slate-200 dark:border-gray-700 rounded-xl p-3 flex flex-col items-center select-none shadow-xs transition-all hover:border-teal-500/50 ${className}`}
+      className={`relative group bg-white dark:bg-gray-900 border border-slate-200 dark:border-gray-700 rounded-xl p-3 flex flex-col items-center select-none shadow-xs transition-all hover:theme-border-primary ${className}`}
     >
       {label && (
         <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-gray-500 mb-1 self-start">
@@ -124,7 +124,7 @@ export function BarcodePreview({
         type="button"
         onClick={handleCopy}
         title="Copy barcode value"
-        className="absolute top-2 right-2 p-1 rounded-md text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors opacity-80 group-hover:opacity-100"
+        className="absolute top-2 right-2 p-1 rounded-md text-slate-400 hover:theme-text-primary hover:bg-slate-100 dark:hover:bg-gray-800 transition-colors opacity-80 group-hover:opacity-100"
       >
         {copied ? <Check size={14} className="text-emerald-600 dark:text-emerald-400" /> : <Copy size={14} />}
       </button>
@@ -144,13 +144,14 @@ export function BarcodeBadge({
   sku?: string | null
   className?: string
 }) {
-  const text = barcode || sku || 'ITEM'
+  if (!barcode && !sku) return null
+  const text = barcode || sku || ''
   const isBarcode = !!barcode
 
   return (
     <span
       className={`inline-flex items-center gap-1 font-mono text-[11px] font-semibold px-2 py-0.5 rounded-md border border-slate-200/80 dark:border-gray-700 bg-slate-100/90 dark:bg-gray-800/90 text-slate-700 dark:text-gray-200 ${className}`}
-      title={isBarcode ? `Barcode: ${barcode}` : `SKU: ${sku || 'ITEM'}`}
+      title={isBarcode ? `Barcode: ${barcode}` : `SKU: ${sku}`}
     >
       <ScanBarcode size={12} className="text-slate-500 dark:text-gray-400 shrink-0" />
       <span className="truncate max-w-[120px]">{text}</span>
