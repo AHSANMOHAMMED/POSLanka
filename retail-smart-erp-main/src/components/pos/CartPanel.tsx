@@ -1,6 +1,6 @@
 'use client'
 
-import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText, MessageCircle } from 'lucide-react'
+import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText, MessageCircle, ScanBarcode } from 'lucide-react'
 import { normalizePhoneForWhatsApp } from '@/lib/whatsapp'
 import { CreatableSelect } from '@/components/ui/creatable-select'
 import { FormInput } from '@/components/ui/form-elements'
@@ -369,6 +369,12 @@ export function CartPanel({
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex-1 min-w-0">
                     <h4 className="font-semibold text-gray-900 dark:text-white truncate min-[1920px]:text-lg">{item.name}</h4>
+                    {item.barcode && (
+                      <span className="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500 dark:text-gray-400 bg-slate-100 dark:bg-gray-700/60 px-1.5 py-0.5 rounded border border-slate-200/50 dark:border-gray-600/50 mt-0.5 mr-1" title={`Barcode: ${item.barcode}`}>
+                        <ScanBarcode size={10} className="text-slate-400" />
+                        {item.barcode}
+                      </span>
+                    )}
                     {isReturnMode && (
                       <span className="inline-block px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded mt-1">
                         Return Item

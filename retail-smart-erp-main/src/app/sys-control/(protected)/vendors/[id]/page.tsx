@@ -1212,6 +1212,7 @@ function StockTab({ vendorId, onSaved }: { vendorId: string; onSaved: (text: str
               invalid={value.trim() !== '' && !(qty >= 0)}
               onChange={(e) => setDraft((x) => ({ ...x, [r.itemId]: { value: e.target.value, name: r.name, before: r.stock } }))}
             />
+            {r.unit && <span className="text-[12px] text-adm-muted font-medium min-w-[24px]">{r.unit}</span>}
           </div>
         )
       },

@@ -21,6 +21,7 @@ import { VehicleModelModal } from './VehicleModelModal'
 import { ItemHistoryPanel } from './ItemHistoryPanel'
 import { formatDateTime } from '@/lib/utils/date-format'
 import { ItemUnitsBarcodesEditor } from '@/components/items/ItemUnitsBarcodesEditor'
+import { BarcodePreview } from '@/components/ui/BarcodePreview'
 
 type TabType = 'basic' | 'pricing' | 'inventory' | 'supplier' | 'physical' | 'dietary' | 'freshness' | 'medicine' | 'variants' | 'fits' | 'cost_tracking' | 'history'
 
@@ -851,10 +852,13 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                       onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
                       placeholder="Scan, enter or leave empty (auto)"
                     />
+                    {formData.barcode && (
+                      <BarcodePreview barcode={formData.barcode} label="Live Barcode Preview" className="mt-2" height={46} />
+                    )}
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <FormLabel required>Purchase / Cost Price</FormLabel>
                     <FormInput
@@ -879,6 +883,26 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                       placeholder="0.00"
                       required
                     />
+                  </div>
+                  <div>
+                    <FormLabel required>Unit of Measure</FormLabel>
+                    <FormSelect
+                      value={formData.unit}
+                      onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                    >
+                      <option value="pcs">Pieces (pcs)</option>
+                      <option value="kg">Kilograms (kg)</option>
+                      <option value="g">Grams (g)</option>
+                      <option value="l">Liters (l)</option>
+                      <option value="ml">Milliliters (ml)</option>
+                      <option value="m">Meters (m)</option>
+                      <option value="yard">Yards (yd)</option>
+                      <option value="box">Box</option>
+                      <option value="pack">Pack</option>
+                      <option value="pair">Pair</option>
+                      <option value="ft">Feet (ft)</option>
+                      <option value="cm">Centimeters (cm)</option>
+                    </FormSelect>
                   </div>
                 </div>
 
@@ -1289,8 +1313,12 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                       <option value="l">Liters (l)</option>
                       <option value="ml">Milliliters (ml)</option>
                       <option value="m">Meters (m)</option>
+                      <option value="yard">Yards (yd)</option>
                       <option value="box">Box</option>
                       <option value="pack">Pack</option>
+                      <option value="pair">Pair</option>
+                      <option value="ft">Feet (ft)</option>
+                      <option value="cm">Centimeters (cm)</option>
                     </FormSelect>
                   </div>
                   <div>

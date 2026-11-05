@@ -7,7 +7,7 @@ import {
   ChevronDown, ChevronRight, Heart, RotateCw, MoreHorizontal,
   Printer, Trash2, Plus, Building2, Warehouse, Calendar,
   User, Package, ChevronUp, Paperclip, Tag, X,
-  CreditCard, CheckCircle, FileIcon
+  CreditCard, CheckCircle, FileIcon, Loader2
 } from 'lucide-react'
 import { useRealtimeData, useSmartWarnings } from '@/hooks'
 import { CancellationReasonModal, ItemModal, SupplierModal } from '@/components/modals'
@@ -344,6 +344,24 @@ export default function PurchaseDetailPage() {
     }
   }, [businessType])
 
+  // Initialize an empty item row for Create Mode
+  useEffect(() => {
+    if (isCreateMode && editingItems.length === 0) {
+      setEditingItems([{
+        id: `new-${Date.now()}`,
+        itemId: '',
+        itemName: '',
+        itemSku: null,
+        itemBarcode: null,
+        itemPartNumber: null,
+        quantity: 1,
+        unitPrice: 0,
+        total: 0,
+        isNew: true,
+      }])
+    }
+  }, [isCreateMode, editingItems.length])
+
   // Create purchase
   async function handleCreate() {
     if (!createFormData.supplierId) {
@@ -356,6 +374,21 @@ export default function PurchaseDetailPage() {
     }
     if (costCenters.length > 0 && !createFormData.costCenterId) {
       toast.error('Please select a cost center')
+      return
+    }
+
+    const validItems = editingItems
+      .filter((i) => i.itemId)
+      .map((i) => ({
+        itemId: i.itemId,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        uom: i.uom || undefined,
+        uomFactor: i.uomFactor || 1,
+      }))
+
+    if (validItems.length === 0) {
+      toast.error('Please add at least one item to the purchase invoice')
       return
     }
 
@@ -372,13 +405,13 @@ export default function PurchaseDetailPage() {
           supplierBillDate: createFormData.supplierBillDate || null,
           paymentTerm: createFormData.paymentTerm,
           notes: createFormData.notes || null,
-          items: [],
+          items: validItems,
         }),
       })
 
       if (res.ok) {
         const savedPurchase = await res.json()
-        toast.success(`Purchase Invoice ${savedPurchase.purchaseNo} created`)
+        toast.success(`Purchase Invoice ${savedPurchase.purchaseNo} created with ${validItems.length} items`)
         router.replace(tenantSlug ? `/c/${tenantSlug}/purchases/${savedPurchase.id}` : `/purchases/${savedPurchase.id}`)
       } else {
         const data = await res.json()
@@ -989,18 +1022,178 @@ export default function PurchaseDetailPage() {
             </div>
           </div>
 
+          {/* Items Section */}
+          <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 mb-4 overflow-hidden">
+            <div className="px-4 py-3 font-medium text-gray-900 dark:text-white border-b border-gray-100 dark:border-gray-700 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <Package size={16} className="text-blue-600" />
+                Purchase Items ({editingItems.length})
+              </span>
+              <button
+                type="button"
+                onClick={handleAddRow}
+                className="flex items-center gap-1 px-3 py-1 bg-blue-50 hover:bg-blue-100 dark:bg-blue-900/30 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 rounded text-xs font-semibold transition-colors"
+              >
+                <Plus size={14} /> Add Item Row
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 dark:bg-gray-700/50">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase w-10">No.</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-24">Qty</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase w-32">Unit (UOM)</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-32">Cost Rate</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-32">Amount</th>
+                    <th className="px-3 py-2 w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {editingItems.map((item, index) => (
+                    <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
+                      <td className="px-3 py-2 text-sm text-gray-500">{index + 1}</td>
+                      <td className="px-3 py-2">
+                        <LinkField
+                          fetchOptions={searchItems}
+                          value={item.itemId}
+                          onChange={(value, option) => handleItemChange(index, 'itemId', value, option)}
+                          onCreateNew={(name) => { setItemInitialName(name); setPendingItemRowIndex(index); setShowItemModal(true) }}
+                          placeholder="Search item by name, barcode, SKU..."
+                          createLabel="Create new Item"
+                          displayValue={formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemPartNumber }, businessType)}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <input
+                          type="number"
+                          value={item.quantity}
+                          onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                          min="0"
+                          step={unitAllowsFraction(item.uom || item.baseUnit) ? 'any' : '1'}
+                          className="w-20 px-2 py-1 text-right text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white"
+                        />
+                      </td>
+                      <td className="px-2 py-2">
+                        <LineUnitSelect
+                          itemId={item.itemId}
+                          baseUnit={item.baseUnit}
+                          value={item.uom}
+                          basePrice={item.basePrice ?? item.unitPrice}
+                          priceMode="cost"
+                          onChange={(patch) => {
+                            setEditingItems((prev) => prev.map((row, i) => (i === index ? { ...row, ...patch, total: row.quantity * patch.unitPrice } : row)))
+                            setHasUnsavedChanges(true)
+                          }}
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={item.unitPrice}
+                          onChange={(e) => handleItemChange(index, 'unitPrice', e.target.value)}
+                          className="w-28 px-2 py-1 text-right text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white font-mono"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right font-medium text-sm text-gray-900 dark:text-white font-mono">
+                        {formatCurrency(item.total)}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          type="button"
+                          onClick={() => setEditingItems(editingItems.filter((_, i) => i !== index))}
+                          disabled={editingItems.length === 1}
+                          className="p-1 text-gray-400 hover:text-red-500 rounded transition-colors disabled:opacity-30"
+                          title="Remove item"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-3 border-t border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800">
+              <button
+                type="button"
+                onClick={handleAddRow}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded border border-dashed border-blue-300 dark:border-blue-700 transition-colors"
+              >
+                <Plus size={14} /> Add Another Item
+              </button>
+            </div>
+          </div>
+
+          {/* Totals & Notes Section */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">
+                  Payment Terms
+                </label>
+                <select
+                  value={createFormData.paymentTerm}
+                  onChange={(e) => setCreateFormData({ ...createFormData, paymentTerm: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-sm"
+                >
+                  <option value="cash">Cash on Delivery</option>
+                  <option value="credit">On Credit / Account</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                  <option value="net_15">Net 15 Days</option>
+                  <option value="net_30">Net 30 Days</option>
+                  <option value="net_60">Net 60 Days</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 uppercase mb-1">
+                  Notes / Terms
+                </label>
+                <textarea
+                  value={createFormData.notes}
+                  onChange={(e) => setCreateFormData({ ...createFormData, notes: e.target.value })}
+                  rows={2}
+                  placeholder="Additional purchase notes, delivery terms or remarks..."
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-700 dark:text-white text-sm resize-none"
+                />
+              </div>
+            </div>
+
+            <div className="bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700 p-4 flex flex-col justify-between">
+              <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Invoice Summary</h4>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm text-gray-600 dark:text-gray-300">
+                  <span>Total Quantity</span>
+                  <span className="font-bold font-mono">{totalQty}</span>
+                </div>
+                <div className="flex justify-between text-sm text-gray-600 dark:text-gray-300">
+                  <span>Subtotal</span>
+                  <span className="font-bold font-mono">{formatCurrency(totalAmount)}</span>
+                </div>
+                <div className="pt-2 border-t border-gray-200 dark:border-gray-700 flex justify-between text-base font-extrabold text-gray-900 dark:text-white">
+                  <span>Grand Total</span>
+                  <span className="font-mono text-blue-600 dark:text-blue-400">{formatCurrency(totalAmount)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Actions */}
           <div className="flex items-center gap-3">
             <button
               onClick={handleCreate}
               disabled={saving}
-              className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              className="px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors shadow-sm flex items-center gap-2"
             >
-              {saving ? 'Creating...' : 'Create'}
+              {saving ? <Loader2 size={16} className="animate-spin" /> : null}
+              {saving ? 'Creating Purchase Invoice...' : 'Create Purchase Invoice'}
             </button>
             <Link
               href={tenantSlug ? `/c/${tenantSlug}/purchases` : '/purchases'}
-              className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              className="px-4 py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
             >
               Cancel
             </Link>
@@ -1013,6 +1206,14 @@ export default function PurchaseDetailPage() {
           onClose={() => setShowCreateSupplierModal(false)}
           onCreated={handleSupplierCreated}
           initialName={pendingSupplierName}
+        />
+
+        <ItemModal
+          isOpen={showItemModal}
+          onClose={() => { setShowItemModal(false); setPendingItemRowIndex(null) }}
+          onCreated={handleItemCreated}
+          initialName={itemInitialName}
+          categories={categories}
         />
       </div>
     )

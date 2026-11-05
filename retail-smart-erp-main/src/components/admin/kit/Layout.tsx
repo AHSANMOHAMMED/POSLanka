@@ -1,6 +1,9 @@
+'use client'
+
 import type { ReactNode } from 'react'
 import Link from 'next/link'
-import { ChevronRight } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { ChevronRight, ArrowLeft, ArrowRight, Home } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 /* ------------------------------------------------------------------ AdminPage */
@@ -24,31 +27,80 @@ export interface AdminPageProps {
 
 /** Standard page frame: header (breadcrumbs, title, description, actions) + stacked content. */
 export function AdminPage({ title, description, actions, breadcrumbs, titleAside, className, children }: AdminPageProps) {
+  const router = useRouter()
   return (
     <div className={cn('mx-auto w-full max-w-[1480px] space-y-5 pb-10', className)}>
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          {breadcrumbs && breadcrumbs.length > 0 && (
-            <nav aria-label="Breadcrumb" className="mb-1.5 flex flex-wrap items-center gap-1 text-[12.5px] text-adm-subtle">
-              {breadcrumbs.map((c, i) => (
-                <span key={`${c.label}-${i}`} className="inline-flex items-center gap-1">
-                  {i > 0 && <ChevronRight size={13} aria-hidden />}
+      <header className="flex flex-col gap-3.5">
+        {/* Navigation & breadcrumb bar with Back & Forward buttons */}
+        <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2 border-b border-adm-border/60">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Back & Forward navigation buttons */}
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-adm-border bg-adm-surface p-0.5 shadow-2xs">
+              <button
+                type="button"
+                onClick={() => router.back()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-adm-fg hover:bg-adm-surface-2 rounded-md transition-all active:scale-95"
+                title="Go back (Alt+Left)"
+              >
+                <ArrowLeft size={13} className="text-adm-muted" />
+                <span>Back</span>
+              </button>
+              <div className="h-3.5 w-px bg-adm-border" />
+              <button
+                type="button"
+                onClick={() => router.forward()}
+                className="inline-flex items-center justify-center p-1.5 text-xs font-semibold text-adm-fg hover:bg-adm-surface-2 rounded-md transition-all active:scale-95"
+                title="Go forward (Alt+Right)"
+                aria-label="Forward"
+              >
+                <ArrowRight size={13} className="text-adm-muted" />
+              </button>
+            </div>
+
+            {/* Breadcrumb pills */}
+            <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1.5 text-xs">
+              <Link
+                href="/sys-control"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-adm-surface-2/60 hover:bg-adm-surface-2 text-adm-muted hover:text-adm-fg transition-colors font-medium border border-adm-border/40"
+                title="Admin Home"
+              >
+                <Home size={12} />
+                <span>Admin</span>
+              </Link>
+              {breadcrumbs && breadcrumbs.map((c, i) => (
+                <span key={`${c.label}-${i}`} className="inline-flex items-center gap-1.5">
+                  <ChevronRight size={12} className="text-adm-subtle shrink-0" aria-hidden />
                   {c.href ? (
-                    <Link href={c.href} className="hover:text-adm-fg">{c.label}</Link>
+                    <Link
+                      href={c.href}
+                      className="px-2.5 py-1 rounded-md bg-adm-surface-2/40 hover:bg-adm-surface-2 text-adm-muted hover:text-adm-fg font-medium transition-colors border border-adm-border/30"
+                    >
+                      {c.label}
+                    </Link>
                   ) : (
-                    <span className="text-adm-muted">{c.label}</span>
+                    <span className="px-2.5 py-1 rounded-md bg-adm-surface-2 text-adm-fg font-semibold shadow-2xs border border-adm-border">
+                      {c.label}
+                    </span>
                   )}
                 </span>
               ))}
             </nav>
-          )}
-          <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.01em] text-adm-fg sm:text-[24px]">{title}</h1>
-            {titleAside}
           </div>
-          {description && <p className="mt-1 max-w-3xl text-[14px] text-adm-muted">{description}</p>}
         </div>
-        {actions && <div className="flex flex-wrap items-center gap-2 sm:justify-end">{actions}</div>}
+
+        {/* Feature title, description and actions */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-[22px] sm:text-[26px] font-bold tracking-tight text-adm-fg">
+                {title}
+              </h1>
+              {titleAside}
+            </div>
+            {description && <p className="mt-1 max-w-3xl text-sm text-adm-muted">{description}</p>}
+          </div>
+          {actions && <div className="flex flex-wrap items-center gap-2 sm:justify-end">{actions}</div>}
+        </div>
       </header>
       {children}
     </div>

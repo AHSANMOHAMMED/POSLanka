@@ -12,7 +12,7 @@
     "accounting": "Accounting",
     "reports": "Reports",
     "settings": "Settings",
-    "grn": "GRN"
+    "grn": "Goods Received (GRN)"
   },
   "pos": {
     "checkout": "Checkout",
@@ -22,7 +22,55 @@
     "closeShift": "Close shift",
     "splitPayment": "Split payment",
     "offline": "Offline mode",
-    "syncPending": "Sales waiting to sync"
+    "syncPending": "Sales waiting to sync",
+    "searchPlaceholder": "Search item by name, barcode, SKU... (Enter to scan)",
+    "pay": "Pay",
+    "cart": "Cart",
+    "emptyCart": "Cart is empty",
+    "customer": "Customer",
+    "discount": "Discount",
+    "weighItem": "Weigh / Measure Item",
+    "textSize": "Text Size",
+    "theme": "Theme"
+  },
+  "items": {
+    "item": "Item",
+    "name": "Item Name",
+    "barcode": "Barcode",
+    "sku": "SKU / Code",
+    "sellingPrice": "Selling Price",
+    "costPrice": "Cost Price",
+    "unit": "Unit of Measure",
+    "category": "Category",
+    "stock": "Stock",
+    "createItem": "Create Item",
+    "quickAdd": "Quick Add Item"
+  },
+  "units": {
+    "pcs": "Pieces (pcs)",
+    "kg": "Kilograms (kg)",
+    "g": "Grams (g)",
+    "l": "Liters (L)",
+    "ml": "Milliliters (ml)",
+    "m": "Meters (m)",
+    "yard": "Yards (yd)",
+    "box": "Box",
+    "pack": "Pack"
+  },
+  "purchases": {
+    "title": "Purchase Invoices",
+    "newPurchase": "New Purchase Invoice",
+    "supplier": "Supplier",
+    "warehouse": "Target Warehouse",
+    "invoiceNo": "Supplier Invoice No.",
+    "billDate": "Bill Date",
+    "items": "Purchase Items",
+    "addItem": "Add Item",
+    "qty": "Quantity",
+    "rate": "Cost Rate",
+    "amount": "Amount",
+    "total": "Total Amount",
+    "grn": "Goods Received (GRN)"
   },
   "common": {
     "save": "Save",

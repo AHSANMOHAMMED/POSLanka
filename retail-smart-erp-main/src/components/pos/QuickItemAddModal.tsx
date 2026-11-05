@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, PlusCircle, Loader2, Sparkles, AlertCircle } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
+import { BarcodePreview } from '@/components/ui/BarcodePreview'
 import { useCurrency } from '@/hooks/useCurrency'
 import type { Item, Category } from './types'
 import { toast } from '@/components/ui/toast'
@@ -24,6 +25,9 @@ const COMMON_UNITS = [
   { value: 'l', label: 'Liters (L)' },
   { value: 'ml', label: 'Milliliters (ml)' },
   { value: 'm', label: 'Meters (m)' },
+  { value: 'yard', label: 'Yards (yd)' },
+  { value: 'ft', label: 'Feet (ft)' },
+  { value: 'cm', label: 'Centimeters (cm)' },
   { value: 'box', label: 'Box' },
   { value: 'pack', label: 'Pack' },
   { value: 'pair', label: 'Pair (Apparel)' },
@@ -221,9 +225,21 @@ export function QuickItemAddModal({
           {/* Barcode & SKU */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1 uppercase tracking-wider">
-                Barcode / EAN
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Barcode / EAN
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const generated = Math.floor(100000000000 + Math.random() * 900000000000).toString()
+                    setBarcode(generated)
+                  }}
+                  className="text-[11px] font-semibold text-teal-600 hover:text-teal-800 hover:underline"
+                >
+                  Auto Generate
+                </button>
+              </div>
               <FormInput
                 type="text"
                 value={barcode}
@@ -250,6 +266,10 @@ export function QuickItemAddModal({
               </select>
             </div>
           </div>
+
+          {barcode && (
+            <BarcodePreview barcode={barcode} label="Live Barcode Preview" height={48} />
+          )}
 
           {/* Pricing: Selling Price & Cost Price */}
           <div className="grid grid-cols-2 gap-3">

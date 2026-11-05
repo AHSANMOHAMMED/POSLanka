@@ -4,6 +4,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { PageSkeleton } from '@/components/ui/skeleton'
 import { toast } from '@/components/ui/toast'
 import { useUnsavedChangesWarning } from '@/hooks'
+import { useTheme, type Theme, type ThemePalette } from '@/components/providers/ThemeProvider'
+import { useTextScale } from '@/components/ui/text-size-control'
+import { TEXT_SCALES, TEXT_SCALE_LABELS, type TextScale } from '@/lib/ui/text-scale'
+import { cn } from '@/lib/utils'
 import {
   User,
   Lock,
@@ -17,7 +21,12 @@ import {
   Shield,
   Loader2,
   Camera,
-  Trash2
+  Trash2,
+  Palette,
+  Type,
+  Sun,
+  Moon,
+  Monitor,
 } from 'lucide-react'
 
 interface AccountProfile {
@@ -77,6 +86,19 @@ function resizeImage(file: File, maxDimension: number): Promise<Blob> {
   })
 }
 
+const PROFILE_PALETTES: { value: ThemePalette; label: string; accent: string; desc: string }[] = [
+  { value: 'default', label: 'Classic Slate', accent: '#2563eb', desc: 'Clean balanced contrast' },
+  { value: 'midnight', label: 'Midnight Navy', accent: '#3b82f6', desc: 'Deep cosmic luxury dark' },
+  { value: 'emerald', label: 'Emerald Green', accent: '#10b981', desc: 'Supermarket & fresh botanical' },
+  { value: 'charcoal', label: 'Carbon OLED', accent: '#38bdf8', desc: 'Ultra contrast pitch black' },
+  { value: 'amber', label: 'Warm Amber', accent: '#f59e0b', desc: 'Warm bistro tone' },
+  { value: 'violet', label: 'Cyber Violet', accent: '#a855f7', desc: 'Neon amethyst dark' },
+  { value: 'crimson', label: 'Ruby Crimson', accent: '#f43f5e', desc: 'High performance crimson' },
+  { value: 'teal', label: 'Teal', accent: '#0d9488', desc: 'Fresh calm teal' },
+  { value: 'rose', label: 'Rose Pink', accent: '#db2777', desc: 'Bright boutique pink' },
+  { value: 'ocean', label: 'Deep Ocean', accent: '#0369a1', desc: 'Naval maritime blue' },
+]
+
 export default function ProfilePage() {
   const [profile, setProfile] = useState<AccountProfile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -85,6 +107,39 @@ export default function ProfilePage() {
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
   const [passwordError, setPasswordError] = useState('')
   const avatarInputRef = useRef<HTMLInputElement>(null)
+
+  const { theme, setTheme, palette, setPalette } = useTheme()
+  const { scale: textScale, setScale: setTextScale } = useTextScale('app', profile?.id || null)
+
+  const handleThemeModeChange = (newTheme: Theme) => {
+    setTheme(newTheme)
+    fetch('/api/account/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ theme: newTheme }),
+    }).catch(() => {})
+    toast.success(`Theme mode set to ${newTheme}`)
+  }
+
+  const handlePaletteChange = (newPalette: ThemePalette) => {
+    setPalette(newPalette)
+    fetch('/api/account/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ themePalette: newPalette }),
+    }).catch(() => {})
+    toast.success('Color theme palette updated')
+  }
+
+  const handleTextScaleChange = (newScale: TextScale) => {
+    setTextScale(newScale)
+    fetch('/api/account/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ textScale: newScale }),
+    }).catch(() => {})
+    toast.success(`Text size set to ${TEXT_SCALE_LABELS[newScale] || `${Math.round(newScale * 100)}%`}`)
+  }
 
   const [formData, setFormData] = useState({
     fullName: '',
@@ -442,6 +497,150 @@ export default function ProfilePage() {
               )}
               {saving ? 'Saving...' : 'Save Changes'}
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Appearance & Display Settings: Text Size & Theme Palette */}
+      <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-2xs">
+        <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-teal-100 dark:bg-teal-900/30 rounded-xl flex items-center justify-center">
+              <Palette className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Appearance & Display</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Customize text size and color themes for POS & app</p>
+            </div>
+          </div>
+          <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-teal-50 dark:bg-teal-950/50 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800">
+            {TEXT_SCALE_LABELS[textScale] || '100%'} · {palette}
+          </span>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Display & Cashier Text Size Zoom */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                <Type className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                Cashier & Application Text Size
+              </label>
+              <span className="text-xs font-mono font-bold text-teal-600 dark:text-teal-400">
+                {TEXT_SCALE_LABELS[textScale] || '100%'}
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              Increases or decreases button, product, and cart text size across all cashier screens and reports.
+            </p>
+
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {TEXT_SCALES.map((s) => {
+                const isSelected = Math.abs(textScale - s) < 0.01
+                const label = s === 0.9 ? '90% (Compact)' : s === 1 ? '100% (Default)' : s === 1.1 ? '110% (Medium)' : s === 1.25 ? '125% (Large)' : '140% (XL)'
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => handleTextScaleChange(s)}
+                    className={cn(
+                      'flex flex-col items-center justify-center p-2.5 rounded-xl border text-xs font-medium transition-all',
+                      isSelected
+                        ? 'border-teal-500 bg-teal-50 dark:bg-teal-950/40 text-teal-800 dark:text-teal-300 ring-2 ring-teal-500/30 font-bold shadow-xs'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-300 bg-gray-50/50 dark:bg-gray-700/30'
+                    )}
+                  >
+                    <span className="text-sm font-bold">{TEXT_SCALE_LABELS[s]}</span>
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">{label.split(' ')[1] || ''}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Live Text Size Preview */}
+            <div className="mt-3 p-3.5 rounded-xl bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-gray-400 block mb-1">Live Text Preview</span>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-gray-900 dark:text-white" style={{ fontSize: `${textScale * 14}px` }}>
+                  Sample Item: Premium Basmati 5kg · Rs. 2,450.00
+                </span>
+                <span className="text-xs px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300 font-bold">
+                  Active
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-gray-100 dark:border-gray-700 pt-5">
+            {/* Color Mode */}
+            <label className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2 mb-2">
+              <Sun className="w-4 h-4 text-amber-500" />
+              Theme Mode
+            </label>
+            <div className="grid grid-cols-3 gap-2.5 mb-5">
+              {[
+                { value: 'light' as const, label: 'Light', icon: Sun, desc: 'Clean white surfaces' },
+                { value: 'dark' as const, label: 'Dark', icon: Moon, desc: 'Eye-friendly low glare' },
+                { value: 'system' as const, label: 'System', icon: Monitor, desc: 'Sync with OS' },
+              ].map(({ value, label, icon: Icon, desc }) => {
+                const isSelected = theme === value
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => handleThemeModeChange(value)}
+                    className={cn(
+                      'flex flex-col items-center justify-center p-3 rounded-xl border text-xs transition-all',
+                      isSelected
+                        ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 ring-2 ring-indigo-500/30 font-bold shadow-xs'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-300 bg-gray-50/50 dark:bg-gray-700/30'
+                    )}
+                  >
+                    <Icon className="w-5 h-5 mb-1.5" />
+                    <span className="font-semibold">{label}</span>
+                    <span className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 text-center">{desc}</span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Color Palettes */}
+            <label className="text-sm font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2 mb-2">
+              <Palette className="w-4 h-4 text-purple-500" />
+              Theme Color Palette
+            </label>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              Applies a coordinated accent color across navigation, tables, buttons, and POS checkout.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              {PROFILE_PALETTES.map((p) => {
+                const isSelected = palette === p.value
+                return (
+                  <button
+                    key={p.value}
+                    type="button"
+                    onClick={() => handlePaletteChange(p.value)}
+                    className={cn(
+                      'flex items-center gap-3 p-2.5 rounded-xl border text-left text-xs transition-all',
+                      isSelected
+                        ? 'border-teal-500 bg-teal-50/50 dark:bg-teal-950/30 text-teal-900 dark:text-teal-200 ring-2 ring-teal-500/30 font-semibold'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-gray-50/50 dark:bg-gray-700/30 text-gray-700 dark:text-gray-300'
+                    )}
+                  >
+                    <span
+                      className="w-5 h-5 rounded-full shrink-0 shadow-xs border border-white/20 flex items-center justify-center text-white"
+                      style={{ backgroundColor: p.accent }}
+                    >
+                      {isSelected && <Check className="w-3 h-3 text-white" />}
+                    </span>
+                    <div className="min-w-0">
+                      <span className="block font-medium truncate">{p.label}</span>
+                      <span className="block text-[10px] text-gray-500 dark:text-gray-400 truncate">{p.desc}</span>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
       </div>

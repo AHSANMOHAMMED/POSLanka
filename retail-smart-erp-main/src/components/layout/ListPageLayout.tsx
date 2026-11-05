@@ -2,7 +2,8 @@
 
 import { ReactNode, useState } from 'react'
 import Link from 'next/link'
-import { Home, ChevronRight, Plus, RefreshCw, Search, X, Filter } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Home, ChevronRight, Plus, RefreshCw, Search, X, Filter, ArrowLeft, ArrowRight } from 'lucide-react'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { useIsMobile } from '@/hooks/useResponsive'
 import { cn } from '@/lib/utils'
@@ -40,6 +41,7 @@ export function ListPageLayout({
   filterContent,
   children,
 }: ListPageLayoutProps) {
+  const router = useRouter()
   const { tenantSlug } = useCompany()
   const isMobile = useIsMobile()
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false)
@@ -54,51 +56,83 @@ export function ListPageLayout({
 
   return (
     <div className="h-full flex flex-col -m-5">
-      {/* Breadcrumb - Simplified on mobile */}
-      <div className="px-4 py-1.5 border-b text-xs" style={{ backgroundColor: 'var(--page-bg)', borderColor: 'var(--sidebar-border)' }}>
-        <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400">
-          <Link 
-            href={`/c/${tenantSlug}/dashboard`} 
-            className="hover:text-[var(--primary)] flex-shrink-0"
-            aria-label="Dashboard"
-          >
-            <Home size={14} />
-          </Link>
-          {!isMobile && (
-            <>
-              <ChevronRight size={14} className="flex-shrink-0" />
-              <Link 
-                href={resolvedModuleHref} 
-                className="hover:text-[var(--primary)] truncate max-w-[120px]"
-                title={module}
-              >
-                {module}
-              </Link>
-            </>
-          )}
-          <ChevronRight size={14} className="flex-shrink-0" />
-          <span 
-            className="text-gray-900 dark:text-white font-medium truncate"
-            title={title}
-          >
-            {isMobile ? title : title}
-          </span>
+      {/* Navigation & Breadcrumb bar with Back & Forward buttons */}
+      <div className="px-4 py-1.5 border-b text-xs flex items-center justify-between gap-2" style={{ backgroundColor: 'var(--page-bg)', borderColor: 'var(--sidebar-border)' }}>
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Back & Forward navigation buttons */}
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-0.5 shadow-2xs shrink-0">
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-all active:scale-95"
+              title="Go back (Alt+Left)"
+            >
+              <ArrowLeft size={13} className="text-gray-500 dark:text-gray-400" />
+              <span className="hidden sm:inline">Back</span>
+            </button>
+            <div className="h-3 w-px bg-gray-200 dark:bg-gray-700" />
+            <button
+              type="button"
+              onClick={() => router.forward()}
+              className="inline-flex items-center justify-center p-1 text-xs font-semibold text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-all active:scale-95"
+              title="Go forward (Alt+Right)"
+              aria-label="Forward"
+            >
+              <ArrowRight size={13} className="text-gray-500 dark:text-gray-400" />
+            </button>
+          </div>
+
+          {/* Breadcrumb pills */}
+          <div className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400 min-w-0 truncate">
+            <Link 
+              href={`/c/${tenantSlug}/dashboard`} 
+              className="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 hover:text-[var(--primary)] flex-shrink-0 transition-colors"
+              aria-label="Dashboard"
+              title="Dashboard"
+            >
+              <Home size={14} />
+            </Link>
+            {!isMobile && (
+              <>
+                <ChevronRight size={13} className="flex-shrink-0 text-gray-400" />
+                <Link 
+                  href={resolvedModuleHref} 
+                  className="px-2 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-medium truncate max-w-[140px] transition-colors"
+                  title={module}
+                >
+                  {module}
+                </Link>
+              </>
+            )}
+            <ChevronRight size={13} className="flex-shrink-0 text-gray-400" />
+            <span 
+              className="px-2 py-0.5 rounded-md bg-primary/10 text-primary font-semibold truncate"
+              title={title}
+            >
+              {title}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Title Bar - Stacked on mobile */}
-      <div className="px-4 py-2 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+      {/* Title Bar */}
+      <div className="px-4 py-2.5 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-2xs">
         <div className={cn(
-          "flex items-center justify-between",
-          isMobile ? "flex-col gap-3" : "flex-row"
+          "flex items-center justify-between gap-3",
+          isMobile ? "flex-col" : "flex-row"
         )}>
           <div className={cn(
             "flex items-center gap-3",
             isMobile ? "w-full justify-between" : ""
           )}>
-            <h1 className="text-lg font-semibold text-gray-900 dark:text-white truncate flex-1">
-              {title}
-            </h1>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="hidden sm:inline-flex px-2 py-0.5 text-[11px] font-bold uppercase tracking-wider rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                {module}
+              </span>
+              <h1 className="text-xl font-bold tracking-tight text-gray-900 dark:text-white truncate">
+                {title}
+              </h1>
+            </div>
             
             {/* Mobile filter toggle button */}
             {isMobile && filterContent && (

@@ -1210,7 +1210,7 @@ export async function POST(request: NextRequest) {
               saleId: newSale.id,
               amount: String(split.amount),
               method: split.method,
-              reference: split.reference || null,
+              reference: split.reference || (split.method === 'card' ? parsed.data.cardReference : null) || null,
               receivedBy: userId,
             })
             recordedPayments.push({ method: split.method, amount: roundCurrency(split.amount) })
@@ -1234,6 +1234,7 @@ export async function POST(request: NextRequest) {
             saleId: newSale.id,
             amount: String(cashCardRecorded),
             method: paymentMethod || 'cash',
+            reference: (paymentMethod === 'card' && parsed.data.cardReference) ? parsed.data.cardReference : null,
             receivedBy: userId,
           })
           recordedPayments.push({ method: paymentMethod || 'cash', amount: roundCurrency(cashCardRecorded) })

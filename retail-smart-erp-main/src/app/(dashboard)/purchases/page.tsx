@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   Plus, Search, RefreshCw, ChevronDown, ChevronRight,
   X, Heart, Home, ArrowUp, ArrowDown, ArrowUpDown,
-  Printer, Download, Trash2, Edit3
+  Printer, Download, Trash2, Edit3, PackageCheck
 } from 'lucide-react'
 import { usePaginatedData } from '@/hooks'
 import { ExportDialog } from '@/components/import-export/ExportDialog'
@@ -254,13 +254,22 @@ export default function PurchasesPage() {
       <div className="px-4 py-3 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold text-gray-900 dark:text-white">Purchase Invoice</h1>
-          <button
-            onClick={() => router.push(tenantSlug ? `/c/${tenantSlug}/purchases/new` : '/purchases/new')}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
-          >
-            <Plus size={16} />
-            Add Purchase Invoice
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              href={tenantSlug ? `/c/${tenantSlug}/buying/grn` : '/buying/grn'}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 text-sm font-medium rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              <PackageCheck size={16} className="text-amber-600" />
+              Goods Received (GRN)
+            </Link>
+            <button
+              onClick={() => router.push(tenantSlug ? `/c/${tenantSlug}/purchases/new` : '/purchases/new')}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 transition-colors"
+            >
+              <Plus size={16} />
+              Add Purchase Invoice
+            </button>
+          </div>
         </div>
       </div>
 

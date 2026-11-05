@@ -65,6 +65,8 @@ eq(paymentMethodIndexForKey(k('F1'), { inTextInput: true, count: 5 }), 0, 'F1 = 
 eq(paymentMethodIndexForKey(k('F5'), { inTextInput: true, count: 5 }), 4, 'F5 = 5th method')
 eq(paymentMethodIndexForKey(k('F6'), { inTextInput: true, count: 5 }), null, 'no 6th method')
 eq(paymentMethodIndexForKey(k('2'), { inTextInput: true, count: 5 }), null, 'digit while typing the amount = amount')
+eq(paymentMethodIndexForKey(k('2', { altKey: true, code: 'Digit2' }), { inTextInput: true, count: 5 }), 1, 'Alt+2 switches to 2nd method even while typing')
+eq(paymentMethodIndexForKey(k('1', { altKey: true, code: 'Digit1' }), { inTextInput: false, count: 5 }), 0, 'Alt+1 switches to 1st method')
 eq(paymentMethodIndexForKey(k('2'), { inTextInput: false, count: 5 }), 1, 'digit outside inputs = method')
 eq(paymentMethodIndexForKey(k('F10'), { inTextInput: true, count: 5 }), null, 'F10 is not a method key')
 

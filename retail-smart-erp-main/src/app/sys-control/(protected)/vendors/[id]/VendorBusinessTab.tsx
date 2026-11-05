@@ -260,7 +260,7 @@ function ItemTable({ vendorId, periodQuery }: { vendorId: string; periodQuery: s
     { key: 'price', header: 'Price', align: 'right', hideBelow: 'xl', cell: (r) => <span className="adm-num">{fmtNumber(r.sellingPrice, 2)}</span> },
     { key: 'hand', header: 'On hand', align: 'right', cell: (r) => <span className="adm-num">{r.trackStock ? `${fmtNumber(r.onHand, 2)} ${r.unit ?? ''}` : '—'}</span> },
     { key: 'stockCost', header: 'Stock at cost', align: 'right', hideBelow: 'lg', cell: (r) => <span className="adm-num">{fmtNumber(r.stockAtCost, 2)}</span> },
-    { key: 'sold', header: 'Sold', align: 'right', cell: (r) => <span className="adm-num">{fmtNumber(r.soldQty, 2)}</span> },
+    { key: 'sold', header: 'Sold', align: 'right', cell: (r) => <span className="adm-num">{fmtNumber(r.soldQty, 2)} {r.unit ?? ''}</span> },
     { key: 'revenue', header: 'Revenue', align: 'right', cell: (r) => <span className="adm-num">{fmtNumber(r.revenue, 2)}</span> },
     { key: 'cogs', header: 'Cost of sales', align: 'right', hideBelow: 'lg', cell: (r) => <span className="adm-num">{fmtNumber(r.costOfGoods, 2)}</span> },
     { key: 'profit', header: 'Profit', align: 'right', cell: (r) => <span className={`adm-num font-medium ${r.profit < 0 ? 'text-adm-danger' : 'text-adm-fg'}`}>{fmtNumber(r.profit, 2)}</span> },

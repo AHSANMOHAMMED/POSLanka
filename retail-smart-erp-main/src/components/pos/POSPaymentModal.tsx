@@ -11,10 +11,11 @@
  *    the selected line.
  */
 import { useEffect, useMemo, useState } from 'react'
-import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle, RotateCcw, FileText, CalendarClock, Plus, Trash2, Calculator } from 'lucide-react'
+import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle, RotateCcw, FileText, CalendarClock, Plus, Trash2, Calculator, User, UserCheck, Check, Sparkles, ArrowRight } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
 import { getCurrencyNotes } from '@/lib/utils/countries'
+import { roundCurrency } from '@/lib/utils/currency'
 import { settleTenders } from '@/lib/pos/tenders'
 import type { Customer, PaymentMethodConfig, LoyaltyProgram, GiftCardInfo, ChequeFormValue, ExtraTender } from './types'
 import { paymentMethodIndexForKey } from '@/lib/pos/shortcuts'
@@ -77,6 +78,15 @@ interface POSPaymentModalProps {
   giftCardLookupLoading: boolean
   onLookupGiftCard: () => void
 
+  /** Customers list for inline lookup / credit / cheque attachment */
+  customers?: Customer[]
+  onSelectCustomer?: (customer: Customer | null) => void
+  onQuickCreateCustomer?: (name: string, phone?: string) => Promise<Customer | null>
+
+  /** Card / slip reference for card transactions */
+  cardReference?: string
+  setCardReference?: (value: string) => void
+
   /** Split payment: payment lines after the first (paymentMethod + amountPaid) */
   extraTenders?: ExtraTender[]
   setExtraTenders?: (lines: ExtraTender[]) => void
@@ -130,6 +140,11 @@ export function POSPaymentModal({
   giftCardInfo,
   giftCardLookupLoading,
   onLookupGiftCard,
+  customers = [],
+  onSelectCustomer,
+  onQuickCreateCustomer,
+  cardReference = '',
+  setCardReference,
   extraTenders = [],
   setExtraTenders,
   chequeDetails,
@@ -323,6 +338,105 @@ export function POSPaymentModal({
     setActiveLine(0)
   }
 
+  // Customer search & quick add state
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('')
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false)
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false)
+  const [quickName, setQuickName] = useState('')
+  const [quickPhone, setQuickPhone] = useState('')
+  const [quickSaving, setQuickSaving] = useState(false)
+
+  const filteredCustomers = useMemo(() => {
+    const q = customerSearchQuery.trim().toLowerCase()
+    if (!q) return []
+    const rawQ = q.replace(/\s+/g, '')
+    return customers
+      .filter((c) => {
+        const nameMatch = c.name?.toLowerCase().includes(q)
+        const phoneMatch = c.phone?.replace(/\s+/g, '').includes(rawQ) || (c as { mobilePhone?: string }).mobilePhone?.replace(/\s+/g, '').includes(rawQ)
+        return nameMatch || phoneMatch
+      })
+      .slice(0, 6)
+  }, [customers, customerSearchQuery])
+
+  const handleSelectCustomer = (cust: Customer | null) => {
+    onSelectCustomer?.(cust)
+    setShowCustomerDropdown(false)
+    setCustomerSearchQuery('')
+    setQuickCreateOpen(false)
+  }
+
+  const handleCreateCustomerSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!quickName.trim() || !onQuickCreateCustomer) return
+    setQuickSaving(true)
+    try {
+      const created = await onQuickCreateCustomer(quickName.trim(), quickPhone.trim() || undefined)
+      if (created) {
+        handleSelectCustomer(created)
+      }
+    } finally {
+      setQuickSaving(false)
+    }
+  }
+
+  const openQuickCreate = () => {
+    const q = customerSearchQuery.trim()
+    const isDigits = /^[0-9+\s-]+$/.test(q)
+    if (isDigits && q.length >= 3) {
+      setQuickPhone(q)
+      setQuickName('')
+    } else {
+      setQuickName(q)
+      setQuickPhone('')
+    }
+    setQuickCreateOpen(true)
+  }
+
+  const applySplitPreset = (m1: string, m2: string) => {
+    if (!setExtraTenders) return
+    setPaymentMethod(m1)
+    const curVal = parseFloat(amountPaid) || 0
+    let line1Val = 0
+    let line2Val = 0
+    if (curVal > 0 && curVal < remainingAfterCredit) {
+      line1Val = curVal
+      line2Val = roundCurrency(remainingAfterCredit - curVal)
+    } else {
+      line1Val = roundCurrency(remainingAfterCredit / 2)
+      line2Val = roundCurrency(remainingAfterCredit - line1Val)
+    }
+    setAmountPaid(line1Val > 0 ? line1Val.toFixed(2) : '')
+    setExtraTenders([{ method: m2, amount: line2Val > 0 ? line2Val.toFixed(2) : '' }])
+    setActiveLine(0)
+    if ((m1 === 'credit' || m2 === 'credit') && !selectedCustomer) {
+      setShowCustomerDropdown(true)
+    }
+  }
+
+  const addSplitRemaining = (method: string, amount: number) => {
+    if (!setExtraTenders) return
+    const nextAmount = amount.toFixed(2)
+    const existingIndex = extraTenders.findIndex((t) => t.method === method)
+    if (existingIndex >= 0) {
+      setExtraTenders(extraTenders.map((t, idx) => idx === existingIndex ? { ...t, amount: nextAmount } : t))
+      setActiveLine(existingIndex + 1)
+    } else {
+      const next = [...extraTenders, { method, amount: nextAmount }]
+      setExtraTenders(next)
+      setActiveLine(next.length)
+    }
+    if (method === 'credit' && !selectedCustomer) {
+      setShowCustomerDropdown(true)
+    }
+  }
+
+  const resetToSinglePayment = () => {
+    setExtraTenders?.([])
+    setActiveLine(0)
+    setAmountPaid(remainingAfterCredit.toFixed(2))
+  }
+
   function pressKey(key: string) {
     const cur = lineAmount(activeLine) || ''
     const isPrefilled = cur === (multi ? restFor(activeLine) : remainingAfterCredit).toFixed(2)
@@ -353,7 +467,12 @@ export function POSPaymentModal({
       >
         <Icon size={22} className={selected ? 'theme-text-primary' : 'text-gray-400'} />
         <span className={`text-sm font-semibold ${selected ? 'theme-text-primary' : 'text-gray-600 dark:text-gray-300'}`}>{meta.label}</span>
-        {idx < 9 && <kbd className="hidden sm:inline text-[10px] font-mono font-bold px-1 rounded border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">F{idx + 1}</kbd>}
+        {idx < 9 && (
+          <div className="flex items-center gap-1 text-[10px] font-mono font-bold text-gray-500 dark:text-gray-400">
+            <kbd className="px-1 rounded border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800">Alt+{idx + 1}</kbd>
+            <kbd className="hidden sm:inline px-1 rounded border border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-800">F{idx + 1}</kbd>
+          </div>
+        )}
       </button>
     )
   }
@@ -418,6 +537,184 @@ export function POSPaymentModal({
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className={showPad ? 'grid md:grid-cols-[minmax(0,1fr)_300px]' : ''}>
             <div className="p-5 sm:p-6 space-y-5 text-gray-900 dark:text-gray-100">
+              {/* Customer Attachment & Account Details */}
+              <div className="space-y-2">
+                {selectedCustomer ? (
+                  <div className="rounded-2xl border-2 border-emerald-300 dark:border-emerald-800 bg-emerald-50/70 dark:bg-emerald-950/30 p-3.5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
+                        <UserCheck size={20} />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">Customer Attached</span>
+                          {selectedCustomer.loyaltyPoints ? (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300">
+                              {selectedCustomer.loyaltyPoints} pts
+                            </span>
+                          ) : null}
+                        </div>
+                        <p className="text-base font-bold text-gray-900 dark:text-gray-100 truncate">{selectedCustomer.name}</p>
+                        {selectedCustomer.phone && (
+                          <p className="text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 font-mono">
+                            <Smartphone size={12} /> {selectedCustomer.phone}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    {onSelectCustomer && (
+                      <button
+                        type="button"
+                        onClick={() => onSelectCustomer(null)}
+                        className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 transition-colors shrink-0"
+                      >
+                        Change / Remove
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className={`rounded-2xl border-2 transition-all p-3.5 space-y-2.5 ${
+                    (paymentMethod === 'credit' || needsCheque || (multi && lineMethods.includes('credit')) || (isReturnMode && refundMethod === 'credit'))
+                      ? 'border-amber-400 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-950/30'
+                      : 'border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/20'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <User size={18} className={(paymentMethod === 'credit' || needsCheque || (multi && lineMethods.includes('credit')) || (isReturnMode && refundMethod === 'credit')) ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500'} />
+                        <span className="text-sm font-bold text-gray-900 dark:text-gray-100">
+                          Customer Search & Entry
+                          {(paymentMethod === 'credit' || needsCheque || (multi && lineMethods.includes('credit')) || (isReturnMode && refundMethod === 'credit')) && (
+                            <span className="ml-1.5 text-xs text-amber-700 dark:text-amber-300 font-semibold">(Required for Credit / Cheque)</span>
+                          )}
+                        </span>
+                      </div>
+                      {onQuickCreateCustomer && !quickCreateOpen && (
+                        <button
+                          type="button"
+                          onClick={openQuickCreate}
+                          className="text-xs font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
+                        >
+                          <Plus size={14} /> Quick Add Customer
+                        </button>
+                      )}
+                    </div>
+
+                    {!quickCreateOpen ? (
+                      <div className="relative">
+                        <div className="flex items-center gap-2">
+                          <div className="relative flex-1">
+                            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input
+                              type="text"
+                              value={customerSearchQuery}
+                              onChange={(e) => {
+                                setCustomerSearchQuery(e.target.value)
+                                setShowCustomerDropdown(true)
+                              }}
+                              onFocus={() => setShowCustomerDropdown(true)}
+                              placeholder="Search by mobile number (e.g. 077...) or customer name..."
+                              className="w-full pl-9 pr-8 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary"
+                            />
+                            {customerSearchQuery && (
+                              <button
+                                type="button"
+                                onClick={() => { setCustomerSearchQuery(''); setShowCustomerDropdown(false) }}
+                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5"
+                              >
+                                <X size={14} />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {showCustomerDropdown && customerSearchQuery.trim().length > 0 && (
+                          <div className="absolute left-0 right-0 top-full mt-1.5 z-30 bg-white dark:bg-gray-900 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-h-56 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
+                            {filteredCustomers.length > 0 ? (
+                              filteredCustomers.map((c) => (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  onClick={() => handleSelectCustomer(c)}
+                                  className="w-full text-left px-3.5 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 flex items-center justify-between gap-2 transition-colors"
+                                >
+                                  <div className="min-w-0">
+                                    <p className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">{c.name}</p>
+                                    {c.phone && <p className="text-xs text-gray-500 font-mono">{c.phone}</p>}
+                                  </div>
+                                  <span className="text-xs font-semibold text-teal-600 dark:text-teal-400 flex items-center gap-1 shrink-0">
+                                    Select <ArrowRight size={12} />
+                                  </span>
+                                </button>
+                              ))
+                            ) : (
+                              <div className="p-3 text-center text-xs text-gray-500">
+                                <p>No customer found matching &quot;{customerSearchQuery}&quot;</p>
+                                {onQuickCreateCustomer && (
+                                  <button
+                                    type="button"
+                                    onClick={openQuickCreate}
+                                    className="mt-2 px-3 py-1.5 rounded-lg bg-teal-600 text-white font-bold text-xs hover:bg-teal-700 inline-flex items-center gap-1"
+                                  >
+                                    <Plus size={14} /> Quick Add &quot;{customerSearchQuery}&quot;
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <form onSubmit={handleCreateCustomerSubmit} className="p-3 rounded-xl bg-white dark:bg-gray-900 border border-teal-200 dark:border-teal-800 space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-teal-800 dark:text-teal-300">Quick Add Customer</span>
+                          <button
+                            type="button"
+                            onClick={() => setQuickCreateOpen(false)}
+                            className="text-xs text-gray-400 hover:text-gray-600"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            value={quickName}
+                            onChange={(e) => setQuickName(e.target.value)}
+                            placeholder="Customer Name *"
+                            required
+                            autoFocus
+                            className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-gray-100 outline-none focus:border-teal-500"
+                          />
+                          <input
+                            type="tel"
+                            value={quickPhone}
+                            onChange={(e) => setQuickPhone(e.target.value)}
+                            placeholder="Mobile Number (e.g. 077...)"
+                            className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-transparent text-gray-900 dark:text-gray-100 outline-none focus:border-teal-500"
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setQuickCreateOpen(false)}
+                            className="px-3 py-1.5 text-xs font-semibold text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={quickSaving || !quickName.trim()}
+                            className="px-3.5 py-1.5 text-xs font-bold bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50 flex items-center gap-1.5"
+                          >
+                            {quickSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                            Save & Attach
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                )}
+              </div>
           {/* Refund Method */}
           {isReturnMode && (
             <div>
@@ -590,9 +887,89 @@ export function POSPaymentModal({
                 </div>
               )}
 
+              {/* Quick Split Presets */}
+              {!isReturnMode && setExtraTenders && !hirePurchase && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 flex items-center gap-1.5">
+                      <Sparkles size={13} className="text-amber-500" /> Split Payment Presets
+                    </span>
+                    {multi && (
+                      <button
+                        type="button"
+                        onClick={resetToSinglePayment}
+                        className="text-xs font-bold text-red-600 dark:text-red-400 hover:underline"
+                      >
+                        Reset to Single Payment
+                      </button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => applySplitPreset('cash', 'card')}
+                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        multi && lineMethods.includes('cash') && lineMethods.includes('card')
+                          ? 'theme-border-primary theme-bg-subtle theme-text-primary'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-white dark:bg-gray-800'
+                      }`}
+                    >
+                      <Banknote size={15} /> + <CreditCard size={15} /> Cash + Card
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applySplitPreset('cash', 'credit')}
+                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        multi && lineMethods.includes('cash') && lineMethods.includes('credit')
+                          ? 'theme-border-primary theme-bg-subtle theme-text-primary'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-white dark:bg-gray-800'
+                      }`}
+                    >
+                      <Banknote size={15} /> + <Wallet size={15} /> Cash + Credit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applySplitPreset('cash', 'cheque')}
+                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        multi && lineMethods.includes('cash') && lineMethods.includes('cheque')
+                          ? 'theme-border-primary theme-bg-subtle theme-text-primary'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-white dark:bg-gray-800'
+                      }`}
+                    >
+                      <Banknote size={15} /> + <FileText size={15} /> Cash + Cheque
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applySplitPreset('card', 'credit')}
+                      className={`py-2 px-2.5 rounded-xl border text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                        multi && lineMethods.includes('card') && lineMethods.includes('credit')
+                          ? 'theme-border-primary theme-bg-subtle theme-text-primary'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-white dark:bg-gray-800'
+                      }`}
+                    >
+                      <CreditCard size={15} /> + <Wallet size={15} /> Card + Credit
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {/* Amount lines */}
               {showAmounts && (
                 <div className="space-y-2">
+                  {multi && (
+                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 text-xs">
+                      <span className="font-bold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                        <Sparkles size={14} className="text-purple-600" /> Split Payment Active ({extraTenders.length + 1} lines)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={resetToSinglePayment}
+                        className="font-bold text-purple-700 dark:text-purple-300 hover:text-red-600 dark:hover:text-red-400 hover:underline"
+                      >
+                        Reset to Single Payment
+                      </button>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between">
                     <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">
                       {multi ? 'Payments' : hirePurchase ? 'Down payment' : 'Amount received'}
@@ -661,6 +1038,61 @@ export function POSPaymentModal({
                       </div>
                     )
                   })}
+
+                  {/* Card Slip / Terminal Auth Reference */}
+                  {!isReturnMode && lineMethods.includes('card') && (
+                    <div className="rounded-2xl border-2 border-blue-200 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/30 p-3 space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <CreditCard size={16} className="text-blue-600 dark:text-blue-400" />
+                          <span className="text-xs font-bold text-blue-900 dark:text-blue-200">Card Slip / Auth Reference</span>
+                        </div>
+                        <span className="text-[10px] text-blue-700 dark:text-blue-300 font-medium">Recorded with card payment</span>
+                      </div>
+                      <FormInput
+                        type="text"
+                        inputSize="md"
+                        value={cardReference}
+                        onChange={(e) => setCardReference?.(e.target.value)}
+                        placeholder="Enter card slip # / approval code / last 4 digits (optional)"
+                        aria-label="Card reference"
+                        className="bg-white dark:bg-gray-900"
+                      />
+                    </div>
+                  )}
+
+                  {/* 1-Click Remaining Balance Allocation */}
+                  {setExtraTenders && !hirePurchase && balanceDue > 0 && (
+                    <div className="rounded-2xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50/70 dark:bg-amber-950/30 p-3 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-amber-900 dark:text-amber-200">
+                        <span>Unpaid Balance: <span className="font-extrabold font-mono text-sm">{currencyCode} {money(balanceDue)}</span></span>
+                        <span className="text-[11px] font-normal text-amber-700 dark:text-amber-300">1-click split:</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => addSplitRemaining('credit', balanceDue)}
+                          className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors"
+                        >
+                          <Wallet size={13} /> + Put {currencyCode} {money(balanceDue)} on Credit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addSplitRemaining('card', balanceDue)}
+                          className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors"
+                        >
+                          <CreditCard size={13} /> + Pay {currencyCode} {money(balanceDue)} by Card
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => addSplitRemaining('cheque', balanceDue)}
+                          className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs transition-colors"
+                        >
+                          <FileText size={13} /> + Pay {currencyCode} {money(balanceDue)} by Cheque
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Add another way to pay */}
                   {setExtraTenders && !hirePurchase && paymentMethod !== 'gift_card' && splitChoices.some((m) => m !== paymentMethod) && (

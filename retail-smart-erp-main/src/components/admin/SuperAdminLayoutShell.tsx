@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
   Activity,
+  ArrowLeft,
+  ArrowRight,
   Bell,
   Bug,
   ChevronDown,
@@ -109,6 +111,7 @@ export function SuperAdminLayoutShell(props: SuperAdminLayoutShellProps) {
 }
 
 function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellProps) {
+  const router = useRouter()
   const pathname = usePathname()
   // Apply this admin's text size (zoom of the main area)
   useTextScale('admin', adminEmail || null)
@@ -162,6 +165,28 @@ function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellPr
               <LogoMark size={26} />
               <span className="hidden text-[15px] font-semibold text-adm-fg min-[420px]:inline">Admin</span>
             </Link>
+
+            {/* Back & Forward navigation buttons */}
+            <div className="flex items-center gap-0.5 text-adm-muted shrink-0 ml-1">
+              <button
+                type="button"
+                onClick={() => router.back()}
+                aria-label="Go back"
+                className="adm-focus flex h-8 w-8 items-center justify-center rounded-lg hover:bg-adm-surface-2 hover:text-adm-fg transition-colors"
+                title="Go back (Alt+Left)"
+              >
+                <ArrowLeft size={16} />
+              </button>
+              <button
+                type="button"
+                onClick={() => router.forward()}
+                aria-label="Go forward"
+                className="adm-focus flex h-8 w-8 items-center justify-center rounded-lg hover:bg-adm-surface-2 hover:text-adm-fg transition-colors"
+                title="Go forward (Alt+Right)"
+              >
+                <ArrowRight size={16} />
+              </button>
+            </div>
 
             <div className="hidden min-w-0 flex-1 sm:block sm:max-w-md">
               <VendorSearch />

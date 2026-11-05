@@ -2,12 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useSession, signOut } from 'next-auth/react'
 import {
   Menu, HelpCircle, ChevronDown, LogOut, Settings, User,
   Keyboard, Info, Bug, Search, X, MoreVertical, Home, MessageCircle,
-  Grid3X3,
+  Grid3X3, ArrowLeft, ArrowRight,
 } from 'lucide-react'
 import { useBreakpoint } from '@/hooks/useResponsive'
 import { BugReportModal } from '@/components/modals/BugReportModal'
@@ -43,6 +43,7 @@ interface NavbarProps {
 }
 
 export function Navbar({ tenantName, userEmail, appVersion, companySlug }: NavbarProps) {
+  const router = useRouter()
   const pathname = usePathname()
   const { data: session } = useSession()
   // The signed-in user's text size (90%..140%), per user on this device
@@ -269,6 +270,28 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
         <Link href={`${basePath}/dashboard`} className="shrink-0">
           <Logo variant="full" size={22} onDark />
         </Link>
+
+        {/* Back and Forward navigation buttons */}
+        <div className="flex items-center gap-0.5 ml-1 text-white/70">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="p-1 rounded-lg hover:bg-white/10 hover:text-white transition-colors"
+            title="Go back (Alt+Left)"
+            aria-label="Back"
+          >
+            <ArrowLeft size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => router.forward()}
+            className="p-1 rounded-lg hover:bg-white/10 hover:text-white transition-colors"
+            title="Go forward (Alt+Right)"
+            aria-label="Forward"
+          >
+            <ArrowRight size={16} />
+          </button>
+        </div>
 
         {/* Company switcher (desktop only) */}
         <div className="hidden lg:flex items-center">

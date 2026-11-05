@@ -656,6 +656,7 @@ export const DEFAULT_WORKSPACES: Record<string, WorkspaceConfig> = {
         { label: 'Suppliers', href: '/suppliers', icon: 'Truck' },
         { label: 'Purchase Orders', href: '/purchase-orders', icon: 'ClipboardList' },
         { label: 'Purchase Invoices', href: '/purchases', icon: 'CreditCard' },
+        { label: 'Goods Received (GRN)', href: '/buying/grn', icon: 'PackageCheck' },
       ] } },
 
       { id: 'ch1', type: 'chart', colSpan: 6, data: { title: 'Purchase Orders by Status', chartKey: 'purchase_orders_by_status', chartType: 'doughnut' } },
@@ -665,10 +666,12 @@ export const DEFAULT_WORKSPACES: Record<string, WorkspaceConfig> = {
         { label: 'Supplier', href: '/suppliers' },
         { label: 'Purchase Order', href: '/purchase-orders' },
         { label: 'Purchase Invoice', href: '/purchases' },
+        { label: 'Goods Received (GRN)', href: '/buying/grn' },
       ] } },
       { id: 'c2', type: 'card', colSpan: 6, data: { title: 'Transactions', links: [
         { label: 'Purchase Orders', href: '/purchase-orders' },
         { label: 'Purchase Invoices', href: '/purchases' },
+        { label: 'Goods Received (GRN)', href: '/buying/grn' },
       ] } },
     ],
   },

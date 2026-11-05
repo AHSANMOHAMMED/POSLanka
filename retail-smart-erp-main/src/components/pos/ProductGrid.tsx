@@ -9,6 +9,7 @@ import type { Item, Category, ActiveShift, POSBusinessConfig } from './types'
 import { POS_ITEMS_LIMIT } from './types'
 import { useTerminology } from '@/hooks/useTerminology'
 import { getItemPartNumber } from '@/lib/utils/item-display'
+import { BarcodeBadge } from '@/components/ui/BarcodePreview'
 
 interface ProductGridProps {
   items: Item[]
@@ -166,18 +167,22 @@ export function ProductGrid({
   const { currency: currencyCode } = useCurrency()
 
   const filteredItems = useMemo(() => {
-    const searchLower = search.toLowerCase()
+    const rawSearch = search.trim()
+    const searchLower = rawSearch.toLowerCase()
+    const searchNorm = searchLower.normalize('NFC')
     const result = items.filter(item => {
-      const matchesSearch = !search ||
-        item.name.toLowerCase().includes(searchLower) ||
-        item.sku?.toLowerCase().includes(searchLower) ||
-        item.barcode?.toLowerCase().includes(searchLower) ||
-        item.oemPartNumber?.toLowerCase().includes(searchLower) ||
-        item.supplierPartNumber?.toLowerCase().includes(searchLower) ||
-        item.genericName?.toLowerCase().includes(searchLower) ||
-        item.pluCode?.toLowerCase() === searchLower ||
-        item.itemCode?.toLowerCase().includes(searchLower) ||
-        item.alternatePartNumbers?.some(pn => pn.toLowerCase().includes(searchLower))
+      if (!rawSearch) return true
+      const nameNorm = (item.name || '').toLowerCase().normalize('NFC')
+      const matchesSearch =
+        nameNorm.includes(searchNorm) ||
+        (item.sku && item.sku.toLowerCase().normalize('NFC').includes(searchNorm)) ||
+        (item.barcode && item.barcode.toLowerCase().normalize('NFC').includes(searchNorm)) ||
+        (item.oemPartNumber && item.oemPartNumber.toLowerCase().normalize('NFC').includes(searchNorm)) ||
+        (item.supplierPartNumber && item.supplierPartNumber.toLowerCase().normalize('NFC').includes(searchNorm)) ||
+        (item.genericName && item.genericName.toLowerCase().normalize('NFC').includes(searchNorm)) ||
+        (item.pluCode && item.pluCode.toLowerCase() === searchLower) ||
+        (item.itemCode && item.itemCode.toLowerCase().normalize('NFC').includes(searchNorm)) ||
+        item.alternatePartNumbers?.some(pn => pn.toLowerCase().normalize('NFC').includes(searchNorm))
       return matchesSearch
     })
 
@@ -362,9 +367,7 @@ export function ProductGrid({
                 >
                   {/* Stock Tag on Top Right */}
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 font-bold">
-                      {item.barcode ? `EAN: ${item.barcode.slice(-6)}` : item.sku || 'ITEM'}
-                    </span>
+                    <BarcodeBadge barcode={item.barcode} sku={item.sku} />
                     {item.trackStock && (
                       <span
                         className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
@@ -466,9 +469,7 @@ export function ProductGrid({
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <span className="text-[11px] font-mono px-2 py-1 rounded bg-slate-100 dark:bg-gray-700 text-slate-600 dark:text-gray-300 font-bold flex-shrink-0">
-                      {item.barcode ? item.barcode.slice(-6) : item.sku || 'ITEM'}
-                    </span>
+                    <BarcodeBadge barcode={item.barcode} sku={item.sku} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-slate-900 dark:text-white text-sm min-[1920px]:text-base truncate group-hover:opacity-80">

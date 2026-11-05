@@ -70,6 +70,8 @@ export const createSaleSchema = z.object({
   paymentMethod: paymentMethodSchema.optional(),
   /** Split tender at POS — when present, overrides single paymentMethod for payment rows */
   paymentSplits: z.array(paymentSplitSchema).max(10).optional(),
+  /** Card slip / terminal auth reference for card tender */
+  cardReference: z.string().trim().max(100).optional(),
   /** Negative for returns (cart lines carry negative quantities); must be >= 0 for sales — enforced below */
   subtotal: z.coerce.number(),
   discount: z.coerce.number().min(0).default(0),

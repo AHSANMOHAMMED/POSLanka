@@ -31,13 +31,14 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
     if (['l', 'ltr', 'liter', 'liters', 'litre', 'litres'].includes(raw)) return 'l'
     if (['ml', 'milliliter', 'milliliters'].includes(raw)) return 'ml'
     if (['m', 'meter', 'meters', 'metre', 'metres'].includes(raw)) return 'm'
+    if (['yard', 'yards', 'yd', 'yds'].includes(raw)) return 'yard'
     return raw || 'pcs'
   }, [item])
 
   const unitFamily: UnitFamily = useMemo(() => {
     if (baseUnit === 'kg' || baseUnit === 'g') return 'weight'
     if (baseUnit === 'l' || baseUnit === 'ml') return 'volume'
-    if (baseUnit === 'm') return 'length'
+    if (baseUnit === 'm' || baseUnit === 'yard') return 'length'
     return 'count'
   }, [baseUnit])
 
@@ -100,8 +101,29 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
         displayLabel = `${baseQuantity} ml`
       }
     }
+  } else if (unitFamily === 'length') {
+    if (baseUnit === 'm') {
+      if (inputUnit === 'yard') {
+        baseQuantity = enteredNum * 0.9144
+        displayLabel = `${enteredNum} yd (= ${baseQuantity.toFixed(3)} m)`
+      } else {
+        baseQuantity = enteredNum
+        displayLabel = `${baseQuantity.toFixed(3)} m`
+      }
+    } else if (baseUnit === 'yard') {
+      if (inputUnit === 'm') {
+        baseQuantity = enteredNum / 0.9144
+        displayLabel = `${enteredNum} m (= ${baseQuantity.toFixed(3)} yd)`
+      } else {
+        baseQuantity = enteredNum
+        displayLabel = `${baseQuantity.toFixed(3)} yd`
+      }
+    } else {
+      baseQuantity = enteredNum
+      displayLabel = `${baseQuantity} ${baseUnit}`
+    }
   } else {
-    // length or count
+    // count
     baseQuantity = enteredNum
     displayLabel = `${baseQuantity} ${baseUnit}`
   }
@@ -156,6 +178,18 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
       ]
     }
     if (unitFamily === 'length') {
+      if (baseUnit === 'yard') {
+        return [
+          { label: '0.5 yd', val: 0.5, unit: 'yard' },
+          { label: '1 yd', val: 1, unit: 'yard' },
+          { label: '1.5 yd', val: 1.5, unit: 'yard' },
+          { label: '2 yd', val: 2, unit: 'yard' },
+          { label: '3 yd', val: 3, unit: 'yard' },
+          { label: '5 yd', val: 5, unit: 'yard' },
+          { label: '1m', val: 1, unit: 'm' },
+          { label: '2m', val: 2, unit: 'm' },
+        ]
+      }
       return [
         { label: '0.5m', val: 0.5, unit: 'm' },
         { label: '1m', val: 1, unit: 'm' },
@@ -163,6 +197,8 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
         { label: '2m', val: 2, unit: 'm' },
         { label: '3m', val: 3, unit: 'm' },
         { label: '5m', val: 5, unit: 'm' },
+        { label: '1 yd', val: 1, unit: 'yard' },
+        { label: '2 yd', val: 2, unit: 'yard' },
       ]
     }
     return [
@@ -310,6 +346,28 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
                     }`}
                   >
                     ml (Milliliters)
+                  </button>
+                </div>
+              )}
+              {unitFamily === 'length' && (
+                <div className="inline-flex rounded-lg bg-slate-100 p-0.5 border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setInputUnit('m')}
+                    className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-all ${
+                      inputUnit === 'm' ? 'bg-white text-teal-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    m (Meters)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInputUnit('yard')}
+                    className={`px-2.5 py-0.5 text-xs font-bold rounded-md transition-all ${
+                      inputUnit === 'yard' ? 'bg-white text-teal-800 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    yd (Yards)
                   </button>
                 </div>
               )}

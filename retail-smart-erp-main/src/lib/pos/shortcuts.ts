@@ -152,11 +152,18 @@ export function isFunctionKey(key: string): boolean {
  * not typing in an input. Returns the 0-based method index or null.
  */
 export function paymentMethodIndexForKey(e: KeyLike, opts: { inTextInput: boolean; count: number }): number | null {
-  if (e.ctrlKey || e.altKey || e.metaKey) return null
+  if (e.ctrlKey || e.metaKey) return null
   let n: number | null = null
-  const f = /^F(\d)$/.exec(e.key)
-  if (f) n = parseInt(f[1], 10)
-  else if (!opts.inTextInput && /^[1-9]$/.test(e.key)) n = parseInt(e.key, 10)
+  // Alt+1..9 switches payment method from anywhere (even while typing in amount / search)
+  if (e.altKey) {
+    const digitMatch = /^(?:Digit|Key)?([1-9])$/.exec(e.code || e.key)
+    if (digitMatch) n = parseInt(digitMatch[1], 10)
+    else return null
+  } else {
+    const f = /^F(\d)$/.exec(e.key)
+    if (f) n = parseInt(f[1], 10)
+    else if (!opts.inTextInput && /^[1-9]$/.test(e.key)) n = parseInt(e.key, 10)
+  }
   if (n === null || n < 1 || n > Math.min(opts.count, 9)) return null
   return n - 1
 }

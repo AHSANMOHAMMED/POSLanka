@@ -45,8 +45,7 @@ import { SerialPickerModal } from '@/components/pos/SerialPickerModal'
 import { ModifierPickerModal } from '@/components/pos/ModifierPickerModal'
 import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
 import { CameraScanModal } from '@/components/pos/CameraScanModal'
-import { ThemeToggle } from '@/components/ui/theme-toggle'
-import { AppTextSizeControl } from '@/components/ui/AppTextSizeControl'
+import { LanguageSwitcher } from '@/components/layout/LanguageSwitcher'
 import type {
   Item,
   Category,
@@ -237,6 +236,8 @@ export default function POSPage() {
   // K1: cheque taken at the till (tender or second split)
   const emptyCheque = (): ChequeFormValue => ({ chequeNo: '', bankName: '', branchName: '', chequeDate: new Date().toLocaleDateString('en-CA') })
   const [chequeDetails, setChequeDetails] = useState<ChequeFormValue>(emptyCheque)
+  // Card slip / terminal authorization code entered at payment
+  const [cardReference, setCardReference] = useState('')
   const { online, queueSale, cacheCatalog, loadCachedCatalog, newClientSaleId: generateClientSaleId } = useOfflinePos()
   // Gift card state
   const [giftCardNumber, setGiftCardNumber] = useState('')
@@ -616,6 +617,30 @@ export default function POSPage() {
     }
   }, [])
 
+  const handleQuickCreateCustomer = useCallback(async (name: string, phone?: string): Promise<Customer | null> => {
+    try {
+      const res = await fetch('/api/customers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), phone: phone?.trim() || undefined }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        toast.error(err.error || 'Failed to create customer')
+        return null
+      }
+      const newCust = await res.json()
+      setCustomers((prev) => [...prev, newCust])
+      setSelectedCustomer(newCust)
+      toast.success(`Customer "${newCust.name}" attached`)
+      return newCust
+    } catch (e) {
+      console.error(e)
+      toast.error('Error creating customer')
+      return null
+    }
+  }, [])
+
   const fetchVehicles = useCallback(async () => {
     if (!config.showVehicleSelector) return
     try {
@@ -883,9 +908,9 @@ export default function POSPage() {
       return
     }
 
-    // Supermarket / measured items (kg, g, l, ml, m) need measurement input first
+    // Supermarket / measured items (kg, g, l, ml, m, yard) need measurement input first
     const itemUnit = (item.unit || '').toLowerCase()
-    const isMeasuredUnit = ['kg', 'g', 'l', 'ml', 'm'].includes(itemUnit)
+    const isMeasuredUnit = ['kg', 'g', 'l', 'ml', 'm', 'yard', 'yd', 'meter', 'metre'].includes(itemUnit)
     if (((config.enableWeighableItems && item.isWeighable) || isMeasuredUnit) && !isReturnMode) {
       setWeightInputItem(item)
       return
@@ -1237,6 +1262,8 @@ export default function POSPage() {
           unitPrice: price,
           total: qtyToAdd * price,
           taxTemplateId: item.taxTemplateId || null,
+          barcode: item.barcode || undefined,
+          unit: item.unit || null,
           ...(ownBatchLine ? { batchNumber: opts.batchNumber } : {}),
         }]
       }
@@ -1308,31 +1335,49 @@ export default function POSPage() {
     // scale / GS1 label: the label fixes weight and amount
     if (line.isWeighable && line.baseUnitPrice == null) return null
     const info = unitInfo[line.itemId]
-    if (!info || info.serial) return null
-    const opts = unitOptionsFor(info.baseUnit, info.uoms)
+    const item = items.find(i => i.id === line.itemId) || knownItemsRef.current.get(line.itemId)
+    const baseUnit = info?.baseUnit || item?.unit || (line.isWeighable ? 'kg' : 'pcs')
+    const uoms = info?.uoms || []
+    const opts = unitOptionsFor(baseUnit, uoms)
     return opts.length > 1 ? opts : null
   }
 
-  /** Sell a line in another unit: the quantity number stays, price and stock follow the unit */
+  /** Sell a line in another unit: physical quantity and price adapt cleanly */
   function changeLineUnit(cartLineId: string, uom: string) {
     const line = cart.find(c => c.cartLineId === cartLineId)
     const opts = line ? lineUnitOptions(line) : null
-    const info = line ? unitInfo[line.itemId] : null
+    const item = line ? (items.find(i => i.id === line.itemId) || knownItemsRef.current.get(line.itemId)) : null
+    const info = line ? (unitInfo[line.itemId] || (item ? {
+      baseUnit: item.unit || (item.isWeighable ? 'kg' : 'pcs'),
+      basePrice: parseFloat(item.sellingPrice || '0') || 0,
+      serial: !!item.trackSerialNumbers,
+      uoms: [],
+    } : null)) : null
     if (!line || !opts || !info) return
     const opt = opts.find(o => normalizeUnit(o.uom) === normalizeUnit(uom))
     if (!opt) return
     const currentUnit = line.uom || info.baseUnit
     if (!line.isWeighable && normalizeUnit(currentUnit) === normalizeUnit(opt.uom)) return
-    let qty = Math.abs(line.isWeighable ? (line.weight || 1) : line.quantity)
-    if (!unitAllowsFraction(opt.uom) && !Number.isInteger(qty)) qty = Math.max(1, Math.round(qty))
-    const item = items.find(i => i.id === line.itemId) || knownItemsRef.current.get(line.itemId)
+
+    const oldFactor = line.isWeighable ? 1 : (line.uomFactor || 1)
+    // When switching between convertible units (e.g. kg <-> g, l <-> ml, m <-> yard) or a weighed line:
+    // convert the physical base quantity so that 0.25 kg becomes 250 g, 500 ml becomes 0.5 L, 1 m becomes 1.0936 yd
+    const currentBaseQty = line.isWeighable ? (line.weight || 1) : (line.quantity * oldFactor)
+    let qty: number
+    if (opt.factor > 0 && Math.abs(opt.factor - oldFactor) > 1e-9) {
+      qty = currentBaseQty / opt.factor
+      qty = unitAllowsFraction(opt.uom) ? Math.round(qty * 10000) / 10000 : Math.max(1, Math.round(qty))
+    } else {
+      qty = Math.abs(line.isWeighable ? (line.weight || 1) : line.quantity)
+      if (!unitAllowsFraction(opt.uom) && !Number.isInteger(qty)) qty = Math.max(1, Math.round(qty))
+    }
+
     if (item?.trackStock) {
       const others = cart.filter(c => c.itemId === line.itemId && c.cartLineId !== cartLineId).reduce((sum, c) => sum + baseQtyOf(c), 0)
       if (others + qty * opt.factor > parseFloat(item.availableStock)) { toast.warning('Not enough stock available in that unit'); return }
     }
     // A price the cashier set by hand is converted by the factor ratio; otherwise the unit's own
     // price (or base price × factor) — price lists then re-quote the line for its new unit
-    const oldFactor = line.isWeighable ? 1 : (line.uomFactor || 1)
     const manual = !!line.priceLocked && !line.isWeighable && !line.barcode
     const unitPrice = manual
       ? roundCurrency((line.unitPrice * opt.factor) / oldFactor)
@@ -3224,7 +3269,12 @@ export default function POSPage() {
       toast.error('Select a customer to leave part of the bill on credit')
       return
     }
-    const paymentSplits = settled && settled.splits.length > 0 ? settled.splits : undefined
+    const paymentSplits = settled && settled.splits.length > 0
+      ? settled.splits.map((s) => ({
+          ...s,
+          reference: s.method === 'card' && cardReference.trim() ? cardReference.trim() : undefined,
+        }))
+      : undefined
 
     // Hire purchase: [down payment, balance on account] (no down payment → a plain credit sale)
     const hpDown = hp ? roundCurrency(amountVal) : 0
@@ -3280,6 +3330,9 @@ export default function POSPage() {
       promotionDiscount: cartPromotionDiscount > 0 ? cartPromotionDiscount : undefined,
       couponCodes: couponCode ? [couponCode] : undefined,
       prescription: prescription || undefined,
+      cardReference: (paymentMethod === 'card' || paymentSplits?.some((s) => s.method === 'card')) && cardReference.trim()
+        ? cardReference.trim()
+        : undefined,
       cheque: chequeTender
         ? { chequeNo: chequeDetails.chequeNo.trim(), bankName: chequeDetails.bankName.trim(), branchName: chequeDetails.branchName.trim() || undefined, chequeDate: chequeDetails.chequeDate }
         : undefined,
@@ -3296,6 +3349,7 @@ export default function POSPage() {
         setCreditAmount('')
         setExtraTenders([])
         setChequeDetails(emptyCheque())
+        setCardReference('')
         // H4: the offline receipt number (OFF-…) identifies the sale until it syncs
         setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
         rememberOfflineReceipt(queued.offlineRef, salePayload as Record<string, unknown>)
@@ -3334,6 +3388,7 @@ export default function POSPage() {
           setShowPayment(false)
           setAmountPaid('')
           setCreditAmount('')
+          setCardReference('')
           toast.success(`${sale.invoiceNo} saved on account — set up the installment plan`)
           if (printing) await printing
           router.push(`/c/${params.slug}/installments/new?invoiceNo=${encodeURIComponent(sale.invoiceNo)}`)
@@ -3350,6 +3405,7 @@ export default function POSPage() {
         setCreditAmount('')
         setExtraTenders([])
         setChequeDetails(emptyCheque())
+        setCardReference('')
         fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
         setLastSale({
           invoiceNo: sale.invoiceNo,
@@ -3615,11 +3671,9 @@ export default function POSPage() {
             Actions
             <Kbd tone="dark">Alt+A</Kbd>
           </button>
-          <div className="flex items-center text-slate-300">
-            <AppTextSizeControl variant="pos" userId={sessionData?.user?.id || null} />
-          </div>
-          <div className="flex items-center text-slate-300">
-            <ThemeToggle />
+          <div className="flex items-center gap-1.5 bg-slate-800/90 px-2 py-0.5 rounded-lg border border-slate-700/80 text-slate-300" title="Language Switcher (English, Sinhala, Tamil)">
+            <span className="text-[10px] uppercase font-bold text-slate-400 hidden xl:inline">Lang</span>
+            <LanguageSwitcher className="text-xs bg-slate-900 border-slate-700 text-slate-200 rounded px-1.5 py-0.5 font-semibold focus:outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer" />
           </div>
         </div>
       </div>
@@ -3747,6 +3801,11 @@ export default function POSPage() {
         giftCardInfo={giftCardInfo}
         giftCardLookupLoading={giftCardLookupLoading}
         onLookupGiftCard={lookupGiftCard}
+        customers={customers}
+        onSelectCustomer={setSelectedCustomer}
+        onQuickCreateCustomer={handleQuickCreateCustomer}
+        cardReference={cardReference}
+        setCardReference={setCardReference}
         chequeDetails={chequeDetails}
         setChequeDetails={setChequeDetails}
       />

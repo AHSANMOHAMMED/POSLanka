@@ -5,9 +5,38 @@
  * designed as a PDF can be used as the template background at its exact page size.
  * pdfjs is loaded on demand so it never enters the main bundle.
  */
+interface PdfJsDoc {
+  getPage: (pageNumber: number) => Promise<{
+    getViewport: (options: { scale: number }) => { width: number; height: number }
+    render: (params: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }) => { promise: Promise<void> }
+  }>
+  destroy?: () => void | Promise<void>
+}
+
+interface PdfJsModule {
+  GlobalWorkerOptions?: { workerSrc?: string }
+  getDocument: (source: { data: Uint8Array }) => { promise: Promise<PdfJsDoc> }
+}
+
 export async function pdfFirstPageToPng(file: File, dpi = 300): Promise<{ file: File; widthMm: number; heightMm: number }> {
-  const pdfjs = await import('pdfjs-dist')
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString()
+  // Load pdfjs dynamically at runtime to avoid bundler build-time resolution when running in offline/contained environments
+  const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<PdfJsModule>
+  let pdfjs: PdfJsModule
+  try {
+    pdfjs = await dynamicImport('pdfjs-dist')
+  } catch {
+    // Fallback to CDN when running in the browser
+    pdfjs = await dynamicImport('https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/+esm')
+  }
+
+  if (pdfjs?.GlobalWorkerOptions) {
+    try {
+      pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs'
+    } catch {
+      // Worker options fallback
+    }
+  }
+
   const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise
   try {
     const page = await doc.getPage(1)
@@ -30,6 +59,6 @@ export async function pdfFirstPageToPng(file: File, dpi = 300): Promise<{ file: 
       heightMm: (base.height / 72) * 25.4,
     }
   } finally {
-    void doc.destroy()
+    void doc?.destroy?.()
   }
 }
