@@ -20,12 +20,6 @@ const SLOW_REQUEST_MS = (() => {
   return Number.isFinite(n) && n > 0 ? n : 2000
 })()
 
-// Validate and set default environment variables for Railway
-if (!process.env.NEXTAUTH_URL && process.env.RAILWAY_PUBLIC_URL) {
-  process.env.NEXTAUTH_URL = process.env.RAILWAY_PUBLIC_URL
-  log.info('NEXTAUTH_URL set from RAILWAY_PUBLIC_URL', { url: process.env.NEXTAUTH_URL })
-}
-
 if (!process.env.NEXTAUTH_SECRET) {
   if (process.env.NODE_ENV === 'production') {
     log.error('FATAL: NEXTAUTH_SECRET is required in production')

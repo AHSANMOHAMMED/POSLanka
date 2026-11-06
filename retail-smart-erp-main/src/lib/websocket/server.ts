@@ -678,7 +678,7 @@ class WebSocketManager {
       log.warn('connection rejected: IP limit', { ip, count: currentIpCount, limit: MAX_CONNECTIONS_PER_IP })
       // Complete the WebSocket handshake then immediately close with a custom
       // close code.  Writing raw HTTP (e.g. 429) on the socket can confuse
-      // reverse proxies (Railway/Cloudflare) and corrupt the stream.
+      // reverse proxies (Cloudflare, Caddy) and corrupt the stream.
       this.wss.handleUpgrade(req, socket, head, (ws) => {
         ws.close(4029, 'Too many connections')
       })

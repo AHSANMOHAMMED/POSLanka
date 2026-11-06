@@ -52,7 +52,7 @@ export function isServedHost(host: string): boolean {
   const h = host.split(':')[0].toLowerCase()
   if (h === 'localhost' || h === '127.0.0.1') return true
   if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true
-  const suffixes = ['skyerpos.com', 'poslanka.lk', 'retailsmarterp.com', 'sslip.io', 'nip.io', 'ondigitalocean.app', 'up.railway.app']
+  const suffixes = ['skyerpos.com', 'poslanka.lk', 'retailsmarterp.com', 'sslip.io', 'nip.io', 'ondigitalocean.app']
   const base = (process.env.NEXT_PUBLIC_BASE_DOMAIN || '').split(':')[0].toLowerCase()
   if (base && base !== 'localhost') suffixes.push(base)
   if (suffixes.some((s) => h === s || h.endsWith(`.${s}`))) return true

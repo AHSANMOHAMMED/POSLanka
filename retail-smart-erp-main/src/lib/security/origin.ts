@@ -4,7 +4,7 @@
  * Trusted browser origins are: the request's own host (same-origin), the configured base domain
  * (NEXT_PUBLIC_BASE_DOMAIN) and every subdomain of it (tenant subdomains, app., www.),
  * poslanka.lk and its subdomains, hosts listed in ALLOWED_HOSTS, and — outside production —
- * localhost / 127.0.0.1. Shared platform suffixes (*.ondigitalocean.app, *.up.railway.app) are
+ * localhost / 127.0.0.1. Shared platform suffixes (*.ondigitalocean.app) are
  * deliberately NOT trusted wholesale: anyone can deploy an app there. Only the exact host the
  * request was made to is accepted for those.
  */

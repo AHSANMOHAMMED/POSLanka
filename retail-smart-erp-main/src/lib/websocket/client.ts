@@ -399,7 +399,7 @@ class WebSocketClient {
         this.setStatus('connected')
         this.startPing()
         // Only clear quick-failure counter after connection stays alive > 5s
-        // (Railway proxy drops connections after ~1-2s even after auth succeeds)
+        // (some reverse proxies drop connections after ~1-2s even after auth succeeds)
         if (this.stableTimeout) clearTimeout(this.stableTimeout)
         this.stableTimeout = setTimeout(() => {
           this.consecutiveQuickFailures = 0

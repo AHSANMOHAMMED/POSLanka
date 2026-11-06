@@ -6,11 +6,11 @@
  *   DATABASE_CA_CERT  PEM of the server CA (DigitalOcean: "Download CA certificate").
  *                     Newlines may be written as \n. When set, the certificate is verified.
  *
- * Managed databases (DigitalOcean, Railway, Neon, Supabase, RDS…) are detected from the host or
+ * Managed databases (DigitalOcean, Neon, Supabase, RDS…) are detected from the host or
  * from `sslmode=` in the URL. `sslmode` is removed from the URL because node-postgres lets the
  * URL override the explicit `ssl` option.
  */
-const MANAGED_HOST = /ondigitalocean\.com|railway|render\.com|neon\.tech|supabase|amazonaws\.com/i
+const MANAGED_HOST = /ondigitalocean\.com|render\.com|neon\.tech|supabase|amazonaws\.com/i
 
 export function pgConnectionConfig(url = process.env.DATABASE_URL) {
   if (!url) throw new Error('DATABASE_URL is required')

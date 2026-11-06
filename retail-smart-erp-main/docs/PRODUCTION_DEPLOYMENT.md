@@ -235,9 +235,9 @@ To support wildcards for multi-tenancy, configure your DNS provider (e.g. Cloudf
 
 | Type | Name | Target / Value | Proxy Status |
 | :--- | :--- | :--- | :--- |
-| **A / CNAME** | `@` (or `poslanka.lk`) | Railway URL or VPS Public IP | DNS or Proxied |
-| **A / CNAME** | `app` | Railway URL or VPS Public IP | DNS or Proxied |
-| **A / CNAME** | `*` (Wildcard) | Railway URL or VPS Public IP | DNS or Proxied |
+| **A / CNAME** | `@` (or `poslanka.lk`) | Droplet / VPS public IP | DNS or Proxied |
+| **A / CNAME** | `app` | Droplet / VPS public IP | DNS or Proxied |
+| **A / CNAME** | `*` (Wildcard) | Droplet / VPS public IP | DNS or Proxied |
 
 > [!IMPORTANT]
 > If using Cloudflare:
@@ -249,17 +249,12 @@ To support wildcards for multi-tenancy, configure your DNS provider (e.g. Cloudf
 
 ## 6. Deployment Guides
 
-### Option A: Railway Deployment (Recommended)
+### Option A: DigitalOcean Droplet with Docker Compose (current production)
 
-1. Connect your GitHub repository to Railway.
-2. Select the root directory as `retail-smart-erp-main`.
-3. In Railway **Variables**, paste all production environment variables from Section 3.
-4. Add a Custom Domain in Railway: `*.poslanka.lk` and `poslanka.lk`.
-5. Railway will automatically execute the build and start commands defined in `railway.json`:
-   - Build: `npm run build`
-   - Post-deploy: `npm run db:migrate`
-   - Start: `npm start` (Runs custom server with WebSocket support)
-   - Healthcheck: `/api/health`
+The live server is a DigitalOcean Droplet running `deploy/digitalocean/docker-compose.small.yml`
+(PostgreSQL, the app and Caddy for HTTPS). See `deploy/digitalocean/` for the compose files,
+`Caddyfile` and `deploy-droplet.sh`. Run `npm run db:migrate` after each deploy
+(the compose file sets `SKIP_MIGRATIONS=true`).
 
 ### Option B: Linux VPS / Docker (Ubuntu 22.04 / 24.04)
 
@@ -481,7 +476,7 @@ repository secrets (Settings → Secrets and variables → Actions):
 | `CRON_SECRET` | the same value as the app's `CRON_SECRET` env var |
 | `APP_URL` | public base URL of the app, e.g. `https://app.poslanka.lk` (no trailing slash) |
 
-Without them the workflow skips with a notice. Any other scheduler (system cron, Railway cron,
+Without them the workflow skips with a notice. Any other scheduler (system cron,
 cron-job.org) works the same way:
 `curl -fsS -X POST -H "Authorization: Bearer $CRON_SECRET" "$APP_URL/api/cron/<name>"`.
 

@@ -15,7 +15,7 @@ function computeFileHash(filePath) {
 async function rebuildMigrations(connectionString, label) {
   const client = new Client({
     connectionString,
-    ssl: connectionString.includes('railway') ? { rejectUnauthorized: false } : undefined
+    ssl: connectionString.includes('sslmode=require') ? { rejectUnauthorized: false } : undefined
   });
 
   try {

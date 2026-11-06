@@ -107,7 +107,7 @@ For production build instructions via EAS, see [apps/mobile/README.md](apps/mobi
 
 ## 🔒 Production Deployment
 
-For full production deployment instructions on **Railway**, **VPS/Docker**, or **PM2**, including PostgreSQL RLS setup and DNS configuration, consult:
+For full production deployment instructions on a **DigitalOcean Droplet (Docker Compose)**, **VPS**, or **PM2**, including PostgreSQL RLS setup and DNS configuration, consult:
 👉 **[Production Deployment & Operations Guide](docs/PRODUCTION_DEPLOYMENT.md)**
 
 ---

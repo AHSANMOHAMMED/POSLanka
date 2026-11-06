@@ -9,7 +9,7 @@
  */
 import type { PoolConfig } from 'pg'
 
-const MANAGED_HOST = /ondigitalocean\.com|railway|render\.com|neon\.tech|supabase|amazonaws\.com/i
+const MANAGED_HOST = /ondigitalocean\.com|render\.com|neon\.tech|supabase|amazonaws\.com/i
 
 export function pgConnectionConfig(url = process.env.DATABASE_URL): Pick<PoolConfig, 'connectionString' | 'ssl'> {
   if (!url) throw new Error('DATABASE_URL environment variable is not set')

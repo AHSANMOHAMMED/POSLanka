@@ -217,9 +217,6 @@ export async function proxy(request: NextRequest) {
     // Allow raw IPv4 address access (e.g. droplet direct testing)
     if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(clean)) return true
 
-    // Allow Railway deployment URLs
-    if (clean === 'retail-smart-pos-web-production.up.railway.app' || clean.endsWith('.up.railway.app')) return true
-
     // Allow DigitalOcean App Platform domains
     if (clean.endsWith('.ondigitalocean.app')) return true
 
@@ -463,7 +460,6 @@ export async function proxy(request: NextRequest) {
   }
 
   // 4. PLATFORM URLS / DIGITALOCEAN / LOCALHOST / DIRECT IP
-  const isRailwayUrl = normalizedHostname.includes('.railway.app')
   const isDigitalOceanApp = normalizedHostname.endsWith('.ondigitalocean.app')
   const isLocalhostOrIp =
     normalizedHostname === 'localhost' ||
@@ -472,26 +468,6 @@ export async function proxy(request: NextRequest) {
     normalizedHostname.endsWith('.sslip.io') ||
     normalizedHostname.endsWith('.nip.io') ||
     /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(normalizedHostname)
-
-  if (isRailwayUrl) {
-    // In production with custom domain, redirect Railway URL to the main app domain
-    if (isRealDomain && !normalizedHostname.includes(baseDomain)) {
-      return NextResponse.redirect(`${protocol}://${APP_DOMAIN}${pathname}`, 301)
-    }
-
-    // Maintain backward compatibility for /c/[slug] routes
-    if (pathname.startsWith('/c/')) {
-      const slugMatch = pathname.match(/^\/c\/([^/]+)/)
-      if (slugMatch) {
-        const response = NextResponse.next()
-        response.headers.set('x-pathname', pathname)
-        response.headers.set('x-tenant-slug', slugMatch[1])
-        return response
-      }
-    }
-
-    return NextResponse.next()
-  }
 
   if (isDigitalOceanApp || isLocalhostOrIp) {
     if (pathname.startsWith('/c/')) {
