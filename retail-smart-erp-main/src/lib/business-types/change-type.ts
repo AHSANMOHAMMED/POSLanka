@@ -19,7 +19,9 @@ import {
   normalizeFeatureFlags,
   type FeatureFlag,
   type FeatureFlagsMap,
+  type TypePresetOverrides,
 } from '@/lib/features/flags'
+import { loadTypePresetOverrides } from '@/lib/admin/business-type-features'
 import { getRolesForBusinessType } from '@/lib/auth/roles'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { clearSessionValidation } from '@/lib/auth/session-validation-cache'
@@ -38,14 +40,16 @@ export function planFeatureChange(
   saved: Partial<Record<string, boolean>> | null | undefined,
   from: BusinessScope,
   to: BusinessScope,
+  /** Saved super-admin preset edits (business types page); omitted = code presets */
+  presetOverrides?: TypePresetOverrides | null,
 ): FeatureChangePlan {
   const current = normalizeFeatureFlags(saved)
   const oldTypes = scopeTypes(from)
   const added = scopeTypes(to).filter((t) => !oldTypes.includes(t))
   const turnOn: FeatureFlag[] = []
   if (added.length > 0) {
-    const addedPreset = defaultFeatureFlagsForBusinessType(added)
-    const oldPreset = oldTypes.length ? defaultFeatureFlagsForBusinessType(oldTypes) : null
+    const addedPreset = defaultFeatureFlagsForBusinessType(added, presetOverrides)
+    const oldPreset = oldTypes.length ? defaultFeatureFlagsForBusinessType(oldTypes, presetOverrides) : null
     for (const key of FEATURE_FLAGS) {
       if (current[key] || !addedPreset[key]) continue
       const newlyApplies = !featureAppliesTo(key, from) && featureAppliesTo(key, to)
@@ -108,7 +112,7 @@ export async function changeTenantBusinessType(
     const to = { businessType, businessSegments }
     const settings = (current.settings || {}) as Record<string, unknown>
     const savedFlags = (settings.featureFlags || {}) as Partial<FeatureFlagsMap>
-    const plan = planFeatureChange(savedFlags, from, to)
+    const plan = planFeatureChange(savedFlags, from, to, await loadTypePresetOverrides())
 
     const nextSettings = plan.turnOn.length
       ? { ...settings, featureFlags: { ...normalizeFeatureFlags(savedFlags), ...Object.fromEntries(plan.turnOn.map((k) => [k, true])) } }

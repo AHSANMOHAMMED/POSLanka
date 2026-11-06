@@ -18,6 +18,7 @@ import {
 import { asc, eq, sql } from 'drizzle-orm'
 import { adminAuthError, validateAdminSession, adminAudit } from '@/lib/admin'
 import { logError } from '@/lib/ai/error-logger'
+import { currentTypePresets, loadTypePresetOverrides } from '@/lib/admin/business-type-features'
 import { validateBody, validateSearchParams } from '@/lib/validation'
 import { createMinimalDefaults } from '@/lib/setup/create-seed-data'
 import { validateTypeChange } from '@/lib/business-types/change-type'
@@ -26,7 +27,6 @@ import { ensureBusinessTypeSeedData } from '@/lib/business-types/ensure-seed'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import {
   DEFAULT_VENDOR_FEATURE_FLAGS,
-  BUSINESS_TYPE_FEATURE_PRESETS,
   FEATURE_FLAGS,
   defaultFeatureFlagsForBusinessType,
   normalizeFeatureFlags,
@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
       tiers,
       defaults: DEFAULT_VENDOR_FEATURE_FLAGS,
       /** Per business type differences from `defaults` applied when a vendor is created */
-      typeDefaults: BUSINESS_TYPE_FEATURE_PRESETS,
+      typeDefaults: await currentTypePresets(),
       /** Shop types a mall can run (create form); a mall starts with the union of their presets */
       segmentTypes: segmentTypeOptions(),
     })
@@ -236,7 +236,7 @@ export async function POST(request: NextRequest) {
 
     // The business type's preset (electronics: installments, deliveries, warranty …; office: HR,
     // no counter extras), then any switches the admin set explicitly
-    const typeFlags = defaultFeatureFlagsForBusinessType(scope)
+    const typeFlags = defaultFeatureFlagsForBusinessType(scope, await loadTypePresetOverrides())
     const mergedFlags: FeatureFlagsMap = featureFlags
       ? {
           ...typeFlags,

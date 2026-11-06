@@ -138,7 +138,7 @@ function gtinCd(d) { let s = 0; [...d].reverse().forEach((c, i) => { s += +c * (
   await ap.locator('button[type="submit"]').click()
   await ap.waitForURL(u => !u.toString().includes('/login'), { timeout: 30000 }).catch(() => {})
   ok('super admin web login', !ap.url().includes('/login'), ap.url())
-  for (const p of ['', '/sales-wall', '/vendors', `/vendors/${vendorId}`, '/vendors/create', '/users', '/subscriptions', '/payments', '/pricing', '/error-logs', '/audit-logs', '/messages', '/notifications', '/settings']) {
+  for (const p of ['', '/sales-wall', '/vendors', `/vendors/${vendorId}`, '/vendors/create', '/business-types', '/business-types/supermarket', '/users', '/subscriptions', '/payments', '/pricing', '/error-logs', '/audit-logs', '/messages', '/notifications', '/settings']) {
     const before = pageErrors.length + serverErrors.length
     const r = await ap.goto(`${BASE}/sys-control${p}`, { waitUntil: 'domcontentloaded' }).catch(() => null)
     await ap.waitForTimeout(2500)

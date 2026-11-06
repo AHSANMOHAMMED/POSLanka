@@ -25,6 +25,7 @@ import {
   Receipt,
   Search,
   Settings,
+  Shapes,
   Store,
   Sun,
   Users,
@@ -42,6 +43,7 @@ import { LogoMark } from './kit/LogoMark'
 import { BrandWordmark } from '@/components/ui/logo'
 import { AdminRoleProvider, useAdminRole } from './AdminRoleContext'
 import { adminCan, ADMIN_ROLE_LABELS, type AdminPermission, type AdminRole } from '@/lib/admin/roles'
+import { CONSOLE_BUSINESS_TYPES, businessTypeHref, businessTypeIcon } from './business-types-shared'
 
 interface SuperAdminLayoutShellProps {
   children: React.ReactNode
@@ -57,11 +59,22 @@ interface NavLink {
   exact?: boolean
   sub?: boolean
   badgeKey?: 'errors'
+  /** Business type key: shows that type's vendor count as a badge */
+  typeCount?: string
+  /** Hidden while the group is folded (unless it is the current page) */
+  foldable?: boolean
   /** hidden when the admin's role lacks this permission */
   need?: AdminPermission
 }
 
-const NAV: Array<{ group: string; links: NavLink[] }> = [
+interface NavGroup {
+  group: string
+  links: NavLink[]
+  /** localStorage key remembering whether the `foldable` links are shown */
+  foldKey?: string
+}
+
+const NAV: NavGroup[] = [
   {
     group: 'Platform',
     links: [
@@ -70,6 +83,21 @@ const NAV: Array<{ group: string; links: NavLink[] }> = [
       { label: 'Vendors', href: '/sys-control/vendors', icon: Store },
       { label: 'New vendor', href: '/sys-control/vendors/create', icon: PlusCircle, sub: true, need: 'vendors.manage' },
       { label: 'Platform users', href: '/sys-control/users', icon: Users },
+    ],
+  },
+  {
+    group: 'Business types',
+    foldKey: 'adm-nav-business-types-open',
+    links: [
+      { label: 'All types', href: businessTypeHref(), icon: Shapes, exact: true },
+      ...CONSOLE_BUSINESS_TYPES.map(({ type, label }) => ({
+        label,
+        href: businessTypeHref(type),
+        icon: businessTypeIcon(type),
+        sub: true,
+        foldable: true,
+        typeCount: type,
+      })),
     ],
   },
   {
@@ -225,9 +253,127 @@ function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellPr
 
 /* ---------------------------------------------------------------- Sidebar */
 
+// Folded / unfolded nav groups, remembered per browser. useSyncExternalStore keeps the server HTML
+// (everything folded) and the first client render identical.
+const FOLD_EVENT = 'adm-nav-fold'
+function subscribeFold(cb: () => void) {
+  window.addEventListener(FOLD_EVENT, cb)
+  window.addEventListener('storage', cb)
+  return () => {
+    window.removeEventListener(FOLD_EVENT, cb)
+    window.removeEventListener('storage', cb)
+  }
+}
+function readFold(key: string): boolean {
+  try {
+    return window.localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+function writeFold(key: string, open: boolean) {
+  try {
+    window.localStorage.setItem(key, open ? '1' : '0')
+  } catch {
+    // storage blocked (private mode): the choice only lasts until the page reloads
+  }
+  window.dispatchEvent(new Event(FOLD_EVENT))
+}
+
+/** Vendors per business type for the sidebar badges: fetched once, the first time the menu opens. */
+function useTypeCounts(open: boolean): Record<string, number> | null {
+  const [counts, setCounts] = useState<Record<string, number> | null>(null)
+  const started = useRef(false)
+  useEffect(() => {
+    if (!open || started.current) return
+    started.current = true
+    fetch('/api/sys-control/business-types', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { types?: Array<{ type: string; tenantCount: number }> } | null) => {
+        if (d?.types) setCounts(Object.fromEntries(d.types.map((t) => [t.type, t.tenantCount])))
+      })
+      .catch(() => undefined)
+  }, [open])
+  return counts
+}
+
+function NavGroupSection({ section, pathname, role, errors24h, typeCounts }: { section: NavGroup; pathname: string; role: AdminRole; errors24h: number | null; typeCounts: Record<string, number> | null }) {
+  const foldKey = section.foldKey
+  const stored = useSyncExternalStore(
+    subscribeFold,
+    () => (foldKey ? readFold(foldKey) : true),
+    () => !foldKey
+  )
+  const links = section.links.filter((link) => !link.need || adminCan(role, link.need))
+  const foldedActive = links.some((l) => l.foldable && isActive(pathname, l))
+  // A type page that is open always shows its link
+  const unfolded = !foldKey || stored || foldedActive
+  const foldableCount = links.filter((l) => l.foldable).length
+  return (
+    <div>
+      {foldKey ? (
+        <button
+          type="button"
+          onClick={() => writeFold(foldKey, !stored)}
+          aria-expanded={unfolded}
+          disabled={foldedActive}
+          title={foldedActive ? undefined : unfolded ? 'Hide the list' : `Show all ${foldableCount}`}
+          className="flex w-full items-center gap-1 rounded px-2.5 pb-1.5 text-left text-[11.5px] font-medium text-adm-sidebar-muted hover:text-white disabled:cursor-default disabled:hover:text-adm-sidebar-muted focus-visible:outline-2 focus-visible:outline-teal-300"
+        >
+          <span className="flex-1">{section.group}</span>
+          <ChevronDown size={13} aria-hidden className={cn('transition-transform', !unfolded && '-rotate-90')} />
+        </button>
+      ) : (
+        <p className="px-2.5 pb-1.5 text-[11.5px] font-medium text-adm-sidebar-muted">{section.group}</p>
+      )}
+      <ul className="space-y-0.5">
+        {links.filter((link) => unfolded || !link.foldable).map((link) => {
+          const active = isActive(pathname, link)
+          const Icon = link.icon
+          const badge = link.badgeKey === 'errors' && errors24h && errors24h > 0 ? errors24h : null
+          const typeCount = link.typeCount && typeCounts ? typeCounts[link.typeCount] ?? 0 : null
+          return (
+            <li key={link.href}>
+              <Link
+                href={link.href}
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13.5px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-teal-300',
+                  link.sub && 'pl-8 text-[13px]',
+                  link.foldable && 'py-[5px]',
+                  active
+                    ? 'bg-adm-sidebar-active font-medium text-adm-sidebar-active-fg'
+                    : 'text-adm-sidebar-fg hover:bg-white/[0.05] hover:text-white'
+                )}
+              >
+                <Icon size={link.sub ? 15 : 17} aria-hidden className={active ? '' : 'text-adm-sidebar-muted'} />
+                <span className="flex-1 truncate">{link.label}</span>
+                {badge !== null && (
+                  <span className="rounded-full bg-red-500/20 px-1.5 text-[11px] font-semibold leading-5 text-red-300" title="Unresolved errors in the last 24 hours">
+                    {badge > 99 ? '99+' : badge}
+                  </span>
+                )}
+                {typeCount !== null && (
+                  <span
+                    className={cn('adm-num rounded-full px-1.5 text-[11px] leading-5', typeCount > 0 ? 'bg-white/[0.08] text-adm-sidebar-fg' : 'text-adm-sidebar-muted')}
+                    title={`${typeCount} vendor${typeCount === 1 ? '' : 's'}`}
+                  >
+                    {typeCount}
+                  </span>
+                )}
+              </Link>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 function Sidebar({ pathname, open, onClose }: { pathname: string; open: boolean; onClose: () => void }) {
   const { health } = useAdminHealth()
   const role = useAdminRole()
+  const typeCounts = useTypeCounts(open)
   return (
     <aside
       aria-label="Admin navigation"
@@ -255,39 +401,7 @@ function Sidebar({ pathname, open, onClose }: { pathname: string; open: boolean;
 
       <nav className="adm-scroll flex-1 space-y-5 overflow-y-auto px-3 py-4">
         {NAV.map((section) => (
-          <div key={section.group}>
-            <p className="px-2.5 pb-1.5 text-[11.5px] font-medium text-adm-sidebar-muted">{section.group}</p>
-            <ul className="space-y-0.5">
-              {section.links.filter((link) => !link.need || adminCan(role, link.need)).map((link) => {
-                const active = isActive(pathname, link)
-                const Icon = link.icon
-                const badge = link.badgeKey === 'errors' && health && health.errors24h > 0 ? health.errors24h : null
-                return (
-                  <li key={link.href}>
-                    <Link
-                      href={link.href}
-                      aria-current={active ? 'page' : undefined}
-                      className={cn(
-                        'flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13.5px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-teal-300',
-                        link.sub && 'pl-8 text-[13px]',
-                        active
-                          ? 'bg-adm-sidebar-active font-medium text-adm-sidebar-active-fg'
-                          : 'text-adm-sidebar-fg hover:bg-white/[0.05] hover:text-white'
-                      )}
-                    >
-                      <Icon size={link.sub ? 15 : 17} aria-hidden className={active ? '' : 'text-adm-sidebar-muted'} />
-                      <span className="flex-1 truncate">{link.label}</span>
-                      {badge !== null && (
-                        <span className="rounded-full bg-red-500/20 px-1.5 text-[11px] font-semibold leading-5 text-red-300" title="Unresolved errors in the last 24 hours">
-                          {badge > 99 ? '99+' : badge}
-                        </span>
-                      )}
-                    </Link>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
+          <NavGroupSection key={section.group} section={section} pathname={pathname} role={role} errors24h={health?.errors24h ?? null} typeCounts={typeCounts} />
         ))}
       </nav>
 

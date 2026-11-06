@@ -301,17 +301,36 @@ export const BUSINESS_TYPE_FEATURE_PRESETS: Record<string, Partial<FeatureFlagsM
   },
 }
 
+/** Per business type: switches the super admin changed for NEW vendors (on top of the code preset). */
+export type TypePresetOverrides = Record<string, Partial<FeatureFlagsMap>>
+
+/** The code preset with the saved overrides applied — what `typeDefaults` should show. */
+export function mergedTypePresets(overrides?: TypePresetOverrides | null): Record<string, Partial<FeatureFlagsMap>> {
+  const out: Record<string, Partial<FeatureFlagsMap>> = {}
+  for (const [type, preset] of Object.entries(BUSINESS_TYPE_FEATURE_PRESETS)) out[type] = { ...preset }
+  for (const [type, o] of Object.entries(overrides || {})) out[type] = { ...(out[type] || {}), ...o }
+  return out
+}
+
 /**
  * The switches a new vendor of this business type starts with (defaults + the type's preset).
  * A mall runs several types: a switch starts off only when it is off for ALL of its segments.
  */
-export function defaultFeatureFlagsForBusinessType(scope: BusinessScope): FeatureFlagsMap {
+export function defaultFeatureFlagsForBusinessType(
+  scope: BusinessScope,
+  /** Super-admin edits of the presets (system_settings, see src/lib/admin/business-type-features.ts) */
+  overrides?: TypePresetOverrides | null,
+): FeatureFlagsMap {
   const types = scopeTypes(scope)
   if (types.length <= 1) {
     const businessType = types[0]
-    return { ...DEFAULT_VENDOR_FEATURE_FLAGS, ...((businessType && BUSINESS_TYPE_FEATURE_PRESETS[businessType]) || {}) }
+    return {
+      ...DEFAULT_VENDOR_FEATURE_FLAGS,
+      ...((businessType && BUSINESS_TYPE_FEATURE_PRESETS[businessType]) || {}),
+      ...((businessType && overrides?.[businessType]) || {}),
+    }
   }
-  const presets = types.map((t) => defaultFeatureFlagsForBusinessType(t))
+  const presets = types.map((t) => defaultFeatureFlagsForBusinessType(t, overrides))
   return Object.fromEntries(FEATURE_FLAGS.map((k) => [k, presets.some((p) => p[k])])) as FeatureFlagsMap
 }
 

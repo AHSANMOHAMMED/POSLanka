@@ -13,6 +13,7 @@ import { Card, ListItem, SectionHeader, type IconName } from '../../src/componen
 
 const NATIVE: Array<{ title: string; subtitle: string; icon: IconName; href: string; permission?: string }> = [
   { title: 'Create vendor', subtitle: 'New tenant onboarding', icon: 'add-circle-outline', href: '/admin/vendors/create', permission: 'vendors.manage' },
+  { title: 'Business types', subtitle: 'Features & usage by type', icon: 'layers-outline', href: '/admin/business-types' },
   { title: 'Subscriptions', subtitle: 'Plans, extend, lock', icon: 'card-outline', href: '/admin/subscriptions', permission: 'billing' },
   { title: 'Pricing', subtitle: 'Monthly / yearly / lifetime', icon: 'pricetags-outline', href: '/admin/pricing', permission: 'billing' },
   { title: 'Payments', subtitle: 'Bank slips & PayHere', icon: 'cash-outline', href: '/admin/payments', permission: 'billing' },

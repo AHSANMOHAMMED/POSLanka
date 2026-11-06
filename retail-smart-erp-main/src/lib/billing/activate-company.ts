@@ -33,7 +33,8 @@ import { eq, sql } from 'drizzle-orm'
 import { getCurrencyByCountry } from '@/lib/utils/countries'
 import { getNextPeriodDates } from '@/lib/billing/proration'
 import { broadcastAccountChange } from '@/lib/websocket/broadcast'
-import { BUSINESS_TYPE_FEATURE_PRESETS } from '@/lib/features/flags'
+import { mergedTypePresets } from '@/lib/features/flags'
+import { loadTypePresetOverrides } from '@/lib/admin/business-type-features'
 
 // Valid plan enum values from schema
 const VALID_PLANS = ['trial', 'basic', 'standard', 'premium'] as const
@@ -96,6 +97,8 @@ export async function activateCompanyFromPending(
 ): Promise<ActivationResult> {
   const now = new Date()
   const currency = getCurrencyByCountry(pending.country)
+  // Super-admin edits of the business-type presets (Business types page)
+  const presetOverrides = await loadTypePresetOverrides()
 
   const result = await db.transaction(async (tx) => {
     // 1. Lock the pending company row and re-check status (prevents double activation)
@@ -166,11 +169,11 @@ export async function activateCompanyFromPending(
       settings: {
         featureFlags: {
           // the business type's preset (electronics: installments, deliveries …; office: HR)
-          ...(BUSINESS_TYPE_FEATURE_PRESETS[pending.businessType] || {}),
+          ...(mergedTypePresets(presetOverrides)[pending.businessType] || {}),
           accounting: true,
           purchase: true,
           credit_customer: true,
-          loyalty: BUSINESS_TYPE_FEATURE_PRESETS[pending.businessType]?.loyalty ?? true,
+          loyalty: mergedTypePresets(presetOverrides)[pending.businessType]?.loyalty ?? true,
           multi_warehouse: false,
           advanced_reports: true,
           whatsapp: true,

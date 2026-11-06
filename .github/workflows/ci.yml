@@ -110,6 +110,7 @@ jobs:
           npx tsx scripts/tests/pos-keyboard.ts
           npx tsx scripts/tests/ws-print-layout.ts
           npx tsx scripts/tests/w7-logo-raster.ts
+          npx tsx scripts/tests/s1-security-sanitize.ts
           npx tsx scripts/tests/w7-code128.ts
           npx tsx scripts/tests/w7-mobile-receipt.ts
           npx tsx scripts/tests/l7-print-agent-install.ts
@@ -170,6 +171,8 @@ jobs:
           for t in h1-pos-controls h2-tax h3-inventory-purchasing h5-pricing-catalog j1-pharmacy-features j2-pharmacy-complete k1-cheques-expenses m1-feature-switches; do
             npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/$t.ts
           done
+      - name: Report / list query performance fixes (batched sums, bounded lists)
+        run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/p1-perf-queries.ts
       - name: Branch isolation (staff of one branch cannot see or change another)
         run: npx tsx --tsconfig scripts/tests/w8-harness/tsconfig.json scripts/tests/k4-branches.ts
       - name: Attendance & payroll, hire purchase, document units, recurring/projects, shift collections, labels, measure units
@@ -198,6 +201,7 @@ jobs:
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/i6-finish.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l9-admin-stock.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l17-admin-business.ts
+          npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/p2-business-types.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/l14-item-create.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/n1-service-jobs.ts
           npx tsx --tsconfig scripts/tests/i3-harness/tsconfig.json scripts/tests/o1-mall.ts

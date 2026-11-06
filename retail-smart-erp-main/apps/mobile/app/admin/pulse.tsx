@@ -168,7 +168,15 @@ export default function AdminPulseScreen() {
 
           {sales ? (
             <>
-              <SectionTitle>Sales by business type</SectionTitle>
+              <SectionTitle
+                right={
+                  <Pressable onPress={() => router.push('/admin/business-types' as any)} hitSlop={8}>
+                    <Text style={{ fontSize: 12, fontWeight: '800', color: THEME.colors.primary }}>Features & usage ›</Text>
+                  </Pressable>
+                }
+              >
+                Sales by business type
+              </SectionTitle>
               <Card>
                 {sales.byBusinessType.length === 0 ? (
                   <Text style={adminStyles.empty}>No sales in this range.</Text>
@@ -176,7 +184,11 @@ export default function AdminPulseScreen() {
                   sales.byBusinessType.map((t) => {
                     const pct = typeTotal > 0 ? Math.round((t.netSales / typeTotal) * 100) : 0
                     return (
-                      <View key={t.businessType} style={{ paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: THEME.colors.border }}>
+                      <Pressable
+                        key={t.businessType}
+                        style={{ paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: THEME.colors.border }}
+                        onPress={() => router.push({ pathname: '/admin/business-types/[type]', params: { type: t.businessType } } as any)}
+                      >
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                           <Text style={{ fontSize: 13, fontWeight: '700', color: THEME.colors.text }}>
                             {businessTypeLabel(t.businessType)}
@@ -190,7 +202,7 @@ export default function AdminPulseScreen() {
                         <View style={adminStyles.bar}>
                           <View style={[adminStyles.barFill, { width: `${pct}%` }]} />
                         </View>
-                      </View>
+                      </Pressable>
                     )
                   })
                 )}

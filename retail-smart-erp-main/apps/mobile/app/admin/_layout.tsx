@@ -32,6 +32,8 @@ export default function AdminLayout() {
       <Stack.Screen name="vendor-data" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="vendor-business" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="recycle-bin" options={{ animation: 'slide_from_right' }} />
+      <Stack.Screen name="business-types" />
+      <Stack.Screen name="business-types/[type]" options={{ animation: 'slide_from_right' }} />
       <Stack.Screen name="approvals" />
       <Stack.Screen name="more" />
     </Stack>
