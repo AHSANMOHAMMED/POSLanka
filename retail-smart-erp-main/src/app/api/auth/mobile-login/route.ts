@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { validateBody } from '@/lib/validation/helpers'
 import { isAccountActive } from '@/lib/auth/live-user'
-import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
+import { loginGuard } from '@/lib/auth/rate-limit'
 import { findTenantByIdentifier, normalizeBusinessId } from '@/lib/tenant/business-id'
 import { findLoginUser } from '@/lib/auth/login-identity'
 import { getEffectivePermissions } from '@/lib/auth/roles'
@@ -45,18 +45,17 @@ export async function POST(request: NextRequest) {
   const tenant = await findTenantByIdentifier(identifier)
   // Rate-limit per resolved company (so "PL-985633", "pl985633" and the slug share one bucket);
   // an unknown identifier gets its own normalised bucket so guessing is limited too.
-  const rateKey = `mobile:${tenant?.id ?? `unknown:${normalizeBusinessId(identifier) ?? identifier.toLowerCase()}`}:${email}:${ip}`
-  const limit = await checkRateLimit(rateKey, LOGIN_RATE_LIMIT)
-  if (limit.limited) {
+  const guard = loginGuard(`mobile:${tenant?.id ?? `unknown:${normalizeBusinessId(identifier) ?? identifier.toLowerCase()}`}`, email, ip)
+  if (await guard.limited()) {
     return NextResponse.json({ error: 'Too many login attempts. Try again in a few minutes.' }, { status: 429 })
   }
 
   if (!tenant) {
-    await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
+    await guard.fail()
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
   if (tenant.status !== 'active') {
-    await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
+    await guard.fail()
     const { resolveLockMessage } = await import('@/lib/tenant/lock-message')
     const msg = resolveLockMessage({
       status: tenant.status,
@@ -98,16 +97,16 @@ export async function POST(request: NextRequest) {
 
   const user = await withTenant(tenant.id, (tdb) => findLoginUser(tdb, tenant, email, { activeOnly: true }))
   if (!user) {
-    await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
+    await guard.fail()
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
   const valid = await bcrypt.compare(parsed.data.password, user.passwordHash)
   if (!valid || (user.accountId && !(await isAccountActive(user.accountId)))) {
-    await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
+    await guard.fail()
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
-  await clearRateLimit(rateKey, LOGIN_RATE_LIMIT.category).catch(() => undefined)
+  await guard.clear().catch(() => undefined)
   await withTenant(tenant.id, async (tdb) =>
     tdb.update(users).set({ lastLoginAt: new Date(), lastActiveAt: new Date() }).where(eq(users.id, user.id))
   ).catch(() => undefined)

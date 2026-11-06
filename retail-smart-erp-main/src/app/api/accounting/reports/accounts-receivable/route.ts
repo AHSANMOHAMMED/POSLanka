@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { requirePermission } from '@/lib/auth/roles'
 import { withTenant } from '@/lib/db'
-import { sales, customers, journalEntryItems, journalEntries, paymentEntryReferences, paymentEntries } from '@/lib/db/schema'
+import { sales, customers, journalEntryItems, journalEntries, paymentEntries } from '@/lib/db/schema'
 import { and, sql, ne, eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { sumAllocatedByReference, sumAllocatedBySourceJeItem, loadNamesInto } from '@/lib/accounting/allocation-sums'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { agingReportQuerySchema } from '@/lib/validation/schemas/accounting'
 
@@ -161,21 +162,15 @@ export async function GET(request: NextRequest) {
           sql`${journalEntries.postingDate} <= ${new Date(asOfDate + 'T23:59:59')}`,
         ))
 
+      // Batched lookups (were one query per JE line): allocated amounts and customer names
+      const jeInvoiceAllocated = await sumAllocatedByReference(db, 'journal_entry', jeReceivables.map((je) => je.jeItemId))
+      await loadNamesInto(db, customers, jeReceivables.map((je) => je.partyId), customerMap)
+
       for (const je of jeReceivables) {
         if (!je.partyId) continue
         const debitAmount = Number(je.debit)
 
-        // Sum already-allocated (reconciled) amounts for this JE invoice item
-        const [allocated] = await db.select({
-          total: sql<string>`COALESCE(SUM(CAST(${paymentEntryReferences.allocatedAmount} AS numeric)), 0)`,
-        })
-          .from(paymentEntryReferences)
-          .where(and(
-            eq(paymentEntryReferences.referenceType, 'journal_entry'),
-            eq(paymentEntryReferences.referenceId, je.jeItemId),
-          ))
-
-        const allocatedAmount = Number(allocated?.total || 0)
+        const allocatedAmount = jeInvoiceAllocated.get(je.jeItemId) ?? 0
         const outstanding = Math.round((debitAmount - allocatedAmount) * 100) / 100
         if (outstanding <= 0) continue
 
@@ -195,16 +190,7 @@ export async function GET(request: NextRequest) {
             invoices: [],
             payments: [],
           }
-          // Fetch customer name if not in map yet
-          if (!customerMap[je.partyId]) {
-            const [cust] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, je.partyId))
-            if (cust) {
-              customerMap[je.partyId] = cust.name
-              customerAging[key].customerName = cust.name
-            }
-          } else {
-            customerAging[key].customerName = customerMap[je.partyId]
-          }
+          if (customerMap[je.partyId]) customerAging[key].customerName = customerMap[je.partyId]
         }
 
         let agingBucket: string
@@ -256,6 +242,8 @@ export async function GET(request: NextRequest) {
           sql`${paymentEntries.postingDate} <= ${asOfDate}`,
         ))
 
+      await loadNamesInto(db, customers, unallocatedPEs.map((pe) => pe.partyId), customerMap)
+
       for (const pe of unallocatedPEs) {
         const unallocated = Number(pe.unallocatedAmount)
         if (unallocated <= 0) continue
@@ -270,13 +258,6 @@ export async function GET(request: NextRequest) {
             current: 0, days31to60: 0, days61to90: 0, over90: 0, total: 0,
             invoices: [],
             payments: [],
-          }
-          if (pe.partyId && !customerMap[pe.partyId]) {
-            const [cust] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, pe.partyId))
-            if (cust) {
-              customerMap[pe.partyId] = cust.name
-              customerAging[key].customerName = cust.name
-            }
           }
         }
 
@@ -317,17 +298,14 @@ export async function GET(request: NextRequest) {
           sql`${journalEntries.postingDate} <= ${asOfDate}`,
         ))
 
+      const jePaymentAllocated = await sumAllocatedBySourceJeItem(db, jePayments.map((je) => je.jeItemId))
+      await loadNamesInto(db, customers, jePayments.map((je) => je.partyId), customerMap)
+
       for (const je of jePayments) {
         if (!je.partyId) continue
         const creditAmount = Number(je.credit)
 
-        const [allocated] = await db.select({
-          total: sql<string>`COALESCE(SUM(CAST(${paymentEntryReferences.allocatedAmount} AS numeric)), 0)`,
-        })
-          .from(paymentEntryReferences)
-          .where(eq(paymentEntryReferences.sourceJeItemId, je.jeItemId))
-
-        const allocatedAmount = Number(allocated?.total || 0)
+        const allocatedAmount = jePaymentAllocated.get(je.jeItemId) ?? 0
         const unallocated = Math.round((creditAmount - allocatedAmount) * 100) / 100
         if (unallocated <= 0) continue
 
@@ -342,13 +320,6 @@ export async function GET(request: NextRequest) {
             current: 0, days31to60: 0, days61to90: 0, over90: 0, total: 0,
             invoices: [],
             payments: [],
-          }
-          if (!customerMap[je.partyId]) {
-            const [cust] = await db.select({ name: customers.name }).from(customers).where(eq(customers.id, je.partyId))
-            if (cust) {
-              customerMap[je.partyId] = cust.name
-              customerAging[key].customerName = cust.name
-            }
           }
         }
 

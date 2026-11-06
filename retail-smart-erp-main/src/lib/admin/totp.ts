@@ -2,7 +2,8 @@ import crypto from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { superAdmins } from '@/lib/db/schema'
-import { checkRateLimit, recordRateLimitAttempt, clearRateLimit } from '@/lib/auth/rate-limit'
+import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, consumeRateLimit } from '@/lib/auth/rate-limit'
+import { decryptSecret } from '@/lib/crypto/secret-box'
 
 const BASE32_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
 
@@ -96,22 +97,32 @@ export async function totpQrDataUrl(
   }
 }
 
-export function verifyTotp(code: string, secret: string): boolean {
+/** The 30-second step the code matched (±1 step of clock drift), or null. Constant-time compare. */
+export function verifyTotpStep(code: string, secret: string): number | null {
   try {
     const cleanCode = code.replace(/\s+/g, '')
-    if (cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) return false
+    if (cleanCode.length !== 6 || !/^\d{6}$/.test(cleanCode)) return null
     const secretBytes = base32Decode(secret)
     const currentStep = Math.floor(Date.now() / 1000 / 30)
 
     for (let step = currentStep - 1; step <= currentStep + 1; step++) {
-      if (getTotpCode(secretBytes, step) === cleanCode) {
-        return true
+      if (crypto.timingSafeEqual(Buffer.from(getTotpCode(secretBytes, step)), Buffer.from(cleanCode))) {
+        return step
       }
     }
-    return false
+    return null
   } catch {
-    return false
+    return null
   }
+}
+
+export function verifyTotp(code: string, secret: string): boolean {
+  return verifyTotpStep(code, secret) !== null
+}
+
+/** Stored TOTP secrets are encrypted (secret-box); legacy rows hold the plain base32 secret. */
+export function readTotpSecret(stored: string | null | undefined): string | null {
+  return decryptSecret(stored)
 }
 
 /** Returns 'ok' | 'required' | 'invalid' for a login attempt. */
@@ -129,7 +140,15 @@ export async function checkAdminTotp(
   // code needs its own brute-force limit: 5 wrong codes → locked for 15 minutes.
   const key = `sa-totp:${superAdminId}`
   if ((await checkRateLimit(key, TOTP_RATE_LIMIT)).limited) return 'invalid'
-  if (verifyTotp(code, admin.totpSecret)) {
+  const secret = readTotpSecret(admin.totpSecret)
+  const step = secret ? verifyTotpStep(code, secret) : null
+  if (step !== null) {
+    // Each code works once: a code seen on the wire (or shoulder-surfed) cannot be replayed.
+    const used = await consumeRateLimit(`sa-totp-used:${superAdminId}:${step}`, TOTP_USED_LIMIT)
+    if (used.limited) {
+      await recordRateLimitAttempt(key, TOTP_RATE_LIMIT)
+      return 'invalid'
+    }
     await clearRateLimit(key, TOTP_RATE_LIMIT.category)
     return 'ok'
   }
@@ -138,3 +157,4 @@ export async function checkAdminTotp(
 }
 
 const TOTP_RATE_LIMIT = { maxAttempts: 5, windowMs: 15 * 60 * 1000, category: 'admin_totp', failClosed: true }
+const TOTP_USED_LIMIT = { maxAttempts: 1, windowMs: 2 * 60 * 1000, category: 'admin_totp_used', failClosed: true }

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { resolveUserIdRequired } from '@/lib/auth'
 import { withAuthTenant, withAuthTenantTransaction } from '@/lib/db'
 import { appointments, customers, vehicles, serviceTypes, tenants } from '@/lib/db/schema'
-import { eq, and, gte, lte, desc, sql } from 'drizzle-orm'
+import { eq, and, gte, lte, desc, sql, or, ilike } from 'drizzle-orm'
+import { escapeLikePattern } from '@/lib/utils/sql'
 import { requirePermission } from '@/lib/auth/roles'
 import { generateActivityDescription } from '@/lib/utils/activity-log'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -90,6 +91,20 @@ export async function GET(request: NextRequest) {
       conditions.push(lte(appointments.scheduledDate, endDate))
     }
 
+    // Search (customer name, vehicle plate/make/model, service type, notes) runs in SQL so the
+    // page is paginated by the database instead of loading every appointment and slicing in JS.
+    if (search) {
+      const pattern = `%${escapeLikePattern(search)}%`
+      conditions.push(or(
+        ilike(appointments.notes, pattern),
+        // Subquery tables use literal aliases: the relational query builder rewrites every
+        // drizzle column reference in `where` to the root "appointments" alias.
+        sql`EXISTS (SELECT 1 FROM customers c WHERE c.id = ${appointments.customerId} AND c.name ILIKE ${pattern})`,
+        sql`EXISTS (SELECT 1 FROM vehicles v WHERE v.id = ${appointments.vehicleId} AND (v.license_plate ILIKE ${pattern} OR v.make ILIKE ${pattern} OR v.model ILIKE ${pattern}))`,
+        sql`EXISTS (SELECT 1 FROM service_types st WHERE st.id = ${appointments.serviceTypeId} AND st.name ILIKE ${pattern})`,
+      )!)
+    }
+
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
     // Get total count for pagination
@@ -102,11 +117,7 @@ export async function GET(request: NextRequest) {
     const limit = all ? 1000 : Math.min(pageSize, 100)
     const offset = all ? undefined : (page - 1) * pageSize
 
-    // For search, we need to fetch more and filter (search includes customer/vehicle)
-    const fetchLimit = search ? undefined : limit
-    const fetchOffset = search ? undefined : offset
-
-    let data = await db.query.appointments.findMany({
+    const data = await db.query.appointments.findMany({
       where: whereClause,
       with: {
         customer: true,
@@ -115,33 +126,9 @@ export async function GET(request: NextRequest) {
         workOrder: true,
       },
       orderBy: [desc(appointments.scheduledDate)],
-      limit: fetchLimit,
-      offset: fetchOffset,
+      limit,
+      offset,
     })
-
-    // Apply search filter if provided
-    let filteredTotal = totalCount
-    if (search) {
-      const searchLower = search.toLowerCase()
-      data = data.filter(apt => {
-        const customer = Array.isArray(apt.customer) ? apt.customer[0] : apt.customer
-        const vehicle = Array.isArray(apt.vehicle) ? apt.vehicle[0] : apt.vehicle
-        const serviceType = Array.isArray(apt.serviceType) ? apt.serviceType[0] : apt.serviceType
-        const customerMatch = customer?.name?.toLowerCase().includes(searchLower)
-        const vehicleMatch = vehicle && (
-          vehicle.licensePlate?.toLowerCase().includes(searchLower) ||
-          vehicle.make?.toLowerCase().includes(searchLower) ||
-          vehicle.model?.toLowerCase().includes(searchLower)
-        )
-        const serviceMatch = serviceType?.name?.toLowerCase().includes(searchLower)
-        const notesMatch = apt.notes?.toLowerCase().includes(searchLower)
-        return customerMatch || vehicleMatch || serviceMatch || notesMatch
-      })
-      filteredTotal = data.length
-      if (!all) {
-        data = data.slice(offset || 0, (offset || 0) + (limit || pageSize))
-      }
-    }
 
     if (all) {
       return { data, isAll: true }
@@ -152,8 +139,8 @@ export async function GET(request: NextRequest) {
       pagination: {
         page,
         pageSize,
-        total: search ? filteredTotal : totalCount,
-        totalPages: Math.ceil((search ? filteredTotal : totalCount) / pageSize),
+        total: totalCount,
+        totalPages: Math.ceil(totalCount / pageSize),
       }
     }
   })

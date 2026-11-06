@@ -38,6 +38,9 @@ interface GeneralLedgerData {
     closingBalance: number
   }
   data: GLEntry[]
+  /** Set when the date range had more rows than the API returns (totals still cover the whole range). */
+  truncated?: boolean
+  rowLimit?: number
 }
 
 function formatCurrency(amount: number): string {
@@ -147,6 +150,11 @@ export default function GeneralLedgerPage() {
               <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">({data.account.rootType})</span>
             </p>
           </div>
+          {data.truncated && (
+            <div className="px-4 py-2 text-xs text-amber-800 bg-amber-50 border-b border-amber-200 dark:text-amber-200 dark:bg-amber-900/30 dark:border-amber-800">
+              Showing the first {(data.rowLimit ?? data.data.length).toLocaleString()} entries only. The totals and closing balance cover the whole period — pick a shorter date range to see every entry.
+            </div>
+          )}
           <div className="overflow-x-auto list-container-xl">
             <table className="w-full">
               <thead className="table-sticky-header bg-gray-50 dark:bg-gray-900">

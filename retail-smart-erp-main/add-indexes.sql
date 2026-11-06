@@ -1,3 +1,8 @@
+-- !!! SUPERSEDED — DO NOT APPLY MANUALLY !!!
+-- Everything still useful in this file is now created by the numbered migrations
+-- drizzle/0092, drizzle/0168 and drizzle/0197_perf_indexes.sql, which run automatically via
+-- `npm run db:migrate`. Running this file by hand creates duplicate indexes. Kept for history only.
+
 -- Performance Indexes for Retail Smart POS
 -- Run this file to dramatically improve query performance
 -- Execute with: psql -d your_database -f add-indexes.sql

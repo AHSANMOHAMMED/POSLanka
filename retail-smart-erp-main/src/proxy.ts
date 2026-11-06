@@ -38,10 +38,7 @@ function isOurOrigin(origin: string): boolean {
       host.endsWith('.skyerpos.com') ||
       host === 'poslanka.lk' ||
       host.endsWith('.poslanka.lk') ||
-      host.endsWith('.ondigitalocean.app') ||
-      host.endsWith('.up.railway.app') ||
-      host === 'localhost' ||
-      host === '127.0.0.1'
+      (process.env.NODE_ENV !== 'production' && (host === 'localhost' || host === '127.0.0.1'))
     )
   } catch {
     return false

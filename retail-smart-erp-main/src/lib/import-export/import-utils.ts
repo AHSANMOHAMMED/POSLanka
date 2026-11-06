@@ -63,7 +63,8 @@ export function parseCsv(csvString: string, maxRows: number = MAX_IMPORT_ROWS): 
     header: true,
     skipEmptyLines: true,
     transformHeader: (header: string) => header.trim(),
-    transform: (value: string) => value.trim(),
+    // Undo the formula guard our CSV export adds ("'=x" / "'-note"), so exports re-import unchanged.
+    transform: (value: string) => { const v = value.trim(); return /^'[=+\-@]/.test(v) ? v.slice(1) : v },
     step: (result, parser) => {
       if (result.errors.length > 0) {
         warnings += result.errors.length

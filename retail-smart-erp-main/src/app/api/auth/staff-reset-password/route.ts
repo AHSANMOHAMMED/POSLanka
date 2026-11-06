@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     let payload: { userId?: string; email?: string; tenantId?: string; purpose?: string; iat?: number }
     try {
-      const result = await jwtVerify(token, new TextEncoder().encode(secret))
+      const result = await jwtVerify(token, new TextEncoder().encode(secret), { algorithms: ['HS256'] })
       payload = result.payload as typeof payload
     } catch {
       return NextResponse.json(

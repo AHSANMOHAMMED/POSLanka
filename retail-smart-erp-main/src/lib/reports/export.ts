@@ -2,6 +2,7 @@
 
 import ExcelJS from 'exceljs'
 import Papa from 'papaparse'
+import { CSV_FORMULA_RE } from '@/lib/utils/csv-safe'
 
 export interface ExportColumn {
   key: string
@@ -106,7 +107,7 @@ export function exportToCSV(
     return mapped
   })
 
-  const csv = Papa.unparse(mappedData)
+  const csv = Papa.unparse(mappedData, { escapeFormulae: CSV_FORMULA_RE })
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
   downloadBlob(blob, `${reportName}.csv`)
 }

@@ -1,7 +1,7 @@
 // Letter heads (letter_heads table) applied to printed documents.
 // Heights are millimetres (the letter-head settings page labels them "mm"); the header / footer
 // HTML is sanitised (no scripts / event handlers) because it is written into a same-origin print frame.
-import { sanitizeHtml } from '@/lib/utils/sanitize-html'
+import { sanitizeCss, sanitizeHtml } from '@/lib/utils/sanitize-html'
 
 export interface LetterHeadConfig {
   headerHtml?: string | null
@@ -83,7 +83,7 @@ export function buildTemplateStyles(
   if (config.letterHead) css += `\n${LETTER_HEAD_CSS}`
 
   if (config.customCss) {
-    css += '\n' + config.customCss
+    css += '\n' + sanitizeCss(config.customCss)
   }
 
   return css

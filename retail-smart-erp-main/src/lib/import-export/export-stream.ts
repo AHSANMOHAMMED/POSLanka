@@ -8,6 +8,7 @@ import { sql, ilike, and, or, gte, lte, inArray, eq, type SQL } from 'drizzle-or
 import { withTenant, type TenantDb } from '@/lib/db'
 import * as schema from '@/lib/db/schema'
 import { escapeLikePattern } from '@/lib/utils/sql'
+import { neutralizeCsvFormula } from '@/lib/utils/csv-safe'
 import { getEntityConfig, getExportFields, STOCK_COLUMN_PREFIX, type EntityConfig, type EntityFieldConfig } from './entity-config'
 import { formatExportValue, flattenParentChildRows } from './export-utils'
 
@@ -405,7 +406,8 @@ export async function* iterateExportRows(req: ExportRequest, plan?: ExportPlan):
   }
 }
 
-function escapeCsv(value: string): string {
+function escapeCsv(raw: string): string {
+  const value = neutralizeCsvFormula(raw)
   if (/[",\r\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
   return value
 }

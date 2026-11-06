@@ -105,7 +105,7 @@ export async function triggerNotification(
 
       if ((template.channel === 'email' || template.channel === 'both') && email && template.emailSubject && template.emailBody) {
         const renderedSubject = await renderTemplate(template.emailSubject, renderContext)
-        const renderedBody = await renderTemplate(template.emailBody, renderContext)
+        const renderedBody = await renderTemplate(template.emailBody, renderContext, { html: true })
         await sendEmailWithLogging({
           to: email,
           subject: renderedSubject,

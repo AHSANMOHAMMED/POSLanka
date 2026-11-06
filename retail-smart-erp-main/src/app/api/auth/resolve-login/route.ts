@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { db, withTenant, withoutTenant } from '@/lib/db'
 import { accountTenants, accounts, tenants, users } from '@/lib/db/schema'
 import { validateBody } from '@/lib/validation/helpers'
-import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
+import { loginGuard } from '@/lib/auth/rate-limit'
 import { findTenantByIdentifier } from '@/lib/tenant/business-id'
 import { findLoginUser } from '@/lib/auth/login-identity'
 import { landingPathForRole } from '@/lib/auth/landing'
@@ -42,15 +42,14 @@ export async function POST(request: NextRequest) {
     const { password } = parsed.data
     const businessId = parsed.data.businessId?.trim()
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || request.headers.get('x-real-ip') || 'unknown'
-    const rateKey = `resolve:${login}:${ip}`
-    const limit = await checkRateLimit(rateKey, LOGIN_RATE_LIMIT)
-    if (limit.limited) return NextResponse.json({ error: 'Too many sign-in attempts. Try again in a few minutes.' }, { status: 429 })
+    const guard = loginGuard('resolve', login, ip)
+    if (await guard.limited()) return NextResponse.json({ error: 'Too many sign-in attempts. Try again in a few minutes.' }, { status: 429 })
     const fail = async (status = 401, body: Record<string, unknown> = INVALID) => {
-      await recordRateLimitAttempt(rateKey, LOGIN_RATE_LIMIT)
+      await guard.fail()
       return NextResponse.json(body, { status })
     }
     const ok = async (target: Target) => {
-      await clearRateLimit(rateKey, LOGIN_RATE_LIMIT.category).catch(() => undefined)
+      await guard.clear().catch(() => undefined)
       return NextResponse.json(target)
     }
 

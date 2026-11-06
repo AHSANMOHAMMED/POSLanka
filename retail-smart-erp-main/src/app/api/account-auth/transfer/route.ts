@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { NextResponse } from 'next/server'
 import { accountAuth } from '@/lib/auth/account-auth'
 import { db } from '@/lib/db'
@@ -70,7 +71,8 @@ export async function POST(request: Request) {
         userAgent,
       },
       secret,
-      { expiresIn: '30s' }
+      // jwtid: single-use — the company login burns it (see transfer provider in lib/auth)
+      { expiresIn: '30s', jwtid: crypto.randomUUID() }
     )
 
     return NextResponse.json({

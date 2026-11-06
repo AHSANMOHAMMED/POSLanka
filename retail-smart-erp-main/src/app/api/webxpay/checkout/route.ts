@@ -7,6 +7,7 @@ import { payhereTransactions } from '@/lib/db/schema'
 import { createWebXPayCheckout, webxpayConfig } from '@/lib/webxpay'
 import { validateBody } from '@/lib/validation/helpers'
 import { logError } from '@/lib/ai/error-logger'
+import { clientErrorMessage } from '@/lib/api/client-error'
 
 const schema = z.object({
   /** Must already exist as a pending payhere_transactions.order_id for this account. */
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     logError('api/webxpay/checkout', error)
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Checkout failed' },
+      { error: clientErrorMessage(error, 'Checkout failed', /^WebXPay is not configured$/) },
       { status: 500 },
     )
   }

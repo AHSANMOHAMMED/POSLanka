@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireCronSecret } from '@/lib/notifications/cron-auth'
 import { db } from '@/lib/db'
 import { tenants, subscriptions, lockoutEvents, accountNotifications } from '@/lib/db/schema'
 import { inArray, eq, and, lt, isNull, isNotNull, sql, or } from 'drizzle-orm'
@@ -10,12 +11,8 @@ import { retryUnactivatedPayments } from '@/lib/payhere/activate-payment'
 // Runs every 6 hours to enforce subscription limits and lockouts
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const denied = requireCronSecret(request)
+    if (denied) return denied
 
     const now = new Date()
     const stats = {

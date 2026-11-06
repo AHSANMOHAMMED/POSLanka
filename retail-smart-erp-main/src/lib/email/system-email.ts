@@ -21,6 +21,11 @@ export async function sendSystemEmail(options: {
 }) {
   const apiKey = process.env.RESEND_API_KEY
   if (!apiKey) {
+    // Production: never write the body (password-reset / invite links) to the logs.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[system-email] RESEND_API_KEY is not set — email not sent:', options.subject)
+      return { success: false, error: 'Email is not configured' }
+    }
     // Dev fallback: log to console
     console.log('=== SYSTEM EMAIL (RESEND_API_KEY not set) ===')
     console.log(`To: ${options.to}`)

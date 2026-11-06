@@ -59,5 +59,7 @@ export function verifyNotificationHash(
     .digest('hex')
     .toUpperCase()
 
-  return localHash === md5sig.toUpperCase()
+  const received = String(md5sig || '').toUpperCase()
+  // Constant-time compare (MD5 is mandated by PayHere's protocol; the compare need not leak timing).
+  return received.length === localHash.length && crypto.timingSafeEqual(Buffer.from(received), Buffer.from(localHash))
 }

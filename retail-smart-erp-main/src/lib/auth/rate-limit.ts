@@ -230,3 +230,55 @@ export const REGISTER_RATE_LIMIT: RateLimitConfig = {
   windowMs: 60 * 60 * 1000, // 1 hour
   category: 'register',
 }
+
+// ---------------------------------------------------------------------------
+// Login brute-force guard: three buckets per sign-in surface.
+//   • email + IP        5 failures / 15 min — the normal lock; an attacker only locks themself.
+//   • email (any IP)   25 failures / 15 min — slows a distributed guess on one account without
+//                                            letting a single stranger lock the real user out.
+//   • IP (any email)   30 failures / 15 min — stops password spraying across many accounts.
+// Every bucket fails closed when the database is down.
+// ---------------------------------------------------------------------------
+
+const LOGIN_EMAIL_RATE_LIMIT: RateLimitConfig = { maxAttempts: 25, windowMs: 15 * 60 * 1000, category: 'login_email', failClosed: true }
+const LOGIN_IP_RATE_LIMIT: RateLimitConfig = { maxAttempts: 30, windowMs: 15 * 60 * 1000, category: 'login_ip', failClosed: true }
+
+export interface LoginGuard {
+  /** True when any bucket is over its limit. */
+  limited(): Promise<boolean>
+  /** Record one failed attempt in every bucket. */
+  fail(): Promise<void>
+  /** Successful sign-in: clear this user's buckets (the IP bucket keeps counting). */
+  clear(): Promise<void>
+}
+
+/** `scope` separates sign-in surfaces (staff web, owner account, mobile, resolve) and may include a tenant id. */
+export function loginGuard(scope: string, email: string, ip: string): LoginGuard {
+  const who = email.toLowerCase().trim()
+  const pairKey = `${scope}:${who}:${ip}`
+  const emailKey = `${scope}:${who}`
+  const ipKey = `${scope}:${ip}`
+  return {
+    async limited() {
+      const [pair, byEmail, byIp] = await Promise.all([
+        checkRateLimit(pairKey, LOGIN_RATE_LIMIT),
+        checkRateLimit(emailKey, LOGIN_EMAIL_RATE_LIMIT),
+        ip && ip !== 'unknown' ? checkRateLimit(ipKey, LOGIN_IP_RATE_LIMIT) : Promise.resolve({ limited: false, remaining: 1 }),
+      ])
+      return pair.limited || byEmail.limited || byIp.limited
+    },
+    async fail() {
+      await Promise.all([
+        recordRateLimitAttempt(pairKey, LOGIN_RATE_LIMIT),
+        recordRateLimitAttempt(emailKey, LOGIN_EMAIL_RATE_LIMIT),
+        ip && ip !== 'unknown' ? recordRateLimitAttempt(ipKey, LOGIN_IP_RATE_LIMIT) : Promise.resolve(),
+      ])
+    },
+    async clear() {
+      await Promise.all([
+        clearRateLimit(pairKey, LOGIN_RATE_LIMIT.category),
+        clearRateLimit(emailKey, LOGIN_EMAIL_RATE_LIMIT.category),
+      ])
+    },
+  }
+}

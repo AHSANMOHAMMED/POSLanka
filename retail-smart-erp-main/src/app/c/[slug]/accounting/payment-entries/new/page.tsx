@@ -85,7 +85,11 @@ export default function NewPaymentEntryPage() {
   const [settings, setSettings] = useState<AccountingSettings | null>(null)
   const [loadingInvoices, setLoadingInvoices] = useState(false)
   const [selectedPartyOption, setSelectedPartyOption] = useState<AsyncSelectOption | null>(null)
-  const [returnUrl] = useState(() => searchParams.get('returnUrl') || '')
+  // Only same-site paths ("/c/…"), never an absolute or protocol-relative URL (open redirect).
+  const [returnUrl] = useState(() => {
+    const r = searchParams.get('returnUrl') || ''
+    return /^\/(?![\/\\])/.test(r) ? r : ''
+  })
   const prePopulated = useRef(false)
 
   const [form, setForm] = useState({

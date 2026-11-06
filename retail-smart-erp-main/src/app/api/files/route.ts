@@ -9,7 +9,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { validateFile, validateFileContent, storeFile, computeFileHash, generateThumbnail } from '@/lib/files'
 import { logFileAudit, getRequestMeta } from '@/lib/files'
 import { logError } from '@/lib/ai/error-logger'
-import { requireQuota, invalidateStorageCache } from '@/lib/db/storage-quota'
+import { requireQuota, invalidateStorageCache, limitUploads } from '@/lib/db/storage-quota'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { filesListSchema } from '@/lib/validation/schemas/files'
 import { readFormData } from '@/lib/api/form-data'
@@ -132,6 +132,8 @@ export async function POST(request: NextRequest) {
 
     const permError = requirePermission(session, 'uploadFiles')
     if (permError) return permError
+    const uploadLimited = await limitUploads(`tenant:${session.user.tenantId}`)
+    if (uploadLimited) return uploadLimited
 
     const formData = await readFormData(request)
 

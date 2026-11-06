@@ -12,6 +12,7 @@ import { logAndBroadcast } from '@/lib/websocket/broadcast'
 import { notify } from '@/lib/notifications/notify'
 import { getAlertSettings } from '@/lib/notifications/alert-settings'
 import { logError } from '@/lib/ai/error-logger'
+import { clientErrorMessage } from '@/lib/api/client-error'
 import { postPosShiftVarianceToGL } from '@/lib/accounting/auto-post'
 import { tenantToday } from '@/lib/accounting/gl'
 import { buildShiftReport, shiftCashMovementTotals, SHIFT_VARIANCE_REASON_LABELS } from '@/lib/pos/shift-report'
@@ -477,8 +478,8 @@ export async function POST(
     })
   } catch (error) {
     logError('api/pos-opening-entries/[id]/close', error)
-    const message = error instanceof Error ? error.message : 'Unknown error'
-    return NextResponse.json({ 
+    const message = clientErrorMessage(error, 'Please try again.', /concurrently/)
+    return NextResponse.json({
       error: `Failed to close shift: ${message}`,
       code: error instanceof Error && error.message.includes('concurrently') ? 'CONCURRENT_MODIFICATION' : 'UNKNOWN_ERROR'
     }, { status: 500 })

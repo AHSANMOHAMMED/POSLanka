@@ -31,6 +31,7 @@ import {
   type FormLayoutConfig,
 } from './form-layout'
 import { LETTER_HEAD_CSS, letterHeadBlockHtml, type LetterHeadConfig } from './template-renderer'
+import { sanitizeCss } from '@/lib/utils/sanitize-html'
 
 // ─── Config model ─────────────────────────────────────────────────────────
 
@@ -1046,7 +1047,7 @@ table.stub-table td { padding: 4px 0; }
   ${opts.preview ? `.sheet { width: ${pageW}mm; min-height: ${pageH}mm; margin: 16px auto; padding: ${m.top}${u} ${m.right}${u} ${m.bottom}${u} ${m.left}${u}; box-shadow: 0 2px 12px rgba(0,0,0,.18); }` : `.sheet { max-width: ${pageW}mm; margin: 0 auto; padding: 12px; }`}
 }
 @media print { .sheet { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; } }
-${opts.letterHead ? `${LETTER_HEAD_CSS}\n` : ''}${c.customCss.replace(/<\/?style/gi, '')}`
+${opts.letterHead ? `${LETTER_HEAD_CSS}\n` : ''}${sanitizeCss(c.customCss)}`
 
   // Letter head (if any) above the repeated header band / below the repeated footer band
   const headHtml = `${letterHeadBlockHtml(opts.letterHead, 'header')}${repeatHeader ? headerBand : ''}`
@@ -1182,7 +1183,7 @@ body { font-family: ${font}; color: ${safeColor(c.general.textColor, '#000000')}
   .screen-only.fbg { opacity: .45; }
 }
 @media print { .screen-only { display: none !important; } }
-${c.customCss.replace(/<\/?style/gi, '')}`
+${sanitizeCss(c.customCss)}`
 }
 
 function formBackgroundHtml(c: InvoiceTemplateConfig, preview: boolean): string {

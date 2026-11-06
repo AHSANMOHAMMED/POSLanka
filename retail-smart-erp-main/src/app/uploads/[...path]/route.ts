@@ -18,6 +18,12 @@ export async function GET(
     return NextResponse.json({ error: 'Access denied' }, { status: 403 })
   }
 
+  // Private files (private/<tenant>/...) live under public/uploads in local-storage mode but
+  // must only be reachable through the authenticated download API, never by URL here.
+  if (/^private(\/|$)/i.test(filePath.replace(/^\/+/, ''))) {
+    return NextResponse.json({ error: 'File not found' }, { status: 404 })
+  }
+
   // 1. Check if the file exists on local disk in public/uploads/
   const localFile = path.join(process.cwd(), 'public', 'uploads', filePath)
   if (fs.existsSync(localFile)) {
@@ -29,7 +35,8 @@ export async function GET(
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
         '.webp': 'image/webp',
-        '.svg': 'image/svg+xml',
+        // .svg intentionally absent: legacy SVGs are served as octet-stream so a script inside
+        // one can never run on this origin.
         '.gif': 'image/gif',
         '.pdf': 'application/pdf',
         '.txt': 'text/plain',
@@ -40,6 +47,7 @@ export async function GET(
         headers: {
           'Content-Type': contentType,
           'Cache-Control': 'public, max-age=31536000, immutable',
+          'X-Content-Type-Options': 'nosniff',
         },
       })
     } catch {

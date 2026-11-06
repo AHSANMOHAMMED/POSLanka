@@ -13,6 +13,7 @@ import { validateBody } from '@/lib/validation/helpers'
 import { aiChatSchema } from '@/lib/validation/schemas/ai'
 import { requireQuota } from '@/lib/db/storage-quota'
 import { isMall, scopeTypes } from '@/lib/business-types/scope'
+import { limitAiForTenant } from '@/lib/ai/tenant-limit'
 
 export async function POST(request: NextRequest) {
   const session = await authWithCompany()
@@ -22,6 +23,9 @@ export async function POST(request: NextRequest) {
 
   const quotaError = await requireQuota(session.user.tenantId, 'standard')
   if (quotaError) return quotaError
+
+  const aiLimited = await limitAiForTenant(session.user.tenantId)
+  if (aiLimited) return aiLimited
 
   if (!isAIEnabledForTenant(session)) {
     return NextResponse.json({

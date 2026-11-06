@@ -23,6 +23,8 @@ export async function GET(request: NextRequest) {
     const parsed = validateSearchParams(request, kitchenOrdersListSchema)
     if (!parsed.success) return parsed.response
     const { status, sortBy, sortOrder, activeOnly } = parsed.data
+    const rawLimit = Number(request.nextUrl.searchParams.get('limit'))
+    const historyLimit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.min(Math.floor(rawLimit), 500) : 100
 
     return await withTenant(session.user.tenantId, async (db) => {
       // Build where conditions
@@ -71,8 +73,16 @@ export async function GET(request: NextRequest) {
             },
           },
         },
-        orderBy: [orderByClause],
+        // Without activeOnly the history is unbounded: take only the newest `limit` (default 100,
+        // max 500), then return them in the requested order below.
+        orderBy: activeOnly ? [orderByClause] : [desc(kitchenOrders.createdAt)],
+        ...(activeOnly ? {} : { limit: historyLimit }),
       })
+      if (!activeOnly) {
+        const key = sortBy === 'createdAt' ? 'createdAt' : 'updatedAt'
+        const dir = sortOrder === 'desc' ? -1 : 1
+        result.sort((a, b) => dir * (new Date(a[key] as Date).getTime() - new Date(b[key] as Date).getTime()))
+      }
 
       // Transform the result to include item details in a more accessible format
       const transformedResult = result.map(kitchenOrder => {

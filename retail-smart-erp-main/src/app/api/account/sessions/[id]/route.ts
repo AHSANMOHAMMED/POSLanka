@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { accountAuth } from '@/lib/auth/account-auth'
-import { revokeSession } from '@/lib/auth/session-manager'
+import { revokeSession, storedTokenMatches } from '@/lib/auth/session-manager'
 import { db } from '@/lib/db'
 import { accountSessions } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
@@ -48,7 +48,7 @@ export async function DELETE(
     }
 
     // Prevent revoking current session
-    if (session.user.sessionToken && targetSession.sessionToken === session.user.sessionToken) {
+    if (storedTokenMatches(targetSession.sessionToken, session.user.sessionToken)) {
       return NextResponse.json({ error: 'Cannot revoke your current session' }, { status: 400 })
     }
 

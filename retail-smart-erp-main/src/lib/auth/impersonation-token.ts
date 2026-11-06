@@ -114,7 +114,7 @@ export async function consumeImpersonationToken(tokenOrJti: string, ip?: string)
   if (!secret) return null
   let payload: jwt.JwtPayload & Partial<ImpersonationClaims>
   try {
-    payload = jwt.verify(raw, secret) as jwt.JwtPayload & Partial<ImpersonationClaims>
+    payload = jwt.verify(raw, secret, { algorithms: ['HS256'] }) as jwt.JwtPayload & Partial<ImpersonationClaims>
   } catch {
     return null
   }

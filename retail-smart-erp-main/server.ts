@@ -12,6 +12,7 @@ import { startDevWarmup } from './src/lib/dev/warmup'
 import { createLogger, ensureRequestId, runWithRequestContext } from './src/lib/logger'
 import { recordHttpRequest, setShuttingDown } from './src/lib/observability/metrics'
 import { isTrustedOrigin } from './src/lib/security/origin'
+import { verifyInternalSecret } from './src/lib/security/internal-secret'
 
 const log = createLogger('server')
 const SLOW_REQUEST_MS = (() => {
@@ -142,9 +143,7 @@ async function handleInternalBroadcast(
   }
 
   // Verify shared secret to prevent unauthorized broadcast injection
-  const broadcastSecret = req.headers['x-broadcast-secret']
-  const expectedSecret = process.env.NEXTAUTH_SECRET
-  if (!expectedSecret || broadcastSecret !== expectedSecret) {
+  if (!verifyInternalSecret('broadcast', req.headers['x-broadcast-secret'])) {
     res.statusCode = 403
     res.end('Forbidden')
     return true

@@ -72,7 +72,7 @@ export async function POST(request: Request) {
       }
 
       if (template.emailBody && (channel === 'email' || channel === 'both')) {
-        finalEmailBody = await renderTemplate(template.emailBody, renderContext)
+        finalEmailBody = await renderTemplate(template.emailBody, renderContext, { html: true })
       }
     }
 

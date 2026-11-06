@@ -8,6 +8,7 @@ import { requireQuota } from '@/lib/db/storage-quota'
 import { applyStockChange } from '@/lib/inventory/apply-stock-change'
 import { validateBody } from '@/lib/validation/helpers'
 import { logError } from '@/lib/ai/error-logger'
+import { clientErrorMessage } from '@/lib/api/client-error'
 import { z } from 'zod'
 import { assertBranchAccess } from '@/lib/auth/branch-access'
 
@@ -119,7 +120,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result.data)
   } catch (error) {
     logError('api/stock/repack', error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Repack operation failed' }, { status: 500 })
+    return NextResponse.json({ error: clientErrorMessage(error, 'Repack operation failed', /^(INVALID_QUANTITY|ITEM_NOT_FOUND|INSUFFICIENT_STOCK)/) }, { status: 500 })
   }
 }
 

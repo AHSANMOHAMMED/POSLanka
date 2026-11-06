@@ -70,7 +70,7 @@ export async function GET(
         .from(itemSerialNumbers)
         .where(whereClause)
 
-      const limit = all ? 10000 : Math.min(pageSize, 100)
+      const limit = all ? 1000 : Math.min(pageSize, 100)
       const offset = all ? undefined : (page - 1) * pageSize
 
       // Query serial numbers with warehouse join

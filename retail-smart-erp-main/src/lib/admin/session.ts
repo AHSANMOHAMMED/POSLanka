@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { adminSessions, superAdmins } from '@/lib/db/schema'
-import { and, eq, gte, lt, like, notLike } from 'drizzle-orm'
+import { and, eq, gte, lt, like, notLike , inArray } from 'drizzle-orm'
+import { hashSessionToken, sessionTokenCandidates } from '@/lib/auth/token-hash'
 import { headers, cookies } from 'next/headers'
 import { randomBytes } from 'crypto'
 import bcrypt from 'bcryptjs'
@@ -47,7 +48,7 @@ export async function createAdminSession(superAdminId: string, options: { setCoo
   // Create new session
   await db.insert(adminSessions).values({
     superAdminId,
-    sessionToken,
+    sessionToken: hashSessionToken(sessionToken),
     ipAddress,
     userAgent,
     lastActivityAt: now,
@@ -126,6 +127,8 @@ function pendingSetupOf(a: { mustChangePassword: boolean; totpRequired: boolean;
 
 /** Live session row + the admin's state, or null (no/expired/idle session, deactivated admin). */
 async function loadSession(sessionToken: string, now: Date) {
+  const candidates = sessionTokenCandidates(sessionToken)
+  if (candidates.length === 0) return null
   const [row] = await db.select({
     session: adminSessions,
     isActive: superAdmins.isActive,
@@ -136,7 +139,7 @@ async function loadSession(sessionToken: string, now: Date) {
   })
     .from(adminSessions)
     .innerJoin(superAdmins, eq(superAdmins.id, adminSessions.superAdminId))
-    .where(and(eq(adminSessions.sessionToken, sessionToken), gte(adminSessions.expiresAt, now)))
+    .where(and(inArray(adminSessions.sessionToken, candidates), gte(adminSessions.expiresAt, now)))
     .limit(1)
   if (!row || !row.isActive) return null
   return { session: { ...row.session, role: normalizeAdminRole(row.role) } as AdminSession, pending: pendingSetupOf(row) }
@@ -312,9 +315,11 @@ export async function destroyAdminSession(sessionToken?: string): Promise<void> 
     sessionToken = cookieStore.get(SESSION_COOKIE_NAME)?.value
   }
 
-  if (sessionToken) {
+  // Accepts the raw cookie/bearer token, or the stored (hashed) value of an already validated session.
+  const candidates = !sessionToken ? [] : sessionToken.includes('h1$') ? [sessionToken] : sessionTokenCandidates(sessionToken)
+  if (candidates.length) {
     await db.delete(adminSessions)
-      .where(eq(adminSessions.sessionToken, sessionToken))
+      .where(inArray(adminSessions.sessionToken, candidates))
   }
 
   cookieStore.delete(SESSION_COOKIE_NAME)

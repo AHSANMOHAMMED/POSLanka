@@ -68,12 +68,12 @@ export async function GET(request: NextRequest) {
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined
 
-      // Get total count
-      const [{ count }] = await db
-        .select({ count: sql<number>`count(*)` })
-        .from(stockMovements)
-        .leftJoin(items, eq(stockMovements.itemId, items.id))
-        .where(whereClause)
+      // Get total count. items is joined only when the search filters on item columns: a LEFT
+      // JOIN on items.id never adds or drops rows, so the count is the same without it.
+      const countBase = db.select({ count: sql<number>`count(*)` }).from(stockMovements)
+      const [{ count }] = search
+        ? await countBase.leftJoin(items, eq(stockMovements.itemId, items.id)).where(whereClause)
+        : await countBase.where(whereClause)
 
       const total = Number(count)
       const totalPages = Math.ceil(total / pageSize)

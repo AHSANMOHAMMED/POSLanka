@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireCronSecret } from '@/lib/notifications/cron-auth'
 import { db } from '@/lib/db'
 import { heldSales } from '@/lib/db/schema'
 import { sql, lte } from 'drizzle-orm'
@@ -12,16 +13,8 @@ import { createLogger } from '@/lib/logger'
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify cron secret
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json(
-        { error: 'Unauthorized. Provide valid CRON_SECRET.' },
-        { status: 401 }
-      )
-    }
+    const denied = requireCronSecret(request)
+    if (denied) return denied
 
     // Get expired held sales grouped by tenant before deleting
     // This allows us to broadcast changes to affected tenants
@@ -82,16 +75,8 @@ export async function POST(request: NextRequest) {
 // GET - Check expired held sales count (for monitoring)
 export async function GET(request: NextRequest) {
   try {
-    // Verify cron secret for GET as well (monitoring endpoint)
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json(
-        { error: 'Unauthorized. Provide valid CRON_SECRET.' },
-        { status: 401 }
-      )
-    }
+    const denied = requireCronSecret(request)
+    if (denied) return denied
 
     // Count expired and pending held sales
     const [stats] = await db

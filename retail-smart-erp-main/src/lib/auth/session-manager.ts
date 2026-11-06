@@ -1,7 +1,8 @@
 import crypto from 'crypto'
 import { db } from '@/lib/db'
 import { accountSessions } from '@/lib/db/schema'
-import { eq, and, lt, ne, or } from 'drizzle-orm'
+import { eq, and, lt, or, inArray, notInArray } from 'drizzle-orm'
+import { hashSessionToken, sessionTokenCandidates } from '@/lib/auth/token-hash'
 
 // Session lifetime: 24 hours (DB record), JWT is 15 min (handled by NextAuth)
 const SESSION_LIFETIME_MS = 24 * 60 * 60 * 1000
@@ -30,7 +31,7 @@ export async function createSession(
 
   await db.insert(accountSessions).values({
     accountId,
-    sessionToken,
+    sessionToken: hashSessionToken(sessionToken),
     scope,
     tenantId: opts.tenantId || null,
     tenantSlug: opts.tenantSlug || null,
@@ -47,10 +48,17 @@ export async function createSession(
  * Validate a session token. Returns the session record if valid, null otherwise.
  * A session is valid if: exists, not revoked, not expired.
  */
+/** Does a stored session_token value belong to this presented (raw) token? */
+export function storedTokenMatches(stored: string, presented: string | undefined | null): boolean {
+  return !!presented && sessionTokenCandidates(presented).includes(stored)
+}
+
 export async function validateSession(sessionToken: string) {
+  const candidates = sessionTokenCandidates(sessionToken)
+  if (candidates.length === 0) return null
   const session = await db.query.accountSessions.findFirst({
     where: and(
-      eq(accountSessions.sessionToken, sessionToken),
+      inArray(accountSessions.sessionToken, candidates),
       eq(accountSessions.isRevoked, false),
     ),
     columns: {
@@ -77,6 +85,8 @@ export async function validateSession(sessionToken: string) {
  * Also extends the expiry by SESSION_LIFETIME_MS from now.
  */
 export async function touchSession(sessionToken: string): Promise<void> {
+  const candidates = sessionTokenCandidates(sessionToken)
+  if (candidates.length === 0) return
   const now = new Date()
   const newExpiry = new Date(now.getTime() + SESSION_LIFETIME_MS)
 
@@ -87,7 +97,7 @@ export async function touchSession(sessionToken: string): Promise<void> {
     })
     .where(
       and(
-        eq(accountSessions.sessionToken, sessionToken),
+        inArray(accountSessions.sessionToken, candidates),
         eq(accountSessions.isRevoked, false),
       )
     )
@@ -124,7 +134,8 @@ export async function revokeAllSessions(
   ]
 
   if (exceptToken) {
-    conditions.push(ne(accountSessions.sessionToken, exceptToken))
+    const keep = sessionTokenCandidates(exceptToken)
+    if (keep.length) conditions.push(notInArray(accountSessions.sessionToken, keep))
   }
 
   await db.update(accountSessions)
@@ -165,7 +176,7 @@ export async function listActiveSessions(accountId: string, currentToken?: strin
     .filter(s => new Date(s.expiresAt) > now)
     .map(({ sessionToken, ...rest }) => ({
       ...rest,
-      isCurrent: currentToken ? sessionToken === currentToken : false,
+      isCurrent: currentToken ? sessionTokenCandidates(currentToken).includes(sessionToken) : false,
     }))
 }
 

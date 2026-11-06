@@ -7,7 +7,7 @@ import { db } from '@/lib/db'
 import { accounts } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { createSession, validateSession } from '@/lib/auth/session-manager'
-import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
+import { loginGuard } from '@/lib/auth/rate-limit'
 
 // Determine cookie domain based on environment
 const getCookieDomain = () => {
@@ -61,8 +61,8 @@ export const {
         const reqUserAgent = request?.headers?.get?.('user-agent') || 'unknown'
 
         // Brute-force protection: check rate limit before any DB work
-        const rateLimitResult = await checkRateLimit(email, LOGIN_RATE_LIMIT)
-        if (rateLimitResult.limited) {
+        const guard = loginGuard('account', email, reqIp)
+        if (await guard.limited()) {
           console.warn('[AccountAuth] Rate limited login attempt:', { email })
           throw new Error('Too many failed login attempts. Please try again later.')
         }
@@ -73,7 +73,7 @@ export const {
           })
 
           if (!account) {
-            await recordRateLimitAttempt(email, LOGIN_RATE_LIMIT)
+            await guard.fail()
             throw new Error('Invalid email or password')
           }
 
@@ -84,7 +84,7 @@ export const {
 
           const isValidPassword = await bcrypt.compare(password, account.passwordHash)
           if (!isValidPassword) {
-            await recordRateLimitAttempt(email, LOGIN_RATE_LIMIT)
+            await guard.fail()
             throw new Error('Invalid email or password')
           }
 
@@ -94,7 +94,7 @@ export const {
           }
 
           // Clear rate limit on successful login
-          await clearRateLimit(email, LOGIN_RATE_LIMIT.category)
+          await guard.clear()
 
           // Update last login and activity
           await db.update(accounts)

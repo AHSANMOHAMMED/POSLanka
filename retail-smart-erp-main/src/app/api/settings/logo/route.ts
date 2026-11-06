@@ -4,6 +4,7 @@ import { authWithCompany } from '@/lib/auth'
 import { tenants } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
+import { clientErrorMessage } from '@/lib/api/client-error'
 import { uploadToR2, deleteFromR2, keyFromUrl } from '@/lib/files'
 import { requireQuota, adjustFileStorage } from '@/lib/db/storage-quota'
 import { logAndBroadcast } from '@/lib/websocket/broadcast'
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('[api/settings/logo] Logo upload error:', error)
     logError('api/settings/logo', error)
-    return NextResponse.json({ error: error instanceof Error ? error.message : 'Failed to upload logo' }, { status: 500 })
+    return NextResponse.json({ error: clientErrorMessage(error, 'Failed to upload logo', /^Object storage is not configured/) }, { status: 500 })
   }
 }
 

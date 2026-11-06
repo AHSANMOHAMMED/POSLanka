@@ -209,7 +209,8 @@ async function run() {
   // -------------------------------------------------------------
   console.log('\n--- 5. Tenant Authentication & Authorization Tokens ---')
   const jwt = (await import('jsonwebtoken')).default
-  const secret = process.env.NEXTAUTH_SECRET || 'development-secret-key-poslanka-2024'
+  const secret = process.env.NEXTAUTH_SECRET
+  if (!secret) throw new Error('Set NEXTAUTH_SECRET to run this script')
   const adminToken = jwt.sign(
     {
       type: 'mobile',

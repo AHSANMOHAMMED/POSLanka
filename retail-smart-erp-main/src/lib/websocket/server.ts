@@ -349,7 +349,7 @@ class WebSocketManager {
         return null
       }
 
-      const decoded = jwt.verify(token, secret) as {
+      const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] }) as {
         id?: string
         sub?: string
         name?: string

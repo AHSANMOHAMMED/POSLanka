@@ -9,6 +9,7 @@ import { getDefaultFiscalYear } from '@/lib/setup/seed-data'
 import { getTaxSuggestionForCountryCode } from '@/lib/setup/country-wise-tax'
 import { validateBody } from '@/lib/validation/helpers'
 import { setupAiSuggestSchema } from '@/lib/validation/schemas/ai'
+import { limitAiForTenant } from '@/lib/ai/tenant-limit'
 
 /** Check if AI is enabled at both server and tenant level */
 function isTenantAIEnabled(tenant: { aiEnabled: boolean }): boolean {
@@ -56,6 +57,9 @@ export async function POST(
     if (!userRecord) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
+
+    const aiLimited = await limitAiForTenant(tenant.id)
+    if (aiLimited) return aiLimited
 
     const parsed = await validateBody(request, setupAiSuggestSchema)
     if (!parsed.success) return parsed.response

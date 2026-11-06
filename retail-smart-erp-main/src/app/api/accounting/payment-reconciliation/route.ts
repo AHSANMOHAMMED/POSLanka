@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuthTenant } from '@/lib/db'
 import { requirePermission } from '@/lib/auth/roles'
-import { paymentEntries, sales, purchases, journalEntries, journalEntryItems, paymentEntryReferences } from '@/lib/db/schema'
+import { paymentEntries, sales, purchases, journalEntries, journalEntryItems } from '@/lib/db/schema'
+import { sumAllocatedByReference, sumAllocatedBySourceJeItem } from '@/lib/accounting/allocation-sums'
 import { eq, and, sql, ne } from 'drizzle-orm'
 import { validateSearchParams } from '@/lib/validation/helpers'
 import { paymentReconciliationQuerySchema } from '@/lib/validation/schemas/accounting'
@@ -65,18 +66,14 @@ export async function GET(request: NextRequest) {
           : sql`CAST(${journalEntryItems.debit} AS numeric) > 0`,
       ))
 
+    // Already-allocated amount per JE payment item, one grouped query (was one per item)
+    const allocatedBySource = await sumAllocatedBySourceJeItem(db, jePaymentItems.map((j) => j.id))
+
     for (const jeItem of jePaymentItems) {
       const amount = partyType === 'customer' ? Number(jeItem.credit) : Number(jeItem.debit)
       if (amount <= 0) continue
 
-      // Sum already-allocated amounts for this JE payment item
-      const [allocated] = await db.select({
-        total: sql<string>`COALESCE(SUM(CAST(${paymentEntryReferences.allocatedAmount} AS numeric)), 0)`,
-      })
-        .from(paymentEntryReferences)
-        .where(eq(paymentEntryReferences.sourceJeItemId, jeItem.id))
-
-      const allocatedAmount = Number(allocated?.total || 0)
+      const allocatedAmount = allocatedBySource.get(jeItem.id) ?? 0
       const unallocated = Math.round((amount - allocatedAmount) * 100) / 100
 
       if (unallocated > 0) {
@@ -233,22 +230,14 @@ export async function GET(request: NextRequest) {
           : sql`CAST(${journalEntryItems.credit} AS numeric) > 0`,
       ))
 
-    // For each JE item, calculate already-allocated amount from paymentEntryReferences
+    // Already-allocated amount per JE invoice item from paymentEntryReferences, one grouped query
+    const allocatedByJeItem = await sumAllocatedByReference(db, 'journal_entry', jeItems.map((j) => j.id))
+
     for (const jeItem of jeItems) {
       const amount = partyType === 'customer' ? Number(jeItem.debit) : Number(jeItem.credit)
       if (amount <= 0) continue
 
-      // Sum already-allocated amounts for this JE item
-      const [allocated] = await db.select({
-        total: sql<string>`COALESCE(SUM(CAST(${paymentEntryReferences.allocatedAmount} AS numeric)), 0)`,
-      })
-        .from(paymentEntryReferences)
-        .where(and(
-          eq(paymentEntryReferences.referenceType, 'journal_entry'),
-          eq(paymentEntryReferences.referenceId, jeItem.id),
-        ))
-
-      const allocatedAmount = Number(allocated?.total || 0)
+      const allocatedAmount = allocatedByJeItem.get(jeItem.id) ?? 0
       const outstanding = Math.round((amount - allocatedAmount) * 100) / 100
 
       if (outstanding > 0) {

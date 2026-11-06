@@ -2,8 +2,9 @@
 // Queries from items, warehouse_stock, stock_movements, purchases, sale_items tables
 
 import { eq, and, sql, gte, lte, desc, ne, inArray } from 'drizzle-orm'
-import { items, warehouseStock, stockMovements, purchases, sales, saleItems, categories, suppliers, journalEntryItems, journalEntries, paymentEntryReferences } from '@/lib/db/schema'
+import { items, warehouseStock, stockMovements, purchases, sales, saleItems, categories, suppliers, journalEntryItems, journalEntries } from '@/lib/db/schema'
 import { tenantDayRange, localTs } from './date-range'
+import { sumAllocatedByReference, loadNamesInto } from '@/lib/accounting/allocation-sums'
 import { branchSqlFilter } from '@/lib/auth/branch-access'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -379,20 +380,18 @@ export async function getAgedPayables(
       sql`${journalEntries.postingDate} <= ${asOfStr}`,
     ))
 
+  // Batched: one grouped allocation query and one supplier-name query (was one each per JE line)
+  const jeLines = jePayables as Array<{ jeItemId: string; partyId: string | null }>
+  const jeAllocated = await sumAllocatedByReference(db, 'journal_entry', jeLines.map((je) => je.jeItemId))
+  const jeSupplierNames = await loadNamesInto(
+    db, suppliers, jeLines.map((je) => je.partyId).filter((id) => !!id && !supplierMap.has(id)), {},
+  )
+
   for (const je of jePayables) {
     if (!je.partyId) continue
     const creditAmount = Number(je.credit)
 
-    const [allocated] = await db.select({
-      total: sql<string>`COALESCE(SUM(CAST(${paymentEntryReferences.allocatedAmount} AS numeric)), 0)`,
-    })
-      .from(paymentEntryReferences)
-      .where(and(
-        eq(paymentEntryReferences.referenceType, 'journal_entry'),
-        eq(paymentEntryReferences.referenceId, je.jeItemId),
-      ))
-
-    const allocatedAmount = Number(allocated?.total || 0)
+    const allocatedAmount = jeAllocated.get(je.jeItemId) ?? 0
     const outstanding = creditAmount - allocatedAmount
     if (outstanding <= 0) continue
 
@@ -401,10 +400,8 @@ export async function getAgedPayables(
 
     const suppId = je.partyId
     if (!supplierMap.has(suppId)) {
-      // Fetch supplier name
-      const [sup] = await db.select({ name: suppliers.name }).from(suppliers).where(eq(suppliers.id, suppId))
       supplierMap.set(suppId, {
-        supplierName: sup?.name || 'Unknown',
+        supplierName: jeSupplierNames[suppId] || 'Unknown',
         current: 0,
         days30: 0,
         days60: 0,

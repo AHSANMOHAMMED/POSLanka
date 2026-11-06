@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { generateText } from '@/lib/ai/gemini'
 import { validateBody } from '@/lib/validation/helpers'
 import { rewriteBugReportSchema } from '@/lib/validation/schemas/ai'
+import { limitAiForTenant } from '@/lib/ai/tenant-limit'
 
 export async function POST(request: Request) {
   const session = await auth()
@@ -13,6 +14,9 @@ export async function POST(request: Request) {
 
   const permError = requirePermission(session, 'manageSettings')
   if (permError) return permError
+
+  const aiLimited = await limitAiForTenant(session.user.tenantId)
+  if (aiLimited) return aiLimited
 
   try {
     const parsed = await validateBody(request, rewriteBugReportSchema)

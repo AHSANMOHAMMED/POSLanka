@@ -381,8 +381,11 @@ export function PrintJobForm({ slug, initial }: { slug: string; initial?: PrintJ
   }
 
   function addProofUrl() {
-    const url = proofUrl.trim()
-    if (!url) return
+    const typed = proofUrl.trim()
+    if (!typed) return
+    // Links only: add https:// to "drive.google.com/…", refuse javascript:/data: and other schemes.
+    const url = /^[a-z][a-z0-9+.-]*:/i.test(typed) || typed.startsWith('/') ? typed : `https://${typed}`
+    if (!/^(\/(?!\/)|https?:\/\/)/i.test(url)) return
     setProofFiles((p) => [...p, { url, name: url.split('/').pop() || url, addedAt: new Date().toISOString() }])
     setProofUrl('')
     if (proofStatus === 'not_needed') setProofStatus('pending')

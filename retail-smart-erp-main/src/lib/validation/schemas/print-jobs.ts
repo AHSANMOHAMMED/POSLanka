@@ -43,7 +43,10 @@ export const printJobLineSchema = z.object({
 const dateTimeInput = z.string().trim().max(40).refine((v) => !Number.isNaN(new Date(v).getTime()), 'Invalid date / time')
 
 const proofFileSchema = z.object({
-  url: z.string().trim().min(1).max(2000),
+  // Uploaded file paths (/…) or http(s) links only — never javascript:/data: URLs rendered as href.
+  url: z.string().trim().min(1).max(2000)
+    .transform((v) => (/^[a-z][a-z0-9+.-]*:/i.test(v) || v.startsWith('/') ? v : `https://${v}`))
+    .refine((v) => /^(\/(?!\/)|https?:\/\/)/i.test(v), 'Link must start with http(s):// or /'),
   name: z.string().trim().max(255).nullish(),
   fileId: z.string().uuid().nullish(),
   addedAt: z.string().max(40).nullish(),

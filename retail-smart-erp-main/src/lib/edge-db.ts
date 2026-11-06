@@ -1,5 +1,6 @@
 // Lightweight HTTP-based database client for Edge Runtime
 import { TenantCache } from './cache/tenant-cache'
+import { internalSecret } from './security/internal-secret'
 
 export class EdgeDB {
   private cache: TenantCache
@@ -21,7 +22,7 @@ export class EdgeDB {
         `${baseUrl}/api/lookup-tenant?slug=${encodeURIComponent(slug)}`,
         {
           headers: {
-            'x-internal-secret': process.env.NEXTAUTH_SECRET || '',
+            'x-internal-secret': internalSecret('lookup-tenant'),
             'cache-control': 'no-cache'
           },
           next: { revalidate: 300 }, // 5 minutes cache

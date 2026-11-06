@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { tenantUsage, subscriptions } from '@/lib/db/schema'
 import { eq, sql } from 'drizzle-orm'
 import { invalidate, registerCache } from '@/lib/cache/invalidation'
+import { consumeRateLimit, rateLimitedResponse } from '@/lib/auth/rate-limit'
 
 export interface StorageQuota {
   dbUsedBytes: number
@@ -159,11 +160,26 @@ export async function checkCanWrite(
  * For file uploads, pass `fileSizeBytes` to check whether the specific file
  * would exceed remaining quota (prevents a single large file from going over).
  */
+/**
+ * Upload flood guard (shared across instances): 300 uploads per 10 minutes per key. Bulk photo
+ * work stays well under it; a script hammering the upload routes does not. Fails open.
+ */
+export async function limitUploads(key: string): Promise<NextResponse | null> {
+  const r = await consumeRateLimit(key, { maxAttempts: 300, windowMs: 10 * 60 * 1000, category: 'uploads' })
+  if (!r.limited) return null
+  const res = rateLimitedResponse(r, 'Too many uploads. Please wait a few minutes and try again.')
+  return new NextResponse(res.body, { status: res.status, headers: res.headers })
+}
+
 export async function requireQuota(
   tenantId: string,
   type: 'standard' | 'essential' | 'file',
   fileSizeBytes?: number
 ): Promise<NextResponse | null> {
+  if (type === 'file') {
+    const limited = await limitUploads(`tenant:${tenantId}`)
+    if (limited) return limited
+  }
   const check = await checkCanWrite(tenantId, type)
   if (!check.allowed) {
     return NextResponse.json(

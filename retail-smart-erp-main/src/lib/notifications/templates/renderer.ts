@@ -33,14 +33,30 @@ export interface RenderContext {
 /**
  * Render a template string with the given context
  */
-export async function renderTemplate(template: string, context: RenderContext): Promise<string> {
+export async function renderTemplate(
+  template: string,
+  context: RenderContext,
+  options: { html?: boolean } = {}
+): Promise<string> {
   // Build the variables object from context
   const variables = await buildVariables(context)
 
-  // Replace all {{variable_name}} placeholders
+  // Replace all {{variable_name}} placeholders. In HTML bodies the values (customer names,
+  // notes, addresses…) are escaped so they can never inject markup or links into the email.
   return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
-    return variables[key] ?? match
+    const value = variables[key]
+    if (value === undefined) return match
+    return options.html ? escapeHtmlValue(value) : value
   })
+}
+
+function escapeHtmlValue(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 /**

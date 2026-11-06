@@ -4,7 +4,8 @@ import { eq } from 'drizzle-orm'
 import { db } from '@/lib/db'
 import { superAdmins } from '@/lib/db/schema'
 import { adminAuthError, validateAdminSession, adminAudit } from '@/lib/admin'
-import { generateTotpSecret, totpQrDataUrl, verifyTotp } from '@/lib/admin/totp'
+import { generateTotpSecret, readTotpSecret, totpQrDataUrl, verifyTotp } from '@/lib/admin/totp'
+import { encryptSecret } from '@/lib/crypto/secret-box'
 import { validateBody } from '@/lib/validation/helpers'
 import { logError } from '@/lib/ai/error-logger'
 
@@ -41,14 +42,14 @@ export async function POST(request: NextRequest) {
     if (action === 'setup') {
       if (admin.totpEnabled) return NextResponse.json({ error: '2FA is already enabled. Disable it first to re-enrol.' }, { status: 400 })
       const secret = generateTotpSecret()
-      await db.update(superAdmins).set({ totpSecret: secret, totpEnabled: false, updatedAt: new Date() }).where(eq(superAdmins.id, admin.id))
+      await db.update(superAdmins).set({ totpSecret: encryptSecret(secret), totpEnabled: false, updatedAt: new Date() }).where(eq(superAdmins.id, admin.id))
       const { otpauthUrl, qrDataUrl } = await totpQrDataUrl(admin.email, secret)
       return NextResponse.json({ secret, otpauthUrl, qrDataUrl })
     }
 
     if (!code) return NextResponse.json({ error: 'A 6-digit code is required' }, { status: 400 })
     if (!admin.totpSecret) return NextResponse.json({ error: 'Run setup first' }, { status: 400 })
-    if (!verifyTotp(code, admin.totpSecret)) return NextResponse.json({ error: 'Invalid code' }, { status: 403 })
+    if (!verifyTotp(code, readTotpSecret(admin.totpSecret) ?? '')) return NextResponse.json({ error: 'Invalid code' }, { status: 403 })
 
     if (action === 'enable') {
       await db.update(superAdmins).set({ totpEnabled: true, updatedAt: new Date() }).where(eq(superAdmins.id, admin.id))

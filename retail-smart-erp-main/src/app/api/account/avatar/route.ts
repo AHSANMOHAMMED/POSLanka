@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm'
 import crypto from 'crypto'
 import { logError } from '@/lib/ai/error-logger'
 import { uploadToR2, deleteFromR2, keyFromUrl, validateFileContent } from '@/lib/files'
+import { limitUploads } from '@/lib/db/storage-quota'
 
 const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp']
 const MAX_SIZE = 2 * 1024 * 1024 // 2MB
@@ -16,6 +17,8 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.accountId) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
+    const uploadLimited = await limitUploads(`account:${session.user.accountId}`)
+    if (uploadLimited) return uploadLimited
 
     const formData = await request.formData()
     const file = formData.get('avatar') as File | null

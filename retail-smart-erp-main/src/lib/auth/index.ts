@@ -6,41 +6,12 @@ import crypto from 'crypto'
 import { db, withTenant } from '@/lib/db'
 import { users, tenants, accounts, accountTenants } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
-import { checkRateLimit, recordRateLimitAttempt, clearRateLimit, LOGIN_RATE_LIMIT } from '@/lib/auth/rate-limit'
+import { consumeRateLimit, loginGuard } from '@/lib/auth/rate-limit'
 import { getLiveCompanyUser, isAccountActive } from '@/lib/auth/live-user'
 import { sessionValidationKey, getSessionValidation, setSessionValidation, deleteSessionValidation } from './session-validation-cache'
 import { consumeImpersonationToken } from '@/lib/auth/impersonation-token'
 import { findTenantByIdentifier } from '@/lib/tenant/business-id'
 import { findLoginUser } from './login-identity'
-
-// ---------------------------------------------------------------------------
-// Brute-force rate limiter (database-backed)
-// Tracks failed login attempts by email to prevent targeted brute-force attacks.
-// Persists across server restarts and works with multiple instances.
-// ---------------------------------------------------------------------------
-
-/**
- * Check whether the given email is currently rate-limited.
- * Returns true if the request should be blocked.
- */
-async function isRateLimited(email: string): Promise<boolean> {
-  const result = await checkRateLimit(email, LOGIN_RATE_LIMIT)
-  return result.limited
-}
-
-/**
- * Record a failed login attempt for the given email.
- */
-async function recordFailedAttempt(email: string): Promise<void> {
-  await recordRateLimitAttempt(email, LOGIN_RATE_LIMIT)
-}
-
-/**
- * Clear rate limit after successful login.
- */
-async function clearLoginRateLimit(email: string): Promise<void> {
-  await clearRateLimit(email, LOGIN_RATE_LIMIT.category)
-}
 
 // Determine cookie domain based on environment
 const getCookieDomain = () => {
@@ -92,8 +63,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           || 'unknown'
         const reqUserAgent = request?.headers?.get?.('user-agent') || 'unknown'
 
-        // --- Brute-force protection: check rate limit before any DB work ---
-        if (await isRateLimited(email)) {
+        // --- Brute-force protection: per email+IP, per email and per IP (see loginGuard) ---
+        const guard = loginGuard('login', email, reqIp)
+        if (await guard.limited()) {
           console.warn('[Auth] Rate limited login attempt:', { email, tenantSlug, rawBusinessId })
           throw new Error('Too many failed login attempts. Please try again later.')
         }
@@ -105,17 +77,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           const tenant = await findTenantByIdentifier(rawBusinessId || tenantSlug!)
 
           if (!tenant) {
-            await recordFailedAttempt(email)
+            await guard.fail()
             throw new Error('Invalid credentials')
           }
 
           if (tenant.status !== 'active') {
-            await recordFailedAttempt(email)
+            await guard.fail()
             throw new Error('Invalid credentials')
           }
 
           if (tenant.planExpiresAt && new Date(tenant.planExpiresAt) < new Date()) {
-            await recordFailedAttempt(email)
+            await guard.fail()
             throw new Error('Invalid credentials')
           }
 
@@ -123,12 +95,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           const user = await withTenant(tenant.id, (tdb) => findLoginUser(tdb, tenant, email))
 
           if (!user) {
-            await recordFailedAttempt(email)
+            await guard.fail()
             throw new Error('Invalid credentials')
           }
 
           if (!user.isActive) {
-            await recordFailedAttempt(email)
+            await guard.fail()
             throw new Error('Invalid credentials')
           }
 
@@ -140,12 +112,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           // 3. Validate password against users.passwordHash
           const isValidPassword = await bcrypt.compare(password, user.passwordHash)
           if (!isValidPassword) {
-            await recordFailedAttempt(email)
+            await guard.fail()
             throw new Error('Invalid credentials')
           }
 
           // Authentication successful -- clear any prior failed attempts
-          await clearLoginRateLimit(email)
+          await guard.clear()
 
           const now = new Date()
 
@@ -217,7 +189,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         try {
           // Verify the transfer token
-          const payload = jwt.verify(transferToken, secret) as {
+          const payload = jwt.verify(transferToken, secret, { algorithms: ['HS256'] }) as {
             accountId: string
             tenantSlug: string
             type: string
@@ -228,6 +200,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           if (payload.type !== 'company-transfer') {
             throw new Error('Invalid token type')
           }
+          // Single use: a transfer token seen once (e.g. in a log or a shared screen) cannot be replayed.
+          const jti = (payload as { jti?: string }).jti
+          if (!jti) throw new Error('Invalid token')
+          const burned = await consumeRateLimit(`transfer-jti:${jti}`, { maxAttempts: 1, windowMs: 2 * 60 * 1000, category: 'transfer_jti', failClosed: true })
+          if (burned.limited) throw new Error('Transfer token already used')
 
           const { accountId, tenantSlug } = payload
 
@@ -780,7 +757,7 @@ export async function authWithCompany(): Promise<CompanySession | null> {
       const secret = process.env.NEXTAUTH_SECRET
       if (!secret) return null
       const token = authHeader.slice(7)
-      const payload = jwt.verify(token, secret) as {
+      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as {
         type?: string
         sub: string
         tenantId: string

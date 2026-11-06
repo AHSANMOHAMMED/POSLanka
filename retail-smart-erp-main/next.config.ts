@@ -5,6 +5,8 @@ const baseDomain = (process.env.NEXT_PUBLIC_BASE_DOMAIN || 'poslanka.lk').split(
 const isDev = process.env.NODE_ENV !== 'production';
 
 const nextConfig: NextConfig = {
+  // Do not advertise the framework (X-Powered-By: Next.js).
+  poweredByHeader: false,
   // Pin the workspace root to this app; stray lockfiles in parent folders
   // (or apps/mobile's own lockfile) must not change module/trace resolution.
   turbopack: { root: process.cwd() },
@@ -167,6 +169,7 @@ const nextConfig: NextConfig = {
               `frame-src ${frameDomains}`,
               "frame-ancestors 'self'",
               "base-uri 'self'",
+              "object-src 'none'",
               "form-action 'self' https://www.payhere.lk https://sandbox.payhere.lk https://api.webxpay.com https://sandboxapi.webxpay.com",
             ].join('; ')
           }

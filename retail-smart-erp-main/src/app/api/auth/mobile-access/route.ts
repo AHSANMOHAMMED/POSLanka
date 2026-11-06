@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
 
   let payload: { type?: string; tenantId?: string }
   try {
-    payload = jwt.verify(authHeader.slice(7), secret) as { type?: string; tenantId?: string }
+    payload = jwt.verify(authHeader.slice(7), secret, { algorithms: ['HS256'] }) as { type?: string; tenantId?: string }
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireCronSecret } from '@/lib/notifications/cron-auth'
 import { db } from '@/lib/db'
 import { sql } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
@@ -12,21 +13,8 @@ import { foldTenantUsage } from '@/lib/db/storage-quota'
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify cron secret or admin auth
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-
-    // Allow if valid cron secret provided
-    if (cronSecret && authHeader === `Bearer ${cronSecret}`) {
-      // Authorized via cron secret
-    } else {
-      // Check for super admin (optional - for manual trigger)
-      // For now, just require the cron secret
-      return NextResponse.json(
-        { error: 'Unauthorized. Provide valid CRON_SECRET.' },
-        { status: 401 }
-      )
-    }
+    const denied = requireCronSecret(request)
+    if (denied) return denied
 
     // Fold pending usage deltas first: the recalculation below sets storage_bytes from scratch,
     // so deltas left unfolded would be counted twice.
@@ -69,15 +57,8 @@ export async function POST(request: NextRequest) {
 // GET - Check last calculation time (requires CRON_SECRET)
 export async function GET(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json(
-        { error: 'Unauthorized. Provide valid CRON_SECRET.' },
-        { status: 401 }
-      )
-    }
+    const denied = requireCronSecret(request)
+    if (denied) return denied
 
     const result = await db.execute(sql`
       SELECT

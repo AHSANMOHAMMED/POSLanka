@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { verifyInternalSecret } from '@/lib/security/internal-secret'
 import { findTenantByIdentifier } from '@/lib/tenant/business-id'
 import { db } from '@/lib/db'
 import { users, tenants, accounts, accountTenants } from '@/lib/db/schema'
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest) {
 
     // Verify internal request using shared secret
     const internalSecret = request.headers.get('x-internal-secret')
-    if (internalSecret !== process.env.NEXTAUTH_SECRET) {
+    if (!verifyInternalSecret('lookup-tenant', internalSecret)) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

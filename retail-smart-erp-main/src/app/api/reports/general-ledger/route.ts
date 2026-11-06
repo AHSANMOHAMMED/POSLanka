@@ -7,6 +7,8 @@ import { eq, and, sql, gte, lte } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { requireAllBranches } from '@/lib/auth/branch-access'
 
+const MAX_ROWS = 5000
+
 export async function GET(request: NextRequest) {
   try {
     const session = await authWithCompany()
@@ -92,6 +94,12 @@ export async function GET(request: NextRequest) {
           lte(glEntries.postingDate, toDate),
         ))
         .orderBy(glEntries.postingDate, glEntries.createdAt)
+        .limit(MAX_ROWS + 1)
+
+      // Very long ranges on busy accounts are capped at MAX_ROWS lines (truncated: true); the
+      // summary totals still cover the whole range (aggregated in SQL below when capped).
+      const truncated = entries.length > MAX_ROWS
+      if (truncated) entries.length = MAX_ROWS
 
       // Build entries with running balance
       let runningBalance = openingBalance
@@ -119,6 +127,22 @@ export async function GET(request: NextRequest) {
         }
       })
 
+      if (truncated) {
+        const [range] = await db.select({
+          totalDebit: sql<string>`COALESCE(SUM(CAST(${glEntries.debit} AS numeric)), 0)`,
+          totalCredit: sql<string>`COALESCE(SUM(CAST(${glEntries.credit} AS numeric)), 0)`,
+        })
+          .from(glEntries)
+          .where(and(
+            eq(glEntries.tenantId, session.user.tenantId),
+            eq(glEntries.accountId, accountId),
+            gte(glEntries.postingDate, fromDate),
+            lte(glEntries.postingDate, toDate),
+          ))
+        totalDebit = Number(range.totalDebit)
+        totalCredit = Number(range.totalCredit)
+      }
+
       const closingBalance = openingBalance + totalDebit - totalCredit
 
       return NextResponse.json({
@@ -135,6 +159,7 @@ export async function GET(request: NextRequest) {
           closingBalance: Math.round(closingBalance * 100) / 100,
         },
         data,
+        ...(truncated ? { truncated: true, rowLimit: MAX_ROWS } : {}),
       })
     })
   } catch (error) {

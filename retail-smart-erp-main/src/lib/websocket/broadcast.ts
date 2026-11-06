@@ -5,6 +5,7 @@
 import type { EntityType } from './events'
 import type { ActivityAction } from '@/lib/utils/activity-log'
 import { publishFanout } from './fanout'
+import { internalSecret } from '@/lib/security/internal-secret'
 
 /**
  * Broadcast message structure
@@ -110,7 +111,7 @@ export function broadcastChange(
     headers: {
       'Content-Type': 'application/json',
       'X-Internal-Broadcast': 'true',
-      'X-Broadcast-Secret': process.env.NEXTAUTH_SECRET || '',
+      'X-Broadcast-Secret': internalSecret('broadcast'),
     },
     body: JSON.stringify(message),
     signal: AbortSignal.timeout(5000), // 5s timeout
@@ -215,7 +216,7 @@ export function broadcastAccountChange(
     headers: {
       'Content-Type': 'application/json',
       'X-Internal-Broadcast': 'account',
-      'X-Broadcast-Secret': process.env.NEXTAUTH_SECRET || '',
+      'X-Broadcast-Secret': internalSecret('broadcast'),
     },
     body: JSON.stringify(message),
     signal: AbortSignal.timeout(5000), // 5s timeout
