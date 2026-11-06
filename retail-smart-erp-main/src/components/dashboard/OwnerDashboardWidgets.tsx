@@ -155,7 +155,7 @@ export function OwnerDashboardWidgets() {
       {/* Header Bar with Segmented Control & Branch Filter */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white dark:bg-gray-800/80 p-3 rounded-xl border border-gray-200/90 dark:border-gray-700/80 shadow-sm">
         <div className="flex items-center gap-2.5">
-          <div className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
+          <div className="w-2.5 h-2.5 rounded-full theme-bg-primary animate-pulse" />
           <h2 className="text-sm font-bold text-gray-900 dark:text-white uppercase tracking-wider">
             Executive Performance Overview
           </h2>
@@ -173,7 +173,7 @@ export function OwnerDashboardWidgets() {
                   aria-pressed={active}
                   className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
                     active
-                      ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 shadow-sm'
+                      ? 'bg-white dark:bg-gray-800 theme-text-primary shadow-sm font-bold'
                       : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
                   }`}
                 >
@@ -399,7 +399,7 @@ export function OwnerDashboardWidgets() {
                 <p className="text-[11px] text-gray-400 mt-0.5">Top profit contributors will rank here automatically as sales happen</p>
                 <Link
                   href={`/c/${slug}/pos`}
-                  className="mt-3 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition-colors"
+                  className="mt-3 inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg theme-btn-primary shadow-sm"
                 >
                   Start selling at POS
                 </Link>
@@ -440,7 +440,7 @@ export function OwnerDashboardWidgets() {
                       </div>
                       <div className="w-full bg-gray-100 dark:bg-gray-700/60 h-1.5 rounded-full overflow-hidden">
                         <div
-                          className="bg-blue-600 dark:bg-blue-500 h-full rounded-full transition-all duration-300"
+                          className="theme-bg-primary h-full rounded-full transition-all duration-300"
                           style={{ width: `${percentOfTop}%` }}
                         />
                       </div>

@@ -250,9 +250,9 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
                       href={`${basePath}${tab.href}`}
                       onClick={() => setAppSwitcherOpen(false)}
                       className={cn(
-                        "flex flex-col items-center gap-1.5 p-3 rounded transition-colors text-center",
+                        "flex flex-col items-center gap-1.5 p-3 rounded-xl transition-all text-center",
                         isActive
-                          ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                          ? "theme-bg-subtle theme-text-primary font-bold shadow-sm"
                           : "text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
                       )}
                     >
@@ -496,7 +496,7 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
                 <p className="text-sm font-medium text-gray-900 dark:text-white">{userName}</p>
                 <p className="text-xs text-gray-500 dark:text-gray-400">{userEmail}</p>
                 {session?.user?.role && (
-                  <span className="inline-block mt-1 text-xs capitalize bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
+                  <span className="inline-block mt-1 text-xs capitalize theme-badge-primary px-2.5 py-0.5 rounded-full font-semibold">
                     {session.user.role}
                   </span>
                 )}
@@ -588,7 +588,7 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
                     </div>
                   </div>
                   {session?.user?.role && (
-                    <span className="inline-block mt-2 text-xs capitalize bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
+                    <span className="inline-block mt-2 text-xs capitalize theme-badge-primary px-2.5 py-0.5 rounded-full font-semibold">
                       {session.user.role}
                     </span>
                   )}
@@ -608,9 +608,9 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
                           href={`${basePath}${tab.href}`}
                           onClick={() => setMobileMenuOpen(false)}
                           className={cn(
-                            "flex flex-col items-center gap-1 p-2 rounded text-center",
+                            "flex flex-col items-center gap-1 p-2 rounded-xl text-center transition-all",
                             isActive
-                              ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300"
+                              ? "theme-bg-subtle theme-text-primary font-bold shadow-sm"
                               : "text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
                           )}
                         >

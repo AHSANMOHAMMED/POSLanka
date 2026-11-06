@@ -2,7 +2,7 @@
 
 import * as React from 'react'
 import { useState, useCallback, useMemo } from 'react'
-import { ChevronUp, ChevronDown, ChevronsUpDown, MoreHorizontal, Search } from 'lucide-react'
+import { ChevronUp, ChevronDown, ChevronsUpDown, MoreHorizontal, Search, Download, Columns, Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Pagination } from './pagination'
 import { FormInput } from './form-elements'
@@ -66,6 +66,12 @@ export interface DataTableProps<T> {
   searchValue?: string
   onSearchChange?: (value: string) => void
 
+  // Adminty Modern Additions
+  enableColumnVisibility?: boolean
+  enableExport?: boolean
+  exportFileName?: string
+  bulkActions?: (selectedRows: T[]) => React.ReactNode
+
   // States
   loading?: boolean
   emptyIcon?: React.ReactNode
@@ -121,6 +127,12 @@ export function DataTable<T extends Record<string, unknown>>({
   searchValue,
   onSearchChange,
 
+  // Adminty Modern Additions
+  enableColumnVisibility = false,
+  enableExport = false,
+  exportFileName = 'export',
+  bulkActions,
+
   // States
   loading = false,
   emptyIcon,
@@ -139,11 +151,50 @@ export function DataTable<T extends Record<string, unknown>>({
   bordered = false,
   hoverable = true,
 }: DataTableProps<T>) {
+  const [hiddenColKeys, setHiddenColKeys] = useState<Set<string>>(new Set())
+  const [colMenuOpen, setColMenuOpen] = useState(false)
+
   // Filter out hidden columns
   const visibleColumns = useMemo(
-    () => columns.filter((col) => !col.hidden),
-    [columns]
+    () => columns.filter((col) => !col.hidden && !hiddenColKeys.has(col.key)),
+    [columns, hiddenColKeys]
   )
+
+  const toggleColumn = useCallback((key: string) => {
+    setHiddenColKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }, [])
+
+  const handleExportCsv = useCallback(() => {
+    const exportCols = columns.filter((c) => !hiddenColKeys.has(c.key))
+    const headers = exportCols.map((c) => (typeof c.header === 'string' ? c.header : c.key))
+    const rows = data.map((row) =>
+      exportCols.map((c) => {
+        const val = c.accessor
+          ? typeof c.accessor === 'function'
+            ? c.accessor(row)
+            : row[c.accessor]
+          : row[c.key as keyof T]
+        return typeof val === 'string' || typeof val === 'number' ? `"${String(val).replace(/"/g, '""')}"` : '""'
+      })
+    )
+    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.setAttribute('href', url)
+    link.setAttribute('download', `${exportFileName}-${new Date().toISOString().split('T')[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+  }, [columns, hiddenColKeys, data, exportFileName])
 
   // Get row key
   const getRowKey = useCallback(
@@ -256,19 +307,86 @@ export function DataTable<T extends Record<string, unknown>>({
   const cellPadding = compact ? 'px-3 py-2' : 'px-4 py-3'
 
   return (
-    <div className={cn('bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700', className)}>
-      {/* Search bar */}
-      {searchable && (
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-          <FormInput
-            type="text"
-            placeholder={searchPlaceholder}
-            value={searchValue}
-            onChange={(e) => onSearchChange?.(e.target.value)}
-            leftIcon={<Search size={16} />}
-            inputSize="sm"
-            className="max-w-xs"
-          />
+    <div className={cn('bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden', className)}>
+      {/* Top Toolbar: Search, Column Picker, Export, Bulk Actions */}
+      {(searchable || enableColumnVisibility || enableExport || (bulkActions && selectedRows.length > 0)) && (
+        <div className="p-3.5 border-b border-gray-200 dark:border-gray-700 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/50">
+          {selectedRows.length > 0 && bulkActions ? (
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full theme-badge-primary">
+                {selectedRows.length} selected
+              </span>
+              <div className="flex items-center gap-2">{bulkActions(selectedRows)}</div>
+              {onSelectionChange && (
+                <button
+                  type="button"
+                  onClick={() => onSelectionChange([])}
+                  className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 underline"
+                >
+                  Clear selection
+                </button>
+              )}
+            </div>
+          ) : (
+            searchable && (
+              <div className="w-full sm:w-auto">
+                <FormInput
+                  type="text"
+                  placeholder={searchPlaceholder}
+                  value={searchValue}
+                  onChange={(e) => onSearchChange?.(e.target.value)}
+                  leftIcon={<Search size={16} />}
+                  inputSize="sm"
+                  className="w-full sm:w-64"
+                />
+              </div>
+            )
+          )}
+
+          <div className="flex items-center gap-2 ml-auto">
+            {enableColumnVisibility && (
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setColMenuOpen((prev) => !prev)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+                >
+                  <Columns size={14} />
+                  <span>Columns</span>
+                </button>
+                {colMenuOpen && (
+                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-200 dark:border-gray-700 p-2 z-20 space-y-1">
+                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider px-2 py-1">Toggle Columns</p>
+                    {columns.map((c) => {
+                      const isVisible = !hiddenColKeys.has(c.key)
+                      return (
+                        <button
+                          key={c.key}
+                          type="button"
+                          onClick={() => toggleColumn(c.key)}
+                          className="w-full flex items-center justify-between px-2 py-1.5 text-xs text-left rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
+                        >
+                          <span className="truncate">{typeof c.header === 'string' ? c.header : c.key}</span>
+                          {isVisible && <Check size={14} className="theme-text-primary" />}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {enableExport && (
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
+              >
+                <Download size={14} />
+                <span>Export CSV</span>
+              </button>
+            )}
+          </div>
         </div>
       )}
 

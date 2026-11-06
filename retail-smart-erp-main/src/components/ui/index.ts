@@ -92,3 +92,8 @@ export type { ColumnDef, ColumnType, EditableGridProps } from './editable-grid'
 // Legacy components (backwards compatibility)
 export { ConfirmModal } from './confirm-modal'
 export { AlertModal } from './alert-modal'
+
+// 2025/2026 SaaS Dashboard Components
+export { MetricCard } from './metric-card'
+export { ChartCard } from './chart-card'
+export { FormWizard } from './form-wizard'

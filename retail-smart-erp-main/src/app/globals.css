@@ -181,6 +181,225 @@
   --background: 0 0% 0%;
 }
 
+/* ==================== 2025/2026 FEATURED SAAS THEMES ==================== */
+
+/* 1. Soft Pastel HR (Smart HRMS Reference Style) */
+[data-theme="pastel-hr"] {
+  --primary: #7c3aed;
+  --primary-hover: #6d28d9;
+  --page-bg: #f8f7ff;
+  --content-bg: #ffffff;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #ede9fe;
+  --sidebar-hover-bg: #f5f3ff;
+  --navbar-bg: #2e1065;
+  --border-color: #ede9fe;
+  --card: 0 0% 100%;
+  --radius-card: 16px;
+}
+[data-theme="pastel-hr"].dark,
+.dark[data-theme="pastel-hr"] {
+  --page-bg: #0d0b18;
+  --content-bg: #16122a;
+  --sidebar-bg: #0a0814;
+  --sidebar-border: #28214a;
+  --sidebar-hover-bg: #1f1a38;
+  --navbar-bg: #090712;
+  --primary: #a78bfa;
+  --primary-hover: #c4b5fd;
+  --border-color: #28214a;
+  --border: 260 38% 21%;
+  --card: 260 40% 12%;
+  --background: 260 45% 7%;
+}
+
+/* 2. Clean Corporate Blue (Modern Enterprise) */
+[data-theme="corporate-blue"] {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --page-bg: #f8fafc;
+  --content-bg: #ffffff;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #e2e8f0;
+  --sidebar-hover-bg: #f1f5f9;
+  --navbar-bg: #1e293b;
+  --border-color: #e2e8f0;
+}
+[data-theme="corporate-blue"].dark,
+.dark[data-theme="corporate-blue"] {
+  --page-bg: #0a0f1d;
+  --content-bg: #131b2e;
+  --sidebar-bg: #080c17;
+  --sidebar-border: #1e293b;
+  --sidebar-hover-bg: #17223b;
+  --navbar-bg: #060912;
+  --primary: #3b82f6;
+  --primary-hover: #60a5fa;
+  --border-color: #1e293b;
+  --border: 217 33% 17%;
+  --card: 222 47% 12%;
+  --background: 222 47% 8%;
+}
+
+/* 3. Modern Altura Dark (True Dark / High Contrast Bento) */
+[data-theme="modern-dark"] {
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --page-bg: #f8fafc;
+  --content-bg: #ffffff;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #e2e8f0;
+  --border-color: #e2e8f0;
+}
+[data-theme="modern-dark"].dark,
+.dark[data-theme="modern-dark"] {
+  --page-bg: #080b11;
+  --content-bg: #0f1523;
+  --sidebar-bg: #06080e;
+  --sidebar-border: #1c2438;
+  --sidebar-hover-bg: #161e33;
+  --navbar-bg: #04060a;
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --border-color: #1c2438;
+  --border: 220 33% 16%;
+  --card: 220 40% 10%;
+  --background: 220 45% 5%;
+}
+
+/* 4. Emerald Analytics (Mint & Growth) */
+[data-theme="emerald-analytics"] {
+  --primary: #059669;
+  --primary-hover: #047857;
+  --page-bg: #f0fdf4;
+  --content-bg: #ffffff;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #d1fae5;
+  --sidebar-hover-bg: #ecfdf5;
+  --navbar-bg: #064e3b;
+  --border-color: #d1fae5;
+}
+[data-theme="emerald-analytics"].dark,
+.dark[data-theme="emerald-analytics"] {
+  --page-bg: #04140d;
+  --content-bg: #0a2418;
+  --sidebar-bg: #030f0a;
+  --sidebar-border: #133a28;
+  --sidebar-hover-bg: #0f3323;
+  --navbar-bg: #020a06;
+  --primary: #10b981;
+  --primary-hover: #34d399;
+  --border-color: #133a28;
+  --border: 155 50% 15%;
+  --card: 155 58% 9%;
+  --background: 155 60% 5%;
+}
+
+/* 5. Warm Amber / Sunset (Bistro & Retail) */
+[data-theme="warm-amber"] {
+  --primary: #ea580c;
+  --primary-hover: #c2410c;
+  --page-bg: #faf8f5;
+  --content-bg: #ffffff;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #fef3c7;
+  --sidebar-hover-bg: #fffbeb;
+  --navbar-bg: #431407;
+  --border-color: #fef3c7;
+}
+[data-theme="warm-amber"].dark,
+.dark[data-theme="warm-amber"] {
+  --page-bg: #140e0a;
+  --content-bg: #1f1711;
+  --sidebar-bg: #0e0a07;
+  --sidebar-border: #38291e;
+  --sidebar-hover-bg: #2a1f17;
+  --navbar-bg: #080503;
+  --primary: #f97316;
+  --primary-hover: #fb923c;
+  --border-color: #38291e;
+  --border: 24 30% 17%;
+  --card: 24 35% 10%;
+  --background: 24 40% 6%;
+}
+
+/* 6. Minimal Slate / Monochrome Executive */
+[data-theme="minimal-neutral"] {
+  --primary: #334155;
+  --primary-hover: #1e293b;
+  --page-bg: #f8fafc;
+  --content-bg: #ffffff;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #e2e8f0;
+  --sidebar-hover-bg: #f1f5f9;
+  --navbar-bg: #0f172a;
+  --border-color: #e2e8f0;
+}
+[data-theme="minimal-neutral"].dark,
+.dark[data-theme="minimal-neutral"] {
+  --page-bg: #0f172a;
+  --content-bg: #1e293b;
+  --sidebar-bg: #0b1120;
+  --sidebar-border: #334155;
+  --sidebar-hover-bg: #1b253b;
+  --navbar-bg: #070a14;
+  --primary: #94a3b8;
+  --primary-hover: #cbd5e1;
+  --border-color: #334155;
+  --border: 215 28% 20%;
+  --card: 215 28% 14%;
+  --background: 215 28% 8%;
+}
+
+/* 7. High-Contrast Professional (AAA Certified OLED) */
+[data-theme="high-contrast"] {
+  --primary: #0284c7;
+  --primary-hover: #0369a1;
+  --page-bg: #ffffff;
+  --content-bg: #ffffff;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #000000;
+  --sidebar-hover-bg: #f1f5f9;
+  --navbar-bg: #000000;
+  --border-color: #000000;
+}
+[data-theme="high-contrast"].dark,
+.dark[data-theme="high-contrast"] {
+  --page-bg: #000000;
+  --content-bg: #111111;
+  --sidebar-bg: #000000;
+  --sidebar-border: #333333;
+  --sidebar-hover-bg: #1a1a1a;
+  --navbar-bg: #000000;
+  --primary: #38bdf8;
+  --primary-hover: #7dd3fc;
+  --border-color: #333333;
+  --border: 0 0% 20%;
+  --card: 0 0% 7%;
+  --background: 0 0% 0%;
+}
+
+/* 8. Custom Brand Studio (Dynamic Custom Properties) */
+[data-theme="custom-brand"] {
+  --primary: var(--theme-custom-primary, #7c3aed);
+  --primary-hover: var(--theme-custom-primary-hover, color-mix(in srgb, var(--primary) 85%, black));
+  --page-bg: #f8fafc;
+  --content-bg: #ffffff;
+  --sidebar-bg: #ffffff;
+  --sidebar-border: #e2e8f0;
+  --border-color: #e2e8f0;
+}
+[data-theme="custom-brand"].dark,
+.dark[data-theme="custom-brand"] {
+  --page-bg: #090e1a;
+  --content-bg: #10172a;
+  --sidebar-bg: #070b14;
+  --sidebar-border: #1e293b;
+  --border-color: #1e293b;
+  --primary: var(--theme-custom-primary, #a78bfa);
+  --primary-hover: var(--theme-custom-primary-hover, color-mix(in srgb, var(--primary) 85%, white));
+}
+
 /* ==================== DYNAMIC THEME SYSTEM UTILITIES ==================== */
 .theme-btn-primary {
   background-color: var(--primary) !important;
@@ -232,6 +451,51 @@
 .theme-ring-primary {
   --tw-ring-color: var(--primary) !important;
   outline-color: var(--primary) !important;
+}
+
+/* Modern Card & KPI Design Tokens */
+.theme-card-pastel {
+  background-color: color-mix(in srgb, var(--primary) 4%, var(--content-bg, #ffffff)) !important;
+  border: 1px solid color-mix(in srgb, var(--primary) 15%, var(--border-color, #e2e8f0)) !important;
+}
+.dark .theme-card-pastel {
+  background-color: color-mix(in srgb, var(--primary) 8%, var(--content-bg, #111827)) !important;
+  border: 1px solid color-mix(in srgb, var(--primary) 22%, var(--border-color, #1f2937)) !important;
+}
+
+.theme-icon-container {
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent) !important;
+  color: var(--primary) !important;
+}
+
+.theme-card-elevated {
+  border-radius: var(--radius-card, 14px);
+  border: 1px solid var(--border-color, #e2e8f0);
+  background-color: var(--content-bg, #ffffff);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.theme-card-elevated:hover {
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.06), 0 8px 10px -6px rgb(0 0 0 / 0.04);
+  transform: translateY(-1px);
+}
+
+.theme-kpi-up {
+  background-color: #ecfdf5 !important;
+  color: #047857 !important;
+}
+.dark .theme-kpi-up {
+  background-color: rgba(6, 78, 59, 0.35) !important;
+  color: #34d399 !important;
+}
+
+.theme-kpi-down {
+  background-color: #fef2f2 !important;
+  color: #b91c1c !important;
+}
+.dark .theme-kpi-down {
+  background-color: rgba(127, 29, 29, 0.35) !important;
+  color: #f87171 !important;
 }
 
 /* Warm Amber / Bistro */
@@ -2892,7 +3156,61 @@ html {
 [data-ui="flat"] .ui-stat-card { background-image: none !important; background-color: var(--content-bg) !important; color: var(--text-primary) !important; border: 1px solid var(--border-color); border-left: 4px solid var(--primary); }
 [data-ui="flat"] .ui-stat-card * { color: inherit !important; }
 [data-ui="flat"] .ui-stat-card .ui-stat-icon { color: var(--primary) !important; background: color-mix(in srgb, var(--primary) 10%, transparent) !important; }
-[data-ui="modern"] .ui-stat-card { box-shadow: var(--shadow-md); }
+
+/* Modern Bento & Pastel HR Card Overrides */
+[data-ui="modern"] .ui-stat-card,
+[data-theme="pastel-hr"] .ui-stat-card,
+[data-theme="corporate-blue"] .ui-stat-card,
+[data-theme="modern-dark"] .ui-stat-card,
+[data-theme="emerald-analytics"] .ui-stat-card,
+[data-theme="warm-amber"] .ui-stat-card,
+[data-theme="minimal-neutral"] .ui-stat-card,
+[data-theme="high-contrast"] .ui-stat-card,
+[data-theme="custom-brand"] .ui-stat-card {
+  background-image: none !important;
+  background-color: var(--content-bg) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: var(--radius-card, 14px) !important;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.04), 0 1px 2px -1px rgb(0 0 0 / 0.04) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+[data-ui="modern"] .ui-stat-card:hover,
+[data-theme="pastel-hr"] .ui-stat-card:hover,
+[data-theme="corporate-blue"] .ui-stat-card:hover,
+[data-theme="modern-dark"] .ui-stat-card:hover,
+[data-theme="emerald-analytics"] .ui-stat-card:hover,
+[data-theme="warm-amber"] .ui-stat-card:hover,
+[data-theme="minimal-neutral"] .ui-stat-card:hover,
+[data-theme="high-contrast"] .ui-stat-card:hover,
+[data-theme="custom-brand"] .ui-stat-card:hover {
+  box-shadow: 0 8px 24px -4px rgb(0 0 0 / 0.08) !important;
+  transform: translateY(-1px) !important;
+}
+[data-ui="modern"] .ui-stat-card *,
+[data-theme="pastel-hr"] .ui-stat-card *,
+[data-theme="corporate-blue"] .ui-stat-card *,
+[data-theme="modern-dark"] .ui-stat-card *,
+[data-theme="emerald-analytics"] .ui-stat-card *,
+[data-theme="warm-amber"] .ui-stat-card *,
+[data-theme="minimal-neutral"] .ui-stat-card *,
+[data-theme="high-contrast"] .ui-stat-card *,
+[data-theme="custom-brand"] .ui-stat-card * {
+  color: inherit !important;
+}
+[data-ui="modern"] .ui-stat-card .ui-stat-icon,
+[data-theme="pastel-hr"] .ui-stat-card .ui-stat-icon,
+[data-theme="corporate-blue"] .ui-stat-card .ui-stat-icon,
+[data-theme="modern-dark"] .ui-stat-card .ui-stat-icon,
+[data-theme="emerald-analytics"] .ui-stat-card .ui-stat-icon,
+[data-theme="warm-amber"] .ui-stat-card .ui-stat-icon,
+[data-theme="minimal-neutral"] .ui-stat-card .ui-stat-icon,
+[data-theme="high-contrast"] .ui-stat-card .ui-stat-icon,
+[data-theme="custom-brand"] .ui-stat-card .ui-stat-icon {
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent) !important;
+  color: var(--primary) !important;
+  border-radius: 10px !important;
+}
 
 /* Icon weight per style (lucide icons) */
 svg.lucide { stroke-width: var(--ui-icon-stroke, 2); }
