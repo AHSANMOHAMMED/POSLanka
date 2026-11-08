@@ -56,4 +56,21 @@ try {
   // Best-effort preview-props fallback
 }
 
+// Record which commit this build is from. The Droplet image (deploy/digitalocean/Dockerfile.droplet)
+// refuses a .next from another commit, so a stale build can't be shipped by mistake.
+try {
+  const fs = await import('fs')
+  const { execSync } = await import('child_process')
+  let commit = 'unknown'
+  try {
+    commit = execSync('git rev-parse --short=12 HEAD', { cwd: root }).toString().trim()
+    try { execSync('git diff --quiet HEAD -- .', { cwd: root }) } catch { commit += '-dirty' }
+  } catch {
+    // no git (e.g. building inside a container): leave 'unknown'
+  }
+  if (fs.existsSync(join(root, '.next'))) fs.writeFileSync(join(root, '.next/skyerpos-commit'), commit + '\n')
+} catch {
+  // best effort
+}
+
 console.log('Built server.js (run with: node server.js)')

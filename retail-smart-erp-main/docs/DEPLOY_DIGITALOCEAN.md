@@ -290,6 +290,16 @@ Options: `DEPLOY_HOST=root@host`, `REMOTE_DIR=/opt/poslanka`, `SKIP_BUILD=1` (re
 > upgrade) then runs on the server's old `node_modules`. Do not use `drizzle-kit migrate`: migrations
 > are applied by `npm run db:migrate` (`scripts/migrate.mjs`, reads `drizzle/meta/_journal.json`).
 
+**Is the live site running the latest code?** `curl -s https://<your-host>/api/health` shows `"commit"`
+(the git commit the image was built from). It must match `git rev-parse --short=12 HEAD` of what you
+deployed. The script checks this itself and rolls back if the restarted app still reports the old commit.
+A missing `commit` means the site still runs an image built before commit stamping (2026-11-08).
+
+> [!CAUTION]
+> `git pull` + `docker compose up -d` on the server does NOT update the app: `up -d` keeps the existing
+> `poslanka:latest` image, and a compose file whose `app` service has only `image:` (no `build:`)
+> never rebuilds it at all. Always deploy with the script (it runs `docker build` explicitly).
+
 Restore a backup into a new database with `deploy/backup/pg-restore.sh` (see `deploy/backup/README.md`).
 
 ---

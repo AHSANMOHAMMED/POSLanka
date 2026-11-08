@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
       database,
       timestamp: new Date().toISOString(),
       version: process.env.APP_VERSION || '1.0.7',
+      commit: process.env.GIT_COMMIT || 'unknown',
     }, { status: ok ? 200 : 503, headers: { 'Cache-Control': 'no-store' } })
   }
 
@@ -54,6 +55,7 @@ export async function GET(request: NextRequest) {
     storage: storageMode(),
     timestamp: new Date().toISOString(),
     version: process.env.APP_VERSION || '1.0.7',
+    commit: process.env.GIT_COMMIT || 'unknown',
   }, { status: ok ? 200 : 503, headers: { 'Cache-Control': 'no-store' } })
 }
 

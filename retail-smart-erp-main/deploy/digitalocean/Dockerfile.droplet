@@ -1,10 +1,14 @@
 FROM node:20-bookworm-slim
 WORKDIR /app
 
+# Commit being deployed; /api/health reports it so a deploy can prove the new code is running
+ARG GIT_COMMIT=unknown
+
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000 \
-    SKIP_MIGRATIONS=true
+    SKIP_MIGRATIONS=true \
+    GIT_COMMIT=${GIT_COMMIT}
 
 RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
@@ -15,6 +19,13 @@ COPY scripts/patch-next-app-route-context.js ./scripts/patch-next-app-route-cont
 RUN npm ci --no-audit --no-fund
 
 COPY . .
+# The app is built before the image (npm run build → .next + server.js). Refuse a missing build, or a
+# build from another commit (e.g. after `git pull` on the server the old .next is still there).
+RUN test -f .next/BUILD_ID && test -f server.js \
+      || { echo "No production build: run npm run build first (deploy-droplet.sh does)"; exit 1; } \
+    && built="$(cat .next/skyerpos-commit 2>/dev/null || echo unknown)" \
+    && if [ "$GIT_COMMIT" != unknown ] && [ "$built" != "$GIT_COMMIT" ]; then \
+         echo "Stale build: .next is from $built but the image is for $GIT_COMMIT. Run npm run build."; exit 1; fi
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

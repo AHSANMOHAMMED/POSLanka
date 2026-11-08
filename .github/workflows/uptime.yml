@@ -36,4 +36,12 @@ jobs:
           echo "$body" | grep -q '"database":"ok"' || { echo "::error::database is not ok"; fail=1; }
           echo "$body" | grep -q 'UNSAFE' && { echo "::error::tenant isolation is unsafe (app running as a database superuser)"; fail=1; }
           awk -v s="$secs" -v m="$MAX_SECONDS" 'BEGIN { exit !(s > m) }' && { echo "::error::slow: ${secs}s (limit ${MAX_SECONDS}s)"; fail=1; }
+          # Deploys are manual: say when the live site is not running the latest main commit
+          live=$(printf '%s' "$body" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')
+          case "$live" in
+            '') echo "::warning::live site does not report its commit (deployed before commit stamping)";;
+            unknown) echo "::warning::live site was built without a commit stamp";;
+            *) [ "${GITHUB_SHA:0:12}" = "${live%-dirty}" ] && echo "live runs main ($live)" \
+                 || echo "::warning::live runs $live, main is ${GITHUB_SHA:0:12} — deploy with deploy/digitalocean/deploy-droplet.sh";;
+          esac
           exit $fail

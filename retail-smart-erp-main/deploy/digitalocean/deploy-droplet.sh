@@ -12,6 +12,11 @@
 #      BUILD_ON=laptop (build the Docker image here and upload it, so the 1 GB Droplet never runs
 #      npm ci; default BUILD_ON=server, the way the guide has always deployed).
 #
+# The image is always built explicitly from the copied code (`docker build`, whether or not the
+# server's docker-compose.yml has a `build:` section) and stamped with the git commit; after the
+# restart the script checks that /api/health reports THAT commit. A deploy that leaves the old code
+# running (compose without `build:`, `docker compose up -d` reusing the old image) fails loudly.
+#
 # Safe order: the running container keeps its own copy of the code, so copying files changes nothing
 # until the restart. A database dump is taken before migrations, the previous image is kept as
 # <image>:rollback, and if the new container is not healthy within ~3 minutes the previous image is
@@ -27,6 +32,7 @@ ROLLBACK="${IMAGE%%:*}:rollback"
 APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 REMOTE_APP="$REMOTE_DIR/$(basename "$APP_DIR")"
 STAMP="$(date +%Y%m%d-%H%M%S)"
+COMMIT="$(git -C "$APP_DIR" rev-parse --short=12 HEAD)$(git -C "$APP_DIR" diff --quiet HEAD -- . 2>/dev/null || echo '-dirty')"
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 # DEPLOY_HOST=local runs the "server" side in REMOTE_DIR on this machine (rehearsal of a deploy)
 if [ "$HOST" = local ]; then
@@ -38,12 +44,19 @@ else
 fi
 
 step "Server check ($HOST:$REMOTE_DIR)"
-remote "test -f docker-compose.yml && test -f .env && docker compose config --services" > /tmp/skyerpos-services.$$ \
-  || { echo "Cannot reach $HOST or $REMOTE_DIR/docker-compose.yml / .env is missing."; exit 1; }
+remote "test -f docker-compose.yml && { test -f .env || test -f .env.production; } && docker compose config --services" > /tmp/skyerpos-services.$$ \
+  || { echo "Cannot reach $HOST or $REMOTE_DIR/docker-compose.yml / .env (.env.production) is missing."; exit 1; }
 grep -qx "$APP_SERVICE" /tmp/skyerpos-services.$$ || { echo "No '$APP_SERVICE' service in docker-compose.yml"; exit 1; }
 HAS_DB=0; grep -qx "$DB_SERVICE" /tmp/skyerpos-services.$$ && HAS_DB=1
 rm -f /tmp/skyerpos-services.$$
 echo "services ok (database in compose: $([ $HAS_DB = 1 ] && echo yes || echo no))"
+# The app service must run the image this script builds, or the restart brings back the old code
+APP_IMAGE=$(remote "docker compose config --format json" | python3 -c "import sys,json; print(json.load(sys.stdin)['services']['$APP_SERVICE'].get('image',''))" 2>/dev/null || true)
+if [ -n "$APP_IMAGE" ] && [ "$APP_IMAGE" != "$IMAGE" ]; then
+  echo "The '$APP_SERVICE' service runs image '$APP_IMAGE' but this script builds '$IMAGE'. Rerun with IMAGE=$APP_IMAGE."; exit 1
+fi
+LIVE_COMMIT=$(remote "docker compose exec -T $APP_SERVICE curl -fsS http://127.0.0.1:3000/api/health" 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('commit','unknown'))" 2>/dev/null || echo unknown)
+echo "running now: commit $LIVE_COMMIT (unknown = deployed before commit stamping); deploying: $COMMIT"
 # A $6 Droplet has 25 GB of disk: the new image, the rollback image and a dump must fit
 FREE_GB=$(remote "df -BG --output=avail . | tail -1 | tr -dc 0-9")
 remote "free -m | sed -n '1,3p'; df -h . | tail -1"
@@ -81,10 +94,10 @@ fi
 step "New image ($([ "${BUILD_ON:-server}" = laptop ] && echo 'built here, uploaded' || echo 'built on the server with the locked packages'))"
 remote "docker image inspect $IMAGE >/dev/null 2>&1 && docker tag $IMAGE $ROLLBACK || true"
 if [ "${BUILD_ON:-server}" = laptop ]; then
-  docker build -f deploy/digitalocean/Dockerfile.droplet -t "$IMAGE" .
+  docker build --build-arg GIT_COMMIT="$COMMIT" -f deploy/digitalocean/Dockerfile.droplet -t "$IMAGE" .
   if [ "$HOST" = local ]; then :; else docker save "$IMAGE" | gzip -1 | ssh -o BatchMode=yes "$HOST" "gunzip | docker load"; fi
 else
-  remote "docker compose build $APP_SERVICE"
+  remote "cd '$REMOTE_APP' && docker build --build-arg GIT_COMMIT=$COMMIT -f deploy/digitalocean/Dockerfile.droplet -t $IMAGE ."
 fi
 
 step "Migrations (scripts/migrate.mjs: drizzle/meta/_journal.json, no-op when up to date)"
@@ -98,14 +111,19 @@ step "Restart and health check"
 remote "docker compose up -d --no-deps --force-recreate $APP_SERVICE"
 for i in $(seq 1 36); do
   if remote "docker compose exec -T $APP_SERVICE curl -fsS http://127.0.0.1:3000/api/health" > /tmp/skyerpos-health.$$ 2>/dev/null; then
-    echo "healthy after ~$((i * 5)) s: $(cat /tmp/skyerpos-health.$$)"; rm -f /tmp/skyerpos-health.$$
+    HEALTH=$(cat /tmp/skyerpos-health.$$); rm -f /tmp/skyerpos-health.$$
+    echo "healthy after ~$((i * 5)) s: $HEALTH"
+    if ! printf '%s' "$HEALTH" | grep -q "\"commit\":\"$COMMIT\""; then
+      echo "The app is healthy but is NOT running commit $COMMIT (old image still in use)."
+      break
+    fi
     remote "docker image prune -f >/dev/null; docker builder prune -f --filter until=168h >/dev/null" || true
-    step "Deployed $(git rev-parse --short HEAD)"; exit 0
+    step "Deployed $COMMIT"; exit 0
   fi
   sleep 5
 done
 rm -f /tmp/skyerpos-health.$$
-step "New version not healthy: rolling back to the previous image"
+step "New version not healthy or not running: rolling back to the previous image"
 remote "docker compose logs --tail 60 $APP_SERVICE" || true
 remote "docker tag $ROLLBACK $IMAGE && docker compose up -d --no-deps --force-recreate $APP_SERVICE"
 echo "Rolled back. The database keeps the new (additive) migrations; the backup is backups/pre-deploy-$STAMP.dump."
