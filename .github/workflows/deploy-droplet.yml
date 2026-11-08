@@ -1,0 +1,92 @@
+name: Deploy to Droplet
+
+# Manual deploy of main to the $6 Droplet, without using your own computer: GitHub's runner builds the
+# app and the Docker image (free for this public repo), uploads the image to the Droplet over SSH, and
+# runs retail-smart-erp-main/deploy/digitalocean/deploy-droplet.sh — database dump first, previous
+# image kept as poslanka:rollback, migrations, restart, then /api/health must report this commit or
+# the previous image is started again.
+#
+# One-time setup (Settings → Secrets and variables → Actions):
+#   secret DROPLET_HOST     e.g. 168.144.216.104
+#   secret DROPLET_SSH_KEY  a private key whose public key is in the Droplet's /root/.ssh/authorized_keys
+# Optional variables NEXT_PUBLIC_* (default: the values the live site was built with).
+# Run: Actions → Deploy to Droplet → Run workflow (tick "check only" first time).
+
+on:
+  workflow_dispatch:
+    inputs:
+      check_only:
+        description: 'Only check SSH and the server layout (changes nothing)'
+        type: boolean
+        default: true
+
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: retail-smart-erp-main
+    steps:
+      - name: Check secrets
+        env:
+          DROPLET_HOST: ${{ secrets.DROPLET_HOST }}
+          DROPLET_SSH_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+        run: |
+          if [ -z "$DROPLET_HOST" ] || [ -z "$DROPLET_SSH_KEY" ]; then
+            echo "::error::Add the DROPLET_HOST and DROPLET_SSH_KEY repository secrets first."; exit 1
+          fi
+        working-directory: .
+
+      - uses: actions/checkout@v4
+
+      - name: SSH key
+        env:
+          DROPLET_HOST: ${{ secrets.DROPLET_HOST }}
+          DROPLET_SSH_KEY: ${{ secrets.DROPLET_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DROPLET_SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf 'Host %s\n  User root\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking accept-new\n' "$DROPLET_HOST" > ~/.ssh/config
+        working-directory: .
+
+      - name: Check the server
+        env:
+          DEPLOY_HOST: root@${{ secrets.DROPLET_HOST }}
+          CHECK_ONLY: '1'
+        run: ./deploy/digitalocean/deploy-droplet.sh
+
+      - uses: actions/setup-node@v4
+        if: ${{ !inputs.check_only }}
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: retail-smart-erp-main/package-lock.json
+
+      - name: Install packages
+        if: ${{ !inputs.check_only }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Deploy (build here, upload image, back up, migrate, restart, verify)
+        if: ${{ !inputs.check_only }}
+        env:
+          DEPLOY_HOST: root@${{ secrets.DROPLET_HOST }}
+          BUILD_ON: laptop
+          NEXT_TELEMETRY_DISABLED: '1'
+          # Build-time placeholders only (as in ci.yml's build job); the server's own .env is used at runtime
+          SKIP_MIGRATIONS: 'true'
+          NEXTAUTH_SECRET: build-only-not-used-at-runtime
+          NEXTAUTH_URL: http://localhost:3000
+          DATABASE_URL: postgresql://build:build@localhost:5432/build
+          NEXT_PUBLIC_APP_NAME: ${{ vars.NEXT_PUBLIC_APP_NAME || 'skyERPOS' }}
+          NEXT_PUBLIC_BASE_DOMAIN: ${{ vars.NEXT_PUBLIC_BASE_DOMAIN || 'localhost' }}
+          NEXT_PUBLIC_APP_DOMAIN: ${{ vars.NEXT_PUBLIC_APP_DOMAIN || 'localhost:3000' }}
+          NEXT_PUBLIC_LANDING_DOMAIN: ${{ vars.NEXT_PUBLIC_LANDING_DOMAIN || 'localhost:3000' }}
+        run: ./deploy/digitalocean/deploy-droplet.sh
