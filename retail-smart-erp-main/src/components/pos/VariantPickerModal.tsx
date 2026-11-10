@@ -313,8 +313,8 @@ export function VariantPickerModal({
                 <span className="text-sm font-bold text-slate-900 dark:text-white block truncate">
                   {matchedVariant ? matchedVariant.name : 'This combination does not exist'}
                 </span>
-                {matchedVariant && (
-                  <span className="text-xs text-slate-500 font-mono">{matchedVariant.barcode || matchedVariant.sku || ''}</span>
+                {matchedVariant && matchedVariant.sku && (
+                  <span className="text-xs text-slate-500 font-mono">SKU: {matchedVariant.sku}</span>
                 )}
               </div>
               {matchedVariant && (

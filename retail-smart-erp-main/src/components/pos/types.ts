@@ -124,6 +124,8 @@ export interface CartItem {
   priceLocked?: boolean
   /** H5: additional barcode with a price override this line was scanned with (sale line `barcode`) */
   barcode?: string
+  /** Item SKU code */
+  sku?: string | null
   /** H5 (from /api/price-quote): promotion discount on this line, its labels, price list, catalog price */
   promotionDiscount?: number
   promotionLabels?: string[]

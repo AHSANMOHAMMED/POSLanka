@@ -150,8 +150,6 @@ export function PriceCheckModal({
                   </h3>
                   <div className="flex items-center gap-2 mt-1.5 text-xs font-mono text-slate-500 dark:text-slate-400">
                     {item.sku && <span>SKU: {item.sku}</span>}
-                    {item.sku && item.barcode && <span>•</span>}
-                    {item.barcode && <span>Barcode: {item.barcode}</span>}
                   </div>
                 </div>
 

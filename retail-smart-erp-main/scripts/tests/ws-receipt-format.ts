@@ -50,7 +50,8 @@ export async function receiptTests(check: Check) {
         if (itemLayout === 'one_line' && paperWidth === 80) {
           check(lines.some((l) => /^Item\s+Qty\s+Price\s+Total$/.test(l.text.trim())), `escpos 80mm ${fontSize} one_line: column header`)
         }
-        check(lines.some((l) => l.text.includes('9300605000957')), `escpos ${paperWidth}mm ${fontSize} ${itemLayout}: item barcode printed`)
+        check(lines.some((l) => l.text.includes('ANC-400')), `escpos ${paperWidth}mm ${fontSize} ${itemLayout}: item SKU printed`)
+        check(!lines.some((l) => l.text.includes('9300605000957')), `escpos ${paperWidth}mm ${fontSize} ${itemLayout}: item barcode excluded`)
       }
     }
   }
@@ -95,11 +96,11 @@ export async function receiptTests(check: Check) {
   check(alignPackedRaster(r, 'center') === r, 'logo centre untouched')
 
   // HTML: same options
-  const h = renderReceiptHtmlSync(model({ itemSeparator: 'solid', fontSize: 'small', itemLayout: 'one_line', showItemBarcode: true, logoAlign: 'left' }), 80, { logoSrc: 'https://cdn/x.png' })
+  const h = renderReceiptHtmlSync(model({ itemSeparator: 'solid', fontSize: 'small', itemLayout: 'one_line', showItemSku: true, logoAlign: 'left' }), 80, { logoSrc: 'https://cdn/x.png' })
   check(h.includes(`font-size:${RECEIPT_FONT_PX[80].small}px`), 'html: small font px')
   check((h.match(/border-top:1px solid currentColor;margin:3px 0/g) || []).length === 2, 'html: solid separators between items')
   check(h.includes('grid-template-columns') && h.includes('>Qty<'), 'html: one-line 80mm grid with header')
-  check(h.includes('9300605000957'), 'html: item barcode')
+  check(h.includes('ANC-400') && !h.includes('9300605000957'), 'html: item SKU, no barcode')
   check(h.includes('margin:0 auto 4px 0'), 'html: logo left')
   check(h.includes('Powered by skyERPOS'), 'html: powered-by')
   const h58 = renderReceiptHtmlSync(model({ itemLayout: 'one_line' }), 58)

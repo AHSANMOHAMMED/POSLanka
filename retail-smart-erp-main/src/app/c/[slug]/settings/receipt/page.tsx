@@ -66,7 +66,6 @@ const TOGGLES: Array<{ key: keyof ReceiptSettings; label: string }> = [
   { key: 'showCashier', label: 'Cashier name' },
   { key: 'showCustomer', label: 'Customer name & phone' },
   { key: 'showItemSku', label: 'Item SKU / code under each line' },
-  { key: 'showItemBarcode', label: 'Item barcode under each line' },
   { key: 'showWarranty', label: 'Warranty period under lines sold with a warranty' },
   { key: 'showPoweredBy', label: '"Powered by skyERPOS" (small, last line)' },
 ]
@@ -78,8 +77,8 @@ const PREVIEW_SALE = {
   total: 4050,
   changeAmount: 950,
   items: [
-    ...(SAMPLE_RECEIPT_SALE.items || []).map((it, i) => ({ ...it, item: { barcode: i === 0 ? '4791234567892' : '4790011223344' } })),
-    { itemName: 'Anchor Full Cream Milk Powder 400g Pack', quantity: 1, unitPrice: 650, total: 650, sku: 'ANC-400', item: { barcode: '9300605000957' } },
+    ...(SAMPLE_RECEIPT_SALE.items || []),
+    { itemName: 'Anchor Full Cream Milk Powder 400g Pack', quantity: 1, unitPrice: 650, total: 650, sku: 'ANC-400' },
   ],
 }
 

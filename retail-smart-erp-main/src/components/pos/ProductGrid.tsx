@@ -367,7 +367,7 @@ export function ProductGrid({
                 >
                   {/* Stock Tag on Top Right */}
                   <div className="flex items-center justify-between mb-2">
-                    <BarcodeBadge barcode={item.barcode} sku={item.sku} />
+                    <BarcodeBadge sku={item.sku} />
                     {item.trackStock && (
                       <span
                         className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
@@ -469,7 +469,7 @@ export function ProductGrid({
                   }`}
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <BarcodeBadge barcode={item.barcode} sku={item.sku} />
+                    <BarcodeBadge sku={item.sku} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-bold text-slate-900 dark:text-white text-sm min-[1920px]:text-base truncate group-hover:opacity-80">

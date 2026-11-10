@@ -259,9 +259,11 @@ export function WeightInputModal({ isOpen, item, onClose, onConfirm }: WeightInp
           <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 flex items-center justify-between">
             <div className="min-w-0 flex-1 pr-3">
               <p className="font-bold text-slate-900 text-sm truncate">{item.name}</p>
-              <p className="text-xs text-slate-500 mt-0.5 font-mono">
-                {item.barcode ? `Barcode: ${item.barcode}` : item.sku ? `SKU: ${item.sku}` : ''}
-              </p>
+              {item.sku && (
+                <p className="text-xs text-slate-500 mt-0.5 font-mono">
+                  SKU: {item.sku}
+                </p>
+              )}
             </div>
             <div className="text-right flex-shrink-0">
               <span className="text-xs text-slate-500 block">Base Price</span>

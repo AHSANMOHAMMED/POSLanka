@@ -145,16 +145,17 @@ export function BarcodeBadge({
   className?: string
 }) {
   if (!barcode && !sku) return null
-  const text = barcode || sku || ''
-  const isBarcode = !!barcode
+  // Prefer SKU when available, or barcode if explicitly provided without SKU
+  const text = sku || barcode || ''
+  const isSku = !!sku
 
   return (
     <span
       className={`inline-flex items-center gap-1 font-mono text-[11px] font-semibold px-2 py-0.5 rounded-md border border-slate-200/80 dark:border-gray-700 bg-slate-100/90 dark:bg-gray-800/90 text-slate-700 dark:text-gray-200 ${className}`}
-      title={isBarcode ? `Barcode: ${barcode}` : `SKU: ${sku}`}
+      title={isSku ? `SKU: ${sku}` : `Barcode: ${barcode}`}
     >
       <ScanBarcode size={12} className="text-slate-500 dark:text-gray-400 shrink-0" />
-      <span className="truncate max-w-[120px]">{text}</span>
+      <span className="truncate max-w-[120px]">{isSku ? `SKU: ${sku}` : text}</span>
     </span>
   )
 }

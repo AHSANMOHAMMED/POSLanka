@@ -978,6 +978,7 @@ export default function POSPage() {
         uomFactor: item.uomFactor || 1,
         priceLocked: item.priceOverride != null,
         ...(item.priceOverride != null && item.matchedBarcode ? { barcode: item.matchedBarcode } : {}),
+        sku: item.sku || null,
         taxTemplateId: item.taxTemplateId || null,
       }])
       return
@@ -1001,6 +1002,7 @@ export default function POSPage() {
         total,
         weight: scaleQty,
         isWeighable: true,
+        sku: item.sku || null,
         taxTemplateId: item.taxTemplateId || null,
       }])
       return
@@ -1077,6 +1079,7 @@ export default function POSPage() {
       notes: folded.notes,
       // the add-ons make it a price above the catalog: kept as is by the pricing engine
       priceLocked: folded.notes ? true : undefined,
+      sku: item.sku || null,
       taxTemplateId: item.taxTemplateId || null,
       sizeSpec: { ...spec, rate },
     }])
@@ -1101,6 +1104,7 @@ export default function POSPage() {
       unitQuantity: weight,
       displayUnit: displayLabel || `${weight} ${baseUnit}`,
       isWeighable: true,
+      sku: item.sku || null,
       taxTemplateId: item.taxTemplateId || null,
     }])
     setWeightInputItem(null)
@@ -1121,6 +1125,7 @@ export default function POSPage() {
       quantity: 1,
       unitPrice,
       total: unitPrice,
+      sku: item.sku || null,
       modifiers: modifiers.length > 0 ? modifiers : undefined,
       taxTemplateId: item.taxTemplateId || null,
     }])
@@ -1148,6 +1153,7 @@ export default function POSPage() {
       quantity,
       unitPrice: price,
       total: quantity * price,
+      sku: item.sku || null,
       taxTemplateId: item.taxTemplateId || null,
       serialNumberIds: serialIds,
     }])
@@ -1225,6 +1231,7 @@ export default function POSPage() {
             quantity: -qtyToAdd,
             unitPrice: price,
             total: -qtyToAdd * price,
+            sku: item.sku || null,
           }]
         }
       })
@@ -1263,6 +1270,7 @@ export default function POSPage() {
           total: qtyToAdd * price,
           taxTemplateId: item.taxTemplateId || null,
           barcode: item.barcode || undefined,
+          sku: item.sku || null,
           unit: item.unit || null,
           ...(ownBatchLine ? { batchNumber: opts.batchNumber } : {}),
         }]
@@ -1953,6 +1961,7 @@ export default function POSPage() {
             ...(cartItem.uom ? { uom: cartItem.uom, uomFactor: Number(cartItem.uomFactor) || 1 } : {}),
             // size lines keep their size when the held cart kept it (older held carts: plain qty lines)
             ...(cartItem.sizeSpec && adjustedQty === cartItem.quantity ? { sizeSpec: cartItem.sizeSpec } : {}),
+            sku: cartItem.sku ?? item.sku ?? null,
           })
           if (item.trackStock && adjustedQty < cartItem.quantity) {
             toast.warning(`${cartItem.name}: quantity adjusted to ${adjustedQty} (stock limited)`)
@@ -2065,6 +2074,7 @@ export default function POSPage() {
 
     const returnItems: CartItem[] = []
     for (const item of returnableItems) {
+      const localItem = item.itemId ? items.find(i => i.id === item.itemId) : null
       const remaining = item.remainingQuantity ?? Math.abs(parseFloat(item.quantity))
       // Unit refund incl. tax after discounts (server-computed); legacy fallback: line average
       const unitPrice = item.refundUnitAmount ?? (Math.abs(parseFloat(item.total)) / Math.abs(parseFloat(item.quantity) || 1))
@@ -2082,6 +2092,7 @@ export default function POSPage() {
             serialNumberIds: [serialIds[i]],
             originalSaleItemId: item.id,
             maxReturnQuantity: 1,
+            sku: localItem?.sku ?? null,
           })
         }
       } else {
@@ -2094,6 +2105,7 @@ export default function POSPage() {
           total: -Math.round(remaining * unitPrice * 100) / 100,
           originalSaleItemId: item.id,
           maxReturnQuantity: remaining,
+          sku: localItem?.sku ?? null,
         })
       }
     }
