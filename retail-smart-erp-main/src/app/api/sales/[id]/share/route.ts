@@ -31,7 +31,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       if (!sale) return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
       const denied = await assertBranchAccess(session, sale.warehouseId, db)
       if (denied) return denied
-      const base = appBaseUrl(request.nextUrl.origin)
+      const base = appBaseUrl(request)
       const page = billUrl(sale.id, base)
       return NextResponse.json({
         invoiceNo: sale.invoiceNo,

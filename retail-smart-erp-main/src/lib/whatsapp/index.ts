@@ -32,6 +32,7 @@ export function buildDocumentShareText(options: {
   documentType: WhatsAppDocumentType
   label: string
   shopName?: string
+  pageUrl?: string
   pdfUrl?: string
   amount?: string
 }): string {
@@ -42,12 +43,22 @@ export function buildDocumentShareText(options: {
       : options.documentType.charAt(0).toUpperCase() + options.documentType.slice(1)
 
   const lines = [
-    `${shop}`,
-    `${typeLabel}: ${options.label}`,
+    `🧾 *${shop}*`,
+    `${typeLabel}: *${options.label}*`,
   ]
-  if (options.amount) lines.push(`Amount: ${options.amount}`)
-  if (options.pdfUrl) lines.push(`PDF: ${options.pdfUrl}`)
-  lines.push('Thank you!')
+  if (options.amount) lines.push(`Total: *${options.amount}*`)
+  if (options.pageUrl) {
+    lines.push('')
+    lines.push('📄 View your bill:')
+    lines.push(options.pageUrl)
+  }
+  if (options.pdfUrl) {
+    lines.push('')
+    lines.push('📥 Download PDF:')
+    lines.push(options.pdfUrl)
+  }
+  lines.push('')
+  lines.push('Thank you for your business!')
   return lines.join('\n')
 }
 

@@ -62,12 +62,13 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
     ])
 
     const paper = new URL(request.url).searchParams.get('w') === '58' ? 58 : 80
+    const isDownload = new URL(request.url).searchParams.get('download') === '1'
     const pdf = await buildReceiptPdf(model, paper, { barcodePng, qrPng, logoPng })
     const name = `${model.isReturn ? 'credit-note' : 'bill'}-${model.invoiceNo.replace(/[^\w.-]+/g, '_')}.pdf`
     return new Response(Buffer.from(pdf), {
       headers: {
         'content-type': 'application/pdf',
-        'content-disposition': `inline; filename="${name}"`,
+        'content-disposition': `${isDownload ? 'attachment' : 'inline'}; filename="${name}"`,
         'cache-control': 'private, no-store',
         'x-robots-tag': 'noindex',
         'referrer-policy': 'no-referrer',

@@ -16,6 +16,7 @@ const schema = z.object({
   label: z.string().min(1),
   phone: z.string().optional(),
   amount: z.string().optional(),
+  pageUrl: z.string().url().optional(),
   pdfUrl: z.string().url().optional(),
   document: z
     .object({
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
     documentType: parsed.data.documentType as WhatsAppDocumentType,
     label: parsed.data.label,
     shopName: session.user.tenantName,
+    pageUrl: parsed.data.pageUrl,
     pdfUrl: parsed.data.pdfUrl,
     amount: parsed.data.amount,
   })

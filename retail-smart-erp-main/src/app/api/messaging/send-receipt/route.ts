@@ -5,6 +5,7 @@ import { requirePermission } from '@/lib/auth/roles'
 import { logError } from '@/lib/ai/error-logger'
 import { validateBody } from '@/lib/validation'
 import { sendSaleReceipt } from '@/lib/messaging/actions'
+import { appBaseUrl } from '@/lib/messaging/bill-link'
 import { httpStatusFor } from '@/lib/messaging/service'
 
 const schema = z.object({
@@ -33,7 +34,7 @@ export async function POST(request: Request) {
       channel: parsed.data.channel,
       phone: parsed.data.phone,
       userId: session.user.id,
-      baseUrl: new URL(request.url).origin,
+      baseUrl: appBaseUrl(request),
     })
     if (result.notFound) return NextResponse.json({ ...result, error: 'Sale not found' }, { status: 404 })
     return NextResponse.json(result, { status: httpStatusFor(result) })

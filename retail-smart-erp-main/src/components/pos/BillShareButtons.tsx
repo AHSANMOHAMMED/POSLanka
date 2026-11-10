@@ -42,13 +42,19 @@ export function BillShareButtons({ saleId, shopName, phone, showWhatsApp = true,
       const s = await loadShare(saleId)
       const total = Number(s.total).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
       const text = [
-        `🧾 *${shopName || 'Your bill'}*`,
+        `🧾 *${shopName || 'Receipt'}*`,
         `${s.isReturn ? 'Credit note' : 'Bill'}: *${s.invoiceNo}*`,
         s.customerName ? `Customer: ${s.customerName}` : null,
         `Total: *${currency} ${total}*`,
-        `Your bill (PDF): ${s.pdfUrl}`,
-        'Thank you!',
-      ].filter(Boolean).join('\n')
+        '',
+        `📄 View your bill:`,
+        s.pageUrl,
+        '',
+        `📥 Download PDF:`,
+        s.pdfUrl,
+        '',
+        'Thank you for your business!',
+      ].filter((x) => x !== null).join('\n')
       const url = buildWhatsAppShareUrl({ phone: s.phone || phone || undefined, text })
       if (tab) {
         tab.opener = null
