@@ -22,6 +22,9 @@ export interface PosDisplayItem {
   unitPrice: number
   total: number
   unit?: string
+  discount?: number
+  discountType?: 'percentage' | 'fixed'
+  discountValue?: number
 }
 
 export type PosDisplayState = {

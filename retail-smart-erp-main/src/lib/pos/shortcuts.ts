@@ -98,6 +98,7 @@ export const POS_CONTEXT_SHORTCUTS: Array<{ group: string; keys: string; label: 
   { group: 'Cart', keys: '0–9 .', label: 'Type the quantity of the selected line (decimals for kg / litre items)' },
   { group: 'Cart', keys: 'Enter', label: 'Confirm the typed quantity (Enter again → back to search)' },
   { group: 'Cart', keys: '+ / −', label: 'Add / remove one (also from an empty search box)' },
+  { group: 'Cart', keys: 'D', label: 'Give / edit discount on the selected line (when enabled)' },
   { group: 'Cart', keys: 'Del', label: 'Remove the selected line' },
   { group: 'Cart', keys: 'U', label: 'Change the unit of the selected line (kg → g, pcs → box …)' },
   { group: 'Cart', keys: 'Esc', label: 'Cancel typing / back to search' },

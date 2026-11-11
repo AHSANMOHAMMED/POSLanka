@@ -38,6 +38,8 @@ interface SaleItemData {
   quantity: string
   unitPrice: string
   discount: string
+  discountType?: string | null
+  discountValue?: string | null
   taxAmount: string
   taxRate: string
   total: string
@@ -954,19 +956,40 @@ export default function SalesInvoiceDetailPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {sale.items.map((item, index) => (
-                      <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                        <td className="px-4 py-2 text-gray-500">{index + 1}</td>
-                        <td className="px-4 py-2">
-                          <span className="font-medium text-gray-900 dark:text-white">
-                            {item.item ? formatItemLabel(item.item, businessType) : item.itemName}
-                          </span>
-                        </td>
-                        <td className="px-4 py-2 text-right">{parseFloat(item.quantity)}</td>
-                        <td className="px-4 py-2 text-right">{formatCurrency(parseFloat(item.unitPrice))}</td>
-                        <td className="px-4 py-2 text-right font-medium">{formatCurrency(parseFloat(item.total))}</td>
-                      </tr>
-                    ))}
+                    {sale.items.map((item, index) => {
+                      const itemDisc = parseFloat(item.discount || '0')
+                      const qty = parseFloat(item.quantity || '0')
+                      const unitPrice = parseFloat(item.unitPrice || '0')
+                      const grossTotal = qty * unitPrice
+                      const discPct = item.discountType === 'percentage' && item.discountValue != null && parseFloat(item.discountValue) > 0
+                        ? `${Number(parseFloat(item.discountValue).toFixed(2))}%`
+                        : null
+                      return (
+                        <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                          <td className="px-4 py-2 text-gray-500">{index + 1}</td>
+                          <td className="px-4 py-2">
+                            <span className="font-medium text-gray-900 dark:text-white">
+                              {item.item ? formatItemLabel(item.item, businessType) : item.itemName}
+                            </span>
+                            {itemDisc > 0.004 && (
+                              <div className="text-xs font-medium text-emerald-700 dark:text-emerald-400 mt-0.5">
+                                Discount{discPct ? ` (${discPct})` : ''}: -{formatCurrency(itemDisc)}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 text-right">{qty}</td>
+                          <td className="px-4 py-2 text-right">{formatCurrency(unitPrice)}</td>
+                          <td className="px-4 py-2 text-right font-medium">
+                            {itemDisc > 0.004 && grossTotal > parseFloat(item.total) + 0.004 && (
+                              <div className="text-xs font-normal text-gray-400 line-through">
+                                {formatCurrency(grossTotal)}
+                              </div>
+                            )}
+                            <div>{formatCurrency(parseFloat(item.total))}</div>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
 

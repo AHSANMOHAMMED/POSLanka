@@ -1324,6 +1324,13 @@
       "when": 1771446442033,
       "tag": "0197_perf_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 198,
+      "version": "7",
+      "when": 1771446443033,
+      "tag": "0198_sale_item_discount_value",
+      "breakpoints": true
     }
   ]
 }

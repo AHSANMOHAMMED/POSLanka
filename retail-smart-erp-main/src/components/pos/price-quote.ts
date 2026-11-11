@@ -30,9 +30,74 @@ export function isPriceLocked(c: CartItem): boolean {
   return !!c.priceLocked || (!!c.isWeighable && !!c.weight) || !!(c.modifiers && c.modifiers.length) || !!c.coreCharge
 }
 
-/** Net line value after its promotions (what the sale's subtotal adds up). */
+/** Gross line amount before manual line discount or promotions. */
+export function lineGross(c: Pick<CartItem, 'quantity' | 'unitPrice'>): number {
+  return round2(c.quantity * c.unitPrice)
+}
+
+/** Compute currency discount from gross total and type/value, clamped to maxAllowed. */
+export function calcLineDiscount(
+  gross: number,
+  discountType?: 'percentage' | 'fixed',
+  discountValue?: number,
+  maxAllowed?: number,
+): number {
+  const absGross = Math.abs(gross)
+  const cap = maxAllowed != null ? Math.min(absGross, Math.max(0, maxAllowed)) : absGross
+  if (!(cap > 0) || !discountValue || !(discountValue > 0)) return 0
+  const raw = discountType === 'percentage'
+    ? round2((absGross * Math.min(100, discountValue)) / 100)
+    : round2(discountValue)
+  return Math.min(cap, Math.max(0, raw))
+}
+
+/** Recompute manual `discount` and `total` on a cart line when quantity, price, or discount changes. */
+export function syncCartLineDiscount<T extends CartItem>(line: T): T {
+  const gross = round2(line.quantity * line.unitPrice)
+  if (line.quantity < 0) return { ...line, total: gross }
+  const maxAllowed = Math.max(0, round2(gross - (line.promotionDiscount || 0)))
+  const hasExplicit = !!line.discountType && line.discountValue != null && line.discountValue > 0
+  const discount = hasExplicit
+    ? calcLineDiscount(gross, line.discountType, line.discountValue, maxAllowed)
+    : Math.min(maxAllowed, Math.max(0, round2(line.discount || 0)))
+  const total = round2(gross - discount)
+  if (discount === (line.discount || 0) && total === line.total) return line
+  return hasExplicit
+    ? { ...line, discount, total }
+    : { ...line, discount: discount > 0 ? discount : undefined, total }
+}
+
+/** Apply or clear a manual per-item discount on a cart line (keeps `unitPrice` as original selling price). */
+export function withLineDiscount<T extends CartItem>(
+  line: T,
+  next: { type: 'percentage' | 'fixed'; value: number } | null
+): T {
+  const gross = round2(line.quantity * line.unitPrice)
+  if (!next || !(next.value > 0)) {
+    return {
+      ...line,
+      discount: undefined,
+      discountType: undefined,
+      discountValue: undefined,
+      total: gross,
+    }
+  }
+  const cleanValue = next.type === 'percentage' ? Math.min(100, Math.max(0, next.value)) : Math.max(0, next.value)
+  const maxAllowed = Math.max(0, round2(gross - (line.promotionDiscount || 0)))
+  const discount = calcLineDiscount(gross, next.type, cleanValue, maxAllowed)
+  return {
+    ...line,
+    discountType: next.type,
+    discountValue: round2(cleanValue),
+    discount,
+    total: round2(gross - discount),
+  }
+}
+
+/** Net line value after its manual discount and promotions (what the sale's subtotal adds up). */
 export function lineNet(c: CartItem): number {
-  return round2(c.total - (c.promotionDiscount || 0))
+  if (c.quantity < 0) return round2(c.total - (c.promotionDiscount || 0))
+  return Math.max(0, round2(c.total - (c.promotionDiscount || 0)))
 }
 
 /** Write a quote into the cart; returns the same array when nothing changed (no re-render loop). */
@@ -44,16 +109,17 @@ export function applyQuoteToCart(cart: CartItem[], quote: QuoteResult): CartItem
     if (!q) return c
     const locked = isPriceLocked(c)
     const unitPrice = locked ? c.unitPrice : q.unitPrice
-    const total = locked ? c.total : round2(unitPrice * c.quantity)
     const labels = q.promotions.map((p) => p.label)
     const promotionDiscount = round2(q.promotionDiscount)
-    if (unitPrice === c.unitPrice && total === c.total && promotionDiscount === (c.promotionDiscount || 0)
+    const updated = syncCartLineDiscount({ ...c, unitPrice, promotionDiscount })
+    if (unitPrice === c.unitPrice && updated.total === c.total && (updated.discount || 0) === (c.discount || 0)
+      && promotionDiscount === (c.promotionDiscount || 0)
       && (c.priceListName ?? null) === (locked ? null : q.priceListName) && JSON.stringify(labels) === JSON.stringify(c.promotionLabels || [])) {
       return c
     }
     changed = true
     return {
-      ...c, unitPrice, total, promotionDiscount, promotionLabels: labels,
+      ...updated, promotionLabels: labels,
       priceListName: locked ? null : q.priceListName, catalogPrice: q.basePrice,
     }
   })

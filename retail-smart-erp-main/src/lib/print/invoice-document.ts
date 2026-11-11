@@ -119,6 +119,8 @@ interface SaleItemApi {
   quantity: Num
   unitPrice: Num
   discount?: Num
+  discountType?: string | null
+  discountValue?: Num
   taxRate?: Num
   taxAmount?: Num
   total: Num
@@ -207,6 +209,8 @@ export async function loadSaleDocument(saleId: string): Promise<{ doc: InvoiceDo
       unit: it.uom || it.item?.unit || null,
       unitPrice: n(it.unitPrice),
       discount: n(it.discount),
+      discountType: it.discountType === 'percentage' || it.discountType === 'fixed' ? it.discountType : null,
+      discountValue: it.discountValue != null ? n(it.discountValue) : null,
       taxRate: n(it.taxRate),
       taxAmount: n(it.taxAmount),
       amount: n(it.total),

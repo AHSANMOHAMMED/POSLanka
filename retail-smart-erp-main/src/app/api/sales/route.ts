@@ -618,6 +618,8 @@ export async function POST(request: NextRequest) {
       resolvedPrice: number
       /** H5: manual line discount (discount = manual + promotionDiscount) */
       manualDiscount: number
+      discountType: 'percentage' | 'fixed' | null
+      discountValue: number | null
       promotionDiscount: number
       promotions: Array<{ promotionId: string; label: string; amount: number }>
       cartPromotionShare: number
@@ -638,7 +640,28 @@ export async function POST(request: NextRequest) {
       // 4 dp: a unit derived by a factor (0.345 / g); prices in cents are unchanged
       const unitPrice = roundUnitPrice(pl.unitPrice)
       const quantity = cartItem.quantity
-      const manualDiscount = roundCurrency(cartItem.discount || 0)
+      const lineGross = roundCurrency(unitPrice * Math.abs(quantity))
+      const rawDiscountType = cartItem.discountType ?? null
+      const rawDiscountValue = cartItem.discountValue != null ? Number(cartItem.discountValue) : null
+      const manualDiscount = rawDiscountType === 'percentage' && rawDiscountValue != null
+        ? roundCurrency((lineGross * rawDiscountValue) / 100)
+        : rawDiscountType === 'fixed' && rawDiscountValue != null
+          ? roundCurrency(rawDiscountValue)
+          : roundCurrency(cartItem.discount || 0)
+      const isWeighRoundingRemainder = !!item.isWeighable && !rawDiscountType && rawDiscountValue == null && manualDiscount <= 0.05
+      if (!isReturn && !offlineRef && !featureFlags.item_discounts && manualDiscount > 0 && !isWeighRoundingRemainder) {
+        return NextResponse.json({
+          error: `${FEATURE_FLAG_LABELS.item_discounts} is turned off for this business.`,
+          code: 'FEATURE_DISABLED',
+          feature: 'item_discounts',
+        }, { status: 403 })
+      }
+      const persistedDiscountType: 'percentage' | 'fixed' | null = manualDiscount > 0 && !isWeighRoundingRemainder
+        ? (rawDiscountType || 'fixed')
+        : null
+      const persistedDiscountValue: number | null = manualDiscount > 0 && !isWeighRoundingRemainder
+        ? (rawDiscountValue != null ? roundCurrency(rawDiscountValue) : manualDiscount)
+        : null
       const itemDiscount = roundCurrency(manualDiscount + pl.promotionDiscount)
 
       // A sale line takes goods out; taking goods back is a return (processReturns, priced from
@@ -681,6 +704,8 @@ export async function POST(request: NextRequest) {
         isWeighable: !!item.isWeighable,
         resolvedPrice: roundUnitPrice(pl.resolvedPrice),
         manualDiscount,
+        discountType: persistedDiscountType,
+        discountValue: persistedDiscountValue,
         promotionDiscount: pl.promotionDiscount,
         promotions: pl.promotions.map(({ promotionId, label, amount }) => ({ promotionId, label, amount })),
         cartPromotionShare: pl.cartDiscountShare,
@@ -1438,6 +1463,8 @@ export async function POST(request: NextRequest) {
           unitPrice: String(cartItem.unitPrice),
           listPrice: String(cartItem.listPrice),
           discount: String(cartItem.discount || 0),
+          discountType: cartItem.discountType,
+          discountValue: cartItem.discountValue != null ? String(cartItem.discountValue) : null,
           taxRate: String(itemTaxRate),
           taxAmount: String(itemTaxAmount),
           taxTemplateId: itemTaxTemplateId,

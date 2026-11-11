@@ -14,6 +14,7 @@ import {
   ShiftOpenModal,
   ShiftCloseModal,
   DiscountModal,
+  ItemDiscountPopover,
   ProductGrid,
   CartPanel,
   POSPaymentModal,
@@ -109,7 +110,7 @@ import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { useBusinessScope } from '@/hooks/useBusinessScope'
 import { hasBusinessType, type BusinessScope } from '@/lib/business-types/scope'
 import { formatItemLabel } from '@/lib/utils/item-display'
-import { usePriceQuote, lineNet } from '@/components/pos/price-quote'
+import { usePriceQuote, lineNet, syncCartLineDiscount, withLineDiscount } from '@/components/pos/price-quote'
 import { loadPricingBundleCache } from '@/lib/offline/pricing-cache'
 import { unitOptionsFor, unitPriceFor, unitAllowsFraction, normalizeUnit, unitShortName, type UnitOption } from '@/lib/units/conversions'
 import { PosActionsPanel, type PosActionTile } from '@/components/pos/PosActionsPanel'
@@ -285,12 +286,14 @@ export default function POSPage() {
   // Discount state
   const [saleDiscount, setSaleDiscount] = useState<{ type: 'percentage' | 'fixed'; value: number; reason: string }>({ type: 'percentage', value: 0, reason: '' })
   const [showDiscountModal, setShowDiscountModal] = useState(false)
+  const [itemDiscountLineId, setItemDiscountLineId] = useState<string | null>(null)
 
   // Supervisor override + terminal lock
   const { data: sessionData } = useSession()
   const cashierName = sessionData?.user?.name || ''
   type SupervisorRequest =
     | { type: 'custom_discount'; discount: { type: 'percentage' | 'fixed'; value: number; reason: string } }
+    | { type: 'item_discount'; cartLineId: string; discount: { type: 'percentage' | 'fixed'; value: number }; itemName: string; discountPercent: number }
     | { type: 'price_override'; cartLineId: string; newPrice: number; itemName: string; originalPrice: number }
     | { type: 'cart_void' }
     | { type: 'quick_add_item' }
@@ -935,18 +938,29 @@ export default function POSPage() {
   function toSaleLine<T extends CartItem>(c: T): T & { discount?: number } {
     if (!c.isWeighable || !c.weight || !(c.weight > 0) || c.quantity !== 1) return c
     const qty = Math.round(c.weight * 1000) / 1000
-    const lineTotal = roundCurrency(c.total)
+    const manualDiscount = roundCurrency(c.discount || 0)
+    const grossTotal = roundCurrency(c.total + manualDiscount)
     if (!(qty > 0) || qty === 1) return c
-    const base = roundCurrency(lineTotal / qty)
+    const base = roundCurrency(grossTotal / qty)
     for (let k = 0; k <= 5; k++) {
       for (const p of k === 0 ? [base] : [roundCurrency(base + k / 100), roundCurrency(base - k / 100)]) {
-        if (p >= 0 && roundCurrency(p * qty) === lineTotal) {
-          return { ...c, quantity: qty, unitPrice: p, total: lineTotal }
+        if (p >= 0 && roundCurrency(p * qty) === grossTotal) {
+          return { ...c, quantity: qty, unitPrice: p, discount: manualDiscount || undefined, total: roundCurrency(c.total) }
         }
       }
     }
-    const p = Math.ceil((lineTotal / qty) * 100) / 100
-    return { ...c, quantity: qty, unitPrice: p, discount: roundCurrency(roundCurrency(p * qty) - lineTotal), total: lineTotal }
+    const p = Math.ceil((grossTotal / qty) * 100) / 100
+    const subCent = roundCurrency(roundCurrency(p * qty) - grossTotal)
+    const combinedDiscount = roundCurrency(manualDiscount + subCent)
+    return {
+      ...c,
+      quantity: qty,
+      unitPrice: p,
+      discount: combinedDiscount,
+      discountType: manualDiscount > 0 && subCent === 0 ? c.discountType : (combinedDiscount > 0 ? 'fixed' : undefined),
+      discountValue: manualDiscount > 0 && subCent === 0 ? c.discountValue : (combinedDiscount > 0 ? combinedDiscount : undefined),
+      total: roundCurrency(c.total),
+    }
   }
 
   /** Add a scanned item honouring scan-derived quantity/price (weighing-scale labels, GS1 net weight / price) or scan multiplier. */
@@ -1060,7 +1074,7 @@ export default function POSPage() {
       setCart(prev => prev.map(c => {
         if (c.cartLineId !== entry.cartLineId) return c
         const folded = foldSizeLine(spec, spec.rate ?? c.sizeSpec?.rate ?? c.unitPrice)
-        return { ...c, name, quantity: folded.billQty, unitPrice: folded.unitPrice, total: folded.total, notes: folded.notes, sizeSpec: spec, priceLocked: c.priceLocked || !!folded.notes || undefined }
+        return syncCartLineDiscount({ ...c, name, quantity: folded.billQty, unitPrice: folded.unitPrice, total: folded.total, notes: folded.notes, sizeSpec: spec, priceLocked: c.priceLocked || !!folded.notes || undefined })
       }))
       return
     }
@@ -1257,7 +1271,7 @@ export default function POSPage() {
       if (existing) {
         return prev.map(c =>
           c.cartLineId === existing.cartLineId
-            ? { ...c, quantity: c.quantity + qtyToAdd, total: (c.quantity + qtyToAdd) * c.unitPrice }
+            ? syncCartLineDiscount({ ...c, quantity: c.quantity + qtyToAdd })
             : c
         )
       } else {
@@ -1394,7 +1408,7 @@ export default function POSPage() {
     for (const sfx of [line.displayUnit, line.uom, line.uom ? unitShortName(line.uom) : undefined]) {
       if (sfx && baseName.endsWith(` (${sfx})`)) baseName = baseName.slice(0, -(sfx.length + 3))
     }
-    setCart(prev => prev.map(c => c.cartLineId !== cartLineId ? c : {
+    setCart(prev => prev.map(c => c.cartLineId !== cartLineId ? c : syncCartLineDiscount({
       ...c,
       name: opt.isBase ? baseName : `${baseName} (${unitShortName(opt.uom)})`,
       quantity: qty,
@@ -1413,7 +1427,7 @@ export default function POSPage() {
       baseUnitPrice: undefined,
       catalogPrice: undefined,
       priceListName: null,
-    }))
+    })))
   }
 
   /** U in the cart: next unit of the selected line */
@@ -1469,19 +1483,19 @@ export default function POSPage() {
     setCart(cart.map(c => {
       if (c.cartLineId !== cartLineId) return c
       if (c.isWeighable) {
-        const basePrice = c.baseUnitPrice || (c.weight ? c.total / c.weight : c.unitPrice)
-        const total = roundCurrency(newQty * basePrice)
-        return {
+        const basePrice = c.baseUnitPrice || (c.weight ? (c.total + (c.discount || 0)) / c.weight : c.unitPrice)
+        const gross = roundCurrency(newQty * basePrice)
+        return syncCartLineDiscount({
           ...c,
           quantity: 1,
           weight: newQty,
           unitQuantity: newQty,
-          unitPrice: total,
-          total,
+          unitPrice: gross,
+          total: gross,
           displayUnit: `${newQty} ${c.unit || 'kg'}`,
-        }
+        })
       }
-      return { ...c, quantity: newQty, total: roundCurrency(newQty * c.unitPrice) }
+      return syncCartLineDiscount({ ...c, quantity: newQty })
     }))
   }
 
@@ -1512,9 +1526,13 @@ export default function POSPage() {
   function withManualPrice(c: CartItem, newPrice: number): CartItem {
     if (c.sizeSpec) {
       const spec: CartSizeSpec = { ...c.sizeSpec, rate: newPrice, finishing: undefined }
-      return { ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true, sizeSpec: spec, name: sizeLineName(spec, c.quantity), notes: undefined }
+      return syncCartLineDiscount({ ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true, sizeSpec: spec, name: sizeLineName(spec, c.quantity), notes: undefined })
     }
-    return { ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true }
+    return syncCartLineDiscount({ ...c, unitPrice: newPrice, total: c.quantity * newPrice, priceLocked: true })
+  }
+
+  function applyItemDiscount(cartLineId: string, discount: { type: 'percentage' | 'fixed'; value: number } | null) {
+    setCart(prev => prev.map(c => (c.cartLineId === cartLineId ? withLineDiscount(c, discount) : c)))
   }
 
   function applyPrice(cartLineId: string, newPrice: number) {
@@ -1552,19 +1570,19 @@ export default function POSPage() {
     setCart(cart.map(c => {
       if (c.cartLineId !== cartLineId) return c
       if (c.isWeighable) {
-        const basePrice = c.baseUnitPrice || (c.weight ? c.total / c.weight : c.unitPrice)
-        const total = roundCurrency(newQty * basePrice)
-        return {
+        const basePrice = c.baseUnitPrice || (c.weight ? (c.total + (c.discount || 0)) / c.weight : c.unitPrice)
+        const gross = roundCurrency(newQty * basePrice)
+        return syncCartLineDiscount({
           ...c,
           quantity: 1,
           weight: newQty,
           unitQuantity: newQty,
-          unitPrice: total,
-          total,
+          unitPrice: gross,
+          total: gross,
           displayUnit: `${newQty} ${c.unit || 'kg'}`,
-        }
+        })
       }
-      return { ...c, quantity: newQty, total: roundCurrency(newQty * c.unitPrice) }
+      return syncCartLineDiscount({ ...c, quantity: newQty })
     }))
   }
 
@@ -1580,6 +1598,7 @@ export default function POSPage() {
     setReturnAgainstSale(null)
     setExchangeFrom(null)
     setSaleDiscount({ type: 'percentage', value: 0, reason: '' })
+    setItemDiscountLineId(null)
     setCouponCode('')
     setPrescription(null)
     setLoyaltyPointsToRedeem('')
@@ -1950,19 +1969,24 @@ export default function POSPage() {
           outOfStockItems.push(cartItem.name)
         } else {
           const adjustedQty = item.trackStock ? Math.min(cartItem.quantity, Math.floor((availableStock / factor) * 1000) / 1000) : cartItem.quantity
-          validCartItems.push({
+          validCartItems.push(syncCartLineDiscount({
             cartLineId: cartItem.cartLineId || `${cartItem.itemId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             itemId: cartItem.itemId,
             name: cartItem.name,
             quantity: adjustedQty,
             unitPrice: cartItem.unitPrice,
             total: adjustedQty * cartItem.unitPrice,
+            ...(cartItem.discount ? { discount: Number(cartItem.discount) } : {}),
+            ...(cartItem.discountType ? { discountType: cartItem.discountType } : {}),
+            ...(cartItem.discountValue != null ? { discountValue: Number(cartItem.discountValue) } : {}),
+            ...(cartItem.priceLocked ? { priceLocked: true } : {}),
+            ...(cartItem.catalogPrice != null ? { catalogPrice: Number(cartItem.catalogPrice) } : {}),
             // the unit the line was held in (box, g …), so its price stays per that unit
             ...(cartItem.uom ? { uom: cartItem.uom, uomFactor: Number(cartItem.uomFactor) || 1 } : {}),
             // size lines keep their size when the held cart kept it (older held carts: plain qty lines)
             ...(cartItem.sizeSpec && adjustedQty === cartItem.quantity ? { sizeSpec: cartItem.sizeSpec } : {}),
             sku: cartItem.sku ?? item.sku ?? null,
-          })
+          }))
           if (item.trackStock && adjustedQty < cartItem.quantity) {
             toast.warning(`${cartItem.name}: quantity adjusted to ${adjustedQty} (stock limited)`)
           }
@@ -2361,7 +2385,7 @@ export default function POSPage() {
   async function authorizeSupervisor(pin: string, reason: string): Promise<boolean> {
     if (!supervisorRequest) return false
     // Scopes the server checks for this action (the token is verified again on POST /api/sales)
-    const approvalScopes = supervisorRequest.type === 'custom_discount' ? ['discount']
+    const approvalScopes = (supervisorRequest.type === 'custom_discount' || supervisorRequest.type === 'item_discount') ? ['discount']
       : supervisorRequest.type === 'price_override' ? ['price_change']
         : supervisorRequest.type === 'sale_approval' ? supervisorRequest.scopes
           : []
@@ -2377,7 +2401,8 @@ export default function POSPage() {
           detail: supervisorRequest.type === 'sale_approval' ? supervisorRequest.message
             : supervisorRequest.type === 'price_override' ? `${supervisorRequest.itemName}: ${supervisorRequest.originalPrice} → ${supervisorRequest.newPrice}`
               : supervisorRequest.type === 'custom_discount' ? `discount ${supervisorRequest.discount.value}${supervisorRequest.discount.type === 'percentage' ? '%' : ''}`
-                : 'cart void',
+                : supervisorRequest.type === 'item_discount' ? `${supervisorRequest.itemName}: item discount ${supervisorRequest.discount.value}${supervisorRequest.discount.type === 'percentage' ? '%' : ''}`
+                  : 'cart void',
         },
       }),
     })
@@ -2389,6 +2414,8 @@ export default function POSPage() {
     if (supervisorRequest.type === 'custom_discount') {
       const d = supervisorRequest.discount
       setSaleDiscount({ ...d, reason: `${d.reason} — approved by ${approver}` })
+    } else if (supervisorRequest.type === 'item_discount') {
+      applyItemDiscount(supervisorRequest.cartLineId, supervisorRequest.discount)
     } else if (supervisorRequest.type === 'price_override') {
       applyPrice(supervisorRequest.cartLineId, supervisorRequest.newPrice)
     } else if (supervisorRequest.type === 'cart_void') {
@@ -2699,6 +2726,12 @@ export default function POSPage() {
     if (!line) return false
     if (k === '+' || k === '-') { e.preventDefault(); setQtyBuffer(''); stepLine(line, k === '+' ? 1 : -1); return true }
     if (k === 'Delete') { e.preventDefault(); setQtyBuffer(''); removeFromCart(line.cartLineId); return true }
+    if ((k === 'd' || k === 'D') && allowItemDiscount && !isReturnMode) {
+      e.preventDefault()
+      if (qtyBuffer) commitQtyBuffer()
+      setItemDiscountLineId(line.cartLineId)
+      return true
+    }
     if (k === 'u' || k === 'U') { e.preventDefault(); if (qtyBuffer) commitQtyBuffer(); cycleLineUnit(line); return true }
     if (/^[0-9]$/.test(k) && timeDiff < 30 && qtyBuffer.length > 0) {
       // Keys this fast are a barcode scanner, not the cashier: hand them to the search box
@@ -2756,6 +2789,8 @@ export default function POSPage() {
 
   const customerDisplayEnabled = featureFlags.customer_display !== false
     && ((posProfile?.receiptSettings as { cashierPermissions?: { customerDisplay?: boolean } } | undefined)?.cashierPermissions?.customerDisplay !== false)
+  const counterAllowItemDiscount = (posProfile?.receiptSettings as { cashierPermissions?: { allowItemDiscount?: boolean } } | undefined)?.cashierPermissions?.allowItemDiscount !== false
+  const allowItemDiscount = featureFlags.item_discounts === true && counterAllowItemDiscount
 
   function openCustomerDisplay() {
     if (!customerDisplayEnabled) {
@@ -2837,7 +2872,7 @@ export default function POSPage() {
 
   /** Any modal / dialog / full-screen overlay on top of the POS: page shortcuts pause while one is open */
   function overlayOpen(): boolean {
-    if (rxPrompt || showPayment || showDiscountModal || showHeldSalesModal || showCustomerModal || showVehicleModal
+    if (rxPrompt || showPayment || showDiscountModal || !!itemDiscountLineId || showHeldSalesModal || showCustomerModal || showVehicleModal
       || showShiftOpenModal || showShiftCloseModal || showReturnLookupModal || showFloatModal || showPriceCheckModal
       || showQuickAddModal || !!variantPickerParentItem || !!supervisorRequest || clearCartConfirm || showCashMovementModal
       || showRecentSalesModal || showPrinterSettings || showCameraScan || showShortcutsHelp || !!lastSale
@@ -3029,8 +3064,9 @@ export default function POSPage() {
           name: c.name,
           quantity: c.isWeighable && c.weight ? c.weight : c.quantity,
           unit: c.isWeighable ? (c.unit || 'kg') : (c.uom ? unitShortName(c.uom) : undefined),
-          unitPrice: c.isWeighable && c.weight ? (c.baseUnitPrice ?? roundCurrency(c.total / c.weight)) : c.unitPrice,
-          total: c.total,
+          unitPrice: c.isWeighable && c.weight ? (c.baseUnitPrice ?? roundCurrency((c.total + (c.discount || 0)) / c.weight)) : c.unitPrice,
+          total: lineNet(c),
+          ...(c.discount && c.discount > 0 ? { discount: c.discount, discountType: c.discountType, discountValue: c.discountValue } : {}),
         })),
         subtotal,
         discount: discountAmount,
@@ -3121,6 +3157,8 @@ export default function POSPage() {
         unitPrice: l.unitPrice,
         total: roundCurrency(l.unitPrice * l.quantity - (l.discount || 0) - (l.promotionDiscount || 0)),
         discount: roundCurrency((l.discount || 0) + (l.promotionDiscount || 0)),
+        discountType: l.discountType ?? null,
+        discountValue: l.discountValue ?? null,
         uom: l.uom || null,
         uomFactor: l.uom ? (l.uomFactor || 1) : null,
         item: { unit: l.unit || null },
@@ -3752,6 +3790,8 @@ export default function POSPage() {
         onOpenPayment={() => openPaymentModal()}
         allowDiscount={allowDiscount}
         onShowDiscount={() => setShowDiscountModal(true)}
+        allowItemDiscount={allowItemDiscount}
+        onOpenItemDiscount={(id) => setItemDiscountLineId(id)}
         loyaltyProgram={loyaltyProgram}
         orderType={orderType}
         onOrderTypeChange={config.showOrderTypeSelector ? setOrderType : undefined}
@@ -3960,6 +4000,28 @@ export default function POSPage() {
         }}
       />
 
+      <ItemDiscountPopover
+        item={itemDiscountLineId ? cart.find(c => c.cartLineId === itemDiscountLineId) ?? null : null}
+        isOpen={!!itemDiscountLineId}
+        onClose={() => setItemDiscountLineId(null)}
+        onApply={applyItemDiscount}
+        maxDiscountPercent={maxDiscountPct}
+        allowDiscountChange={allowDiscount}
+        onRequestOverride={(cartLineId, discount) => {
+          const line = cart.find(c => c.cartLineId === cartLineId)
+          if (!line) return
+          const gross = roundCurrency(line.quantity * line.unitPrice)
+          const discAmt = discount.type === 'percentage' ? (gross * discount.value) / 100 : discount.value
+          setSupervisorRequest({
+            type: 'item_discount',
+            cartLineId,
+            discount,
+            itemName: line.name,
+            discountPercent: gross > 0 ? Math.round((discAmt / gross) * 10000) / 100 : 0,
+          })
+        }}
+      />
+
       <DiscountModal
         isOpen={showDiscountModal}
         onClose={() => setShowDiscountModal(false)}
@@ -3977,7 +4039,7 @@ export default function POSPage() {
         isOpen={!!supervisorRequest}
         onClose={() => setSupervisorRequest(null)}
         onAuthorize={authorizeSupervisor}
-        actionType={supervisorRequest?.type || 'custom_discount'}
+        actionType={supervisorRequest?.type === 'item_discount' ? 'custom_discount' : (supervisorRequest?.type || 'custom_discount')}
         title="Supervisor Approval Required"
         contextDetails={{
           cashierName,
@@ -3988,7 +4050,9 @@ export default function POSPage() {
                   ? supervisorRequest.discount.value
                   : Math.abs(subtotal) > 0 ? (supervisorRequest.discount.value / Math.abs(subtotal)) * 100 : 0,
               }
-            : supervisorRequest?.type === 'price_override'
+            : supervisorRequest?.type === 'item_discount'
+              ? { itemName: supervisorRequest.itemName, discountPercent: supervisorRequest.discountPercent }
+              : supervisorRequest?.type === 'price_override'
               ? { itemName: supervisorRequest.itemName, originalPrice: supervisorRequest.originalPrice, requestedPrice: supervisorRequest.newPrice }
               : supervisorRequest?.type === 'sale_approval'
                 ? { message: supervisorRequest.message }

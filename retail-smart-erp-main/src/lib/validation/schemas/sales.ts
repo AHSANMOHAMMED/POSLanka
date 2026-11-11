@@ -35,6 +35,7 @@ const saleCartItemSchema = cartItemSchema.extend({
   unitPrice: z.coerce.number(),
   discount: z.coerce.number().min(0).default(0),
   discountType: discountTypeSchema.optional(),
+  discountValue: z.coerce.number().min(0).optional(),
   taxRate: z.coerce.number().min(0).optional(),
   taxTemplateId: z.string().uuid().optional(),
   taxBreakdown: z.array(taxBreakdownItemSchema).optional(),
@@ -52,7 +53,10 @@ const saleCartItemSchema = cartItemSchema.extend({
   priceLocked: z.boolean().optional(),
   /** H5: additional barcode the line was scanned with — its price override counts as the resolved price */
   barcode: z.string().trim().max(100).optional(),
-})
+}).refine(
+  (v) => v.discountType !== 'percentage' || v.discountValue == null || v.discountValue <= 100,
+  { message: 'Percentage discount cannot exceed 100%', path: ['discountValue'] }
+)
 
 const paymentSplitSchema = z.object({
   method: paymentMethodSchema,

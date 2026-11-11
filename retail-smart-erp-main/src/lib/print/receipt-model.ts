@@ -47,6 +47,8 @@ export interface ReceiptSaleItemSource {
   unitPrice: Num
   total: Num
   discount?: Num
+  discountType?: 'percentage' | 'fixed' | null
+  discountValue?: Num
   unit?: string | null
   sku?: string | null
   barcode?: string | null
@@ -111,8 +113,11 @@ export interface ReceiptModelLine {
   qtyText: string
   unit: string | null
   unitPrice: number
+  grossTotal: number
   total: number
   discount: number
+  discountType: 'percentage' | 'fixed' | null
+  discountValue: number | null
   notes: string[]
   /** Tax invoices only: line VAT rate (%) and amount. */
   vatRate: number | null
@@ -230,6 +235,15 @@ export function formatQty(q: number): string {
 export function formatRate(rate: number | null | undefined): string {
   const r = Number(rate) || 0
   return Number.isInteger(r) ? String(r) : r.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')
+}
+
+/** Label for a manual line discount: "Discount (10%)" or "Discount". */
+export function lineDiscountLabel(l: Pick<ReceiptModelLine, 'discountType' | 'discountValue'>, short = false): string {
+  const prefix = short ? 'Disc' : 'Discount'
+  if (l.discountType === 'percentage' && l.discountValue != null && l.discountValue > 0) {
+    return `${prefix} (${formatRate(l.discountValue)}%)`
+  }
+  return prefix
 }
 
 export function paymentMethodLabel(method: string): string {
@@ -377,6 +391,9 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
 
   const items: ReceiptModelLine[] = (sale.items || []).map((it, idx) => {
     const qty = num(it.quantity)
+    const unitPrice = num(it.unitPrice)
+    const manualDisc = Math.max(0, Math.round((num(it.discount) - (it.promotions || []).filter((p) => !p.cart).reduce((t, p) => t + num(p.amount), 0)) * 100) / 100)
+    const rawDv = it.discountValue != null ? num(it.discountValue) : null
     return {
       name: it.itemName,
       sku: clean(it.sku ?? it.item?.sku) || null,
@@ -384,10 +401,13 @@ export function buildReceiptModel(args: BuildReceiptModelArgs): ReceiptModel {
       qty,
       qtyText: formatQty(qty),
       unit: it.uom ? unitShortName(it.uom) : (it.unit ?? null),
-      unitPrice: num(it.unitPrice),
+      unitPrice,
+      grossTotal: Math.round(qty * unitPrice * 100) / 100,
       total: num(it.total),
       // manual line discount only: the line's promotions print as notes below
-      discount: Math.max(0, Math.round((num(it.discount) - (it.promotions || []).filter((p) => !p.cart).reduce((t, p) => t + num(p.amount), 0)) * 100) / 100),
+      discount: manualDisc,
+      discountType: manualDisc > 0 ? (it.discountType ?? null) : null,
+      discountValue: manualDisc > 0 && rawDv != null && rawDv > 0 ? rawDv : null,
       // H5: line promotions print under the line (the bill promotion share prints in the totals)
       notes: [
         ...(args.lineNotes?.[idx] || []),

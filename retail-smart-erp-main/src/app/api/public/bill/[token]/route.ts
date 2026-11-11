@@ -68,7 +68,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
     }).from(sales).innerJoin(tenants, eq(tenants.id, sales.tenantId)).where(eq(sales.id, saleId)).limit(1)
     if (!s) return page('Bill not found', '<h1>Bill not found</h1>', 404)
 
-    const lines = await db.select({ name: saleItems.itemName, qty: saleItems.quantity, price: saleItems.unitPrice, total: saleItems.total })
+    const lines = await db.select({
+      name: saleItems.itemName,
+      qty: saleItems.quantity,
+      price: saleItems.unitPrice,
+      discount: saleItems.discount,
+      discountType: saleItems.discountType,
+      discountValue: saleItems.discountValue,
+      total: saleItems.total,
+    })
       .from(saleItems).where(and(eq(saleItems.saleId, s.id), eq(saleItems.tenantId, s.tenantId))).orderBy(asc(saleItems.id)).limit(500)
 
     const m = (n: string | number) => `${esc(s.currency)} ${Number(n).toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -85,7 +93,17 @@ ${s.address ? `<div class="muted">${esc(s.address)}</div>` : ''}${s.phone ? `<di
   <span class="muted">${esc(when)}${s.customerName ? ` · ${esc(s.customerName)}` : ''}</span>
 </div>
 ${s.status === 'void' ? '<p style="color:#dc2626;font-weight:600;margin:12px 0 0">This bill was cancelled.</p>' : ''}
-<table>${lines.map((l) => `<tr><td>${esc(l.name)}<div class="muted">${qty(l.qty)} × ${m(l.price)}</div></td><td class="r">${m(l.total)}</td></tr>`).join('')}</table>
+<table>${lines.map((l) => {
+  const disc = Number(l.discount) || 0
+  const qNum = Number(l.qty) || 0
+  const pNum = Number(l.price) || 0
+  const gross = Math.round(qNum * pNum * 100) / 100
+  const dv = l.discountValue != null ? Number(l.discountValue) : null
+  const discLabel = l.discountType === 'percentage' && dv && dv > 0
+    ? `Discount (${Number.isInteger(dv) ? dv : dv.toFixed(2).replace(/0+$/, '').replace(/\.$/, '')}%)`
+    : 'Discount'
+  return `<tr><td>${esc(l.name)}<div class="muted">${qty(l.qty)} × ${m(l.price)}</div>${disc > 0 ? `<div style="font-size:12px;color:#059669;font-weight:500">${esc(discLabel)}: -${m(disc)}</div>` : ''}</td><td class="r">${disc > 0 ? `<div class="muted" style="text-decoration:line-through;font-size:12px">${m(gross)}</div>` : ''}<strong>${m(l.total)}</strong></td></tr>`
+}).join('')}</table>
 <table>
 <tr class="sum"><td>Subtotal</td><td class="r">${m(s.subtotal)}</td></tr>
 ${Number(s.discountAmount) ? `<tr class="sum"><td>Discount</td><td class="r">-${m(s.discountAmount)}</td></tr>` : ''}

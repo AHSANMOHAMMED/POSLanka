@@ -499,6 +499,8 @@ export interface InvoiceDocLine {
   unit?: string | null
   unitPrice: number
   discount?: number | null
+  discountType?: 'percentage' | 'fixed' | null
+  discountValue?: number | null
   taxRate?: number | null
   taxAmount?: number | null
   /** Line amount as charged (after discount). */
@@ -851,15 +853,23 @@ export function renderInvoiceHtml(
   const showSerialCol = t.columns.serial.show
   const showWarrantyCol = t.columns.warranty.show
   const showDescCol = t.columns.description.show
+  const showDiscountCol = t.columns.discount.show
   const rows = doc.lines.map((l, i) => {
     const serials = (l.serialNumbers || []).filter(Boolean)
     const warranty = warrantyText(l.warrantyMonths, l.warrantyUntil, g.dateFormat)
+    const discAmt = num(l.discount)
+    const discPct = l.discountType === 'percentage' && l.discountValue != null && num(l.discountValue) > 0
+      ? `${Number(num(l.discountValue).toFixed(2))}%`
+      : null
     const cell = (k: InvoiceColumnKey): string => {
       switch (k) {
         case 'lineNo': return `<td class="c">${i + 1}</td>`
         case 'item': {
           const extra: string[] = []
           if (!showDescCol && l.description) extra.push(`<div class="sub">${multiline(l.description)}</div>`)
+          if (!showDiscountCol && discAmt > 0 && l.discountType != null) {
+            extra.push(`<div class="sub">Discount${discPct ? ` (${escapeHtml(discPct)})` : ''}: -${plain(discAmt)}</div>`)
+          }
           if (t.extrasUnderItem && !showSerialCol && serials.length) extra.push(`<div class="sub">S/N: ${escapeHtml(serials.join(', '))}</div>`)
           if (t.extrasUnderItem && !showWarrantyCol && warranty) extra.push(`<div class="sub">Warranty: ${escapeHtml(warranty)}</div>`)
           return `<td><div class="item-name">${escapeHtml(l.name)}</div>${extra.join('')}</td>`
@@ -871,7 +881,7 @@ export function renderInvoiceHtml(
         case 'qty': return `<td class="r">${escapeHtml(formatQty(l.quantity))}${!t.columns.unit.show && l.unit ? ` <span class="muted">${escapeHtml(l.unit)}</span>` : ''}</td>`
         case 'unit': return `<td>${escapeHtml(l.unit || '')}</td>`
         case 'rate': return `<td class="r">${plain(l.unitPrice)}</td>`
-        case 'discount': return `<td class="r">${num(l.discount) ? plain(num(l.discount)) : ''}</td>`
+        case 'discount': return `<td class="r">${discAmt ? `${plain(discAmt)}${discPct ? ` <span class="muted">(${escapeHtml(discPct)})</span>` : ''}` : ''}</td>`
         case 'taxRate': return `<td class="r">${l.taxRate != null && num(l.taxRate) ? `${escapeHtml(String(num(l.taxRate)))}%` : ''}</td>`
         case 'taxAmount': return `<td class="r">${num(l.taxAmount) ? plain(num(l.taxAmount)) : ''}</td>`
         case 'amount': return `<td class="r">${plain(l.amount)}</td>`
@@ -1136,10 +1146,15 @@ interface FormRow { cells: Partial<Record<FormColumnKey, string>> }
 export function formItemRows(c: InvoiceTemplateConfig, doc: InvoiceDoc): FormRow[] {
   const fmt = c.general.dateFormat
   const hasUnitCol = c.form.columns.some((col) => col.key === 'unit')
+  const hasDiscountCol = c.form.columns.some((col) => col.key === 'discount')
   const rows: FormRow[] = []
   doc.lines.forEach((l, i) => {
     const serials = (l.serialNumbers || []).filter(Boolean)
     const warranty = warrantyText(l.warrantyMonths, l.warrantyUntil, fmt)
+    const discAmt = num(l.discount)
+    const discPct = l.discountType === 'percentage' && l.discountValue != null && num(l.discountValue) > 0
+      ? `${Number(num(l.discountValue).toFixed(2))}%`
+      : null
     rows.push({
       cells: {
         lineNo: String(i + 1),
@@ -1151,11 +1166,14 @@ export function formItemRows(c: InvoiceTemplateConfig, doc: InvoiceDoc): FormRow
         qty: `${formatQty(l.quantity)}${!hasUnitCol && l.unit ? ` ${l.unit}` : ''}`,
         unit: l.unit || '',
         rate: formatAmount(l.unitPrice),
-        discount: num(l.discount) ? formatAmount(num(l.discount)) : '',
+        discount: discAmt ? `${formatAmount(discAmt)}${discPct ? ` (${discPct})` : ''}` : '',
         taxAmount: num(l.taxAmount) ? formatAmount(num(l.taxAmount)) : '',
         amount: formatAmount(l.amount),
       },
     })
+    if (!hasDiscountCol && discAmt > 0 && l.discountType != null) {
+      rows.push({ cells: { item: `Discount${discPct ? ` (${discPct})` : ''}: -${formatAmount(discAmt)}` } })
+    }
     if (c.form.items.serialRow && (serials.length || warranty)) {
       rows.push({ cells: { item: [serials.length ? `S/N: ${serials.join(', ')}` : '', warranty ? `Warranty: ${warranty}` : ''].filter(Boolean).join('   ') } })
     }

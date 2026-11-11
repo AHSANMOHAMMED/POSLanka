@@ -77,7 +77,7 @@ async function makeTenant(admin: Client, label: string): Promise<Fx> {
   const f: Fx = {
     tenantId, slug, wh: randomUUID(), ownerId: randomUUID(), cashierId: randomUUID(), cashier2Id: randomUUID(), customerId: randomUUID(), acc: {},
   }
-  await admin.query(`INSERT INTO tenants (id, name, slug, email) VALUES ($1, 'H1 test', $2, $3)`, [tenantId, slug, `${slug}@example.test`])
+  await admin.query(`INSERT INTO tenants (id, name, slug, email, settings) VALUES ($1, 'H1 test', $2, $3, '{"featureFlags":{"item_discounts":true}}'::jsonb)`, [tenantId, slug, `${slug}@example.test`])
   await admin.query(`INSERT INTO warehouses (id, tenant_id, name, code, is_default) VALUES ($1, $2, 'Main', 'MAIN', true)`, [f.wh, tenantId])
   const pin = await bcrypt.hash(OWNER_PIN, 4)
   await admin.query(`INSERT INTO users (id, tenant_id, email, password_hash, full_name, role, pin_hash) VALUES ($1, $2, $3, 'x', 'Owner', 'owner', $4)`,

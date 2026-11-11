@@ -4,7 +4,7 @@
  * settings live preview. The invoice barcode / QR are inline SVGs generated
  * with bwip-js (loaded lazily).
  */
-import { formatRate, RECEIPT_FONT_PX, type ReceiptModel, type ReceiptModelLine } from './receipt-model'
+import { formatRate, lineDiscountLabel, RECEIPT_FONT_PX, type ReceiptModel, type ReceiptModelLine } from './receipt-model'
 import { formatMoney } from './escpos/encoder'
 
 export interface ReceiptHtmlAssets {
@@ -99,7 +99,7 @@ function itemsTableHtml(model: ReceiptModel, paperWidth: 58 | 80, base: number, 
     const codes = [model.showItemSku ? l.sku : null].filter(Boolean) as string[]
     if (codes.length) sub.push(codes.map(e).join(' · '))
     if (!wide) sub.push(`${qty} x ${m(l.unitPrice)}`)
-    if (l.discount > 0) sub.push(`Discount -${m(l.discount)}`)
+    if (l.discount > 0) sub.push(`${m(l.grossTotal)} - ${lineDiscountLabel(l, true)} ${m(l.discount)} = ${m(l.total)}`)
     if (model.taxInvoice && l.vatAmount) sub.push(`VAT ${formatRate(l.vatRate)}% ${m(l.vatAmount)}`)
     for (const n of l.notes) sub.push(e(n))
     const name = `${e(l.name)}${sub.length ? `<div style="font-size:${base - 1}px">${sub.join('<br />')}</div>` : ''}`
@@ -161,8 +161,18 @@ function itemHtml(l: ReceiptModelLine, model: ReceiptModel, paperWidth: 58 | 80,
     out.push(`<div style="font-weight:600">${e(l.name)}</div>`)
   }
   if (codes.length) out.push(`<div style="font-size:${base - 1}px">&nbsp;&nbsp;${codes.map(e).join(' · ')}</div>`)
-  if (model.itemLayout !== 'one_line') out.push(row(`&nbsp;&nbsp;${qty} x ${m(l.unitPrice)}`, m(l.total)))
-  if (l.discount > 0) out.push(row('&nbsp;&nbsp;Discount', `-${m(l.discount)}`))
+  if (model.itemLayout !== 'one_line') {
+    if (l.discount > 0) {
+      out.push(row(`&nbsp;&nbsp;${qty} x ${m(l.unitPrice)}`, m(l.grossTotal)))
+      out.push(row(`&nbsp;&nbsp;${e(lineDiscountLabel(l))}`, `-${m(l.discount)}`))
+      out.push(row('&nbsp;&nbsp;<b>Net</b>', `<b>${m(l.total)}</b>`))
+    } else {
+      out.push(row(`&nbsp;&nbsp;${qty} x ${m(l.unitPrice)}`, m(l.total)))
+    }
+  } else if (l.discount > 0) {
+    if (paperWidth !== 80) out.push(`<div style="font-size:${base - 1}px">&nbsp;&nbsp;${qty} x ${m(l.unitPrice)}</div>`)
+    out.push(`<div style="font-size:${base - 1}px">&nbsp;&nbsp;${m(l.grossTotal)} - ${e(lineDiscountLabel(l, true))} ${m(l.discount)} = ${m(l.total)}</div>`)
+  }
   if (model.taxInvoice && l.vatAmount) out.push(row(`&nbsp;&nbsp;VAT ${formatRate(l.vatRate)}%`, m(l.vatAmount)))
   for (const n of l.notes) out.push(`<div style="font-size:${base - 1}px">&nbsp;&nbsp;${e(n)}</div>`)
   return out.join('')

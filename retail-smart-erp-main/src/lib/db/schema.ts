@@ -2625,6 +2625,7 @@ export const saleItems = pgTable('sale_items', {
   unitPrice: decimal('unit_price', { precision: 14, scale: 4 }).notNull(),
   discount: decimal('discount', { precision: 12, scale: 2 }).notNull().default('0'),
   discountType: discountTypeEnum('discount_type'),
+  discountValue: decimal('discount_value', { precision: 12, scale: 2 }),
   tax: decimal('tax', { precision: 12, scale: 2 }).notNull().default('0'), // DEPRECATED: unused, use taxAmount instead
   taxAmount: decimal('tax_amount', { precision: 15, scale: 2 }).notNull().default('0'),
   taxRate: decimal('tax_rate', { precision: 5, scale: 2 }).notNull().default('0'),

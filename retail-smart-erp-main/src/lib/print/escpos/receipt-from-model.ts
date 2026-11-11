@@ -6,7 +6,7 @@
  * only, so the amount column never wraps on 58 mm), secondary lines plain.
  * Font size: small = printer font B (42 / 64 columns), large = double-height body.
  */
-import { formatRate, type ReceiptModel, type ReceiptModelLine } from '../receipt-model'
+import { formatRate, lineDiscountLabel, type ReceiptModel, type ReceiptModelLine } from '../receipt-model'
 import {
   COLUMNS,
   DOT_WIDTH,
@@ -96,8 +96,18 @@ function itemRows(b: EscPosBuilder, model: ReceiptModel, l: ReceiptModelLine, m:
     b.paragraph(l.name)
   }
   if (codes.length) b.paragraph(`  ${codes.join(' / ')}`)
-  if (!oneLine) b.row(`  ${qty} x ${m(l.unitPrice)}`, m(l.total))
-  if (l.discount > 0) b.row('  Discount', `-${m(l.discount)}`)
+  if (!oneLine) {
+    if (l.discount > 0) {
+      b.row(`  ${qty} x ${m(l.unitPrice)}`, m(l.grossTotal))
+      b.row(`  ${lineDiscountLabel(l)}`, `-${m(l.discount)}`)
+      b.row('  Net', m(l.total))
+    } else {
+      b.row(`  ${qty} x ${m(l.unitPrice)}`, m(l.total))
+    }
+  } else if (l.discount > 0) {
+    if (!(cols >= 42)) b.paragraph(`  ${qty} x ${m(l.unitPrice)}`)
+    b.paragraph(`  ${m(l.grossTotal)} - ${lineDiscountLabel(l, true)} ${m(l.discount)} = ${m(l.total)}`)
+  }
   if (model.taxInvoice && l.vatAmount) b.row(`  VAT ${formatRate(l.vatRate)}%`, m(l.vatAmount))
   for (const n of l.notes) b.paragraph(`  ${n}`)
 }

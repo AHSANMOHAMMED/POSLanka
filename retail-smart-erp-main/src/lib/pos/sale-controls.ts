@@ -100,7 +100,7 @@ export interface SaleControlFindings {
  *  - allowRateChange = false: a line below the catalog price needs approval (weighed lines get a
  *    few cents of tolerance: the POS derives their per-unit price from the label amount)
  */
-export function evaluateSaleControls(profile: Pick<ProfileRow, 'allowDiscountChange' | 'allowRateChange' | 'maxDiscountPercent'> | null, input: {
+export function evaluateSaleControls(profile: (Pick<ProfileRow, 'allowDiscountChange' | 'allowRateChange' | 'maxDiscountPercent'> & { receiptSettings?: unknown }) | null, input: {
   lines: DiscountCheckLine[]
   cartDiscount: number
 }): SaleControlFindings {
@@ -116,9 +116,12 @@ export function evaluateSaleControls(profile: Pick<ProfileRow, 'allowDiscountCha
     return { discountPercent, manualDiscount, priceOverrides, needsDiscountApproval: false, needsPriceApproval: false }
   }
   const maxPct = parseFloat(String(profile.maxDiscountPercent ?? '100'))
-  const needsDiscountApproval = manualDiscount > 0.004 && (
-    profile.allowDiscountChange === false || (Number.isFinite(maxPct) && discountPercent > maxPct + 0.0001)
-  )
+  const counterAllowItemDisc = ((profile.receiptSettings as { cashierPermissions?: { allowItemDiscount?: boolean } } | null | undefined)?.cashierPermissions?.allowItemDiscount) !== false
+  const needsDiscountApproval =
+    (manualDiscount > 0.004 && (
+      profile.allowDiscountChange === false || (Number.isFinite(maxPct) && discountPercent > maxPct + 0.0001)
+    ))
+    || (lineDiscount > 0.004 && !counterAllowItemDisc)
   const needsPriceApproval = profile.allowRateChange === false && priceOverrides.length > 0
   return { discountPercent, manualDiscount, priceOverrides, needsDiscountApproval, needsPriceApproval }
 }

@@ -234,6 +234,11 @@ export default function CustomerFacingDisplayPage() {
                         ? `${Number(item.quantity).toLocaleString('en-US', { maximumFractionDigits: 3 })} ${item.unit} × ${money(item.unitPrice)}`
                         : `${item.quantity} × ${money(item.unitPrice)}`}
                     </div>
+                    {!!item.discount && item.discount > 0 && (
+                      <div className="text-[clamp(11px,0.9vw,18px)] text-emerald-600 dark:text-emerald-400 font-mono font-semibold">
+                        Discount{item.discountType === 'percentage' && item.discountValue ? ` (${item.discountValue}%)` : ''}: −{money(item.discount)}
+                      </div>
+                    )}
                   </div>
                   <div className="text-[clamp(18px,1.6vw,36px)] font-bold font-mono shrink-0">{money(item.total)}</div>
                 </div>

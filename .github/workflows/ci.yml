@@ -108,6 +108,7 @@ jobs:
           npx tsx src/lib/print/escpos/__selftest__.ts
           npx tsx scripts/tests/w9-labels.ts
           npx tsx scripts/tests/pos-keyboard.ts
+          npx tsx scripts/tests/pos-item-discount.ts
           npx tsx scripts/tests/ws-print-layout.ts
           npx tsx scripts/tests/w7-logo-raster.ts
           npx tsx scripts/tests/s1-security-sanitize.ts

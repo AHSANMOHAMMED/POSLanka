@@ -6,7 +6,7 @@
  * (e.g. Sinhala / Tamil) print as "?".
  */
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage, type RGB } from 'pdf-lib'
-import { formatRate, type ReceiptModel, type ReceiptModelLine } from './receipt-model'
+import { formatRate, lineDiscountLabel, type ReceiptModel, type ReceiptModelLine } from './receipt-model'
 import { formatMoney } from './escpos/encoder'
 
 const MM = 72 / 25.4
@@ -109,12 +109,12 @@ export async function buildReceiptPdf(model: ReceiptModel, paperWidth: 58 | 80 =
   ops.push({ k: 'rule', dashed: true })
 
   const qtyOf = (l: ReceiptModelLine) => `${l.qtyText}${l.unit ? ` ${l.unit}` : ''}`
-  const subLines = (l: ReceiptModelLine, withQty: boolean) => {
+  const subLines = (l: ReceiptModelLine, withQty: boolean, showInlineDisc: boolean) => {
     const sub: string[] = []
     const codes = [model.showItemSku ? l.sku : null].filter(Boolean) as string[]
     if (codes.length) sub.push(codes.join(' · '))
     if (withQty) sub.push(`${qtyOf(l)} x ${m(l.unitPrice)}`)
-    if (l.discount > 0) sub.push(`Discount -${m(l.discount)}`)
+    if (showInlineDisc && l.discount > 0) sub.push(`${m(l.grossTotal)} - ${lineDiscountLabel(l, true)} ${m(l.discount)} = ${m(l.total)}`)
     if (model.taxInvoice && l.vatAmount) sub.push(`VAT ${formatRate(l.vatRate)}% ${m(l.vatAmount)}`)
     sub.push(...l.notes)
     return sub
@@ -127,7 +127,7 @@ export async function buildReceiptPdf(model: ReceiptModel, paperWidth: 58 | 80 =
       head: wide ? ['Item', 'Qty', 'Price', 'Total'] : ['Item', 'Qty', 'Total'],
       rows: model.items.map((l) => ({
         cells: wide ? [l.name, qtyOf(l), m(l.unitPrice), m(l.total)] : [l.name, qtyOf(l), m(l.total)],
-        sub: subLines(l, !wide),
+        sub: subLines(l, !wide, true),
       })),
       widths,
       size: base - 0.5,
@@ -137,12 +137,20 @@ export async function buildReceiptPdf(model: ReceiptModel, paperWidth: 58 | 80 =
     ops.push({ k: 'rule', dashed: true })
     model.items.forEach((l, i) => {
       if (i > 0 && model.itemSeparator !== 'none') ops.push({ k: 'rule', dashed: model.itemSeparator === 'dashed' })
-      if (model.itemLayout === 'one_line') row(`${qtyOf(l)} x ${l.name}`, m(l.total))
-      else {
+      if (model.itemLayout === 'one_line') {
+        row(`${qtyOf(l)} x ${l.name}`, m(l.total))
+        for (const s of subLines(l, l.discount > 0, true)) text(s, base - 1, { indent: IND })
+      } else {
         text(l.name, base, { bold: true })
-        row(`${qtyOf(l)} x ${m(l.unitPrice)}`, m(l.total), base, false, IND)
+        if (l.discount > 0) {
+          row(`${qtyOf(l)} x ${m(l.unitPrice)}`, m(l.grossTotal), base, false, IND)
+          row(lineDiscountLabel(l), `-${m(l.discount)}`, base - 1, false, IND)
+          row('Net', m(l.total), base, true, IND)
+        } else {
+          row(`${qtyOf(l)} x ${m(l.unitPrice)}`, m(l.total), base, false, IND)
+        }
+        for (const s of subLines(l, false, false)) text(s, base - 1, { indent: IND })
       }
-      for (const s of subLines(l, false)) text(s, base - 1, { indent: IND })
     })
   }
   ops.push({ k: 'rule', dashed: true })

@@ -142,6 +142,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
     allowCartClear: true,
     allowNoSaleDrawerOpen: true,
     customerDisplay: true,
+    allowItemDiscount: true,
   })
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>([
     { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
@@ -212,6 +213,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
             allowCartClear: cp.allowCartClear !== false,
             allowNoSaleDrawerOpen: cp.allowNoSaleDrawerOpen !== false,
             customerDisplay: cp.customerDisplay !== false,
+            allowItemDiscount: cp.allowItemDiscount !== false,
           })
         } else {
           setCashierPermissions({
@@ -219,6 +221,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
             allowCartClear: true,
             allowNoSaleDrawerOpen: true,
             customerDisplay: true,
+            allowItemDiscount: true,
           })
         }
       } else {
@@ -229,6 +232,7 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
           allowCartClear: true,
           allowNoSaleDrawerOpen: true,
           customerDisplay: true,
+          allowItemDiscount: true,
         })
         setPaymentMethods([
           { paymentMethod: 'cash', isDefault: true, allowInReturns: true, sortOrder: 0 },
@@ -680,6 +684,18 @@ export function POSProfileFormModal({ isOpen, onClose, onSaved, editProfile }: P
                         />
                         <span className="text-sm dark:text-gray-300">
                           Customer display (second screen) on this counter
+                        </span>
+                      </label>
+
+                      <label className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={cashierPermissions.allowItemDiscount}
+                          onChange={(e) => setCashierPermissions(prev => ({ ...prev, allowItemDiscount: e.target.checked }))}
+                          className="rounded border-gray-300 dark:border-gray-600"
+                        />
+                        <span className="text-sm dark:text-gray-300">
+                          Allow per-item discounts on this counter (when enabled for the business)
                         </span>
                       </label>
                     </div>

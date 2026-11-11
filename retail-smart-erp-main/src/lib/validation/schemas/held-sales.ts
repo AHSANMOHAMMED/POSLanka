@@ -18,6 +18,12 @@ export const createHeldSaleSchema = z.object({
     quantity: z.coerce.number().positive('Quantity must be greater than zero'),
     unitPrice: z.coerce.number(),
     total: z.coerce.number(),
+    discount: z.coerce.number().min(0).optional(),
+    discountType: z.enum(['percentage', 'fixed']).optional(),
+    discountValue: z.coerce.number().min(0).optional(),
+    priceLocked: z.boolean().optional(),
+    catalogPrice: z.coerce.number().optional(),
+    sku: z.string().max(100).nullish(),
     // H5: unit of the held line (reservations count quantity × uomFactor base units)
     uom: z.string().trim().max(20).optional(),
     uomFactor: z.coerce.number().positive().optional(),

@@ -131,6 +131,10 @@ export interface CartItem {
   promotionLabels?: string[]
   priceListName?: string | null
   catalogPrice?: number
+  /** Manual per-item discount given by cashier (% or fixed amount subtracted from qty * unitPrice) */
+  discount?: number
+  discountType?: 'percentage' | 'fixed'
+  discountValue?: number
   /** Print studio: size of an area / length priced line (quantity = billable area) */
   sizeSpec?: CartSizeSpec
 }

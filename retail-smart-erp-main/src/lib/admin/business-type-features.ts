@@ -88,6 +88,7 @@ const USAGE_SQL: Partial<Record<FeatureFlag, (since: Date) => ReturnType<typeof 
   gift_cards: (s) => sql`SELECT tenant_id, count(*)::int AS n FROM gift_card_transactions WHERE created_at >= ${s} GROUP BY tenant_id`,
   promotions: (s) => sql`SELECT tenant_id, count(*)::int AS n FROM promotion_redemptions WHERE created_at >= ${s} GROUP BY tenant_id`,
   price_lists: () => sql`SELECT tenant_id, count(*)::int AS n FROM price_lists WHERE is_active GROUP BY tenant_id`,
+  item_discounts: (s) => sql`SELECT si.tenant_id, count(*)::int AS n FROM sale_items si JOIN sales s ON s.id = si.sale_id WHERE si.discount > COALESCE(si.promotion_discount, 0) AND s.created_at >= ${s} GROUP BY si.tenant_id`,
   quotation: (s) => sql`SELECT tenant_id, count(*)::int AS n FROM quotations WHERE created_at >= ${s} GROUP BY tenant_id`,
   sales_orders: (s) => sql`SELECT tenant_id, count(*)::int AS n FROM sales_orders WHERE created_at >= ${s} GROUP BY tenant_id`,
   layaways: (s) => sql`SELECT tenant_id, count(*)::int AS n FROM layaways WHERE created_at >= ${s} GROUP BY tenant_id`,

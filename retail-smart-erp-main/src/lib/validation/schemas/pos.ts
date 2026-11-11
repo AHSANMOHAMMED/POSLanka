@@ -12,6 +12,7 @@ const posProfileReceiptSettingsSchema = receiptSettingsPatchSchema.extend({
     allowCartClear: z.boolean(),
     allowNoSaleDrawerOpen: z.boolean(),
     customerDisplay: z.boolean(),
+    allowItemDiscount: z.boolean(),
   }).partial().strict().optional(),
 }).strict()
 

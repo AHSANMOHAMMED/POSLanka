@@ -187,17 +187,27 @@ export function layoutTextDocument(doc: InvoiceDoc, company: InvoiceCompany, opt
   const row = (cells: Partial<Record<TextColumnKey, string>>) => tcols.map((tc) => fit(cells[tc.key] || '', tc.width, tc.align)).join(' ')
   const tableHead: TextLine[] = [rule(), L(row(Object.fromEntries(tcols.map((tc) => [tc.key, tc.label]))), true), rule()]
   const itemCol = tcols.find((tc) => tc.key === 'item')!
+  const hasDiscountCol = tcols.some((tc) => tc.key === 'discount')
   const groups: TextLine[][] = doc.lines.map((l, i) => {
     const name = [l.name, tcols.some((tc) => tc.key === 'sku') ? '' : l.sku ? `(${l.sku})` : ''].filter(Boolean).join(' ')
     const nameLines = wrapText(name, itemCol.width)
+    const discAmt = num(l.discount)
+    const discPct = l.discountType === 'percentage' && l.discountValue != null && num(l.discountValue) > 0
+      ? `${Number(num(l.discountValue).toFixed(2))}%`
+      : null
     const g: TextLine[] = [L(row({
       lineNo: String(i + 1), sku: l.sku || '', item: nameLines[0] || '',
       qty: `${qtyText(l.quantity)}${tcols.some((tc) => tc.key === 'unit') || !l.unit || cols < 64 ? '' : ` ${l.unit}`}`.slice(0, 12),
-      unit: l.unit || '', rate: formatAmount(l.unitPrice), discount: num(l.discount) ? formatAmount(num(l.discount)) : '',
+      unit: l.unit || '', rate: formatAmount(l.unitPrice), discount: discAmt ? formatAmount(discAmt) : '',
       tax: num(l.taxAmount) ? formatAmount(num(l.taxAmount)) : '', amount: formatAmount(l.amount),
     }))]
     const extra = nameLines.slice(1)
     if (cols < 64) extra.push(`  ${qtyText(l.quantity)} x ${formatAmount(l.unitPrice)}`)
+    if (!hasDiscountCol && discAmt > 0) {
+      extra.push(...wrapText(`  Discount${discPct ? ` (${discPct})` : ''}: -${formatAmount(discAmt)} -> Net ${formatAmount(l.amount)}`, itemCol.width))
+    } else if (hasDiscountCol && discAmt > 0 && discPct) {
+      extra.push(...wrapText(`  Discount (${discPct})`, itemCol.width))
+    }
     const serials = (l.serialNumbers || []).filter(Boolean)
     if (serials.length) extra.push(...wrapText(`S/N: ${serials.join(', ')}`, itemCol.width))
     if (num(l.warrantyMonths) > 0) {

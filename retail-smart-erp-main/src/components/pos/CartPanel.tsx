@@ -64,6 +64,9 @@ interface CartPanelProps {
 
   allowDiscount: boolean
   onShowDiscount: () => void
+  /** Per-item discount feature enabled (business switch + counter permission) */
+  allowItemDiscount?: boolean
+  onOpenItemDiscount?: (cartLineId: string) => void
 
   loyaltyProgram: LoyaltyProgram | null
 
@@ -138,6 +141,8 @@ export function CartPanel({
   onOpenPayment,
   allowDiscount,
   onShowDiscount,
+  allowItemDiscount = false,
+  onOpenItemDiscount,
   loyaltyProgram,
   orderType,
   onOrderTypeChange,
@@ -323,7 +328,7 @@ export function CartPanel({
           <div className="p-3 min-[1920px]:p-4 space-y-2.5">
             {cartFocused && (
               <p className="text-[11px] font-mono theme-text-primary px-1">
-                ↑↓ line · type qty + Enter · + / − · U unit · Del remove · Esc search
+                ↑↓ line · type qty + Enter · + / − · {allowItemDiscount ? 'D discount · ' : ''}U unit · Del remove · Esc search
               </p>
             )}
             {cart.map((item) => {
@@ -537,10 +542,12 @@ export function CartPanel({
                   {/* Price */}
                   <div className="text-right">
                     <div className={`text-lg min-[1920px]:text-xl font-bold ${item.total < 0 ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
-                      {currencyCode} {Math.abs(item.total - (item.promotionDiscount || 0)).toFixed(2)}
+                      {currencyCode} {Math.max(0, Math.abs(item.total - (item.promotionDiscount || 0))).toFixed(2)}
                     </div>
-                    {!!item.promotionDiscount && item.promotionDiscount > 0 && (
-                      <div className="text-xs text-gray-400 line-through">{currencyCode} {Math.abs(item.total).toFixed(2)}</div>
+                    {(((item.discount || 0) > 0) || (!!item.promotionDiscount && item.promotionDiscount > 0)) && !isReturnMode && (
+                      <div className="text-xs text-gray-400 line-through">
+                        {currencyCode} {Math.abs(item.quantity * item.unitPrice).toFixed(2)}
+                      </div>
                     )}
                     <div className="flex items-center gap-1 text-xs text-gray-500 justify-end">
                       <span>@</span>
@@ -559,6 +566,42 @@ export function CartPanel({
                         className="w-20 text-right !px-1 !py-0.5 !h-6 text-xs"
                       />
                     </div>
+                    {allowItemDiscount && !isReturnMode && onOpenItemDiscount && (
+                      <div className="mt-1 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onSelectLine?.(item.cartLineId)
+                            onOpenItemDiscount(item.cartLineId)
+                          }}
+                          title={
+                            item.discount && item.discount > 0
+                              ? 'Edit or remove item discount (shortcut: D)'
+                              : 'Give item discount (% or amount) — shortcut: D'
+                          }
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border transition-colors ${
+                            item.discount && item.discount > 0
+                              ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900/60'
+                              : 'bg-slate-100 dark:bg-gray-700/70 text-slate-600 dark:text-gray-300 border-slate-200 dark:border-gray-600 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 dark:hover:bg-gray-700'
+                          }`}
+                        >
+                          <Tag size={10} />
+                          {item.discount && item.discount > 0 ? (
+                            item.discountType === 'percentage' && item.discountValue
+                              ? `-${item.discountValue}% (-${currencyCode} ${item.discount.toFixed(2)})`
+                              : `-${currencyCode} ${item.discount.toFixed(2)}`
+                          ) : (
+                            <>
+                              + Disc
+                              {isSelected && (
+                                <span className="ml-0.5 px-1 rounded bg-white/80 dark:bg-gray-800 text-[9px] font-mono">D</span>
+                              )}
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
