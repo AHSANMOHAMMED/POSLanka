@@ -6,7 +6,7 @@ import { useRouter, useParams } from 'next/navigation'
 import {
   Clock, Loader2, Tag, Wallet, Keyboard, MonitorUp, LayoutGrid, Printer, RotateCcw, PlusCircle,
   FileText, Files, Camera, ScanBarcode, Lock, ArrowDownUp, Power, Play, History,
-  Ruler, ClipboardList, ShieldCheck, CalendarClock, Truck,
+  Ruler, ClipboardList, ShieldCheck, CalendarClock, Truck, Zap,
 } from 'lucide-react'
 import { CustomerFormModal, VehicleModal } from '@/components/modals'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
@@ -327,6 +327,7 @@ export default function POSPage() {
   const [variantPickerParentItem, setVariantPickerParentItem] = useState<Item | null>(null)
   const [showQuickAddModal, setShowQuickAddModal] = useState(false)
   const [quickAddInitialBarcode, setQuickAddInitialBarcode] = useState('')
+  const [quickAddInitialName, setQuickAddInitialName] = useState('')
 
   // Supermarket: Float / Safe Drop & Price Check modals
   const [showFloatModal, setShowFloatModal] = useState(false)
@@ -2423,6 +2424,16 @@ export default function POSPage() {
     } else if (supervisorRequest.type === 'cart_void') {
       clearCart()
     } else if (supervisorRequest.type === 'quick_add_item') {
+      const query = debouncedItemSearch || search || ''
+      if (query.trim()) {
+        if (/^\d+$/.test(query.trim())) {
+          setQuickAddInitialBarcode(query.trim())
+          setQuickAddInitialName('')
+        } else {
+          setQuickAddInitialName(query.trim())
+          setQuickAddInitialBarcode('')
+        }
+      }
       setShowQuickAddModal(true)
     }
     toast.success(`Approved by ${approver}`)
@@ -2437,6 +2448,17 @@ export default function POSPage() {
     const rawSettings = (profile?.receiptSettings || {}) as Record<string, unknown>
     const cp = rawSettings.cashierPermissions as Record<string, boolean> | undefined
     const allowQuick = cp?.allowQuickItemAdd ?? true
+
+    const query = debouncedItemSearch || search || ''
+    if (query.trim()) {
+      if (/^\d+$/.test(query.trim())) {
+        setQuickAddInitialBarcode(query.trim())
+        setQuickAddInitialName('')
+      } else {
+        setQuickAddInitialName(query.trim())
+        setQuickAddInitialBarcode('')
+      }
+    }
 
     if (!allowQuick) {
       setSupervisorRequest({ type: 'quick_add_item' })
@@ -2627,6 +2649,7 @@ export default function POSPage() {
     // Nothing anywhere: say so, and leave the code on screen so the cashier sees what was read
     showCodeInSearch(raw)
     setQuickAddInitialBarcode(attempts[attempts.length - 1].code)
+    setQuickAddInitialName('')
     toast.error(serverAnswered
       ? `No item with barcode/code "${raw}". Press F4 to Quick Add it.`
       : `No item with barcode/code "${raw}" on this till (server not reachable). Press F4 to Quick Add it.`)
@@ -2820,6 +2843,12 @@ export default function POSPage() {
           // A typed quantity still pending is applied first, then payment opens on the updated cart
           if (qtyBuffer && commitQtyBuffer()) window.setTimeout(() => openPaymentRef.current(), 0)
           else openPaymentModal()
+        }
+        break
+      case 'fastBill':
+        if (cart.length > 0 && activeShift) {
+          if (qtyBuffer && commitQtyBuffer()) window.setTimeout(() => void handleFastCash(), 0)
+          else void handleFastCash()
         }
         break
       case 'floatDrop': if (activeShift) setShowFloatModal(true); break
@@ -3177,7 +3206,7 @@ export default function POSPage() {
     void printReceiptForSale(sale.id)
   }
 
-  async function completeSale() {
+  async function completeSale(fastOptions?: { paymentMethod?: string; amountPaid?: number }) {
     if (cart.length === 0 || processing) return
 
     // Validate cost center
@@ -3252,8 +3281,10 @@ export default function POSPage() {
       return
     }
 
+    const effectivePaymentMethod = fastOptions?.paymentMethod ?? paymentMethod
+
     // Hire purchase: down payment now, the balance on account (financed by the installment plan)
-    const hp = hirePurchase && hirePurchaseAvailable
+    const hp = !fastOptions && hirePurchase && hirePurchaseAvailable
     if (hp) {
       if (!selectedCustomer) {
         toast.error('Hire purchase needs a customer — pick or add the customer, then press Payment again')
@@ -3269,20 +3300,23 @@ export default function POSPage() {
         toast.error('Hire purchase needs a connection — the installment plan is set up online')
         return
       }
-      if (['credit', 'gift_card', 'cheque'].includes(paymentMethod)) {
+      if (['credit', 'gift_card', 'cheque'].includes(effectivePaymentMethod)) {
         toast.error('Take the down payment in cash, card, transfer or mobile payment')
         return
       }
     }
 
     // Credit sales require a customer (need to know who owes the money)
-    if (paymentMethod === 'credit' && !selectedCustomer) {
+    if (effectivePaymentMethod === 'credit' && !selectedCustomer) {
       toast.error('Please select a customer for credit sales')
       return
     }
 
-    const creditVal = parseFloat(creditAmount) || 0
-    const amountVal = parseFloat(amountPaid) || 0
+    const tip = config.enableTips ? tipAmount : 0
+    const payableTotal = Math.max(0, total - loyaltyRedeemValue + tip)
+
+    const creditVal = fastOptions ? 0 : (parseFloat(creditAmount) || 0)
+    const amountVal = fastOptions ? (fastOptions.amountPaid ?? payableTotal) : (parseFloat(amountPaid) || 0)
     if (creditVal < 0 || amountVal < 0) {
       toast.error('Amounts cannot be negative')
       return
@@ -3291,8 +3325,6 @@ export default function POSPage() {
       toast.error('Credit amount exceeds available balance')
       return
     }
-    const tip = config.enableTips ? tipAmount : 0
-    const payableTotal = Math.max(0, total - loyaltyRedeemValue + tip)
     if (creditVal > payableTotal) {
       toast.error('Credit amount cannot exceed total')
       return
@@ -3302,14 +3334,14 @@ export default function POSPage() {
     const remainingAfterCredit = Math.max(0, payableTotal - creditUsed)
     const cashCardPaid = amountVal
     // Credit payment = sell on credit (no money received now), so amountPaid must be 0
-    const effectiveCashCardPaid = paymentMethod === 'credit' ? 0 : (paymentMethod === 'cash' ? cashCardPaid : Math.min(cashCardPaid, remainingAfterCredit))
+    const effectiveCashCardPaid = effectivePaymentMethod === 'credit' ? 0 : (effectivePaymentMethod === 'cash' ? cashCardPaid : Math.min(cashCardPaid, remainingAfterCredit))
 
-    const saleTotal = Math.max(0, total - loyaltyRedeemValue + tip)
+    const saleTotal = payableTotal
     // Split payment: every line its own amount; cash over the rest is change (taken off the cash line)
-    const multiTender = !hp && extraTenders.length > 0
+    const multiTender = !hp && !fastOptions && extraTenders.length > 0
     const settled = multiTender
       ? settleTenders(saleTotal - creditUsed, [
-          { method: paymentMethod, amount: amountVal },
+          { method: effectivePaymentMethod, amount: amountVal },
           ...extraTenders.map((t) => ({ method: t.method, amount: parseFloat(t.amount) || 0 })),
         ])
       : null
@@ -3320,10 +3352,10 @@ export default function POSPage() {
 
     const saleChangeAmount = settled
       ? settled.change
-      : (paymentMethod === 'cash' && cashCardPaid > remainingAfterCredit ? roundCurrency(cashCardPaid - remainingAfterCredit) : 0)
+      : (effectivePaymentMethod === 'cash' && cashCardPaid > remainingAfterCredit ? roundCurrency(cashCardPaid - remainingAfterCredit) : 0)
     const salePaidAmount = settled
       ? roundCurrency(settled.received + settled.change)
-      : (paymentMethod === 'cash' ? cashCardPaid : effectiveCashCardPaid)
+      : (effectivePaymentMethod === 'cash' ? cashCardPaid : effectiveCashCardPaid)
     if (settled && settled.onAccount > 0 && !selectedCustomer) {
       toast.error('Select a customer to leave part of the bill on credit')
       return
@@ -3343,11 +3375,11 @@ export default function POSPage() {
       return
     }
     const hpSplits = hp && hpDown > 0
-      ? [{ method: paymentMethod, amount: hpDown }, { method: 'credit', amount: hpBalance }]
+      ? [{ method: effectivePaymentMethod, amount: hpDown }, { method: 'credit', amount: hpBalance }]
       : undefined
 
     // K1: a cheque tender carries its details
-    const chequeTender = !hp && (paymentSplits ? paymentSplits.some((p) => p.method === 'cheque') : paymentMethod === 'cheque')
+    const chequeTender = !hp && (paymentSplits ? paymentSplits.some((p) => p.method === 'cheque') : effectivePaymentMethod === 'cheque')
     if (chequeTender && (!chequeDetails.chequeNo.trim() || !chequeDetails.bankName.trim() || !chequeDetails.chequeDate)) {
       toast.error('Enter the cheque number, bank and date')
       return
@@ -3366,7 +3398,7 @@ export default function POSPage() {
         ? `${selectedVehicle.year ? `${selectedVehicle.year} ` : ''}${selectedVehicle.make} ${selectedVehicle.model}`
         : undefined,
       cartItems: cartWithTax.map(toSaleLine),
-      paymentMethod: hp && !hpSplits ? 'credit' : paymentMethod,
+      paymentMethod: hp && !hpSplits ? 'credit' : effectivePaymentMethod,
       paymentSplits: hp ? hpSplits : paymentSplits,
       subtotal,
       discount: discountAmount,
@@ -3536,6 +3568,13 @@ export default function POSPage() {
     }
   }
 
+  const handleFastCash = useCallback(async () => {
+    if (cart.length === 0 || processing || isReturnMode || exchangeFrom) return
+    const tip = config.enableTips ? tipAmount : 0
+    const payableTotal = Math.max(0, total - loyaltyRedeemValue + tip)
+    await completeSale({ paymentMethod: 'cash', amountPaid: payableTotal })
+  }, [cart.length, processing, isReturnMode, exchangeFrom, config.enableTips, tipAmount, total, loyaltyRedeemValue, completeSale])
+
   // ─── Receipt Printing ─────────────────────────────────────────
 
   async function printReceiptForSale(saleId: string) {
@@ -3659,6 +3698,7 @@ export default function POSPage() {
     { id: 'floatDrop', label: 'Float / safe drop', icon: Wallet, shortcut: 'F10', keywords: 'drawer cash', disabledReason: noShift, tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('floatDrop') },
     { id: 'billsHistory', label: 'Bills history', icon: Clock, shortcut: 'Alt+B', keywords: 'recent sales receipts whatsapp', tone: 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400', run: () => runPosAction('billsHistory') },
     { id: 'reprintLast', label: 'Reprint last bill', icon: Printer, shortcut: 'Alt+R', keywords: 'receipt print again', run: () => runPosAction('reprintLast') },
+    { id: 'fastBill', label: 'Fast bill (exact cash)', icon: Zap, shortcut: 'Alt+F', keywords: 'fast bill cash exact checkout instant quick', disabledReason: isReturnMode ? 'Not in return mode' : cart.length === 0 ? 'Cart is empty' : null, tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('fastBill') },
     { id: 'priceCheck', label: 'Price & stock check', icon: Tag, shortcut: 'F7', keywords: 'inquiry lookup', tone: 'bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400', run: () => runPosAction('priceCheck') },
     { id: 'returnSale', label: 'Return / refund', icon: RotateCcw, shortcut: 'F6', keywords: 'refund exchange', disabledReason: isReturnMode ? 'Already in return mode' : null, tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('returnSale') },
     { id: 'quickAdd', label: 'Quick add item', icon: PlusCircle, shortcut: 'F4', keywords: 'new item create', disabledReason: isReturnMode ? 'Not in return mode' : null, run: () => runPosAction('quickAdd') },
@@ -3774,6 +3814,7 @@ export default function POSPage() {
         config={config}
         businessType={tillType}
         onScanSubmit={handleScanSubmit}
+        onOpenQuickAdd={handleOpenQuickAdd}
         onShowSubstitutes={pharmacyTill && !isReturnMode ? setSubstitutesFor : undefined}
       />
 
@@ -3813,6 +3854,8 @@ export default function POSPage() {
         holdingInProgress={holdingInProgress}
         onHoldSale={holdSale}
         onOpenPayment={() => openPaymentModal()}
+        onFastCash={handleFastCash}
+        fastCashInProgress={processing}
         allowDiscount={allowDiscount}
         onShowDiscount={() => setShowDiscountModal(true)}
         allowItemDiscount={allowItemDiscount}
@@ -4171,12 +4214,22 @@ export default function POSPage() {
       <QuickItemAddModal
         isOpen={showQuickAddModal}
         initialBarcode={quickAddInitialBarcode}
+        initialName={quickAddInitialName}
         warehouseId={posWarehouse?.id || null}
         categories={categories}
-        onClose={() => setShowQuickAddModal(false)}
+        onClose={() => {
+          setShowQuickAddModal(false)
+          setQuickAddInitialBarcode('')
+          setQuickAddInitialName('')
+        }}
         onItemCreated={(newItem) => {
-          setItems(prev => [newItem, ...prev])
+          rememberItem(newItem)
+          setItems(prev => [newItem, ...prev.filter(i => i.id !== newItem.id)])
           addToCart(newItem)
+          setShowQuickAddModal(false)
+          setQuickAddInitialBarcode('')
+          setQuickAddInitialName('')
+          setSearch('')
         }}
       />
 

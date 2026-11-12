@@ -1,6 +1,6 @@
 'use client'
 
-import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText, MessageCircle, ScanBarcode } from 'lucide-react'
+import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText, MessageCircle, ScanBarcode, Zap } from 'lucide-react'
 import { normalizePhoneForWhatsApp } from '@/lib/whatsapp'
 import { CreatableSelect } from '@/components/ui/creatable-select'
 import { FormInput } from '@/components/ui/form-elements'
@@ -61,6 +61,8 @@ interface CartPanelProps {
   onHoldSale: () => void
 
   onOpenPayment: () => void
+  onFastCash?: () => void
+  fastCashInProgress?: boolean
 
   allowDiscount: boolean
   onShowDiscount: () => void
@@ -139,6 +141,8 @@ export function CartPanel({
   holdingInProgress,
   onHoldSale,
   onOpenPayment,
+  onFastCash,
+  fastCashInProgress = false,
   allowDiscount,
   onShowDiscount,
   allowItemDiscount = false,
@@ -788,6 +792,23 @@ export function CartPanel({
               <FileText size={15} />
               Save as quotation
               <Kbd>Alt+Q</Kbd>
+            </button>
+          </div>
+        )}
+
+        {/* Fast Cash Bill (Alt+F) — 1-click cash checkout */}
+        {onFastCash && !isReturnMode && (
+          <div className="px-5 pb-2">
+            <button
+              type="button"
+              onClick={onFastCash}
+              disabled={cart.length === 0 || fastCashInProgress}
+              title="Fast Bill / Exact Cash (Alt+F)"
+              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <Zap size={18} className="fill-current" />
+              <span>Fast Bill (Exact Cash)</span>
+              <Kbd tone="dark">Alt+F</Kbd>
             </button>
           </div>
         )}

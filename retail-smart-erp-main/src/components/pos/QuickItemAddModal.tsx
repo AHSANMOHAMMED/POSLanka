@@ -12,6 +12,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey'
 interface QuickItemAddModalProps {
   isOpen: boolean
   initialBarcode?: string
+  initialName?: string
   warehouseId: string | null
   categories: Category[]
   onClose: () => void
@@ -36,6 +37,7 @@ const COMMON_UNITS = [
 export function QuickItemAddModal({
   isOpen,
   initialBarcode = '',
+  initialName = '',
   warehouseId: _warehouseId,
   categories,
   onClose,
@@ -43,6 +45,7 @@ export function QuickItemAddModal({
 }: QuickItemAddModalProps) {
   const { currency: currencyCode } = useCurrency()
   const nameInputRef = useRef<HTMLInputElement>(null)
+  const priceInputRef = useRef<HTMLInputElement>(null)
 
   const [name, setName] = useState('')
   const [barcode, setBarcode] = useState('')
@@ -57,7 +60,7 @@ export function QuickItemAddModal({
 
   useEffect(() => {
     if (isOpen) {
-      setName('')
+      setName(initialName.trim())
       setBarcode(initialBarcode.trim())
       setSellingPrice('')
       setCostPrice('')
@@ -66,9 +69,15 @@ export function QuickItemAddModal({
       setInitialStock('10')
       setIsWeighable(false)
       setError(null)
-      setTimeout(() => nameInputRef.current?.focus(), 100)
+      setTimeout(() => {
+        if (initialName.trim()) {
+          priceInputRef.current?.focus()
+        } else {
+          nameInputRef.current?.focus()
+        }
+      }, 100)
     }
-  }, [isOpen, initialBarcode, categories])
+  }, [isOpen, initialBarcode, initialName, categories])
 
   useEscapeKey(isOpen, onClose)
 
@@ -109,6 +118,9 @@ export function QuickItemAddModal({
         isWeighable,
       }
 
+      if (_warehouseId) {
+        payload.warehouseId = _warehouseId
+      }
       if (barcode.trim()) {
         payload.barcode = barcode.trim()
         payload.sku = barcode.trim()
@@ -278,6 +290,7 @@ export function QuickItemAddModal({
                 Selling Price ({currencyCode}) <span className="text-red-500">*</span>
               </label>
               <FormInput
+                ref={priceInputRef}
                 type="number"
                 step="0.01"
                 min="0"

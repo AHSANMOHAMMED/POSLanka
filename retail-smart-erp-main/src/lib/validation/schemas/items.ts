@@ -51,6 +51,8 @@ export const createItemSchema = z.object({
   trackStock: z.boolean().optional(),
   trackBatches: z.boolean().optional(),
   trackSerialNumbers: z.boolean().optional(),
+  isWeighable: z.boolean().optional(),
+  warehouseId: optionalUuid,
 
   // Supplier
   supplierId: optionalUuid,

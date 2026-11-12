@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { notInRecycleBin } from '@/lib/recycle-bin'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission, requireModule } from '@/lib/auth/roles'
+import { requirePermission, requireAnyPermission, requireModule } from '@/lib/auth/roles'
 import { canViewCostPrices, redactItemCost } from '@/lib/auth/field-access'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { items, users, workOrderParts, workOrders, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, warehouses, stockMovements } from '@/lib/db/schema'
@@ -403,7 +403,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const session = await authWithCompany()
-    const permError = requirePermission(session, 'manageItems')
+    const permError = requireAnyPermission(session, ['manageItems', 'createSales', 'managePOS'])
     if (permError) return permError
 
     const quotaError = await requireQuota(session!.user.tenantId, 'standard')
@@ -413,6 +413,7 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) return parsed.response
     const {
       name, itemCode, sku, barcode, categoryId, costPrice, sellingPrice, currentStock, minStock, unit, trackStock, trackBatches, trackSerialNumbers,
+      isWeighable, warehouseId,
       // Auto parts fields
       oemPartNumber, alternatePartNumbers, brand, condition, reorderQty, binLocation,
       supplierId, supplierPartNumber, leadTimeDays, weight, dimensions, warrantyMonths, imageUrl, supersededBy,
@@ -438,11 +439,11 @@ export async function POST(request: NextRequest) {
     // Single creator: allocates item code + barcode atomically, maps duplicates,
     // writes the change log and books opening stock through the stock ledger.
     const newItem = await withTenantTransaction(tenantId, async (tx) => {
-      // Opening stock / warehouse settings go to the default warehouse
+      // Opening stock / warehouse settings go to the target or default warehouse
       const initialStock = currentStock || 0
       const wantsStockRow = initialStock > 0 || (minStock || 0) > 0 || !!reorderQty || !!binLocation
-      let defaultWarehouseId: string | null = null
-      if (wantsStockRow) {
+      let defaultWarehouseId: string | null = warehouseId || null
+      if (wantsStockRow && !defaultWarehouseId) {
         // K4: a branch-restricted user's opening stock goes to their own (first) branch.
         // Everyone else: the default branch, else the first active one (a shop whose branches
         // carry no default flag must not have every opening stock refused)
@@ -520,6 +521,8 @@ export async function POST(request: NextRequest) {
           isGiftCard: isGiftCard || false,
           // Tax template
           taxTemplateId: taxTemplateId || null,
+          // Weighable
+          isWeighable: isWeighable ?? false,
         },
         openingStock: defaultWarehouseId ? [{
           warehouseId: defaultWarehouseId,

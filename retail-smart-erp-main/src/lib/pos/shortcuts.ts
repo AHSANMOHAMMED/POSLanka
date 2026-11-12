@@ -19,6 +19,7 @@ export type PosShortcutAction =
   | 'priceCheck'
   | 'lock'
   | 'payment'
+  | 'fastBill'
   | 'floatDrop'
   | 'focusCart'
   | 'customer'
@@ -68,6 +69,7 @@ export const POS_SHORTCUTS: PosShortcutDef[] = [
   { action: 'focusCart', group: 'Cart', label: 'Go to the cart (select a line, type a quantity)', keys: ['*', '↓'],
     bindings: [{ key: '*', outsideInput: true }] },
   { action: 'payment', group: 'Sale', label: 'Payment', keys: ['F9'], bindings: [{ key: 'F9' }] },
+  { action: 'fastBill', group: 'Sale', label: 'Fast bill (exact cash)', keys: ['Alt+F'], bindings: [{ code: 'KeyF', alt: true }] },
   { action: 'holdSale', group: 'Sale', label: 'Hold sale', keys: ['F2'], bindings: [{ key: 'F2' }] },
   { action: 'recallHeld', group: 'Sale', label: 'Recall held sale', keys: ['F3'], bindings: [{ key: 'F3' }] },
   { action: 'quickAdd', group: 'Sale', label: 'Quick add item', keys: ['F4'], bindings: [{ key: 'F4' }] },
