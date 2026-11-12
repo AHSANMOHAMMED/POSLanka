@@ -51,7 +51,7 @@ export async function receiptTests(check: Check) {
           check(lines.some((l) => /^Item\s+Qty\s+Price\s+Total$/.test(l.text.trim())), `escpos 80mm ${fontSize} one_line: column header`)
         }
         check(lines.some((l) => l.text.includes('ANC-400')), `escpos ${paperWidth}mm ${fontSize} ${itemLayout}: item SKU printed`)
-        check(!lines.some((l) => l.text.includes('9300605000957')), `escpos ${paperWidth}mm ${fontSize} ${itemLayout}: item barcode excluded`)
+        check(lines.some((l) => l.text.includes('9300605000957')), `escpos ${paperWidth}mm ${fontSize} ${itemLayout}: item barcode printed`)
       }
     }
   }

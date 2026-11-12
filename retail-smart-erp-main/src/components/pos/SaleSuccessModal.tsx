@@ -16,6 +16,8 @@ interface SaleSuccessModalProps {
     isReturn: boolean
     customerName?: string | null
     customerPhone?: string | null
+    paidAmount?: number | null
+    changeAmount?: number | null
   } | null
   lastSaleId: string | null
   onDismiss: () => void
@@ -76,6 +78,20 @@ export function SaleSuccessModal({
           <p className={`text-3xl font-bold font-mono ${lastSale.isReturn ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
             {currencyCode} {lastSale.total.toFixed(2)}
           </p>
+          {!lastSale.isReturn && lastSale.changeAmount != null && lastSale.changeAmount > 0 && (
+            <div className="mt-3 pt-2.5 border-t border-gray-200 dark:border-gray-600/70 space-y-1">
+              {lastSale.paidAmount != null && lastSale.paidAmount > 0 && (
+                <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400">
+                  <span>Paid Amount</span>
+                  <span className="font-mono font-medium">{currencyCode} {lastSale.paidAmount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                <span>Change Due</span>
+                <span className="font-mono text-base">{currencyCode} {lastSale.changeAmount.toFixed(2)}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-2.5">

@@ -430,6 +430,8 @@ export default function POSPage() {
     isReturn: boolean
     customerName?: string | null
     customerPhone?: string | null
+    paidAmount?: number | null
+    changeAmount?: number | null
   } | null>(null)
   const [lastSaleId, setLastSaleId] = useState<string | null>(null)
   const [showRecentSalesModal, setShowRecentSalesModal] = useState(false)
@@ -3172,7 +3174,9 @@ export default function POSPage() {
     }
     offlineReceiptsRef.current.set(sale.id, sale)
     setLastSaleId(sale.id)
-    if (posProfile?.printReceiptOnComplete) printReceiptForSale(sale.id)
+    if (posProfile?.printReceiptOnComplete && printer.isRawPrinter) {
+      void printReceiptForSale(sale.id, { auto: true })
+    }
   }
 
   async function completeSale() {
@@ -3315,6 +3319,13 @@ export default function POSPage() {
       toast.error(settled.error)
       return
     }
+
+    const saleChangeAmount = settled
+      ? settled.change
+      : (paymentMethod === 'cash' && cashCardPaid > remainingAfterCredit ? roundCurrency(cashCardPaid - remainingAfterCredit) : 0)
+    const salePaidAmount = settled
+      ? roundCurrency(settled.received + settled.change)
+      : (paymentMethod === 'cash' ? cashCardPaid : effectiveCashCardPaid)
     if (settled && settled.onAccount > 0 && !selectedCustomer) {
       toast.error('Select a customer to leave part of the bill on credit')
       return
@@ -3401,7 +3412,13 @@ export default function POSPage() {
         setChequeDetails(emptyCheque())
         setCardReference('')
         // H4: the offline receipt number (OFF-…) identifies the sale until it syncs
-        setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
+        setLastSale({
+          invoiceNo: queued.offlineRef,
+          total: saleTotal,
+          isReturn: false,
+          paidAmount: salePaidAmount > 0 ? salePaidAmount : null,
+          changeAmount: saleChangeAmount > 0 ? saleChangeAmount : null,
+        })
         rememberOfflineReceipt(queued.offlineRef, salePayload as Record<string, unknown>)
         toast.success(`Sale queued offline (receipt ${queued.offlineRef}) — will sync when online`)
         return
@@ -3430,7 +3447,10 @@ export default function POSPage() {
           }).catch(console.error)
         }
 
-        const printing = posProfile?.printReceiptOnComplete && sale.id ? printReceiptForSale(sale.id) : null
+        const printing =
+          posProfile?.printReceiptOnComplete && printer.isRawPrinter && sale.id
+            ? printReceiptForSale(sale.id, { auto: true })
+            : null
 
         if (hp) {
           // The plan form looks the invoice up and finances its open balance
@@ -3457,12 +3477,16 @@ export default function POSPage() {
         setChequeDetails(emptyCheque())
         setCardReference('')
         fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
+        const finalChange = sale.changeAmount != null ? Number(sale.changeAmount) : saleChangeAmount
+        const finalPaid = sale.paidAmount != null ? Number(sale.paidAmount) : salePaidAmount
         setLastSale({
           invoiceNo: sale.invoiceNo,
           total: saleTotal,
           isReturn: false,
           customerName: selectedCustomer?.name || null,
           customerPhone: selectedCustomer?.phone || null,
+          paidAmount: finalPaid > 0 ? finalPaid : null,
+          changeAmount: finalChange > 0 ? finalChange : null,
         })
         setLastSaleId(sale.id)
         // Show generated gift card numbers
@@ -3500,7 +3524,13 @@ export default function POSPage() {
         setCreditAmount('')
         setExtraTenders([])
         setChequeDetails(emptyCheque())
-        setLastSale({ invoiceNo: queued.offlineRef, total: saleTotal, isReturn: false })
+        setLastSale({
+          invoiceNo: queued.offlineRef,
+          total: saleTotal,
+          isReturn: false,
+          paidAmount: salePaidAmount > 0 ? salePaidAmount : null,
+          changeAmount: saleChangeAmount > 0 ? saleChangeAmount : null,
+        })
         rememberOfflineReceipt(queued.offlineRef, salePayload as Record<string, unknown>)
         toast.success(`Network error — sale queued offline (receipt ${queued.offlineRef})`)
       } catch {
@@ -3513,7 +3543,7 @@ export default function POSPage() {
 
   // ─── Receipt Printing ─────────────────────────────────────────
 
-  async function printReceiptForSale(saleId: string) {
+  async function printReceiptForSale(saleId: string, { auto = false }: { auto?: boolean } = {}) {
     const receiptOpts = { posProfile: posProfile || null, cashier: cashierName || null, counter: posProfile?.name || null }
     // Offline sale: model built on this device from the cart, marked with its OFF- number
     const offlineSale = offlineReceiptsRef.current.get(saleId)
@@ -3532,7 +3562,11 @@ export default function POSPage() {
       }
       // Closed in the print preview: keep the "sale completed" window (print again / send / delivery)
       if (result === 'cancelled') return
+      if (auto) return // Do not pop up browser print if this was an automatic background print
       toast.warning(printer.status.message ? `Printer: ${printer.status.message}. Using browser print.` : 'Printer unavailable, using browser print')
+    } else if (auto) {
+      // Browser transport auto-print skipped to prevent intrusive Chrome print popup
+      return
     }
     try {
       // Shared receipt model -> branded HTML (logo, business profile, invoice barcode / QR).

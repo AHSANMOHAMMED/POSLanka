@@ -77,7 +77,9 @@ function solidRule(b: EscPosBuilder): void {
 function itemRows(b: EscPosBuilder, model: ReceiptModel, l: ReceiptModelLine, m: (n: number) => string) {
   const cols = b.columns
   const qty = `${l.qtyText}${l.unit ? ` ${l.unit}` : ''}`
-  const codes = [model.showItemSku ? l.sku : null].filter(Boolean) as string[]
+  const codes = Array.from(
+    new Set([model.showItemSku ? l.sku : null, model.showItemBarcode ? l.barcode : null].filter(Boolean))
+  ) as string[]
   const oneLine = model.itemLayout === 'one_line' || model.itemLayout === 'table'
   if (oneLine && cols >= 42) {
     // Item | Qty | Price | Total, the name wraps inside its column

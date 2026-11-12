@@ -28,7 +28,8 @@ const TENANT_LS_KEY = 'poslanka:receipt-tenant'
 let tenantCache: { at: number; data: TenantReceiptInfo } | null = null
 
 export async function fetchTenantInfo(force = false): Promise<TenantReceiptInfo> {
-  if (!force && tenantCache && Date.now() - tenantCache.at < 5 * 60_000) return tenantCache.data
+  const lastUpdated = typeof window !== 'undefined' ? Number(localStorage.getItem('poslanka:tenant-updated') || 0) : 0
+  if (!force && tenantCache && tenantCache.at > lastUpdated && Date.now() - tenantCache.at < 5 * 60_000) return tenantCache.data
   try {
     const res = await fetch('/api/tenant')
     if (res.ok) {
@@ -72,6 +73,12 @@ export function receiptVerifyBaseUrl(): string | null {
 
 export function invalidateTenantInfo() {
   tenantCache = null
+  try {
+    localStorage.removeItem(TENANT_LS_KEY)
+    localStorage.setItem('poslanka:tenant-updated', String(Date.now()))
+  } catch {
+    /* ignore */
+  }
 }
 
 // ─── Logo raster ──────────────────────────────────────────────────────────
@@ -185,7 +192,7 @@ export async function loadReceiptModel(
   saleId: string,
   opts: LoadReceiptOptions = {}
 ): Promise<{ model: ReceiptModel; sale: SaleForReceipt; tenant: TenantReceiptInfo; settings: ReceiptSettings }> {
-  const [sale, tenant] = await Promise.all([fetchSaleForReceipt(saleId), fetchTenantInfo()])
+  const [sale, tenant] = await Promise.all([fetchSaleForReceipt(saleId), fetchTenantInfo(true)])
   if (sale.isReturn && sale.returnAgainst && !sale.originalInvoiceNo) {
     // A credit note must quote the invoice it adjusts. Non-critical (offline: printed without it).
     try {

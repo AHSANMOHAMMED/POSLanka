@@ -111,7 +111,9 @@ export async function buildReceiptPdf(model: ReceiptModel, paperWidth: 58 | 80 =
   const qtyOf = (l: ReceiptModelLine) => `${l.qtyText}${l.unit ? ` ${l.unit}` : ''}`
   const subLines = (l: ReceiptModelLine, withQty: boolean, showInlineDisc: boolean) => {
     const sub: string[] = []
-    const codes = [model.showItemSku ? l.sku : null].filter(Boolean) as string[]
+    const codes = Array.from(
+      new Set([model.showItemSku ? l.sku : null, model.showItemBarcode ? l.barcode : null].filter(Boolean))
+    ) as string[]
     if (codes.length) sub.push(codes.join(' · '))
     if (withQty) sub.push(`${qtyOf(l)} x ${m(l.unitPrice)}`)
     if (showInlineDisc && l.discount > 0) sub.push(`${m(l.grossTotal)} - ${lineDiscountLabel(l, true)} ${m(l.discount)} = ${m(l.total)}`)
