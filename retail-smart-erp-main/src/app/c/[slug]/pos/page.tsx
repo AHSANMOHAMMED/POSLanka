@@ -3174,9 +3174,7 @@ export default function POSPage() {
     }
     offlineReceiptsRef.current.set(sale.id, sale)
     setLastSaleId(sale.id)
-    if (posProfile?.printReceiptOnComplete && printer.isRawPrinter) {
-      void printReceiptForSale(sale.id, { auto: true })
-    }
+    void printReceiptForSale(sale.id)
   }
 
   async function completeSale() {
@@ -3447,10 +3445,7 @@ export default function POSPage() {
           }).catch(console.error)
         }
 
-        const printing =
-          posProfile?.printReceiptOnComplete && printer.isRawPrinter && sale.id
-            ? printReceiptForSale(sale.id, { auto: true })
-            : null
+        const printing = sale.id ? printReceiptForSale(sale.id) : null
 
         if (hp) {
           // The plan form looks the invoice up and finances its open balance
@@ -3543,7 +3538,7 @@ export default function POSPage() {
 
   // ─── Receipt Printing ─────────────────────────────────────────
 
-  async function printReceiptForSale(saleId: string, { auto = false }: { auto?: boolean } = {}) {
+  async function printReceiptForSale(saleId: string) {
     const receiptOpts = { posProfile: posProfile || null, cashier: cashierName || null, counter: posProfile?.name || null }
     // Offline sale: model built on this device from the cart, marked with its OFF- number
     const offlineSale = offlineReceiptsRef.current.get(saleId)
@@ -3562,11 +3557,7 @@ export default function POSPage() {
       }
       // Closed in the print preview: keep the "sale completed" window (print again / send / delivery)
       if (result === 'cancelled') return
-      if (auto) return // Do not pop up browser print if this was an automatic background print
       toast.warning(printer.status.message ? `Printer: ${printer.status.message}. Using browser print.` : 'Printer unavailable, using browser print')
-    } else if (auto) {
-      // Browser transport auto-print skipped to prevent intrusive Chrome print popup
-      return
     }
     try {
       // Shared receipt model -> branded HTML (logo, business profile, invoice barcode / QR).
