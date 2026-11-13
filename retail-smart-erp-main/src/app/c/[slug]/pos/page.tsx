@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { CustomerFormModal, VehicleModal } from '@/components/modals'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
+import { Dialog, DialogContent, DialogFooter } from '@/components/ui/dialog'
 import {
   ShiftOpenModal,
   ShiftCloseModal,
@@ -1946,93 +1947,194 @@ export default function POSPage() {
     }
   }
 
+  // Helper to merge recalled lines into existing cart lines
+  function mergeCartLines(currentCart: CartItem[], newItems: CartItem[]): CartItem[] {
+    const result = [...currentCart]
+    for (const item of newItems) {
+      const existingIdx = result.findIndex(c =>
+        c.itemId === item.itemId &&
+        c.unitPrice === item.unitPrice &&
+        !c.sizeSpec &&
+        !c.isWeighable &&
+        (!c.modifiers || c.modifiers.length === 0) &&
+        c.uom === item.uom &&
+        !c.batchId &&
+        (!c.serialNumberIds || c.serialNumberIds.length === 0)
+      )
+      if (existingIdx >= 0) {
+        const existing = result[existingIdx]
+        const newQty = existing.quantity + item.quantity
+        result[existingIdx] = syncCartLineDiscount({
+          ...existing,
+          quantity: newQty,
+          total: roundCurrency(newQty * existing.unitPrice),
+        })
+      } else {
+        result.push(item)
+      }
+    }
+    return result
+  }
+
   function recallHeldSale(heldSale: HeldSale) {
     if (cart.length > 0) {
+      setShowHeldSalesModal(false)
       setRecallConfirm({ open: true, heldSale })
       return
     }
-    performRecallHeldSale(heldSale)
+    performRecallHeldSale(heldSale, 'replace')
   }
 
-  async function performRecallHeldSale(heldSale: HeldSale) {
-    const validCartItems: CartItem[] = []
-    const invalidItems: string[] = []
-    const outOfStockItems: string[] = []
-
-    for (const cartItem of heldSale.cartItems) {
-      const item = items.find(i => i.id === cartItem.itemId)
-      if (!item) {
-        invalidItems.push(cartItem.name)
-      } else {
-        // Add back this held sale's reserved qty since it will be released on recall
-        // stock is in base units; the held line may be in another unit (box = 12 pcs)
-        const factor = Number(cartItem.uomFactor) || 1
-        const availableStock = parseFloat(item.availableStock) + (item.trackStock ? cartItem.quantity * factor : 0)
-        if (item.trackStock && availableStock <= 0) {
-          outOfStockItems.push(cartItem.name)
-        } else {
-          const adjustedQty = item.trackStock ? Math.min(cartItem.quantity, Math.floor((availableStock / factor) * 1000) / 1000) : cartItem.quantity
-          validCartItems.push(syncCartLineDiscount({
-            cartLineId: cartItem.cartLineId || `${cartItem.itemId}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-            itemId: cartItem.itemId,
-            name: cartItem.name,
-            quantity: adjustedQty,
-            unitPrice: cartItem.unitPrice,
-            total: adjustedQty * cartItem.unitPrice,
-            ...(cartItem.discount ? { discount: Number(cartItem.discount) } : {}),
-            ...(cartItem.discountType ? { discountType: cartItem.discountType } : {}),
-            ...(cartItem.discountValue != null ? { discountValue: Number(cartItem.discountValue) } : {}),
-            ...(cartItem.priceLocked ? { priceLocked: true } : {}),
-            ...(cartItem.catalogPrice != null ? { catalogPrice: Number(cartItem.catalogPrice) } : {}),
-            // the unit the line was held in (box, g …), so its price stays per that unit
-            ...(cartItem.uom ? { uom: cartItem.uom, uomFactor: Number(cartItem.uomFactor) || 1 } : {}),
-            // size lines keep their size when the held cart kept it (older held carts: plain qty lines)
-            ...(cartItem.sizeSpec && adjustedQty === cartItem.quantity ? { sizeSpec: cartItem.sizeSpec } : {}),
-            sku: cartItem.sku ?? item.sku ?? null,
-          }))
-          if (item.trackStock && adjustedQty < cartItem.quantity) {
-            toast.warning(`${cartItem.name}: quantity adjusted to ${adjustedQty} (stock limited)`)
-          }
-        }
-      }
-    }
-
-    if (invalidItems.length > 0) toast.warning(`Removed items no longer available: ${invalidItems.join(', ')}`)
-    if (outOfStockItems.length > 0) toast.warning(`Removed out-of-stock items: ${outOfStockItems.join(', ')}`)
-
-    if (validCartItems.length === 0) {
-      toast.error('No valid items to recall. Held sale preserved.')
-      setShowHeldSalesModal(false)
+  async function performRecallHeldSale(heldSale: HeldSale, mode: 'replace' | 'add' = 'replace') {
+    setShowHeldSalesModal(false)
+    if (!heldSale || !heldSale.cartItems || heldSale.cartItems.length === 0) {
+      toast.error('This held sale has no items')
       return
     }
 
-    setCart(validCartItems)
+    // 1. Build a map of items from all known sources (in-memory, knownItemsRef)
+    const itemMap = new Map<string, Item>(items.map(i => [i.id, i]))
+    if (knownItemsRef.current) {
+      knownItemsRef.current.forEach((it, id) => {
+        if (!itemMap.has(id)) itemMap.set(id, it)
+      })
+    }
 
-    if (heldSale.customerId) {
-      const cust = customers.find(c => c.id === heldSale.customerId)
-      setSelectedCustomer(cust || null)
-      if (!cust) toast.info('Customer no longer exists')
+    // 2. Identify missing items from heldSale.cartItems
+    const missingIds = Array.from(new Set(
+      heldSale.cartItems
+        .map(c => c.itemId)
+        .filter((id): id is string => Boolean(id) && !itemMap.has(id))
+    ))
+
+    // 3. Try to load missing items from offline cache
+    if (missingIds.length > 0) {
+      try {
+        const cached = (await loadCachedCatalog()) as Item[]
+        if (Array.isArray(cached)) {
+          for (const it of cached) {
+            if (missingIds.includes(it.id) && !itemMap.has(it.id)) {
+              itemMap.set(it.id, it)
+              rememberItem(it)
+            }
+          }
+        }
+      } catch { /* ignore cache read error */ }
+    }
+
+    // 4. If still missing, fetch missing items directly from API
+    const stillMissingIds = missingIds.filter(id => !itemMap.has(id))
+    if (stillMissingIds.length > 0) {
+      try {
+        const warehouseParam = posWarehouse?.id ? `&warehouseId=${posWarehouse.id}` : ''
+        const res = await fetch(`/api/items?ids=${stillMissingIds.join(',')}${warehouseParam}`)
+        if (res.ok) {
+          const resp = await res.json()
+          const fetchedItems: Item[] = Array.isArray(resp.data) ? resp.data : Array.isArray(resp) ? resp : []
+          for (const it of fetchedItems) {
+            itemMap.set(it.id, it)
+            rememberItem(it)
+          }
+          if (fetchedItems.length > 0) {
+            setItems(prev => {
+              const existingIds = new Set(prev.map(p => p.id))
+              const toAdd = fetchedItems.filter(f => !existingIds.has(f.id))
+              return toAdd.length > 0 ? [...toAdd, ...prev] : prev
+            })
+          }
+        }
+      } catch (err) {
+        console.warn('Could not fetch missing catalog items for recall:', err)
+      }
+    }
+
+    // 5. Construct cart items for ALL held items (never drop them!)
+    const validCartItems: CartItem[] = []
+    for (const cartItem of heldSale.cartItems) {
+      const item = itemMap.get(cartItem.itemId)
+      const factor = Number(cartItem.uomFactor) || 1
+      const availableStock = item
+        ? (parseFloat(item.availableStock || '0') + (item.trackStock ? cartItem.quantity * factor : 0))
+        : 999
+
+      let adjustedQty = cartItem.quantity
+      if (item?.trackStock) {
+        if (availableStock <= 0) {
+          toast.warning(`${cartItem.name}: recorded stock is 0 or low (${availableStock})`)
+        } else if (availableStock / factor < cartItem.quantity) {
+          const maxPossible = Math.floor((availableStock / factor) * 1000) / 1000
+          if (maxPossible > 0) {
+            adjustedQty = maxPossible
+            toast.warning(`${cartItem.name}: quantity adjusted to ${adjustedQty} (stock limited)`)
+          } else {
+            toast.warning(`${cartItem.name}: recorded stock (${availableStock}) is less than requested`)
+          }
+        }
+      }
+
+      validCartItems.push(syncCartLineDiscount({
+        cartLineId: `${cartItem.itemId || 'line'}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        itemId: cartItem.itemId,
+        name: cartItem.name,
+        quantity: adjustedQty,
+        unitPrice: Number(cartItem.unitPrice) || 0,
+        total: roundCurrency(adjustedQty * (Number(cartItem.unitPrice) || 0)),
+        ...(cartItem.discount ? { discount: Number(cartItem.discount) } : {}),
+        ...(cartItem.discountType ? { discountType: cartItem.discountType } : {}),
+        ...(cartItem.discountValue != null ? { discountValue: Number(cartItem.discountValue) } : {}),
+        ...(cartItem.priceLocked ? { priceLocked: true } : {}),
+        ...(cartItem.catalogPrice != null ? { catalogPrice: Number(cartItem.catalogPrice) } : {}),
+        ...(cartItem.uom ? { uom: cartItem.uom, uomFactor: factor } : {}),
+        ...(cartItem.sizeSpec && adjustedQty === cartItem.quantity ? { sizeSpec: cartItem.sizeSpec } : {}),
+        sku: cartItem.sku ?? item?.sku ?? null,
+        taxTemplateId: (cartItem as any).taxTemplateId ?? item?.taxTemplateId ?? null,
+      }))
+    }
+
+    if (validCartItems.length === 0) {
+      toast.error('No items found to recall. Held sale preserved.')
+      return
+    }
+
+    // 6. Update cart based on mode (replace or add/merge)
+    if (mode === 'add' && cart.length > 0) {
+      setCart(prev => mergeCartLines(prev, validCartItems))
+      toast.success(`Added ${heldSale.holdNumber} (${validCartItems.length} items) to current bill`)
     } else {
+      setCart(validCartItems)
+      toast.success(`Recalled ${heldSale.holdNumber} (${validCartItems.length} items) to bill`)
+    }
+
+    // 7. Restore customer and vehicle
+    if (heldSale.customerId) {
+      const cust = customers.find(c => c.id === heldSale.customerId) || (heldSale.customer ? (heldSale.customer as unknown as Customer) : null)
+      if (cust) {
+        setSelectedCustomer(cust)
+      } else if (heldSale.customerName) {
+        setSelectedCustomer({ id: heldSale.customerId, name: heldSale.customerName } as Customer)
+      }
+    } else if (mode === 'replace') {
       setSelectedCustomer(null)
     }
 
     if (heldSale.vehicleId) {
-      const veh = vehicles.find(v => v.id === heldSale.vehicleId)
-      setSelectedVehicle(veh || null)
-      if (!veh) toast.info('Vehicle no longer exists')
-    } else {
+      const veh = vehicles.find(v => v.id === heldSale.vehicleId) || (heldSale.vehicle ? (heldSale.vehicle as unknown as Vehicle) : null)
+      if (veh) {
+        setSelectedVehicle(veh)
+      } else if (heldSale.vehiclePlate) {
+        setSelectedVehicle({ id: heldSale.vehicleId, licensePlate: heldSale.vehiclePlate, make: '', model: '' } as Vehicle)
+      }
+    } else if (mode === 'replace') {
       setSelectedVehicle(null)
     }
 
+    // 8. Delete held sale after recall
     try {
       await fetch(`/api/held-sales/${heldSale.id}?recall=1`, { method: 'DELETE' })
       fetchHeldSales()
     } catch (error) {
       console.error('Error deleting held sale:', error)
     }
-
-    setShowHeldSalesModal(false)
-    toast.success(`Recalled ${heldSale.holdNumber}`)
   }
 
   function deleteHeldSale(id: string) {
@@ -4017,18 +4119,57 @@ export default function POSPage() {
         shopName={company?.tenantName || 'skyERPOS'}
       />
 
-      <ConfirmModal
+      {/* Recall Held Sale - Add to Current Bill or Replace Current Bill */}
+      <Dialog
         isOpen={recallConfirm.open}
         onClose={() => setRecallConfirm({ open: false, heldSale: null })}
-        onConfirm={() => {
-          if (recallConfirm.heldSale) performRecallHeldSale(recallConfirm.heldSale)
-          setRecallConfirm({ open: false, heldSale: null })
-        }}
-        title="Replace Cart"
-        message="Current cart will be replaced. Continue?"
-        confirmText="Replace"
-        variant="warning"
-      />
+        title="Recall Held Sale"
+      >
+        <DialogContent>
+          <div className="flex items-start gap-3">
+            <div className="p-2 rounded-full shrink-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+              <Clock size={20} />
+            </div>
+            <div className="flex-1 pt-0.5 space-y-2">
+              <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                You already have {cart.length} item{cart.length > 1 ? 's' : ''} in your current bill.
+              </p>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Choose how to recall ticket <strong>{recallConfirm.heldSale?.holdNumber}</strong> ({recallConfirm.heldSale?.cartItems.length} items):
+              </p>
+            </div>
+          </div>
+        </DialogContent>
+        <DialogFooter className="flex-wrap sm:flex-nowrap gap-2 justify-end">
+          <button
+            type="button"
+            onClick={() => setRecallConfirm({ open: false, heldSale: null })}
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md border border-gray-300 dark:border-gray-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (recallConfirm.heldSale) performRecallHeldSale(recallConfirm.heldSale, 'replace')
+              setRecallConfirm({ open: false, heldSale: null })
+            }}
+            className="px-4 py-2 text-sm font-medium text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-md border border-amber-300 dark:border-amber-700"
+          >
+            Replace Bill
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (recallConfirm.heldSale) performRecallHeldSale(recallConfirm.heldSale, 'add')
+              setRecallConfirm({ open: false, heldSale: null })
+            }}
+            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md shadow-sm"
+          >
+            Add to Current Bill
+          </button>
+        </DialogFooter>
+      </Dialog>
 
       <ConfirmModal
         isOpen={deleteHeldConfirm.open}

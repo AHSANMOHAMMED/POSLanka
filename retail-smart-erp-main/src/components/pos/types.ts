@@ -176,6 +176,10 @@ export interface HeldSale {
   holdNumber: string
   customerId: string | null
   vehicleId: string | null
+  warehouseId?: string | null
+  customerName?: string | null
+  vehiclePlate?: string | null
+  vehicleDescription?: string | null
   cartItems: CartItem[]
   subtotal: string
   notes: string | null
