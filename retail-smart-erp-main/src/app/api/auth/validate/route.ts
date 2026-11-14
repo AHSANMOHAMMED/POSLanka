@@ -5,7 +5,7 @@ import { tenants, users } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 
-const INACTIVITY_LIMIT_MS = 3 * 60 * 60 * 1000 // 3 hours
+const INACTIVITY_LIMIT_MS = 24 * 60 * 60 * 1000 // 24 hours — keeps full shift cashier sessions alive
 
 /**
  * Validates the current company session against the database.

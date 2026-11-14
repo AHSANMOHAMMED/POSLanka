@@ -24,22 +24,20 @@ export function CashierLockModal({
   const [error, setError] = useState<string | null>(null)
   const [isUnlocking, setIsUnlocking] = useState(false)
 
-  if (!isOpen) return null
-
-  const handleKeyPress = (num: string) => {
+  const handleKeyPress = useCallback((num: string) => {
     setPin(prev => (prev.length < 6 ? prev + num : prev))
     setError(null)
-  }
+  }, [])
 
-  const handleBackspace = () => {
+  const handleBackspace = useCallback(() => {
     setPin(prev => prev.slice(0, -1))
     setError(null)
-  }
+  }, [])
 
-  const handleClear = () => {
+  const handleClear = useCallback(() => {
     setPin('')
     setError(null)
-  }
+  }, [])
 
   const handleAttemptUnlock = useCallback(async () => {
     if (!pin || pin.length < 4) {
@@ -85,7 +83,9 @@ export function CashierLockModal({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, handleAttemptUnlock])
+  }, [isOpen, handleAttemptUnlock, handleKeyPress, handleBackspace, handleClear])
+
+  if (!isOpen) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-200">

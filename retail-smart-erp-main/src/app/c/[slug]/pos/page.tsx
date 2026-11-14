@@ -304,14 +304,15 @@ export default function POSPage() {
   // H1: signed supervisor approvals for the current cart (sent with the sale, spent once)
   const approvalTokensRef = useRef<string[]>([])
   const [showCashMovementModal, setShowCashMovementModal] = useState(false)
-  const [terminalLocked, setTerminalLocked] = useState(() => {
-    if (typeof window === 'undefined') return false
+  const [terminalLocked, setTerminalLocked] = useState(false)
+
+  // Restore persistent lock state on client mount (avoids SSR hydration mismatch)
+  useEffect(() => {
     try {
-      return localStorage.getItem(`poslanka:pos-locked:${params.slug}`) === 'true'
-    } catch {
-      return false
-    }
-  })
+      const locked = localStorage.getItem(`poslanka:pos-locked:${params.slug}`) === 'true'
+      if (locked) setTerminalLocked(true)
+    } catch { /* ignore */ }
+  }, [params.slug])
 
   const handleSetTerminalLocked = useCallback((locked: boolean) => {
     setTerminalLocked(locked)
@@ -710,6 +711,7 @@ export default function POSPage() {
       if (res.ok) {
         const data = await res.json()
         setActiveShift(data.shift || null)
+        lastActivityRef.current = Date.now()
       }
     } catch (error) {
       console.error('Error fetching active shift:', error)
@@ -2651,14 +2653,30 @@ export default function POSPage() {
   }
 
   useEffect(() => {
-    const bump = () => { lastActivityRef.current = Date.now() }
-    const events: (keyof WindowEventMap)[] = ['mousedown', 'keydown', 'touchstart', 'wheel']
+    let lastBump = 0
+    const bump = () => {
+      const now = Date.now()
+      if (now - lastBump > 1000) {
+        lastBump = now
+        lastActivityRef.current = now
+      }
+    }
+    const events: (keyof WindowEventMap)[] = ['mousedown', 'mousemove', 'pointermove', 'click', 'keydown', 'touchstart', 'wheel']
     events.forEach(ev => window.addEventListener(ev, bump, { passive: true }))
     const timer = window.setInterval(() => {
       if (!activeShift || terminalLocked) return
       let minutes = 10
-      try { minutes = parseInt(localStorage.getItem('poslanka:pos-lock-minutes') || '10', 10) || 10 } catch { /* ignore */ }
-      if (minutes > 0 && Date.now() - lastActivityRef.current > minutes * 60_000) handleSetTerminalLocked(true)
+      try {
+        const stored = localStorage.getItem('poslanka:pos-lock-minutes')
+        if (stored !== null && stored !== '') {
+          const parsed = parseInt(stored, 10)
+          if (!isNaN(parsed)) minutes = parsed
+        }
+      } catch { /* ignore */ }
+      // Auto-lock only triggers if minutes > 0 (0 disables auto-lock)
+      if (minutes > 0 && Date.now() - lastActivityRef.current >= minutes * 60_000) {
+        handleSetTerminalLocked(true)
+      }
     }, 15_000)
     return () => {
       events.forEach(ev => window.removeEventListener(ev, bump))

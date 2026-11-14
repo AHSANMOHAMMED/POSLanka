@@ -50,6 +50,9 @@ export function SessionValidator({
 
       // If session loaded but user ID is empty, the session is invalid
       if (status === 'authenticated' && session?.user && !userId) {
+        if (typeof window !== 'undefined' && window.location.pathname.includes('/pos')) {
+          return
+        }
         setIsValid(false)
         broadcastAuthEvent('logout', scope)
         signOut({ callbackUrl: loginUrl, redirect: true })
@@ -64,6 +67,10 @@ export function SessionValidator({
         })
 
         if (res.status === 401) {
+          // In POS cashier mode, station lock handles terminal security; never force logout cashiers
+          if (typeof window !== 'undefined' && window.location.pathname.includes('/pos')) {
+            return
+          }
           // Session is invalid - sign out
           setIsValid(false)
           broadcastAuthEvent('logout', scope)
