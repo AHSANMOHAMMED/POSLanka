@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Lock, LogOut, ShieldAlert } from 'lucide-react'
 
 interface CashierLockModalProps {
@@ -27,10 +27,8 @@ export function CashierLockModal({
   if (!isOpen) return null
 
   const handleKeyPress = (num: string) => {
-    if (pin.length < 6) {
-      setPin(prev => prev + num)
-      setError(null)
-    }
+    setPin(prev => (prev.length < 6 ? prev + num : prev))
+    setError(null)
   }
 
   const handleBackspace = () => {
@@ -43,7 +41,7 @@ export function CashierLockModal({
     setError(null)
   }
 
-  const handleAttemptUnlock = async () => {
+  const handleAttemptUnlock = useCallback(async () => {
     if (!pin || pin.length < 4) {
       setError('Please enter your 4-digit cashier PIN')
       return
@@ -64,7 +62,30 @@ export function CashierLockModal({
     } finally {
       setIsUnlocking(false)
     }
-  }
+  }, [pin, onUnlock])
+
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept if an input is focused
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key >= '0' && e.key <= '9') {
+        e.preventDefault()
+        handleKeyPress(e.key)
+      } else if (e.key === 'Backspace') {
+        e.preventDefault()
+        handleBackspace()
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        void handleAttemptUnlock()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        handleClear()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [isOpen, handleAttemptUnlock])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-slate-950/90 backdrop-blur-xl animate-in fade-in duration-200">

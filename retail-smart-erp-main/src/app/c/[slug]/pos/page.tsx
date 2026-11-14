@@ -304,7 +304,25 @@ export default function POSPage() {
   // H1: signed supervisor approvals for the current cart (sent with the sale, spent once)
   const approvalTokensRef = useRef<string[]>([])
   const [showCashMovementModal, setShowCashMovementModal] = useState(false)
-  const [terminalLocked, setTerminalLocked] = useState(false)
+  const [terminalLocked, setTerminalLocked] = useState(() => {
+    if (typeof window === 'undefined') return false
+    try {
+      return localStorage.getItem(`poslanka:pos-locked:${params.slug}`) === 'true'
+    } catch {
+      return false
+    }
+  })
+
+  const handleSetTerminalLocked = useCallback((locked: boolean) => {
+    setTerminalLocked(locked)
+    try {
+      if (locked) {
+        localStorage.setItem(`poslanka:pos-locked:${params.slug}`, 'true')
+      } else {
+        localStorage.removeItem(`poslanka:pos-locked:${params.slug}`)
+      }
+    } catch { /* ignore */ }
+  }, [params.slug])
   const [clearCartConfirm, setClearCartConfirm] = useState(false)
   const lastActivityRef = useRef(Date.now())
   // One idempotency key per cart: survives retries, reset after a successful sale / clear
@@ -1591,6 +1609,9 @@ export default function POSPage() {
   }
 
   function clearCart() {
+    try {
+      localStorage.removeItem(`poslanka:pos-cart:${params.slug}`)
+    } catch { /* ignore */ }
     fromQuotationIdRef.current = null
     setHirePurchase(false)
     newClientSaleId()
@@ -1613,6 +1634,37 @@ export default function POSPage() {
     setGiftCardNumber('')
     setGiftCardInfo(null)
   }
+
+  // Restore draft cart on initial load if empty
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`poslanka:pos-cart:${params.slug}`)
+      if (saved) {
+        const parsed = JSON.parse(saved)
+        if (Array.isArray(parsed.cart) && parsed.cart.length > 0) {
+          setCart(parsed.cart)
+          if (parsed.customer) setSelectedCustomer(parsed.customer)
+          if (parsed.vehicle) setSelectedVehicle(parsed.vehicle)
+        }
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.slug])
+
+  // Persist draft cart across refresh/locks
+  useEffect(() => {
+    try {
+      if (cart.length > 0) {
+        localStorage.setItem(`poslanka:pos-cart:${params.slug}`, JSON.stringify({
+          cart,
+          customer: selectedCustomer,
+          vehicle: selectedVehicle,
+        }))
+      } else {
+        localStorage.removeItem(`poslanka:pos-cart:${params.slug}`)
+      }
+    } catch { /* ignore */ }
+  }, [cart, selectedCustomer, selectedVehicle, params.slug])
 
   // ─── Restaurant Functions ───────────────────────────────────
 
@@ -2593,7 +2645,7 @@ export default function POSPage() {
     const data = await res.json().catch(() => ({}))
     if (res.status === 400 || res.status === 429) throw new Error(data.error || 'PIN check failed')
     if (!res.ok || !data.ok) return false
-    setTerminalLocked(false)
+    handleSetTerminalLocked(false)
     lastActivityRef.current = Date.now()
     return true
   }
@@ -2606,13 +2658,13 @@ export default function POSPage() {
       if (!activeShift || terminalLocked) return
       let minutes = 10
       try { minutes = parseInt(localStorage.getItem('poslanka:pos-lock-minutes') || '10', 10) || 10 } catch { /* ignore */ }
-      if (minutes > 0 && Date.now() - lastActivityRef.current > minutes * 60_000) setTerminalLocked(true)
+      if (minutes > 0 && Date.now() - lastActivityRef.current > minutes * 60_000) handleSetTerminalLocked(true)
     }, 15_000)
     return () => {
       events.forEach(ev => window.removeEventListener(ev, bump))
       window.clearInterval(timer)
     }
-  }, [activeShift, terminalLocked])
+  }, [activeShift, terminalLocked, handleSetTerminalLocked])
 
   // ─── Scan fast path: Enter in the search box = immediate exact lookup ──
   function focusSearch() {
@@ -2939,7 +2991,7 @@ export default function POSPage() {
       case 'discount': if (allowDiscount && cart.length > 0) setShowDiscountModal(true); break
       case 'returnSale': if (cart.length > 0) setReturnModeConfirm(true); else setShowReturnLookupModal(true); break
       case 'priceCheck': setShowPriceCheckModal(true); break
-      case 'lock': if (activeShift) setTerminalLocked(true); break
+      case 'lock': if (activeShift) handleSetTerminalLocked(true); break
       case 'payment':
         if (cart.length > 0 && activeShift) {
           // A typed quantity still pending is applied first, then payment opens on the updated cart
@@ -4306,7 +4358,12 @@ export default function POSPage() {
         terminalName={posProfile?.name || posWarehouse?.name || 'POS'}
         shiftNumber={activeShift?.entryNumber || ''}
         onUnlock={unlockTerminal}
-        onSwitchUser={() => signOut({ callbackUrl: `/c/${params.slug}/login` })}
+        onSwitchUser={() => {
+          try {
+            localStorage.removeItem(`poslanka:pos-locked:${params.slug}`)
+          } catch { /* ignore */ }
+          signOut({ callbackUrl: `/c/${params.slug}/login` })
+        }}
       />
 
       <ConfirmModal

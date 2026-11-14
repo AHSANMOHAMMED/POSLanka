@@ -611,7 +611,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
   session: {
     strategy: 'jwt',
-    maxAge: 15 * 60, // 15 minutes — auto-refreshed by SessionProvider refetchInterval
+    maxAge: 24 * 60 * 60, // 24 hours — keeps cashier sessions alive through full work shifts
   },
 })
 

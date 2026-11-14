@@ -333,6 +333,6 @@ export const {
   },
   session: {
     strategy: 'jwt',
-    maxAge: 15 * 60, // 15 minutes — auto-refreshed by SessionProvider refetchInterval
+    maxAge: 24 * 60 * 60, // 24 hours
   },
 })

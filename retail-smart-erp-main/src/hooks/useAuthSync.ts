@@ -76,6 +76,9 @@ export function useAuthSync(options: UseAuthSyncOptions): void {
       if (eventType === 'logout' || !hasSessionFlag(scope)) {
         const hasSession = await checkSession()
         if (!hasSession) {
+          if (typeof window !== 'undefined' && window.location.pathname.includes('/pos')) {
+            return
+          }
           router.push('/login')
         }
       }

@@ -6,7 +6,7 @@ import { broadcastAuthEvent, type AuthScope } from '@/lib/auth/events'
 
 const HEARTBEAT_INTERVAL = 5 * 60 * 1000 // 5 minutes — how often to send heartbeat when active
 const INACTIVITY_CHECK_INTERVAL = 60 * 1000 // 1 minute — how often to check local inactivity
-const INACTIVITY_LIMIT = 3 * 60 * 60 * 1000 // 3 hours
+const INACTIVITY_LIMIT = 24 * 60 * 60 * 1000 // 24 hours — keeps full shift alive
 
 interface ActivityTrackerProps {
   /** Heartbeat endpoint URL (default: /api/auth/heartbeat) */
@@ -44,6 +44,9 @@ export function ActivityTracker({
         credentials: 'include',
       })
       if (res.status === 401) {
+        if (typeof window !== 'undefined' && window.location.pathname.includes('/pos')) {
+          return
+        }
         broadcastAuthEvent('logout', scope)
         signOut({ callbackUrl: loginUrl, redirect: true })
       }
@@ -81,6 +84,10 @@ export function ActivityTracker({
 
     // Periodic inactivity check
     const checkInterval = setInterval(async () => {
+      // In POS cashier mode, station lock handles terminal security; never force logout cashiers
+      if (typeof window !== 'undefined' && window.location.pathname.includes('/pos')) {
+        return
+      }
       const elapsed = Date.now() - lastActivityRef.current
       if (elapsed >= INACTIVITY_LIMIT) {
         try {

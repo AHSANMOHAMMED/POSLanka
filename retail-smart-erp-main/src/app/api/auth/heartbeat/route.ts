@@ -4,7 +4,7 @@ import { withTenant } from '@/lib/db'
 import { users } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 
-const INACTIVITY_LIMIT_MS = 3 * 60 * 60 * 1000 // 3 hours
+const INACTIVITY_LIMIT_MS = 24 * 60 * 60 * 1000 // 24 hours — prevents cashiers on duty from being signed out
 
 /**
  * Heartbeat endpoint — called periodically by the client when the user is active.
