@@ -27,6 +27,10 @@ const purchaseItemSchema = z.object({
   tax: z.coerce.number().min(0).optional(),
   /** 0184: unit the line is entered in (blank = base unit); the factor is resolved server-side */
   uom: z.string().trim().max(20).nullish(),
+  /** Expiry date for perishable or batch-tracked goods (YYYY-MM-DD) */
+  expiryDate: z.string().nullish(),
+  /** Batch / Lot number */
+  batchNumber: z.string().trim().max(100).nullish(),
 })
 
 // ==================== PURCHASES (Purchase Invoices) ====================
@@ -246,6 +250,8 @@ export const addPurchaseItemSchema = z.object({
   tax: z.coerce.number().min(0).optional(),
   /** 0184: unit the line is entered in (blank = base unit); the factor is resolved server-side */
   uom: z.string().trim().max(20).nullish(),
+  expiryDate: z.string().nullish(),
+  batchNumber: z.string().trim().max(100).nullish(),
 })
 
 // PUT /api/purchases/[id]/items/[itemId]
@@ -255,6 +261,8 @@ export const updatePurchaseItemSchema = z.object({
   tax: z.coerce.number().min(0).optional(),
   /** 0184: unit the line is entered in (blank = base unit); the factor is resolved server-side */
   uom: z.string().trim().max(20).nullish(),
+  expiryDate: z.string().nullish(),
+  batchNumber: z.string().trim().max(100).nullish(),
 })
 
 // POST /api/purchases/[id]/payments

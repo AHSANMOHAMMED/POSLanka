@@ -46,12 +46,23 @@ export const SHIFT_VARIANCE_REASONS = [
   'card_terminal_mismatch', 'theft_suspected', 'other',
 ] as const
 
+const externalBillSchema = z.object({
+  id: z.string().optional(),
+  billNo: z.string().trim().max(100),
+  description: z.string().trim().max(255),
+  amount: z.coerce.number().min(0, 'Amount cannot be negative'),
+  paymentMethod: z.string().default('cash'),
+})
+
 // POST /api/pos-opening-entries/[id]/close
 export const closePosShiftSchema = z.object({
   actualAmounts: z.array(closingAmountSchema).min(1, 'At least one payment method amount is required').max(50),
   notes: z.string().max(2000).optional(),
   varianceReason: z.enum(SHIFT_VARIANCE_REASONS).optional(),
   varianceNote: z.string().trim().max(1000).optional(),
+  cashOutAmount: z.coerce.number().min(0).optional(),
+  retainedFloatAmount: z.coerce.number().min(0).optional(),
+  externalBills: z.array(externalBillSchema).optional(),
   version: z.string().optional(), // Optimistic locking
 }).superRefine((data, ctx) => {
   if (data.varianceReason === 'other' && !data.varianceNote) {

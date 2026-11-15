@@ -1,7 +1,7 @@
 'use client'
 
 import { formatCurrency } from '@/lib/utils/currency'
-import { DollarSign, CreditCard, Banknote } from 'lucide-react'
+import { DollarSign, CreditCard, Banknote, HelpCircle } from 'lucide-react'
 
 export interface PaymentMethodBreakdown {
   openingBalances: Record<string, number>
@@ -98,6 +98,23 @@ export function PaymentMethodReconciliationTable({
 
   return (
     <div className="space-y-4">
+      {/* Educational Clarification Banner */}
+      <div className="p-3 bg-blue-50/80 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg text-xs text-blue-950 dark:text-blue-200 space-y-1">
+        <div className="flex items-center gap-1.5 font-bold text-blue-800 dark:text-blue-300">
+          <HelpCircle size={15} />
+          <span>Understanding Cash & Tender Variance:</span>
+        </div>
+        <p>
+          • <strong>Expected Amount</strong> = Starting Balance + Today's Sales. (If your shift started with 0 and you sold Rs. 5,000, Expected is Rs. 5,000).
+        </p>
+        <p>
+          • <strong>Actual Counted</strong> = Physical money counted in your drawer or on your card terminal.
+        </p>
+        <p>
+          • <strong>Variance</strong> = (Counted - Expected). If the counted box says 0, it shows <em>-5,000 Shortage</em> because the physical cash hasn&apos;t been entered yet. Type your counted amount in the <strong>Actual</strong> box and variance will become <strong>0.00 (Balanced)</strong>.
+        </p>
+      </div>
+
       <div className="overflow-x-auto rounded border border-gray-200 dark:border-gray-700">
         <table className="w-full">
           <thead className="bg-gray-50 dark:bg-gray-800">
@@ -115,10 +132,10 @@ export function PaymentMethodReconciliationTable({
                 Expected
               </th>
               <th className="text-right p-3 text-sm font-medium text-gray-500 dark:text-gray-400">
-                Actual
+                Actual (Counted)
               </th>
               <th className="text-right p-3 text-sm font-medium text-gray-500 dark:text-gray-400">
-                Variance
+                Status / Variance
               </th>
             </tr>
           </thead>
@@ -169,7 +186,7 @@ export function PaymentMethodReconciliationTable({
                 </td>
                 <td className="p-3 text-right">
                   <div
-                    className={`text-sm font-medium ${
+                    className={`text-sm font-semibold flex flex-col items-end ${
                       Math.abs(row.variance) < 0.01
                         ? 'text-green-600 dark:text-green-400'
                         : row.variance > 0
@@ -177,8 +194,14 @@ export function PaymentMethodReconciliationTable({
                         : 'text-red-600 dark:text-red-400'
                     }`}
                   >
-                    {row.variance > 0 ? '+' : ''}
-                    {formatCurrency(row.variance)}
+                    <span>{row.variance > 0 ? '+' : ''}{formatCurrency(row.variance)}</span>
+                    <span className="text-[10px] font-normal tracking-wide uppercase">
+                      {Math.abs(row.variance) < 0.01
+                        ? '✓ Balanced'
+                        : row.variance > 0
+                        ? 'Overage (Extra)'
+                        : 'Shortage (Missing)'}
+                    </span>
                   </div>
                 </td>
               </tr>
@@ -201,7 +224,7 @@ export function PaymentMethodReconciliationTable({
               </td>
               <td className="p-3 text-right">
                 <div
-                  className={`text-sm font-medium ${
+                  className={`text-sm font-semibold flex flex-col items-end ${
                     Math.abs(totals.variance) < 0.01
                       ? 'text-green-600 dark:text-green-400'
                       : totals.variance > 0
@@ -209,8 +232,14 @@ export function PaymentMethodReconciliationTable({
                       : 'text-red-600 dark:text-red-400'
                   }`}
                 >
-                  {totals.variance > 0 ? '+' : ''}
-                  {formatCurrency(totals.variance)}
+                  <span>{totals.variance > 0 ? '+' : ''}{formatCurrency(totals.variance)}</span>
+                  <span className="text-[10px] font-normal uppercase">
+                    {Math.abs(totals.variance) < 0.01
+                      ? '✓ Balanced'
+                      : totals.variance > 0
+                      ? 'Total Overage'
+                      : 'Total Shortage'}
+                  </span>
                 </div>
               </td>
             </tr>

@@ -112,7 +112,7 @@ export async function buildReceiptPdf(model: ReceiptModel, paperWidth: 58 | 80 =
   const subLines = (l: ReceiptModelLine, withQty: boolean, showInlineDisc: boolean) => {
     const sub: string[] = []
     const codes = Array.from(
-      new Set([model.showItemSku ? l.sku : null, model.showItemBarcode ? l.barcode : null].filter(Boolean))
+      new Set([model.showItemSku ? l.sku : null].filter(Boolean))
     ) as string[]
     if (codes.length) sub.push(codes.join(' · '))
     if (withQty) sub.push(`${qtyOf(l)} x ${m(l.unitPrice)}`)

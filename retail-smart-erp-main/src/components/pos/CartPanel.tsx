@@ -367,110 +367,88 @@ export function CartPanel({
                   listRef.current?.focus()
                 }}
                 aria-selected={isSelected}
-                className={`rounded-md border-2 p-3 min-[1920px]:p-4 cursor-pointer transition-colors ${
+                className={`rounded-md border p-2 min-[1920px]:p-2.5 cursor-pointer transition-colors ${
                   isReturnMode
-                    ? `bg-red-50 ${isSelected ? 'border-red-500' : 'border-red-200'}`
+                    ? `bg-red-50/90 ${isSelected ? 'border-red-500 ring-1 ring-red-400' : 'border-red-200'}`
                     : isSelected
                       ? `theme-bg-subtle ${cartFocused ? 'theme-border-primary ring-1' : 'border-slate-300 dark:border-gray-700'}`
-                      : 'bg-gray-50 dark:bg-gray-800 border-gray-100 dark:border-gray-700'
+                      : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-gray-300'
                 }`}
               >
-                <div className="flex items-start justify-between mb-3">
+                <div className="flex items-start justify-between gap-1 mb-1.5">
                   <div className="flex-1 min-w-0">
-                    <h4 className="font-semibold text-gray-900 dark:text-white truncate min-[1920px]:text-lg">{item.name}</h4>
-                    {item.sku && (
-                      <span className="inline-flex items-center gap-1 font-mono text-[11px] text-slate-500 dark:text-gray-400 bg-slate-100 dark:bg-gray-700/60 px-1.5 py-0.5 rounded border border-slate-200/50 dark:border-gray-600/50 mt-0.5 mr-1" title={`SKU: ${item.sku}`}>
-                        <ScanBarcode size={10} className="text-slate-400" />
-                        SKU: {item.sku}
-                      </span>
-                    )}
+                    <h4 className="font-bold text-gray-900 dark:text-white text-sm min-[1920px]:text-base leading-snug line-clamp-1">{item.name}</h4>
                     {isReturnMode && (
-                      <span className="inline-block px-2 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded mt-1">
-                        Return Item
+                      <span className="inline-block px-1.5 py-0.2 bg-red-100 text-red-700 text-[10px] font-semibold rounded mr-1">
+                        Return
                       </span>
                     )}
                     {isReturnMode && item.maxReturnQuantity !== undefined && (
-                      <span className="inline-block ml-2 text-xs text-red-600 mt-1">
-                        {item.maxReturnQuantity} returnable
+                      <span className="inline-block text-[11px] font-medium text-red-600">
+                        max {item.maxReturnQuantity}
                       </span>
                     )}
                     {/* H5: unit, price list and promotions of the line */}
                     {item.uom && !showUnitPicker && (
-                      <span className="inline-block mt-0.5 mr-1 px-1.5 py-0.5 text-xs rounded bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200">
+                      <span className="inline-block mr-1 px-1 py-0.2 text-[10px] font-medium rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
                         {item.uom}{item.uomFactor && item.uomFactor !== 1 ? ` × ${item.uomFactor}` : ''}
                       </span>
                     )}
                     {item.priceListName && (
-                      <span className="inline-block mt-0.5 mr-1 px-1.5 py-0.5 text-xs rounded bg-blue-50 text-blue-700">
+                      <span className="inline-block mr-1 px-1 py-0.2 text-[10px] font-medium rounded bg-blue-50 text-blue-700">
                         {item.priceListName}
-                        {item.catalogPrice !== undefined && item.catalogPrice !== item.unitPrice && (
-                          <s className="ml-1 text-gray-400">{item.catalogPrice.toFixed(2)}</s>
-                        )}
                       </span>
                     )}
                     {!!item.promotionDiscount && item.promotionDiscount > 0 && (
-                      <p className="text-xs text-green-700 mt-0.5">
-                        {(item.promotionLabels || []).join(', ')} −{currencyCode} {item.promotionDiscount.toFixed(2)}
-                      </p>
+                      <span className="inline-block text-[10px] text-green-700 font-medium mr-1">
+                        −{currencyCode} {item.promotionDiscount.toFixed(2)}
+                      </span>
                     )}
                     {item.weight && item.isWeighable && (
-                      <p className="text-xs text-orange-600 mt-0.5">
-                        {item.weight.toFixed(3)} kg @ {currencyCode} {item.unitPrice.toFixed(2)}/kg
-                      </p>
+                      <span className="inline-block text-[11px] text-orange-600 font-medium">
+                        {item.weight.toFixed(3)} kg @ {currencyCode} {item.unitPrice.toFixed(2)}
+                      </span>
                     )}
                     {item.batchNumber && (
-                      <div className="text-xs theme-text-primary mt-0.5 flex items-center gap-1">
-                        <span>Batch</span>
+                      <div className="text-[11px] theme-text-primary mt-0.5 flex items-center gap-1">
+                        <span>Batch:</span>
                         {onChangeBatch && item.batchOptions && item.batchOptions.length > 1 ? (
                           <select
                             aria-label="Batch"
-                            className="text-xs border border-gray-300 dark:border-gray-600 rounded px-1 py-0 bg-white dark:bg-gray-800"
+                            className="text-[11px] border border-gray-300 dark:border-gray-600 rounded px-1 py-0 bg-white dark:bg-gray-800"
                             value={item.batchId || ''}
                             onChange={(e) => onChangeBatch(item.cartLineId, e.target.value)}
                           >
                             {item.batchOptions.map(b => (
                               <option key={b.id} value={b.id}>
-                                {b.batchNumber}{b.expiryDate ? ` · exp ${b.expiryDate}` : ''} ({b.currentQuantity}){b.expired ? ' · EXPIRED' : ''}
+                                {b.batchNumber}{b.expiryDate ? ` · ${b.expiryDate}` : ''}
                               </option>
                             ))}
                           </select>
                         ) : (
                           <span>
-                            {item.batchNumber}{item.batchExpiry ? ` · exp ${item.batchExpiry}` : ''}
-                            {item.batchOptions?.find(b => b.id === item.batchId)?.expired && (
-                              <span className="ml-1 font-semibold text-red-600 dark:text-red-400">EXPIRED</span>
-                            )}
+                            {item.batchNumber}{item.batchExpiry ? ` · ${item.batchExpiry}` : ''}
                           </span>
                         )}
                       </div>
                     )}
-                    {item.modifiers && item.modifiers.length > 0 && (
-                      <p className="text-xs text-gray-500 mt-0.5">
-                        {item.modifiers.map(m => m.price > 0 ? `${m.name} (+${m.price.toFixed(0)})` : m.name).join(', ')}
-                      </p>
-                    )}
-                    {item.coreCharge && item.coreCharge > 0 && (
-                      <p className="text-xs text-purple-600 mt-0.5">
-                        Core charge: {currencyCode} {(item.coreCharge * Math.abs(item.quantity)).toFixed(2)}
-                      </p>
-                    )}
                   </div>
                   <button
                     onClick={() => onRemoveFromCart(item.cartLineId)}
-                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                    title="Remove line (select it and press Del)"
+                    className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                    title="Remove line (Del)"
                     aria-label={`Remove ${item.name}`}
                   >
-                    <Trash2 size={18} />
+                    <Trash2 size={15} />
                   </button>
                 </div>
 
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-1.5">
                   {/* Quantity Controls */}
-                  <div className={`relative flex items-center gap-1 bg-white dark:bg-gray-900 rounded border p-1 ${typing ? 'ring-2 theme-ring-primary' : ''}`}>
+                  <div className={`relative flex items-center gap-0.5 bg-white dark:bg-gray-900 rounded border border-gray-200 dark:border-gray-700 p-0.5 ${typing ? 'ring-2 theme-ring-primary' : ''}`}>
                     {typing && (
-                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-1 rounded theme-btn-primary text-white font-mono font-extrabold text-lg">
-                        <span className="text-[11px] font-sans font-semibold opacity-80">Qty</span>{qtyBuffer}<span className="animate-pulse">▌</span>
+                      <div className="absolute inset-0 z-10 flex items-center justify-center gap-1 rounded theme-btn-primary text-white font-mono font-extrabold text-sm">
+                        <span className="text-[10px] font-sans font-semibold opacity-80">Qty</span>{qtyBuffer}<span className="animate-pulse">▌</span>
                       </div>
                     )}
                     <button
@@ -478,17 +456,17 @@ export function CartPanel({
                         onSelectLine?.(item.cartLineId)
                         onUpdateQuantity(item.cartLineId, -1)
                       }}
-                      className="w-9 h-9 flex items-center justify-center rounded-md hover:bg-gray-100 active:scale-95 transition-all text-gray-700 dark:text-gray-200"
+                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 active:scale-95 transition-all text-gray-700 dark:text-gray-200"
                       aria-label="Decrease quantity"
                     >
-                      <Minus size={16} />
+                      <Minus size={13} />
                     </button>
                     <FormInput
                       type="number"
                       step={decimalQty ? '0.001' : '1'}
                       inputSize="sm"
                       key={`qty-${item.cartLineId}-${item.isWeighable ? item.weight : item.quantity}`}
-                      defaultValue={item.isWeighable ? item.weight : item.quantity}
+                      defaultValue={item.isWeighable ? item.weight : Math.abs(item.quantity)}
                       readOnly={!!sizeEdit}
                       title={sizeEdit ? 'Change the size' : undefined}
                       onFocus={(e) => {
@@ -503,7 +481,7 @@ export function CartPanel({
                       onBlur={(e) => {
                         if (sizeEdit) return
                         const newQty = parseFloat(e.currentTarget.value) || 0
-                        const current = item.isWeighable ? (item.weight || 1) : item.quantity
+                        const current = item.isWeighable ? (item.weight || 1) : Math.abs(item.quantity)
                         if (newQty !== current) onSetQuantityDirectly(item.cartLineId, newQty)
                       }}
                       onKeyDown={(e) => {
@@ -511,17 +489,17 @@ export function CartPanel({
                         if (sizeEdit) { e.preventDefault(); sizeEdit(); return }
                         e.currentTarget.blur()
                       }}
-                      className="w-16 text-center font-bold !border-0 !ring-0 !shadow-none"
+                      className="w-12 text-center font-bold text-xs !border-0 !ring-0 !shadow-none !h-7 !px-0.5"
                     />
                     <button
                       onClick={() => {
                         onSelectLine?.(item.cartLineId)
                         onUpdateQuantity(item.cartLineId, 1)
                       }}
-                      className="w-9 h-9 flex items-center justify-center rounded-md hover:bg-gray-100 active:scale-95 transition-all text-gray-700 dark:text-gray-200"
+                      className="w-7 h-7 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 active:scale-95 transition-all text-gray-700 dark:text-gray-200"
                       aria-label="Increase quantity"
                     >
-                      <Plus size={16} />
+                      <Plus size={13} />
                     </button>
                     {unitOptions && !unitChips ? (
                       <select
@@ -544,16 +522,16 @@ export function CartPanel({
                   </div>
 
                   {/* Price */}
-                  <div className="text-right">
-                    <div className={`text-lg min-[1920px]:text-xl font-bold ${item.total < 0 ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
-                      {currencyCode} {Math.max(0, Math.abs(item.total - (item.promotionDiscount || 0))).toFixed(2)}
+                  <div className="text-right flex flex-col items-end">
+                    <div className={`text-base min-[1920px]:text-lg font-bold leading-tight ${item.total < 0 ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
+                      {item.total < 0 ? '−' : ''}{currencyCode} {Math.max(0, Math.abs(item.total - (item.promotionDiscount || 0))).toFixed(2)}
                     </div>
                     {(((item.discount || 0) > 0) || (!!item.promotionDiscount && item.promotionDiscount > 0)) && !isReturnMode && (
-                      <div className="text-xs text-gray-400 line-through">
+                      <div className="text-[10px] text-gray-400 line-through leading-tight">
                         {currencyCode} {Math.abs(item.quantity * item.unitPrice).toFixed(2)}
                       </div>
                     )}
-                    <div className="flex items-center gap-1 text-xs text-gray-500 justify-end">
+                    <div className="flex items-center gap-1 text-[11px] text-gray-500 justify-end mt-0.5">
                       <span>@</span>
                       <FormInput
                         type="number"
@@ -567,7 +545,7 @@ export function CartPanel({
                           if (newPrice !== item.unitPrice) onUpdatePrice(item.cartLineId, newPrice)
                         }}
                         onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-                        className="w-20 text-right !px-1 !py-0.5 !h-6 text-xs"
+                        className="w-16 text-right !px-1 !py-0.2 !h-5 text-xs"
                       />
                     </div>
                     {allowItemDiscount && !isReturnMode && onOpenItemDiscount && (

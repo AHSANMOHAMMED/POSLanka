@@ -3,11 +3,12 @@
 import { useState, useEffect } from 'react'
 import { Modal } from '@/components/ui/modal'
 import { toast } from '@/components/ui/toast'
-import { Loader2, Printer } from 'lucide-react'
+import { Loader2, Printer, FileText, MessageCircle, Plus, Trash2, ArrowRight } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/currency'
 import { usePrinter, closingToZReportInput, type ZReportSource } from '@/hooks/usePrinter'
 import { fetchTenantInfo } from '@/lib/print/receipt-loader'
 import type { ZReportDetails } from '@/lib/print/escpos/encoder'
+import { buildWhatsAppShareUrl } from '@/lib/whatsapp'
 import { 
   PaymentMethodReconciliationTable, 
   type PaymentMethodBreakdown 
@@ -87,6 +88,8 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
   /** Methods the cashier actually counted (a counted 0 is valid: empty drawer, takings banked) */
   const [countedMethods, setCountedMethods] = useState<Set<string>>(new Set())
   const [carryForwardFloat, setCarryForwardFloat] = useState(true)
+  const [cashOutHandover, setCashOutHandover] = useState<number>(0)
+  const [externalBills, setExternalBills] = useState<Array<{ id: string; billNo: string; description: string; amount: number; paymentMethod: string }>>([])
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
   const [varianceReason, setVarianceReason] = useState('')
@@ -108,21 +111,20 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
         .then(data => {
           setShiftDetails(data)
           
-          // Initialize actual amounts from all available payment method sources
+          // Initialize actual amounts: non-cash tenders default to expected, cash defaults to expected to prevent alarming "-5000" false variance
           const initialActualAmounts: Record<string, number> = {}
           const breakdown = data.paymentMethodBreakdown
           if (breakdown) {
-            // Collect all methods from openingBalances, salesByMethod, expectedAmounts
             const allMethods = new Set([
               ...Object.keys(breakdown.openingBalances || {}),
               ...Object.keys(breakdown.salesByMethod || {}),
               ...Object.keys(breakdown.expectedAmounts || {}),
             ])
             allMethods.forEach(method => {
-              initialActualAmounts[method] = 0
+              // Pre-fill with the expected amount so cashier starts at 0 variance
+              initialActualAmounts[method] = breakdown.expectedAmounts?.[method] || 0
             })
           }
-          // Fallback to POS profile payment methods if no breakdown methods found
           if (Object.keys(initialActualAmounts).length === 0) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const paymentMethods = data.posProfile?.paymentMethods?.map((pm: any) => pm.paymentMethod) || ['cash']
@@ -131,6 +133,8 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
             })
           }
           setActualAmounts(initialActualAmounts)
+          // Mark as initialized so cashier can review or adjust counts
+          setCountedMethods(new Set(Object.keys(initialActualAmounts)))
         })
         .catch(err => {
           console.error('Failed to load shift details:', err)
@@ -205,6 +209,10 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
     setLoading(true)
     setError('')
 
+    const countedCash = actualAmounts['cash'] || 0
+    const safeCashOut = Math.min(countedCash, Math.max(0, cashOutHandover))
+    const retainedFloat = Math.max(0, Math.round((countedCash - safeCashOut) * 100) / 100)
+
     try {
       // Convert actualAmounts record to array format expected by API
       const actualAmountsArray = Object.entries(actualAmounts).map(([paymentMethod, amount]) => ({
@@ -220,6 +228,14 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
           notes: notes || undefined,
           varianceReason: hasVariance ? varianceReason : undefined,
           varianceNote: hasVariance && varianceNote.trim() ? varianceNote.trim() : undefined,
+          cashOutAmount: safeCashOut,
+          retainedFloatAmount: retainedFloat,
+          externalBills: externalBills.map(b => ({
+            billNo: b.billNo,
+            description: b.description,
+            amount: b.amount,
+            paymentMethod: b.paymentMethod,
+          })),
         }),
       })
 
@@ -227,11 +243,11 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
 
       if (res.ok) {
         toast.success('Shift closed successfully')
-        if (carryForwardFloat && actualAmounts['cash'] != null) {
+        if (carryForwardFloat && retainedFloat != null) {
           try {
-            localStorage.setItem('sky_last_cash_float', String(actualAmounts['cash']))
+            localStorage.setItem('sky_last_cash_float', String(retainedFloat))
             if (shiftDetails?.posProfile?.id) {
-              localStorage.setItem(`sky_last_cash_float_${shiftDetails.posProfile.id}`, String(actualAmounts['cash']))
+              localStorage.setItem(`sky_last_cash_float_${shiftDetails.posProfile.id}`, String(retainedFloat))
             }
           } catch {}
         }
@@ -393,20 +409,130 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
             </div>
           )}
 
-          {/* Shift Handover Option */}
-          {actualAmounts['cash'] != null && actualAmounts['cash'] > 0 && (
-            <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg flex items-center justify-between text-sm">
-              <label className="flex items-center gap-2.5 cursor-pointer text-blue-900 dark:text-blue-200 font-medium select-none">
+          {/* Cash Drawer Handover (Cash Out vs Retained Float) */}
+          <div className="bg-blue-50/60 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-blue-900 dark:text-blue-200">
+              💵 Cash Drawer Handover & Next-Day Float
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+              <div className="bg-white dark:bg-gray-800 p-2.5 rounded border border-gray-200 dark:border-gray-700">
+                <span className="text-xs text-gray-500 dark:text-gray-400 block">Total Counted Cash in Drawer</span>
+                <span className="text-base font-bold font-mono text-gray-900 dark:text-white">
+                  {formatCurrency(actualAmounts['cash'] || 0)}
+                </span>
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 dark:text-gray-300 font-medium block mb-1">
+                  Cash Out (Safe Drop / Handed to Owner)
+                </label>
                 <input
-                  type="checkbox"
-                  checked={carryForwardFloat}
-                  onChange={(e) => setCarryForwardFloat(e.target.checked)}
-                  className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
+                  type="number"
+                  min="0"
+                  max={actualAmounts['cash'] || 0}
+                  step="any"
+                  value={cashOutHandover || ''}
+                  onChange={(e) => setCashOutHandover(Math.max(0, parseFloat(e.target.value) || 0))}
+                  placeholder="0.00"
+                  className="w-full px-2.5 py-1.5 text-sm font-mono border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                 />
-                Carry forward cash in drawer as Opening Float for next shift ({formatCurrency(actualAmounts['cash'])})
-              </label>
+              </div>
+              <div className="bg-green-50 dark:bg-green-900/30 p-2.5 rounded border border-green-200 dark:border-green-800">
+                <span className="text-xs text-green-700 dark:text-green-300 font-medium block">
+                  🏦 Retained Float for Next Shift
+                </span>
+                <span className="text-base font-bold font-mono text-green-800 dark:text-green-200">
+                  {formatCurrency(Math.max(0, (actualAmounts['cash'] || 0) - cashOutHandover))}
+                </span>
+              </div>
             </div>
-          )}
+            <label className="flex items-center gap-2 text-xs text-blue-900 dark:text-blue-300 cursor-pointer pt-1">
+              <input
+                type="checkbox"
+                checked={carryForwardFloat}
+                onChange={(e) => setCarryForwardFloat(e.target.checked)}
+                className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
+              />
+              Auto-fill next morning's shift opening float with this retained cash ({formatCurrency(Math.max(0, (actualAmounts['cash'] || 0) - cashOutHandover))})
+            </label>
+          </div>
+
+          {/* External / Off-Register Bills Section */}
+          <div className="bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 rounded-lg p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300">
+                External / Manual Bills ({externalBills.length})
+              </span>
+              <button
+                type="button"
+                onClick={() => setExternalBills(prev => [
+                  ...prev,
+                  { id: `ext-${Date.now()}`, billNo: '', description: '', amount: 0, paymentMethod: 'cash' }
+                ])}
+                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+              >
+                <Plus size={13} /> Add Manual Bill
+              </button>
+            </div>
+            {externalBills.length > 0 && (
+              <div className="space-y-2 pt-1">
+                {externalBills.map((bill, bIdx) => (
+                  <div key={bill.id} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Bill # (e.g. EXT-101)"
+                      value={bill.billNo}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setExternalBills(prev => prev.map((b, i) => i === bIdx ? { ...b, billNo: val } : b))
+                      }}
+                      className="w-28 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Description or Item Name"
+                      value={bill.description}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setExternalBills(prev => prev.map((b, i) => i === bIdx ? { ...b, description: val } : b))
+                      }}
+                      className="flex-1 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                    <input
+                      type="number"
+                      placeholder="Amount"
+                      min="0"
+                      step="any"
+                      value={bill.amount || ''}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0
+                        setExternalBills(prev => prev.map((b, i) => i === bIdx ? { ...b, amount: val } : b))
+                      }}
+                      className="w-24 px-2 py-1 text-xs text-right font-mono border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    />
+                    <select
+                      value={bill.paymentMethod}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setExternalBills(prev => prev.map((b, i) => i === bIdx ? { ...b, paymentMethod: val } : b))
+                      }}
+                      className="w-20 px-1.5 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                    >
+                      <option value="cash">Cash</option>
+                      <option value="card">Card</option>
+                      <option value="bank_transfer">Bank</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setExternalBills(prev => prev.filter((_, i) => i !== bIdx))}
+                      className="p-1 text-gray-400 hover:text-red-500 rounded"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div>
             <label className="block text-sm font-medium mb-1 dark:text-gray-300">Notes (optional)</label>
@@ -472,19 +598,59 @@ function ShiftCloseResult({ result, onPrint, printing, onDone }: { result: any; 
           </div>
         ))}
       </div>
-      <div className="flex justify-end gap-2 pt-2 border-t dark:border-gray-700">
-        <button
-          type="button"
-          onClick={onPrint}
-          disabled={printing}
-          className="px-4 py-2 border rounded hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800 dark:text-gray-300 flex items-center gap-2 disabled:opacity-50"
-        >
-          {printing ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
-          Print Z Report
-        </button>
-        <button type="button" onClick={onDone} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-          Done
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t dark:border-gray-700">
+        <div className="flex items-center gap-2">
+          {result?.closingEntry?.id && (
+            <>
+              <a
+                href={`/api/pos-closing-entries/${result.closingEntry.id}/pdf`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-2 text-sm bg-blue-50 hover:bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50 rounded flex items-center gap-1.5 transition-colors font-medium border border-blue-200 dark:border-blue-800"
+              >
+                <FileText size={15} /> A4 PDF Summary
+              </a>
+              <button
+                type="button"
+                onClick={() => {
+                  const shiftNo = result?.closingEntry?.entryNumber || 'Shift'
+                  const total = formatCurrency(result?.summary?.netSales || 0)
+                  const handover = formatCurrency(result?.cashOutAmount || 0)
+                  const retained = formatCurrency(result?.retainedFloatAmount || 0)
+                  const origin = window.location.origin
+                  const pdfLink = `${origin}/api/pos-closing-entries/${result.closingEntry.id}/pdf`
+                  const text = [
+                    `📋 *Daily Shift & Sales Summary*`,
+                    `Shift: *${shiftNo}*`,
+                    `Net Sales: *${total}*`,
+                    `💵 Cash Handover (To Owner): *${handover}*`,
+                    `🏦 Retained Float: *${retained}*`,
+                    `📄 Full A4 PDF Summary: ${pdfLink}`,
+                  ].join('\n')
+                  const waUrl = buildWhatsAppShareUrl({ text })
+                  window.open(waUrl, '_blank')
+                }}
+                className="px-3 py-2 text-sm bg-green-50 hover:bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-900/50 rounded flex items-center gap-1.5 transition-colors font-medium border border-green-200 dark:border-green-800"
+              >
+                <MessageCircle size={15} /> Share to Owner (WhatsApp)
+              </button>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onPrint}
+            disabled={printing}
+            className="px-4 py-2 text-sm border rounded hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800 dark:text-gray-300 flex items-center gap-2 disabled:opacity-50"
+          >
+            {printing ? <Loader2 size={15} className="animate-spin" /> : <Printer size={15} />}
+            Print Z Report
+          </button>
+          <button type="button" onClick={onDone} className="px-5 py-2 text-sm font-semibold bg-blue-600 text-white rounded hover:bg-blue-700">
+            Done
+          </button>
+        </div>
       </div>
     </div>
   )

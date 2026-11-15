@@ -63,7 +63,7 @@ export async function POST(
     const { id } = paramsParsed.data
     const parsed = await validateBody(request, closePosShiftSchema)
     if (!parsed.success) return parsed.response
-    const { actualAmounts, notes, varianceReason, varianceNote, version: _version } = parsed.data
+    const { actualAmounts, notes, varianceReason, varianceNote, cashOutAmount, retainedFloatAmount, externalBills, version: _version } = parsed.data
 
     return await withTenantTransaction(session.user.tenantId, async (db) => {
       // Get the opening entry with optimistic locking check
@@ -329,6 +329,17 @@ export async function POST(
       // Closing entry number CLOSE-YYYYMMDD-### from the per-tenant daily sequence
       const entryNumber = await nextDocNo(db, session.user.tenantId, 'pos_closing')
 
+      const externalBillsList = Array.isArray(externalBills) ? externalBills : []
+      const externalBillsTotal = externalBillsList.reduce((acc, b) => acc + (Number(b.amount) || 0), 0)
+
+      const enrichedReportData = {
+        ...(reportData as unknown as Record<string, unknown>),
+        cashOutAmount: cashOutAmount != null ? Number(cashOutAmount) : undefined,
+        retainedFloatAmount: retainedFloatAmount != null ? Number(retainedFloatAmount) : undefined,
+        externalBills: externalBillsList,
+        externalBillsTotal,
+      }
+
       // Create closing entry
       const [closingEntry] = await db.insert(posClosingEntries).values({
         tenantId: session.user.tenantId,
@@ -348,7 +359,7 @@ export async function POST(
         notes: notes || null,
         varianceReason: hasVariance ? varianceReason || null : null,
         varianceNote: hasVariance ? varianceNote || null : null,
-        reportData: reportData as unknown as Record<string, unknown>,
+        reportData: enrichedReportData as unknown as Record<string, unknown>,
       }).returning()
 
       // Update reconciliation values with closing entry ID
@@ -460,7 +471,11 @@ export async function POST(
         },
         varianceReason: hasVariance ? varianceReason : null,
         varianceNote: hasVariance ? varianceNote || null : null,
-        zReport: reportData,
+        zReport: enrichedReportData,
+        cashOutAmount: cashOutAmount != null ? Number(cashOutAmount) : undefined,
+        retainedFloatAmount: retainedFloatAmount != null ? Number(retainedFloatAmount) : undefined,
+        externalBills: externalBillsList,
+        externalBillsTotal,
         paymentMethodBreakdown: {
           openingBalances: openingBalanceMap,
           salesByMethod: salesByPaymentMethod,

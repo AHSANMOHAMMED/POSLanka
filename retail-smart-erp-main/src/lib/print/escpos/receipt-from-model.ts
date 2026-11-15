@@ -78,7 +78,7 @@ function itemRows(b: EscPosBuilder, model: ReceiptModel, l: ReceiptModelLine, m:
   const cols = b.columns
   const qty = `${l.qtyText}${l.unit ? ` ${l.unit}` : ''}`
   const codes = Array.from(
-    new Set([model.showItemSku ? l.sku : null, model.showItemBarcode ? l.barcode : null].filter(Boolean))
+    new Set([model.showItemSku ? l.sku : null].filter(Boolean))
   ) as string[]
   const oneLine = model.itemLayout === 'one_line' || model.itemLayout === 'table'
   if (oneLine && cols >= 42) {

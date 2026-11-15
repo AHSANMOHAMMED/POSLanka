@@ -97,7 +97,7 @@ function itemsTableHtml(model: ReceiptModel, paperWidth: 58 | 80, base: number, 
     const qty = `${e(l.qtyText)}${l.unit ? ` ${e(l.unit)}` : ''}`
     const sub: string[] = []
     const codes = Array.from(
-      new Set([model.showItemSku ? l.sku : null, model.showItemBarcode ? l.barcode : null].filter(Boolean))
+      new Set([model.showItemSku ? l.sku : null].filter(Boolean))
     ) as string[]
     if (codes.length) sub.push(codes.map(e).join(' · '))
     if (!wide) sub.push(`${qty} x ${m(l.unitPrice)}`)
@@ -147,8 +147,9 @@ const sepLine = (kind: 'dashed' | 'solid') => `<div style="border-top:1px ${kind
 function itemHtml(l: ReceiptModelLine, model: ReceiptModel, paperWidth: 58 | 80, base: number, m: (n: number) => string): string {
   const e = escapeHtml
   const out: string[] = []
+  // Hide barcode from printed customer bills as requested, unless SKU is explicitly enabled
   const codes = Array.from(
-    new Set([model.showItemSku ? l.sku : null, model.showItemBarcode ? l.barcode : null].filter(Boolean))
+    new Set([model.showItemSku ? l.sku : null].filter(Boolean))
   ) as string[]
   const qty = `${e(l.qtyText)}${l.unit ? ` ${e(l.unit)}` : ''}`
   if (model.itemLayout === 'one_line' && paperWidth === 80) {

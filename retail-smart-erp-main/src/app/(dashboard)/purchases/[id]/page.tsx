@@ -7,10 +7,11 @@ import {
   ChevronDown, ChevronRight, Heart, RotateCw, MoreHorizontal,
   Printer, Trash2, Plus, Building2, Warehouse, Calendar,
   User, Package, ChevronUp, Paperclip, Tag, X,
-  CreditCard, CheckCircle, FileIcon, Loader2
+  CreditCard, CheckCircle, FileIcon, Loader2, Info
 } from 'lucide-react'
 import { useRealtimeData, useSmartWarnings } from '@/hooks'
 import { CancellationReasonModal, ItemModal, SupplierModal } from '@/components/modals'
+import { ItemPurchaseHistoryModal } from '@/components/purchases/ItemPurchaseHistoryModal'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { SmartWarningBanner } from '@/components/ai/SmartWarningBanner'
 import { toast } from '@/components/ui/toast'
@@ -129,7 +130,10 @@ interface EditableItem extends LineUnitFields {
   itemBarcode: string | null
   itemPartNumber: string | null
   quantity: number
+  oldUnitPrice?: number
   unitPrice: number
+  expiryDate?: string | null
+  batchNumber?: string | null
   total: number
   isNew?: boolean
 }
@@ -216,6 +220,7 @@ export default function PurchaseDetailPage() {
   const [showItemModal, setShowItemModal] = useState(false)
   const [itemInitialName, setItemInitialName] = useState('')
   const [pendingItemRowIndex, setPendingItemRowIndex] = useState<number | null>(null)
+  const [historyModalItem, setHistoryModalItem] = useState<{ id: string; name: string; costPrice?: number } | null>(null)
 
   // Attachments
   const [attachments, setAttachments] = useState<Array<{
@@ -385,6 +390,8 @@ export default function PurchaseDetailPage() {
         unitPrice: i.unitPrice,
         uom: i.uom || undefined,
         uomFactor: i.uomFactor || 1,
+        expiryDate: i.expiryDate || undefined,
+        batchNumber: i.batchNumber || undefined,
       }))
 
     if (validItems.length === 0) {
@@ -522,6 +529,8 @@ export default function PurchaseDetailPage() {
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               uom: item.uom || null,
+              expiryDate: item.expiryDate || null,
+              batchNumber: item.batchNumber || null,
               tax: 0,
             }),
           })
@@ -539,6 +548,8 @@ export default function PurchaseDetailPage() {
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               uom: item.uom || null,
+              expiryDate: item.expiryDate || null,
+              batchNumber: item.batchNumber || null,
               tax: 0,
             }),
           })
@@ -787,6 +798,7 @@ export default function PurchaseDetailPage() {
         itemSku: option.data?.sku as string || option.sublabel || null,
         itemBarcode: option.data?.barcode as string || null,
         itemPartNumber: (option.data?.oemPartNumber || option.data?.sku || option.data?.pluCode) as string || null,
+        oldUnitPrice: globalCostPrice,
         unitPrice: globalCostPrice,
         baseUnit: (option.data?.unit as string) || null,
         basePrice: globalCostPrice,
@@ -799,7 +811,7 @@ export default function PurchaseDetailPage() {
       setHasUnsavedChanges(true)
 
       // Fetch supplier-specific cost and update if available
-      const supplierId = purchase?.supplierId
+      const supplierId = purchase?.supplierId || createFormData.supplierId
       if (supplierId && itemId) {
         fetch(`/api/items/${itemId}/supplier-costs?supplierId=${supplierId}`)
           .then(res => res.ok ? res.json() : null)
@@ -811,7 +823,7 @@ export default function PurchaseDetailPage() {
                   const updated = [...prev]
                   if (updated[index]?.itemId === itemId) {
                     const unitCost = Math.round(supplierCost * (updated[index].uomFactor || 1) * 100) / 100
-                    updated[index] = { ...updated[index], basePrice: supplierCost, unitPrice: unitCost, total: updated[index].quantity * unitCost }
+                    updated[index] = { ...updated[index], basePrice: supplierCost, oldUnitPrice: supplierCost, unitPrice: unitCost, total: updated[index].quantity * unitCost }
                   }
                   return updated
                 })
@@ -827,6 +839,12 @@ export default function PurchaseDetailPage() {
     } else if (field === 'unitPrice') {
       const price = parseFloat(String(value)) || 0
       newItems[index] = { ...newItems[index], unitPrice: price, total: newItems[index].quantity * price }
+    } else if (field === 'expiryDate') {
+      newItems[index] = { ...newItems[index], expiryDate: String(value || '') }
+    } else if (field === 'batchNumber') {
+      newItems[index] = { ...newItems[index], batchNumber: String(value || '') }
+    } else {
+      newItems[index] = { ...newItems[index], [field]: value }
     }
     setEditingItems(newItems)
     setHasUnsavedChanges(true)
@@ -1042,10 +1060,12 @@ export default function PurchaseDetailPage() {
                 <thead className="bg-gray-50 dark:bg-gray-700/50">
                   <tr>
                     <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase w-10">No.</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-24">Qty</th>
-                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase w-32">Unit (UOM)</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-32">Cost Rate</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase min-w-[240px]">Item</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-20">Qty</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase w-28">Unit</th>
+                    <th className="px-2 py-2 text-right text-xs font-medium text-gray-500 uppercase w-28">Old Cost</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-32">New Cost</th>
+                    <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase w-32">Expiry / Batch</th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase w-32">Amount</th>
                     <th className="px-3 py-2 w-10"></th>
                   </tr>
@@ -1055,15 +1075,29 @@ export default function PurchaseDetailPage() {
                     <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/30">
                       <td className="px-3 py-2 text-sm text-gray-500">{index + 1}</td>
                       <td className="px-3 py-2">
-                        <LinkField
-                          fetchOptions={searchItems}
-                          value={item.itemId}
-                          onChange={(value, option) => handleItemChange(index, 'itemId', value, option)}
-                          onCreateNew={(name) => { setItemInitialName(name); setPendingItemRowIndex(index); setShowItemModal(true) }}
-                          placeholder="Search item by name, barcode, SKU..."
-                          createLabel="Create new Item"
-                          displayValue={formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemPartNumber }, businessType)}
-                        />
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex-1">
+                            <LinkField
+                              fetchOptions={searchItems}
+                              value={item.itemId}
+                              onChange={(value, option) => handleItemChange(index, 'itemId', value, option)}
+                              onCreateNew={(name) => { setItemInitialName(name); setPendingItemRowIndex(index); setShowItemModal(true) }}
+                              placeholder="Search item by name, barcode, SKU..."
+                              createLabel="Create new Item"
+                              displayValue={formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemPartNumber }, businessType)}
+                            />
+                          </div>
+                          {item.itemId && (
+                            <button
+                              type="button"
+                              onClick={() => setHistoryModalItem({ id: item.itemId, name: item.itemName, costPrice: item.oldUnitPrice ?? item.unitPrice })}
+                              className="p-1.5 text-blue-600 hover:text-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/40 rounded transition-colors"
+                              title="View purchase history from suppliers"
+                            >
+                              <Info size={16} />
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right">
                         <input
@@ -1088,6 +1122,11 @@ export default function PurchaseDetailPage() {
                           }}
                         />
                       </td>
+                      <td className="px-2 py-2 text-right">
+                        <span className="font-mono text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded inline-block">
+                          {formatCurrency(item.oldUnitPrice ?? item.unitPrice)}
+                        </span>
+                      </td>
                       <td className="px-3 py-2 text-right">
                         <input
                           type="number"
@@ -1095,8 +1134,31 @@ export default function PurchaseDetailPage() {
                           min="0"
                           value={item.unitPrice}
                           onChange={(e) => handleItemChange(index, 'unitPrice', e.target.value)}
-                          className="w-28 px-2 py-1 text-right text-sm border border-gray-300 dark:border-gray-600 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white font-mono"
+                          className={`w-28 px-2 py-1 text-right text-sm border rounded focus:outline-none focus:ring-1 focus:ring-blue-500 dark:bg-gray-700 dark:text-white font-mono ${
+                            item.oldUnitPrice != null && Math.abs(item.unitPrice - item.oldUnitPrice) > 0.001
+                              ? 'border-amber-400 bg-amber-50/50 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200 font-bold'
+                              : 'border-gray-300 dark:border-gray-600'
+                          }`}
+                          title={item.oldUnitPrice != null && item.unitPrice !== item.oldUnitPrice ? 'Cost changed from old price' : undefined}
                         />
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="flex flex-col gap-1">
+                          <input
+                            type="date"
+                            value={item.expiryDate || ''}
+                            onChange={(e) => handleItemChange(index, 'expiryDate', e.target.value)}
+                            className="px-1.5 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
+                            title="Expiry date"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Batch #"
+                            value={item.batchNumber || ''}
+                            onChange={(e) => handleItemChange(index, 'batchNumber', e.target.value)}
+                            className="px-1.5 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded dark:bg-gray-700 dark:text-white"
+                          />
+                        </div>
                       </td>
                       <td className="px-3 py-2 text-right font-medium text-sm text-gray-900 dark:text-white font-mono">
                         {formatCurrency(item.total)}
@@ -1214,6 +1276,14 @@ export default function PurchaseDetailPage() {
           onCreated={handleItemCreated}
           initialName={itemInitialName}
           categories={categories}
+        />
+
+        <ItemPurchaseHistoryModal
+          isOpen={!!historyModalItem}
+          onClose={() => setHistoryModalItem(null)}
+          itemId={historyModalItem?.id || null}
+          itemName={historyModalItem?.name || ''}
+          currentCostPrice={historyModalItem?.costPrice}
         />
       </div>
     )
@@ -1771,20 +1841,44 @@ export default function PurchaseDetailPage() {
                             <td className="px-3 py-2 text-sm text-gray-500">{index + 1}</td>
                             <td className="px-3 py-2">
                               {canEdit ? (
-                                <LinkField
-                                  fetchOptions={searchItems}
-                                  value={item.itemId}
-                                  onChange={(value, option) => handleItemChange(index, 'itemId', value, option)}
-                                  onCreateNew={(name) => { setItemInitialName(name); setPendingItemRowIndex(index); setShowItemModal(true) }}
-                                  placeholder="Select Item"
-                                  createLabel="Create Item"
-                                  displayValue={formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemPartNumber }, businessType)}
-                                />
+                                <div className="flex items-center gap-1.5">
+                                  <div className="flex-1">
+                                    <LinkField
+                                      fetchOptions={searchItems}
+                                      value={item.itemId}
+                                      onChange={(value, option) => handleItemChange(index, 'itemId', value, option)}
+                                      onCreateNew={(name) => { setItemInitialName(name); setPendingItemRowIndex(index); setShowItemModal(true) }}
+                                      placeholder="Select Item"
+                                      createLabel="Create Item"
+                                      displayValue={formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemPartNumber }, businessType)}
+                                    />
+                                  </div>
+                                  {item.itemId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setHistoryModalItem({ id: item.itemId, name: item.itemName, costPrice: item.oldUnitPrice ?? item.unitPrice })}
+                                      className="p-1 text-blue-600 hover:text-blue-800 hover:bg-blue-50 dark:hover:bg-blue-900/40 rounded transition-colors"
+                                      title="View purchase history from suppliers"
+                                    >
+                                      <Info size={15} />
+                                    </button>
+                                  )}
+                                </div>
                               ) : (
-                                <div>
+                                <div className="flex items-center justify-between">
                                   <div className="text-sm font-medium text-gray-900 dark:text-white">
                                     {formatItemLabel({ name: item.itemName, barcode: item.itemBarcode, sku: item.itemSku, oemPartNumber: item.itemPartNumber }, businessType)}
                                   </div>
+                                  {item.itemId && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setHistoryModalItem({ id: item.itemId, name: item.itemName, costPrice: item.unitPrice })}
+                                      className="p-1 text-gray-400 hover:text-blue-600 rounded transition-colors"
+                                      title="View purchase history from suppliers"
+                                    >
+                                      <Info size={14} />
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </td>
@@ -2041,6 +2135,14 @@ export default function PurchaseDetailPage() {
         onCreated={handleItemCreated}
         initialName={itemInitialName}
         categories={categories}
+      />
+
+      <ItemPurchaseHistoryModal
+        isOpen={!!historyModalItem}
+        onClose={() => setHistoryModalItem(null)}
+        itemId={historyModalItem?.id || null}
+        itemName={historyModalItem?.name || ''}
+        currentCostPrice={historyModalItem?.costPrice}
       />
 
       <ConfirmModal

@@ -6,7 +6,7 @@ import { useRouter, useParams } from 'next/navigation'
 import {
   Clock, Loader2, Tag, Wallet, Keyboard, MonitorUp, LayoutGrid, Printer, RotateCcw, PlusCircle,
   FileText, Files, Camera, ScanBarcode, Lock, ArrowDownUp, Power, Play, History,
-  Ruler, ClipboardList, ShieldCheck, CalendarClock, Truck, Zap,
+  Ruler, ClipboardList, ShieldCheck, CalendarClock, Truck, Zap, AlertCircle,
 } from 'lucide-react'
 import { CustomerFormModal, VehicleModal } from '@/components/modals'
 import { ConfirmModal } from '@/components/ui/confirm-modal'
@@ -1484,16 +1484,32 @@ export default function POSPage() {
     const item = items.find(i => i.id === cartItem.itemId)
     if (!item && !isReturnMode) return
 
-    const newQty = cartItem.isWeighable ? roundCurrency((cartItem.weight || 1) + delta) : cartItem.quantity + delta
-    if (isReturnMode) {
-      if (newQty <= 0) { removeFromCart(cartLineId); return }
-      if (cartItem.maxReturnQuantity !== undefined && (newQty > 0 || Math.abs(newQty) > cartItem.maxReturnQuantity)) {
+    if (isReturnMode || cartItem.quantity < 0) {
+      const currentAbsQty = cartItem.isWeighable ? roundCurrency(cartItem.weight || 1) : Math.abs(cartItem.quantity)
+      const nextAbsQty = currentAbsQty + delta
+      if (nextAbsQty <= 0) {
+        removeFromCart(cartLineId)
+        return
+      }
+      if (cartItem.maxReturnQuantity !== undefined && nextAbsQty > cartItem.maxReturnQuantity) {
         toast.warning(`Only ${cartItem.maxReturnQuantity} returnable on this invoice line`)
         return
       }
-    } else {
-      if (newQty <= 0) { removeFromCart(cartLineId); return }
+
+      setCart(cart.map(c => {
+        if (c.cartLineId !== cartLineId) return c
+        const negQty = -nextAbsQty
+        return {
+          ...c,
+          quantity: negQty,
+          total: negQty * c.unitPrice,
+        }
+      }))
+      return
     }
+
+    const newQty = cartItem.isWeighable ? roundCurrency((cartItem.weight || 1) + delta) : cartItem.quantity + delta
+    if (newQty <= 0) { removeFromCart(cartLineId); return }
 
     if (!isReturnMode && item && item.trackStock) {
       const totalInCart = cart.filter(c => c.itemId === cartItem.itemId).reduce((sum, c) => sum + baseQtyOf(c), 0)
@@ -1591,6 +1607,25 @@ export default function POSPage() {
     if (newQty <= 0) { removeFromCart(cartLineId); return }
     const sizeLine = cart.find(c => c.cartLineId === cartLineId && c.sizeSpec)
     if (sizeLine && !isReturnMode) { editSizeLine(sizeLine); return }
+
+    const targetLine = cart.find(c => c.cartLineId === cartLineId)
+    if (targetLine && (isReturnMode || targetLine.quantity < 0)) {
+      const absQty = Math.abs(newQty)
+      if (targetLine.maxReturnQuantity !== undefined && absQty > targetLine.maxReturnQuantity) {
+        toast.warning(`Only ${targetLine.maxReturnQuantity} returnable on this invoice line`)
+        return
+      }
+      setCart(cart.map(c => {
+        if (c.cartLineId !== cartLineId) return c
+        const negQty = -absQty
+        return {
+          ...c,
+          quantity: negQty,
+          total: negQty * c.unitPrice,
+        }
+      }))
+      return
+    }
     setCart(cart.map(c => {
       if (c.cartLineId !== cartLineId) return c
       if (c.isWeighable) {
@@ -3635,7 +3670,7 @@ export default function POSPage() {
       if (res.ok) {
         const sale = await res.json()
 
-        // Complete restaurant order with skipSaleCreation (POS handles payment)
+        // Trigger background tasks non-blockingly
         if (restaurantOrderId) {
           fetch(`/api/restaurant-orders/${restaurantOrderId}`, {
             method: 'PUT',
@@ -3649,25 +3684,14 @@ export default function POSPage() {
           }).catch(console.error)
         }
 
-        const printing = sale.id ? printReceiptForSale(sale.id) : null
-
-        if (hp) {
-          // The plan form looks the invoice up and finances its open balance
-          clearCart()
-          setShowPayment(false)
-          setAmountPaid('')
-          setCreditAmount('')
-          setCardReference('')
-          toast.success(`${sale.invoiceNo} saved on account — set up the installment plan`)
-          if (printing) await printing
-          router.push(`/c/${params.slug}/installments/new?invoiceNo=${encodeURIComponent(sale.invoiceNo)}`)
-          return
-        }
-
         if (selectedCustomer?.id && loyaltyProgram) {
           fetchCustomers()
         }
 
+        const finalChange = sale.changeAmount != null ? Number(sale.changeAmount) : saleChangeAmount
+        const finalPaid = sale.paidAmount != null ? Number(sale.paidAmount) : salePaidAmount
+
+        // Immediately update state and show receipt dialog without blocking
         clearCart()
         setShowPayment(false)
         setAmountPaid('')
@@ -3675,9 +3699,6 @@ export default function POSPage() {
         setExtraTenders([])
         setChequeDetails(emptyCheque())
         setCardReference('')
-        fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
-        const finalChange = sale.changeAmount != null ? Number(sale.changeAmount) : saleChangeAmount
-        const finalPaid = sale.paidAmount != null ? Number(sale.paidAmount) : salePaidAmount
         setLastSale({
           invoiceNo: sale.invoiceNo,
           total: saleTotal,
@@ -3688,6 +3709,19 @@ export default function POSPage() {
           changeAmount: finalChange > 0 ? finalChange : null,
         })
         setLastSaleId(sale.id)
+
+        // Asynchronously print or trigger receipt without delaying the UI (< 5s)
+        if (sale.id) {
+          void printReceiptForSale(sale.id)
+        }
+
+        if (hp) {
+          toast.success(`${sale.invoiceNo} saved on account — set up the installment plan`)
+          router.push(`/c/${params.slug}/installments/new?invoiceNo=${encodeURIComponent(sale.invoiceNo)}`)
+          return
+        }
+
+        fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
         // Show generated gift card numbers
         if (sale.generatedGiftCards?.length) {
           const cards = sale.generatedGiftCards as { cardNumber: string; balance: number }[]
@@ -3965,6 +3999,31 @@ export default function POSPage() {
         </div>
       </div>
       {pharmacyTill && <PatientAlertBanner customerId={selectedCustomer?.id} slug={String(params.slug || '')} />}
+      {activeShift && activeShift.openingTime && (
+        (() => {
+          const openedDate = new Date(activeShift.openingTime).toDateString()
+          const todayDate = new Date().toDateString()
+          const isOlderDay = openedDate !== todayDate
+          if (!isOlderDay) return null
+          return (
+            <div className="bg-amber-500 text-slate-950 px-4 py-2 font-semibold text-xs flex items-center justify-between shadow-sm animate-pulse">
+              <span className="flex items-center gap-2">
+                <AlertCircle size={16} />
+                <span>
+                  <strong>Daily Shift Notice:</strong> Shift <strong>{activeShift.entryNumber}</strong> was opened on {openedDate}. Daily shifts must be closed each day before starting today&apos;s business.
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowShiftCloseModal(true)}
+                className="px-3 py-1 bg-slate-900 text-amber-300 rounded font-bold hover:bg-slate-800 transition-colors"
+              >
+                Close Shift Now
+              </button>
+            </div>
+          )
+        })()
+      )}
       <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
       <ProductGrid
         items={items}
