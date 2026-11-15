@@ -147,45 +147,49 @@ export default function CustomerFacingDisplayPage() {
   const clock = new Date(now).toLocaleTimeString('en-LK', { hour: '2-digit', minute: '2-digit', hour12: true })
 
   return (
-    <div className="h-screen bg-[#F6F8FB] dark:bg-[#0B1220] text-slate-900 dark:text-slate-100 flex flex-col font-sans select-none overflow-hidden">
+    <div className="min-h-screen h-[100dvh] bg-[#F6F8FB] dark:bg-[#0B1220] text-slate-900 dark:text-slate-100 flex flex-col font-sans select-none overflow-hidden">
       {/* Header */}
-      <header className="shrink-0 h-[clamp(64px,9vh,120px)] bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-[clamp(16px,3vw,56px)] flex items-center justify-between gap-4">
-        <div className="flex items-center gap-[clamp(10px,1.2vw,24px)] min-w-0">
+      <header className="shrink-0 h-14 sm:h-16 md:h-20 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 sm:px-6 md:px-8 flex items-center justify-between gap-2 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-3 md:gap-4 min-w-0">
           {logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt="" className="h-[clamp(40px,6vh,88px)] w-auto max-w-[30vw] object-contain" />
+            <img src={logoUrl} alt="" className="h-8 sm:h-10 md:h-12 w-auto max-w-[22vw] object-contain rounded" />
           ) : (
-            <div className="h-[clamp(40px,6vh,88px)] aspect-square rounded-2xl bg-teal-600 flex items-center justify-center text-white">
+            <div className="h-8 sm:h-10 md:h-12 aspect-square rounded-xl sm:rounded-2xl bg-teal-600 flex items-center justify-center text-white shrink-0">
               <Store className="w-1/2 h-1/2" />
             </div>
           )}
           <div className="min-w-0">
-            <h1 className="text-[clamp(20px,2.4vw,48px)] font-extrabold tracking-tight text-teal-800 dark:text-teal-300 truncate leading-tight">{shopName}</h1>
-            <p className="text-[clamp(12px,1vw,20px)] text-slate-500 dark:text-slate-400 truncate">
+            <h1 className="text-sm sm:text-lg md:text-2xl font-extrabold tracking-tight text-teal-800 dark:text-teal-300 truncate leading-tight">
+              {shopName}
+            </h1>
+            <p className="text-[10px] sm:text-xs md:text-sm text-slate-500 dark:text-slate-400 truncate">
               {cashierName ? `Served by ${cashierName}` : 'Customer display'}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-[clamp(8px,1vw,20px)] shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {!isStale ? (
-            <span className="px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 text-[clamp(10px,0.8vw,15px)] font-bold uppercase tracking-wider flex items-center gap-1">
-              <Wifi className="w-3.5 h-3.5" /> Live
+            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 text-[10px] sm:text-xs font-bold uppercase tracking-wider flex items-center gap-1">
+              <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="hidden xs:inline sm:inline">Live</span>
             </span>
           ) : (
-            <span className="px-2.5 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 text-[clamp(10px,0.8vw,15px)] font-bold uppercase tracking-wider flex items-center gap-1" title="Open the POS in this browser and keep it running">
-              <WifiOff className="w-3.5 h-3.5" /> Waiting for POS
+            <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 text-[10px] sm:text-xs font-bold uppercase tracking-wider flex items-center gap-1" title="Open the POS in this browser and keep it running">
+              <WifiOff className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+              <span className="hidden xs:inline sm:inline">Waiting</span>
             </span>
           )}
-          <span className="font-mono font-bold text-[clamp(16px,1.6vw,32px)] text-slate-700 dark:text-slate-200">{clock}</span>
+          <span className="font-mono font-bold text-xs sm:text-base md:text-xl text-slate-700 dark:text-slate-200 tabular-nums">{clock}</span>
           {!isFullscreen && (
             <button
               type="button"
               onClick={goFullscreen}
-              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+              className="p-1.5 sm:p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
               title="Full screen (or press F11)"
               aria-label="Full screen"
             >
-              <Maximize2 className="w-5 h-5" />
+              <Maximize2 className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
           )}
         </div>
@@ -194,90 +198,160 @@ export default function CustomerFacingDisplayPage() {
       {view === 'idle' && <IdleSlides shopName={shopName} logoUrl={logoUrl} brand={brand} now={now} />}
 
       {view === 'paid' && shown && (
-        <main className="flex-1 min-h-0 flex flex-col items-center justify-center text-center gap-[clamp(16px,3vh,48px)] p-8">
-          <CheckCircle2 className="w-[clamp(72px,12vh,180px)] h-[clamp(72px,12vh,180px)] text-emerald-500" />
-          <h2 className="text-[clamp(32px,5vw,96px)] font-extrabold tracking-tight text-emerald-700 dark:text-emerald-400 leading-tight">Thank you!</h2>
-          <div className="flex flex-wrap items-stretch justify-center gap-[clamp(12px,2vw,40px)]">
+        <main className="flex-1 min-h-0 flex flex-col items-center justify-center text-center gap-4 sm:gap-6 md:gap-8 p-4 sm:p-8 overflow-y-auto">
+          <div className="w-14 h-14 sm:w-20 sm:h-20 md:w-28 md:h-28 rounded-full bg-emerald-100 dark:bg-emerald-950/60 flex items-center justify-center text-emerald-600 dark:text-emerald-400 animate-in zoom-in duration-300">
+            <CheckCircle2 className="w-10 h-10 sm:w-14 sm:h-14 md:w-20 md:h-20" />
+          </div>
+          <h2 className="text-3xl sm:text-5xl md:text-6xl font-extrabold tracking-tight text-emerald-700 dark:text-emerald-400 leading-tight">Thank you!</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4 md:gap-6 w-full max-w-3xl">
             <Stat label="Total" value={money(shown.total)} />
             {shown.amountPaid !== undefined && shown.amountPaid > 0 && <Stat label="Cash received" value={money(shown.amountPaid)} />}
             {shown.changeDue !== undefined && shown.changeDue > 0 && <Stat label="Your change" value={money(shown.changeDue)} highlight />}
           </div>
-          <p className="text-[clamp(16px,1.6vw,32px)] text-slate-500 dark:text-slate-400">
-            {shown.invoiceNo ? `Receipt ${shown.invoiceNo} · ` : ''}Please come again
-          </p>
-          <p className="text-[clamp(14px,1.3vw,26px)] text-teal-700 dark:text-teal-300 font-semibold">ස්තූතියි · நன்றி · Thank you</p>
+          <div className="space-y-1">
+            <p className="text-sm sm:text-lg md:text-2xl text-slate-500 dark:text-slate-400">
+              {shown.invoiceNo ? `Receipt ${shown.invoiceNo} · ` : ''}Please come again
+            </p>
+            <p className="text-xs sm:text-base md:text-xl text-teal-700 dark:text-teal-300 font-semibold">
+              ස්තූතියි · நன்றி · Thank you
+            </p>
+          </div>
         </main>
       )}
 
       {view === 'cart' && shown && (
-        <main className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)] gap-[clamp(12px,2vw,40px)] p-[clamp(12px,2vw,40px)]">
-          {/* Lines */}
-          <section className="min-h-0 flex flex-col bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
-            <div className="shrink-0 px-[clamp(16px,1.6vw,32px)] py-[clamp(10px,1.4vh,24px)] border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <h2 className="text-[clamp(18px,1.6vw,34px)] font-bold flex items-center gap-2">
-                <ShoppingBag className="w-[1em] h-[1em] text-teal-600" /> Your items
+        <main className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[minmax(0,1.3fr)_minmax(300px,1fr)] lg:grid-cols-[minmax(0,1.5fr)_minmax(360px,1fr)] gap-3 sm:gap-4 md:gap-6 p-3 sm:p-4 md:p-6 overflow-hidden">
+          {/* Left Column (Desktop) / Bottom Section (Mobile): Items List */}
+          <section className="flex-1 min-h-0 flex flex-col bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden order-2 md:order-1">
+            <div className="shrink-0 px-4 py-2.5 sm:px-6 sm:py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <h2 className="text-sm sm:text-base md:text-xl font-bold flex items-center gap-2">
+                <ShoppingBag className="w-4 h-4 sm:w-5 sm:h-5 text-teal-600 shrink-0" />
+                <span>Your items</span>
               </h2>
-              <span className="text-[clamp(13px,1.1vw,22px)] text-slate-500 font-mono">{items.length} lines · {totalUnits} items</span>
+              <span className="text-xs sm:text-sm text-slate-500 font-mono">
+                {items.length} {items.length === 1 ? 'line' : 'lines'} · {totalUnits} items
+              </span>
             </div>
+
             <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
               {items.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-slate-400 text-[clamp(16px,1.4vw,28px)]">No items yet</div>
-              ) : items.map((item, idx) => (
-                <div
-                  key={item.id || idx}
-                  className={`px-[clamp(16px,1.6vw,32px)] py-[clamp(10px,1.6vh,26px)] flex items-center justify-between gap-4 ${idx === items.length - 1 ? 'bg-teal-50/70 dark:bg-teal-950/30' : ''}`}
-                >
-                  <div className="min-w-0">
-                    <div className="text-[clamp(17px,1.5vw,34px)] font-semibold leading-snug truncate">{item.name}</div>
-                    <div className="text-[clamp(13px,1.05vw,22px)] text-slate-500 font-mono">
-                      {item.unit
-                        ? `${Number(item.quantity).toLocaleString('en-US', { maximumFractionDigits: 3 })} ${item.unit} × ${money(item.unitPrice)}`
-                        : `${item.quantity} × ${money(item.unitPrice)}`}
-                    </div>
-                    {!!item.discount && item.discount > 0 && (
-                      <div className="text-[clamp(11px,0.9vw,18px)] text-emerald-600 dark:text-emerald-400 font-mono font-semibold">
-                        Discount{item.discountType === 'percentage' && item.discountValue ? ` (${item.discountValue}%)` : ''}: −{money(item.discount)}
-                      </div>
-                    )}
-                  </div>
-                  <div className="text-[clamp(18px,1.6vw,36px)] font-bold font-mono shrink-0">{money(item.total)}</div>
+                <div className="h-full min-h-[140px] flex flex-col items-center justify-center text-slate-400 p-6 text-center gap-2">
+                  <ShoppingBag className="w-10 h-10 stroke-1 text-slate-300 dark:text-slate-600" />
+                  <p className="text-sm sm:text-base">No items scanned yet</p>
                 </div>
-              ))}
+              ) : (
+                items.map((item, idx) => {
+                  const isLatest = idx === items.length - 1
+                  return (
+                    <div
+                      key={item.id || idx}
+                      className={`px-3 py-2.5 sm:px-5 sm:py-3 md:px-6 md:py-4 flex items-center justify-between gap-3 sm:gap-4 transition-colors ${
+                        isLatest
+                          ? 'bg-teal-50/80 dark:bg-teal-950/40 border-l-4 border-teal-500'
+                          : 'hover:bg-slate-50/50 dark:hover:bg-slate-800/50'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm sm:text-base md:text-lg font-semibold leading-snug line-clamp-2 text-slate-900 dark:text-slate-100">
+                            {item.name}
+                          </span>
+                          {isLatest && items.length > 1 && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-teal-100 dark:bg-teal-900/60 text-teal-700 dark:text-teal-300">
+                              Latest
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                          {item.unit
+                            ? `${Number(item.quantity).toLocaleString('en-US', { maximumFractionDigits: 3 })} ${item.unit} × ${money(item.unitPrice)}`
+                            : `${item.quantity} × ${money(item.unitPrice)}`}
+                        </div>
+                        {!!item.discount && item.discount > 0 && (
+                          <div className="text-[11px] sm:text-xs text-emerald-600 dark:text-emerald-400 font-mono font-semibold mt-0.5">
+                            Discount{item.discountType === 'percentage' && item.discountValue ? ` (${item.discountValue}%)` : ''}: −{money(item.discount)}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-base sm:text-lg md:text-xl font-bold font-mono shrink-0 tabular-nums text-right text-slate-900 dark:text-slate-100">
+                        {money(item.total)}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
               <div ref={listEndRef} />
             </div>
           </section>
 
-          {/* Totals */}
-          <section className="min-h-0 flex flex-col gap-[clamp(12px,2vh,32px)]">
-            <div className="bg-white dark:bg-slate-900 rounded-3xl border-2 border-teal-600/30 shadow-xl p-[clamp(16px,2vw,40px)] flex flex-col gap-[clamp(8px,1.4vh,20px)] text-[clamp(16px,1.4vw,30px)]">
-              <Row label="Subtotal" value={money(shown.subtotal)} />
-              {shown.discount > 0 && <Row label="Discount" value={`− ${money(shown.discount)}`} className="text-emerald-600 dark:text-emerald-400 font-semibold" />}
-              {shown.tax > 0 && <Row label="Tax" value={money(shown.tax)} className="text-slate-500" />}
-              <div className="mt-2 pt-[clamp(10px,1.6vh,24px)] border-t-2 border-dashed border-slate-200 dark:border-slate-700 flex flex-col items-end">
-                <span className="text-[clamp(13px,1.1vw,24px)] uppercase tracking-widest font-bold text-slate-500">Total</span>
-                <span className="font-mono font-extrabold text-teal-700 dark:text-teal-300 leading-none text-[clamp(40px,5vw,110px)] break-all text-right">{money(shown.total)}</span>
+          {/* Right Column (Desktop) / Top Section (Mobile): Totals & Status */}
+          <section className="shrink-0 md:min-h-0 flex flex-col gap-2.5 sm:gap-4 order-1 md:order-2">
+            {/* Totals Box */}
+            <div className="bg-white dark:bg-slate-900 rounded-2xl sm:rounded-3xl border-2 border-teal-600/30 shadow-lg p-3 sm:p-5 md:p-6 flex flex-col gap-2 sm:gap-3">
+              {/* Compact breakdown when discount or tax present */}
+              {(shown.discount > 0 || shown.tax > 0) && (
+                <div className="flex flex-col gap-1 text-xs sm:text-sm md:text-base border-b border-slate-100 dark:border-slate-800 pb-2">
+                  <Row label="Subtotal" value={money(shown.subtotal)} />
+                  {shown.discount > 0 && (
+                    <Row
+                      label="Discount"
+                      value={`− ${money(shown.discount)}`}
+                      className="text-emerald-600 dark:text-emerald-400 font-semibold"
+                    />
+                  )}
+                  {shown.tax > 0 && (
+                    <Row label="Tax" value={money(shown.tax)} className="text-slate-500" />
+                  )}
+                </div>
+              )}
+
+              {/* The Main Total Display */}
+              <div className="flex items-baseline justify-between gap-2 pt-1">
+                <div className="flex flex-col">
+                  <span className="text-xs sm:text-sm uppercase tracking-widest font-bold text-slate-500 dark:text-slate-400">
+                    Total Due
+                  </span>
+                  <span className="text-[11px] sm:text-xs text-slate-400 dark:text-slate-500 font-mono">
+                    {items.length} {items.length === 1 ? 'item' : 'items'}
+                  </span>
+                </div>
+                <span className="font-mono font-extrabold text-teal-700 dark:text-teal-300 leading-none text-2xl sm:text-3xl md:text-4xl lg:text-5xl tracking-tight tabular-nums text-right whitespace-nowrap">
+                  {money(shown.total)}
+                </span>
               </div>
+
+              {/* Payment tender info when paying */}
               {shown.status === 'paying' && shown.amountPaid !== undefined && shown.amountPaid > 0 && (
-                <>
+                <div className="mt-1 pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-1 text-xs sm:text-sm md:text-base">
                   <Row label="Cash received" value={money(shown.amountPaid)} />
                   {shown.amountPaid >= shown.total && (
-                    <Row label="Change" value={money(shown.amountPaid - shown.total)} className="text-emerald-700 dark:text-emerald-400 font-bold" />
+                    <Row
+                      label="Change"
+                      value={money(shown.amountPaid - shown.total)}
+                      className="text-emerald-700 dark:text-emerald-400 font-bold text-sm sm:text-base md:text-lg"
+                    />
                   )}
-                </>
+                </div>
               )}
             </div>
+
+            {/* Status Prompt Banner */}
             {shown.status === 'paying' ? (
-              <div className="rounded-3xl bg-slate-900 text-white p-[clamp(16px,2vw,40px)] flex items-center gap-4 shadow-lg">
-                <CreditCard className="w-[clamp(32px,3vw,64px)] h-[clamp(32px,3vw,64px)] text-emerald-400 shrink-0" />
-                <div>
-                  <div className="text-[clamp(18px,1.6vw,34px)] font-bold">Please complete your payment</div>
-                  <div className="text-[clamp(13px,1.1vw,22px)] text-slate-300">Cash, card or bank transfer at the counter</div>
+              <div className="rounded-2xl sm:rounded-3xl bg-slate-900 text-white p-3 sm:p-4 md:p-5 flex items-center gap-3 sm:gap-4 shadow-md">
+                <CreditCard className="w-6 h-6 sm:w-8 sm:h-8 md:w-10 md:h-10 text-emerald-400 shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-xs sm:text-sm md:text-base font-bold truncate">
+                    Please complete your payment
+                  </div>
+                  <div className="text-[11px] sm:text-xs text-slate-300 truncate">
+                    Cash, card, or transfer at the counter
+                  </div>
                 </div>
               </div>
             ) : (
-              <div className="rounded-3xl bg-gradient-to-r from-teal-700 to-teal-900 text-white p-[clamp(16px,2vw,40px)] flex items-center gap-4 shadow-md">
-                <HeartHandshake className="w-[clamp(32px,3vw,64px)] h-[clamp(32px,3vw,64px)] text-teal-200 shrink-0" />
-                <div className="text-[clamp(15px,1.3vw,28px)] font-semibold leading-snug">
+              <div className="rounded-2xl sm:rounded-3xl bg-gradient-to-r from-teal-700 to-teal-900 text-white p-2.5 sm:p-3.5 md:p-4 flex items-center gap-2.5 sm:gap-3.5 shadow-sm">
+                <HeartHandshake className="w-5 h-5 sm:w-6 sm:h-6 md:w-8 md:h-8 text-teal-200 shrink-0" />
+                <div className="text-[11px] sm:text-xs md:text-sm font-semibold leading-snug line-clamp-2">
                   Please check your items and prices as they are scanned.
                 </div>
               </div>
@@ -291,20 +365,22 @@ export default function CustomerFacingDisplayPage() {
 
 function Row({ label, value, className = '' }: { label: string; value: string; className?: string }) {
   return (
-    <div className={`flex items-baseline justify-between gap-4 ${className}`}>
-      <span>{label}</span>
-      <span className="font-mono">{value}</span>
+    <div className={`flex items-baseline justify-between gap-2 ${className}`}>
+      <span className="truncate">{label}</span>
+      <span className="font-mono tabular-nums shrink-0">{value}</span>
     </div>
   )
 }
 
 function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className={`rounded-3xl px-[clamp(20px,2.4vw,56px)] py-[clamp(12px,2vh,32px)] border-2 ${highlight
-      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-300'
-      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700'}`}>
-      <div className="text-[clamp(13px,1.1vw,24px)] uppercase tracking-widest font-bold opacity-70">{label}</div>
-      <div className="font-mono font-extrabold text-[clamp(28px,3.6vw,80px)] leading-tight">{value}</div>
+    <div className={`rounded-2xl sm:rounded-3xl px-3 py-2.5 sm:px-5 sm:py-4 md:px-6 md:py-5 border-2 flex flex-col items-center justify-center text-center shadow-sm ${
+      highlight
+        ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-400 text-emerald-800 dark:text-emerald-300'
+        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800'
+    }`}>
+      <div className="text-[10px] sm:text-xs uppercase tracking-widest font-bold opacity-70 mb-0.5 sm:mb-1">{label}</div>
+      <div className="font-mono font-extrabold text-lg sm:text-2xl md:text-3xl lg:text-4xl leading-tight truncate tabular-nums max-w-full">{value}</div>
     </div>
   )
 }
@@ -319,22 +395,26 @@ function IdleSlides({ shopName, logoUrl, brand, now }: { shopName: string; logoU
   const index = Math.floor(now / SLIDE_MS) % slides.length
   const slide = slides[index]
   return (
-    <main className="flex-1 min-h-0 flex flex-col items-center justify-center text-center gap-[clamp(16px,3vh,48px)] p-8 bg-gradient-to-br from-teal-50 via-white to-sky-50 dark:from-slate-950 dark:via-slate-900 dark:to-teal-950">
-      <div key={slide.key} className="flex flex-col items-center gap-[clamp(16px,3vh,48px)] animate-in fade-in duration-700">
+    <main className="flex-1 min-h-0 flex flex-col items-center justify-center text-center gap-4 sm:gap-6 md:gap-8 p-4 sm:p-8 overflow-y-auto bg-gradient-to-br from-teal-50 via-white to-sky-50 dark:from-slate-950 dark:via-slate-900 dark:to-teal-950">
+      <div key={slide.key} className="flex flex-col items-center gap-3 sm:gap-5 md:gap-6 animate-in fade-in duration-700 max-w-4xl px-2">
         {slide.icon === 'logo' && logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={logoUrl} alt="" className="max-h-[28vh] max-w-[60vw] object-contain" />
+          <img src={logoUrl} alt="" className="max-h-[18vh] sm:max-h-[25vh] md:max-h-[30vh] max-w-[75vw] sm:max-w-[50vw] object-contain rounded-xl shadow-sm" />
         ) : (
-          <div className="w-[clamp(96px,16vh,220px)] aspect-square rounded-[2rem] bg-teal-600 text-white flex items-center justify-center shadow-xl shadow-teal-600/20">
+          <div className="w-16 h-16 sm:w-24 sm:h-24 md:w-36 md:h-36 aspect-square rounded-2xl sm:rounded-[2rem] bg-teal-600 text-white flex items-center justify-center shadow-lg sm:shadow-xl shadow-teal-600/20">
             {slide.icon === 'spark' ? <Sparkles className="w-1/2 h-1/2" /> : slide.icon === 'bag' ? <ShoppingBag className="w-1/2 h-1/2" /> : <Store className="w-1/2 h-1/2" />}
           </div>
         )}
-        <h2 className="text-[clamp(30px,4.2vw,96px)] font-extrabold tracking-tight text-teal-800 dark:text-teal-300 leading-tight max-w-[90vw]">{slide.title}</h2>
-        <p className="text-[clamp(16px,1.8vw,40px)] text-slate-500 dark:text-slate-400 max-w-[85vw]">{slide.sub}</p>
+        <h2 className="text-xl sm:text-3xl md:text-5xl lg:text-6xl font-extrabold tracking-tight text-teal-800 dark:text-teal-300 leading-tight">
+          {slide.title}
+        </h2>
+        <p className="text-xs sm:text-base md:text-xl lg:text-2xl text-slate-500 dark:text-slate-400">
+          {slide.sub}
+        </p>
       </div>
-      <div className="flex gap-2" aria-hidden>
+      <div className="flex gap-1.5 sm:gap-2 mt-2" aria-hidden>
         {slides.map((s, i) => (
-          <span key={s.key} className={`h-2 rounded-full transition-all ${i === index ? 'w-8 bg-teal-600' : 'w-2 bg-slate-300 dark:bg-slate-700'}`} />
+          <span key={s.key} className={`h-1.5 sm:h-2 rounded-full transition-all ${i === index ? 'w-6 sm:w-8 bg-teal-600' : 'w-1.5 sm:w-2 bg-slate-300 dark:bg-slate-700'}`} />
         ))}
       </div>
     </main>
