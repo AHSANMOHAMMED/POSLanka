@@ -49,8 +49,8 @@ export interface ExchangeCartItem {
 }
 
 export interface ExchangeInput {
-  originalSaleId: string
-  returnLines: Array<{ originalSaleItemId: string; quantity: number; serialNumberIds?: string[] | null }>
+  originalSaleId?: string | null
+  returnLines: Array<{ originalSaleItemId?: string | null; itemId?: string | null; quantity: number; serialNumberIds?: string[] | null }>
   newCartItems: ExchangeCartItem[]
   paymentMethod?: 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | 'cheque' | null
   paymentSplits?: Array<{ method: 'cash' | 'card' | 'bank_transfer' | 'credit' | 'gift_card' | 'cheque'; amount: number; reference?: string | null }> | null
@@ -155,8 +155,13 @@ export async function createExchangeInTx(tx: DbTx, ctx: ReturnContext, input: Ex
   const returnResult = await createReturnInTx(tx, ctx, {
     serialReturnStatus: input.serialReturnStatus || settings.returns.serialReturnStatus,
     restockMode: input.restockMode || settings.returns.restockMode,
-    originalSaleId: input.originalSaleId,
-    lines: input.returnLines.map((l) => ({ originalSaleItemId: l.originalSaleItemId, quantity: l.quantity, serialNumberIds: l.serialNumberIds || undefined })),
+    originalSaleId: input.originalSaleId || undefined,
+    lines: input.returnLines.map((l) => ({
+      originalSaleItemId: l.originalSaleItemId || undefined,
+      itemId: l.itemId || undefined,
+      quantity: l.quantity,
+      serialNumberIds: l.serialNumberIds || undefined,
+    })),
     refundMethod,
     customerId: input.customerId,
     warehouseId: input.warehouseId,

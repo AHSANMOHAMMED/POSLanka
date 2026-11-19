@@ -102,6 +102,14 @@ interface POSPaymentModalProps {
    */
   hirePurchase?: boolean
   setHirePurchase?: (value: boolean) => void
+
+  /** Exchange difference and credit info */
+  exchangeInfo?: {
+    credit: number
+    newTotal: number
+    difference: number
+    invoiceNo?: string
+  } | null
 }
 
 const money = (n: number) => n.toLocaleString('en-LK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -151,10 +159,16 @@ export function POSPaymentModal({
   setChequeDetails,
   hirePurchase: hirePurchaseProp = false,
   setHirePurchase,
+  exchangeInfo = null,
 }: POSPaymentModalProps) {
-  const hirePurchase = !isReturnMode && !!setHirePurchase && hirePurchaseProp
+  const isExchangeRefund = !!exchangeInfo && exchangeInfo.difference < -0.005
+  const isEvenExchange = !!exchangeInfo && Math.abs(exchangeInfo.difference) <= 0.005
+  const exchangeRefundAmount = isExchangeRefund ? Math.abs(exchangeInfo.difference) : 0
+  const effectiveReturnMode = isReturnMode || isExchangeRefund
+
+  const hirePurchase = !effectiveReturnMode && !!setHirePurchase && hirePurchaseProp
   const { currency: currencyCode } = useCurrency()
-  const multi = !isReturnMode && !hirePurchase && extraTenders.length > 0
+  const multi = !effectiveReturnMode && !hirePurchase && extraTenders.length > 0
   // Line the number pad / quick cash buttons type into: 0 = first payment, n = extraTenders[n - 1]
   const [activeLine, setActiveLine] = useState(0)
   const [adding, setAdding] = useState(false)
@@ -176,7 +190,7 @@ export function POSPaymentModal({
   }
 
   const lineMethods = [paymentMethod, ...extraTenders.map((t) => t.method)]
-  const needsCheque = !isReturnMode && (multi ? lineMethods.includes('cheque') : paymentMethod === 'cheque')
+  const needsCheque = !effectiveReturnMode && (multi ? lineMethods.includes('cheque') : paymentMethod === 'cheque')
   const chequeIncomplete = needsCheque && (!chequeDetails?.chequeNo.trim() || !chequeDetails?.bankName.trim() || !chequeDetails?.chequeDate)
   const todayStr = new Date().toLocaleDateString('en-CA')
   const chequeDays = chequeDetails?.chequeDate
@@ -207,9 +221,9 @@ export function POSPaymentModal({
     || chequeIncomplete
     || !!splitError
     || creditLineWithoutCustomer
-    || (isReturnMode && refundMethod === 'credit' && !selectedCustomer)
-    || (!isReturnMode && !multi && paymentMethod === 'credit' && !selectedCustomer)
-    || (!isReturnMode && !multi && paymentMethod === 'gift_card' && (!giftCardInfo || giftCardInfo.status !== 'active'))
+    || (effectiveReturnMode && refundMethod === 'credit' && !selectedCustomer)
+    || (!effectiveReturnMode && !isEvenExchange && !multi && paymentMethod === 'credit' && !selectedCustomer)
+    || (!effectiveReturnMode && !isEvenExchange && !multi && paymentMethod === 'gift_card' && (!giftCardInfo || giftCardInfo.status !== 'active'))
 
   // Keyboard: Enter = complete sale, Escape = close
   useEffect(() => {
@@ -279,12 +293,12 @@ export function POSPaymentModal({
     function onMethodKey(e: KeyboardEvent) {
       const el = e.target as HTMLElement | null
       const inTextInput = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
-      const ids = isReturnMode ? enabledRefundMethods : enabledPaymentMethods.map((m) => m.paymentMethod)
+      const ids = effectiveReturnMode ? enabledRefundMethods : enabledPaymentMethods.map((m) => m.paymentMethod)
       const idx = paymentMethodIndexForKey(e, { inTextInput, count: ids.length })
       if (idx === null) return
       e.preventDefault()
       const id = ids[idx]
-      if (isReturnMode) {
+      if (effectiveReturnMode) {
         if (id === 'credit' && !selectedCustomer) return
         setRefundMethod(id)
         return
@@ -486,16 +500,18 @@ export function POSPaymentModal({
       <div className={`bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full ${showPad ? 'max-w-4xl' : 'max-w-xl'} overflow-hidden flex flex-col max-h-[96vh] border border-gray-100 dark:border-gray-800`}>
         {/* Header: same colour as the till */}
         <div
-          className={`px-5 sm:px-6 py-4 ${isReturnMode ? 'bg-red-50 dark:bg-red-950/40' : 'text-white'}`}
-          style={isReturnMode ? undefined : { background: 'linear-gradient(135deg, var(--primary), var(--primary-hover))' }}
+          className={`px-5 sm:px-6 py-4 ${effectiveReturnMode ? 'bg-red-50 dark:bg-red-950/40' : 'text-white'}`}
+          style={effectiveReturnMode ? undefined : { background: 'linear-gradient(135deg, var(--primary), var(--primary-hover))' }}
         >
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <h2 className={`text-xl font-bold ${isReturnMode ? 'text-red-700 dark:text-red-300' : 'text-white'}`}>{isReturnMode ? 'Process Refund' : 'Payment'}</h2>
-              {selectedCustomer && <p className={`text-sm truncate ${isReturnMode ? 'text-red-600' : 'text-white/80'}`}>{selectedCustomer.name}{selectedCustomer.phone ? ` · ${selectedCustomer.phone}` : ''}</p>}
+              <h2 className={`text-xl font-bold ${effectiveReturnMode ? 'text-red-700 dark:text-red-300' : 'text-white'}`}>
+                {isReturnMode ? 'Process Refund' : isExchangeRefund ? 'Exchange Refund' : isEvenExchange ? 'Even Exchange' : 'Payment'}
+              </h2>
+              {selectedCustomer && <p className={`text-sm truncate ${effectiveReturnMode ? 'text-red-600' : 'text-white/80'}`}>{selectedCustomer.name}{selectedCustomer.phone ? ` · ${selectedCustomer.phone}` : ''}</p>}
             </div>
             <div className="flex items-center gap-1.5">
-              {!isReturnMode && (
+              {!effectiveReturnMode && !isEvenExchange && (
                 <button
                   type="button"
                   onClick={toggleNumpad}
@@ -506,29 +522,46 @@ export function POSPaymentModal({
                   <Calculator size={14} /> Number pad
                 </button>
               )}
-              <button onClick={onClose} disabled={processing} aria-label="Close" className={`p-2 rounded-md ${isReturnMode ? 'hover:bg-red-100' : 'hover:bg-white/20'} transition-colors`}>
-                <X size={20} className={isReturnMode ? 'text-red-600' : 'text-white'} />
+              <button onClick={onClose} disabled={processing} aria-label="Close" className={`p-2 rounded-md ${effectiveReturnMode ? 'hover:bg-red-100' : 'hover:bg-white/20'} transition-colors`}>
+                <X size={20} className={effectiveReturnMode ? 'text-red-600' : 'text-white'} />
               </button>
             </div>
           </div>
-          {isReturnMode ? (
+          {effectiveReturnMode ? (
             <div className="mt-3 text-center py-3 rounded-2xl bg-red-100 dark:bg-red-900/40">
-              <p className="text-sm text-red-600 dark:text-red-300">Refund Amount</p>
-              <p className="text-4xl font-bold text-red-700 dark:text-red-200">{currencyCode} {money(Math.abs(total))}</p>
+              <p className="text-sm text-red-600 dark:text-red-300">
+                {isExchangeRefund ? 'Refund Due to Customer (Exchange Difference)' : 'Refund Amount'}
+              </p>
+              <p className="text-4xl font-bold text-red-700 dark:text-red-200">
+                {currencyCode} {money(isExchangeRefund ? exchangeRefundAmount : Math.abs(total))}
+              </p>
+              {exchangeInfo && (
+                <p className="text-xs text-red-700 dark:text-red-300 mt-1 font-medium">
+                  Replacement: {currencyCode} {money(exchangeInfo.newTotal)} &bull; Credit: -{currencyCode} {money(exchangeInfo.credit)}
+                </p>
+              )}
             </div>
           ) : (
-            <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-              <div className="rounded-2xl bg-white/15 py-2.5 px-1">
-                <p className="text-[11px] uppercase tracking-wide text-white/80">Total{(tipAmount || 0) > 0 ? ' (incl. tip)' : ''}</p>
-                <p className="text-xl sm:text-2xl font-extrabold tabular-nums">{money(payableTotal)}</p>
-              </div>
-              <div className="rounded-2xl bg-white/15 py-2.5 px-1">
-                <p className="text-[11px] uppercase tracking-wide text-white/80">Paid</p>
-                <p className="text-xl sm:text-2xl font-extrabold tabular-nums">{money(totalPaid)}</p>
-              </div>
-              <div className={`rounded-2xl py-2.5 px-1 ${change > 0 ? 'bg-emerald-500' : balanceDue > 0 ? 'bg-amber-500' : 'bg-white/15'}`}>
-                <p className="text-[11px] uppercase tracking-wide text-white/90">{change > 0 ? 'Change' : hirePurchase ? 'On installments' : 'Balance'}</p>
-                <p className="text-xl sm:text-2xl font-extrabold tabular-nums">{money(change > 0 ? change : balanceDue)}</p>
+            <div className="space-y-2">
+              {exchangeInfo && (
+                <div className="mt-2 p-2.5 rounded-xl bg-black/20 text-white text-xs flex justify-between items-center">
+                  <span>Replacement: {currencyCode} {money(exchangeInfo.newTotal)} | Credit: -{currencyCode} {money(exchangeInfo.credit)}</span>
+                  <span className="font-bold text-amber-200">Balance: {currencyCode} {money(exchangeInfo.difference)}</span>
+                </div>
+              )}
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-2xl bg-white/15 py-2.5 px-1">
+                  <p className="text-[11px] uppercase tracking-wide text-white/80">Total{(tipAmount || 0) > 0 ? ' (incl. tip)' : ''}</p>
+                  <p className="text-xl sm:text-2xl font-extrabold tabular-nums">{money(payableTotal)}</p>
+                </div>
+                <div className="rounded-2xl bg-white/15 py-2.5 px-1">
+                  <p className="text-[11px] uppercase tracking-wide text-white/80">Paid</p>
+                  <p className="text-xl sm:text-2xl font-extrabold tabular-nums">{money(totalPaid)}</p>
+                </div>
+                <div className={`rounded-2xl py-2.5 px-1 ${change > 0 ? 'bg-emerald-500' : balanceDue > 0 ? 'bg-amber-500' : 'bg-white/15'}`}>
+                  <p className="text-[11px] uppercase tracking-wide text-white/90">{change > 0 ? 'Change' : hirePurchase ? 'On installments' : 'Balance'}</p>
+                  <p className="text-xl sm:text-2xl font-extrabold tabular-nums">{money(change > 0 ? change : balanceDue)}</p>
+                </div>
               </div>
             </div>
           )}
@@ -716,7 +749,7 @@ export function POSPaymentModal({
                 )}
               </div>
           {/* Refund Method */}
-          {isReturnMode && (
+          {effectiveReturnMode && (
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-3">Refund Method</label>
               <div className={`grid gap-3 ${enabledRefundMethods.length <= 3 ? 'grid-cols-3' : 'grid-cols-4'}`}>
@@ -1327,11 +1360,13 @@ export function POSPaymentModal({
           </button>
           <button onClick={onCompleteSale} disabled={completeDisabled}
             className={`flex-[2] py-3.5 text-white rounded-xl font-bold text-base shadow-lg transition-all disabled:opacity-50 ${
-              isReturnMode ? 'bg-gradient-to-r from-red-600 to-red-500' : balanceDue > 0 && !hirePurchase ? 'bg-gradient-to-r from-amber-500 to-orange-500' : 'theme-btn-primary'
+              effectiveReturnMode ? 'bg-gradient-to-r from-red-600 to-red-500' : balanceDue > 0 && !hirePurchase ? 'bg-gradient-to-r from-amber-500 to-orange-500' : 'theme-btn-primary'
             }`}>
             {processing ? (
               <span className="flex items-center justify-center gap-2"><Loader2 className="animate-spin" size={20} /> Processing...</span>
             ) : isReturnMode ? 'Process Refund'
+              : isExchangeRefund ? `Refund ${currencyCode} ${money(exchangeRefundAmount)} & Complete Exchange`
+              : isEvenExchange ? 'Complete Even Exchange — Enter'
               : hirePurchase ? 'Complete & set up plan'
               : balanceDue > 0 ? `Complete (balance ${money(balanceDue)}) — Enter`
               : change > 0 ? `Complete · Change ${money(change)} — Enter`

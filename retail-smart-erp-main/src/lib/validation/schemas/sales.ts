@@ -233,14 +233,15 @@ export const salesLookupSchema = z.object({
 })
 
 const returnLineSchema = z.object({
-  originalSaleItemId: z.string().uuid(),
+  originalSaleItemId: z.string().uuid().optional().nullable(),
+  itemId: z.string().uuid().optional().nullable(),
   quantity: z.coerce.number().positive('Quantity must be greater than zero'),
   serialNumberIds: z.array(uuidSchema).optional(),
 })
 
 // POST /api/sales/exchange
 export const exchangeSaleSchema = z.object({
-  originalSaleId: z.string().uuid(),
+  originalSaleId: z.string().uuid().optional().nullable(),
   returnLines: z.array(returnLineSchema).min(1, 'Select at least one line to return').max(200),
   newCartItems: z.array(saleCartItemSchema).min(1, 'Add at least one new item').max(200),
   paymentMethod: paymentMethodSchema.optional(),

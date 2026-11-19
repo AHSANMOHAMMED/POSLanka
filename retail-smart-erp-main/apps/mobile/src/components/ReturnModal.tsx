@@ -71,6 +71,15 @@ export interface ReturnableSale {
   returns?: Array<{ id: string; invoiceNo: string; total: string }>
 }
 
+export interface ReturnModalLine {
+  originalSaleItemId?: string
+  itemId?: string
+  name: string
+  quantity: number
+  unitPrice: number
+  total: number
+}
+
 interface ReturnModalProps {
   visible: boolean
   onClose: () => void
@@ -80,6 +89,7 @@ interface ReturnModalProps {
   business: BusinessInfo | null
   cashierName?: string | null
   onReturnComplete: (data: SaleResultData) => void
+  onExchange?: (sale: ReturnableSale, lines: ReturnModalLine[], totalCredit: number) => void
 }
 
 function num(v: unknown): number {
@@ -87,7 +97,7 @@ function num(v: unknown): number {
   return isNaN(n) ? 0 : n
 }
 
-export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, cashierName, onReturnComplete }: ReturnModalProps) {
+export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, cashierName, onReturnComplete, onExchange }: ReturnModalProps) {
   const headerPad = useHeaderPad()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -397,9 +407,35 @@ export function ReturnModal({ visible, onClose, invoiceQuery, shift, business, c
                     <Text style={styles.refundLabel}>Refund amount</Text>
                     <Text style={styles.refundVal}>{formatLKR(refundAmount)}</Text>
                   </View>
-                  <Pressable style={[styles.submitBtn, (!hasAny || busy) && { opacity: 0.5 }]} onPress={submit} disabled={!hasAny || busy}>
-                    {busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.submitText}>↩ Process Return · {formatLKR(refundAmount)}</Text>}
-                  </Pressable>
+                  <View style={{ gap: 10 }}>
+                    <Pressable style={[styles.submitBtn, (!hasAny || busy) && { opacity: 0.5 }]} onPress={submit} disabled={!hasAny || busy}>
+                      {busy ? <ActivityIndicator color="#FFF" /> : <Text style={styles.submitText}>↩ Return & Refund · {formatLKR(refundAmount)}</Text>}
+                    </Pressable>
+
+                    {onExchange ? (
+                      <Pressable
+                        style={[styles.exchangeBtn, (!hasAny || busy) && { opacity: 0.5 }]}
+                        onPress={() => {
+                          if (!selected || !hasAny) return
+                          const returnLines: ReturnModalLine[] = lines
+                            .map((l, idx) => ({ l, q: qty[idx] || 0 }))
+                            .filter(({ q }) => q > 0)
+                            .map(({ l, q }) => ({
+                              originalSaleItemId: l.id || undefined,
+                              itemId: l.itemId || undefined,
+                              name: l.itemName,
+                              quantity: q,
+                              unitPrice: l.refundUnit,
+                              total: roundCurrency(q * l.refundUnit),
+                            }))
+                          onExchange(selected, returnLines, refundAmount)
+                        }}
+                        disabled={!hasAny || busy}
+                      >
+                        <Text style={styles.exchangeBtnText}>⇄ Exchange for New Items · Credit {formatLKR(refundAmount)}</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
                 </View>
               ) : null}
             </>
@@ -454,6 +490,8 @@ const styles = StyleSheet.create({
   refundBox: { marginTop: 12, padding: 14, borderRadius: 12, backgroundColor: THEME.colors.errorLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   refundLabel: { fontSize: 12, fontWeight: '800', color: THEME.colors.error, textTransform: 'uppercase' },
   refundVal: { fontSize: 20, fontWeight: '900', color: THEME.colors.error },
-  submitBtn: { marginTop: 12, height: 52, borderRadius: 12, backgroundColor: THEME.colors.error, alignItems: 'center', justifyContent: 'center' },
+  submitBtn: { height: 52, borderRadius: 12, backgroundColor: THEME.colors.error, alignItems: 'center', justifyContent: 'center' },
   submitText: { color: '#FFF', fontSize: 15, fontWeight: '800' },
+  exchangeBtn: { height: 52, borderRadius: 12, backgroundColor: '#D97706', alignItems: 'center', justifyContent: 'center' },
+  exchangeBtnText: { color: '#FFF', fontSize: 15, fontWeight: '800' },
 })

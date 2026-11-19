@@ -44,6 +44,8 @@ interface CartPanelProps {
   onCancelReturnMode: () => void
   /** Return mode against an invoice: turn the selected return lines into an exchange (W8) */
   onStartExchange?: () => void
+  exchangeCredit?: number
+  exchangeInvoiceNo?: string
 
   subtotal: number
   itemCount: number
@@ -127,6 +129,8 @@ export function CartPanel({
   onClearCart,
   onCancelReturnMode,
   onStartExchange,
+  exchangeCredit,
+  exchangeInvoiceNo,
   subtotal,
   itemCount,
   discountAmount,
@@ -736,10 +740,18 @@ export function CartPanel({
               <span>-{currencyCode} {loyaltyRedeemValue.toFixed(2)}</span>
             </div>
           )}
+          {exchangeCredit !== undefined && exchangeCredit > 0 && (
+            <div className="flex justify-between text-amber-600 dark:text-amber-400 font-bold text-sm">
+              <span>Exchange Credit ({exchangeInvoiceNo || 'Return'})</span>
+              <span>-{currencyCode} {exchangeCredit.toFixed(2)}</span>
+            </div>
+          )}
           <div className={`flex justify-between items-baseline gap-2 text-2xl font-black pt-3 border-t border-slate-200 ${isReturnMode ? 'text-red-700' : 'text-slate-900 dark:text-white font-mono'}`}>
-            <span className="text-sm min-[1920px]:text-base font-sans font-bold text-slate-500 uppercase tracking-wider">{isReturnMode ? 'Refund Due' : 'Total Payable'}</span>
-            <span className={`text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-mono font-black break-all text-right ${isReturnMode ? 'text-red-600' : 'theme-text-primary'}`}>
-              {currencyCode} {Math.abs(isReturnMode ? total : Math.max(0, total - loyaltyRedeemValue + (config.enableTips ? (tipAmount || 0) : 0))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <span className="text-sm min-[1920px]:text-base font-sans font-bold text-slate-500 uppercase tracking-wider">
+              {isReturnMode ? 'Refund Due' : exchangeCredit !== undefined && exchangeCredit > 0 ? (total - exchangeCredit >= 0 ? 'To Collect' : 'To Refund') : 'Total Payable'}
+            </span>
+            <span className={`text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-mono font-black break-all text-right ${isReturnMode ? 'text-red-600' : exchangeCredit && total - exchangeCredit < 0 ? 'text-emerald-600' : 'theme-text-primary'}`}>
+              {currencyCode} {Math.abs(isReturnMode ? total : exchangeCredit ? (total - exchangeCredit) : Math.max(0, total - loyaltyRedeemValue + (config.enableTips ? (tipAmount || 0) : 0))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
           </div>
         </div>
@@ -824,7 +836,15 @@ export function CartPanel({
                 : 'theme-btn-primary'
             }`}
           >
-            {isReturnMode ? 'Process Refund' : `${terms.payNow} →`}
+            {isReturnMode
+              ? 'Process Refund'
+              : exchangeCredit !== undefined && exchangeCredit > 0
+              ? total - exchangeCredit > 0
+                ? `Collect Diff (${currencyCode} ${(total - exchangeCredit).toFixed(2)}) →`
+                : total - exchangeCredit < 0
+                ? `Refund Diff (${currencyCode} ${Math.abs(total - exchangeCredit).toFixed(2)}) →`
+                : 'Even Exchange (0.00) →'
+              : `${terms.payNow} →`}
             <Kbd tone="dark">F9</Kbd>
           </button>
         </div>

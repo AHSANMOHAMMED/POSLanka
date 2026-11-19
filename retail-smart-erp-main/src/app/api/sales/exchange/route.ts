@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
       }
       // K4: a branch-restricted cashier exchanges only sales of their own branches, into them
       const branchDenied = await assertBranchAccess(session, body.warehouseId, db)
-        || await assertRecordBranch(session, db, sales, body.originalSaleId, { includeUnassigned: true })
+        || (body.originalSaleId ? await assertRecordBranch(session, db, sales, body.originalSaleId, { includeUnassigned: true }) : null)
       if (branchDenied) return branchDenied
       // H1: the exchange is rung up on an open shift of the cashier (or any shift for manageSales)
       const shiftCheck = await checkSaleShift(db, {

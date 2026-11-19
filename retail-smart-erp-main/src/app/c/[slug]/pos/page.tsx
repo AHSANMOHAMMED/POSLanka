@@ -21,6 +21,7 @@ import {
   POSPaymentModal,
   HeldSalesModal,
   ReturnLookupModal,
+  type SelectedReturnLine,
   VehicleMismatchDialog,
   SaleSuccessModal,
   SupervisorAuthModal,
@@ -265,9 +266,11 @@ export default function POSPage() {
   const [returnModeConfirm, setReturnModeConfirm] = useState(false)
   // Exchange (W8): return lines kept as credit while the replacement items are rung up
   const [exchangeFrom, setExchangeFrom] = useState<{
-    sale: SaleForReturn
-    returnLines: Array<{ originalSaleItemId: string; quantity: number; serialNumberIds?: string[] }>
+    sale?: SaleForReturn | null
+    returnLines: Array<{ originalSaleItemId?: string; itemId?: string; name?: string; quantity: number; unitPrice?: number; total?: number; serialNumberIds?: string[] }>
     credit: number
+    isManual?: boolean
+    reason?: string
   } | null>(null)
 
   // Confirm dialogs
@@ -2246,7 +2249,20 @@ export default function POSPage() {
     }
   }
 
-  // ─── Return Functions ─────────────────────────────────────────
+  // ─── Return & Exchange Functions ──────────────────────────────
+
+  async function searchInvoiceExact(invoiceNo: string): Promise<SaleForReturn | null> {
+    try {
+      const res = await fetch(`/api/sales/lookup?code=${encodeURIComponent(invoiceNo.trim())}`)
+      if (res.ok) {
+        const found = await res.json()
+        if (found?.sale) return found.sale
+      }
+    } catch (err) {
+      console.error('Invoice exact lookup error:', err)
+    }
+    return null
+  }
 
   async function loadSaleForReturn(listed: SaleForReturn) {
     // Always refresh through the lookup endpoint: remaining quantities + server refund prices
@@ -2294,11 +2310,9 @@ export default function POSPage() {
     for (const item of returnableItems) {
       const localItem = item.itemId ? items.find(i => i.id === item.itemId) : null
       const remaining = item.remainingQuantity ?? Math.abs(parseFloat(item.quantity))
-      // Unit refund incl. tax after discounts (server-computed); legacy fallback: line average
       const unitPrice = item.refundUnitAmount ?? (Math.abs(parseFloat(item.total)) / Math.abs(parseFloat(item.quantity) || 1))
       const serialIds = item.remainingSerialNumberIds ?? (item.serialNumberIds as string[] | undefined) ?? []
       if (serialIds.length) {
-        // Serial-tracked: one cart line per serial still on the invoice
         for (let i = 0; i < Math.min(serialIds.length, remaining); i++) {
           returnItems.push({
             cartLineId: `return-${item.id}-${Date.now()}-${i}`,
@@ -2335,55 +2349,176 @@ export default function POSPage() {
     toast.info(`Loaded invoice ${sale.invoiceNo} for return`)
   }
 
-  /** Exchange: keep the selected return lines as credit and sell new items against it. */
-  function startExchange() {
-    if (!isReturnMode || !returnAgainstSale) return
-    const lines = cart.filter(l => l.originalSaleItemId && l.quantity !== 0)
-    if (lines.length === 0) {
-      toast.error('Select the items being returned first')
+  /** Confirm Return & Refund from modal: populates cart with negative lines for refund */
+  function handleConfirmReturn(sale: SaleForReturn | null, selectedLines: SelectedReturnLine[], reason?: string) {
+    if (selectedLines.length === 0) {
+      toast.error('Please select at least one item to return')
       return
     }
-    const byLine = new Map<string, { quantity: number; serialNumberIds: string[] }>()
-    for (const l of lines) {
-      const cur = byLine.get(l.originalSaleItemId!) || { quantity: 0, serialNumberIds: [] }
-      cur.quantity += Math.abs(l.quantity)
-      cur.serialNumberIds.push(...(l.serialNumberIds || []))
-      byLine.set(l.originalSaleItemId!, cur)
+
+    setCart([])
+    setExchangeFrom(null)
+    setIsReturnMode(true)
+    setReturnAgainstSale(sale)
+    if (sale?.customer) setSelectedCustomer(sale.customer)
+
+    if (sale) {
+      const paid = Object.entries(sale.paidByMethod || {})
+        .filter(([m, amt]) => amt > 0 && !['credit', 'gift_card', 'loyalty'].includes(m))
+      setRefundMethod(paid.length > 1 ? 'original' : paid[0]?.[0] === 'card' ? 'card' : 'cash')
+    } else {
+      setRefundMethod('cash')
     }
+
+    const returnItems: CartItem[] = []
+    for (const line of selectedLines) {
+      const localItem = line.itemId ? items.find(i => i.id === line.itemId) : null
+      const serialIds = line.serialNumberIds || []
+      const qty = Math.abs(line.quantity)
+      const unitPrice = line.unitPrice
+
+      if (serialIds.length > 0) {
+        for (let i = 0; i < Math.min(serialIds.length, qty); i++) {
+          returnItems.push({
+            cartLineId: `return-${line.originalSaleItemId || line.itemId || Date.now()}-${i}`,
+            itemId: line.itemId || '',
+            name: line.name,
+            quantity: -1,
+            unitPrice,
+            total: -unitPrice,
+            serialNumberIds: [serialIds[i]],
+            originalSaleItemId: line.originalSaleItemId,
+            maxReturnQuantity: 1,
+            sku: localItem?.sku ?? null,
+          })
+        }
+      } else {
+        returnItems.push({
+          cartLineId: `return-${line.originalSaleItemId || line.itemId || Date.now()}-0`,
+          itemId: line.itemId || '',
+          name: line.name,
+          quantity: -qty,
+          unitPrice,
+          total: -Math.round(qty * unitPrice * 100) / 100,
+          originalSaleItemId: line.originalSaleItemId,
+          maxReturnQuantity: qty,
+          sku: localItem?.sku ?? null,
+        })
+      }
+    }
+
+    setCart(returnItems)
+    setShowReturnLookupModal(false)
+    setReturnSearchQuery('')
+    setReturnSearchResults([])
+    toast.info(sale ? `Loaded ${returnItems.length} return item(s) from ${sale.invoiceNo}` : 'Manual return mode activated')
+  }
+
+  /** Confirm Exchange for New Items: keeps return items as credit while preserving scanned replacement items */
+  function handleConfirmExchange(sale: SaleForReturn | null, selectedLines: SelectedReturnLine[], reason?: string) {
+    if (selectedLines.length === 0) {
+      toast.error('Please select at least one item to exchange')
+      return
+    }
+
+    const totalCredit = Math.round(selectedLines.reduce((sum, l) => sum + (l.unitPrice * l.quantity), 0) * 100) / 100
+
     setExchangeFrom({
-      sale: returnAgainstSale,
-      returnLines: [...byLine.entries()].map(([originalSaleItemId, v]) => ({
-        originalSaleItemId, quantity: v.quantity, serialNumberIds: v.serialNumberIds.length ? v.serialNumberIds : undefined,
+      sale: sale ?? undefined,
+      returnLines: selectedLines.map(l => ({
+        originalSaleItemId: l.originalSaleItemId,
+        itemId: l.itemId,
+        name: l.name,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+        total: Math.round(l.unitPrice * l.quantity * 100) / 100,
+        serialNumberIds: l.serialNumberIds,
       })),
-      credit: Math.round(Math.abs(lines.reduce((sum, l) => sum + l.total, 0)) * 100) / 100,
+      credit: totalCredit,
+      isManual: !sale,
+      reason,
+    })
+
+    // Retain only positive items in cart (preserve replacement items already scanned)
+    setCart(prev => prev.filter(c => c.quantity > 0))
+    setIsReturnMode(false)
+    setReturnAgainstSale(null)
+    if (sale?.customer && !selectedCustomer) {
+      setSelectedCustomer(sale.customer)
+    }
+
+    setShowReturnLookupModal(false)
+    setReturnSearchQuery('')
+    setReturnSearchResults([])
+    toast.success(`Exchange credit of ${currencyCode} ${totalCredit.toFixed(2)} applied! Scan or add replacement items.`)
+  }
+
+  /** Exchange: keep existing negative return lines in cart as credit and ring up new items against it. */
+  function startExchange() {
+    if (!isReturnMode) return
+    const lines = cart.filter(l => l.quantity < 0)
+    if (lines.length === 0) {
+      toast.error('Select or add the items being returned first')
+      return
+    }
+    const returnLines = lines.map(l => ({
+      originalSaleItemId: l.originalSaleItemId,
+      itemId: l.itemId,
+      name: l.name,
+      quantity: Math.abs(l.quantity),
+      unitPrice: l.unitPrice,
+      total: Math.abs(l.total),
+      serialNumberIds: l.serialNumberIds,
+    }))
+    const totalCredit = Math.round(lines.reduce((sum, l) => sum + Math.abs(l.total), 0) * 100) / 100
+
+    setExchangeFrom({
+      sale: returnAgainstSale ?? undefined,
+      returnLines,
+      credit: totalCredit,
+      isManual: !returnAgainstSale,
     })
     setCart([])
     setIsReturnMode(false)
     setReturnAgainstSale(null)
-    toast.info('Exchange: add the replacement items, then take payment for the difference')
+    toast.info(`Exchange credit of ${currencyCode} ${totalCredit.toFixed(2)} applied! Now add replacement items.`)
   }
 
   async function completeExchange() {
     if (!exchangeFrom) return
     setProcessing(true)
     try {
+      const netDifference = Math.round((total - exchangeFrom.credit) * 100) / 100
       const res = await fetch('/api/sales/exchange', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          originalSaleId: exchangeFrom.sale.id,
-          returnLines: exchangeFrom.returnLines,
+          originalSaleId: exchangeFrom.sale?.id || undefined,
+          returnLines: exchangeFrom.returnLines.map(rl => ({
+            originalSaleItemId: rl.originalSaleItemId || undefined,
+            itemId: rl.itemId || undefined,
+            name: rl.name,
+            quantity: Math.abs(rl.quantity),
+            unitPrice: rl.unitPrice,
+            total: rl.total,
+            serialNumberIds: rl.serialNumberIds,
+          })),
           newCartItems: cart.map(c => ({
-            itemId: c.itemId, name: c.name, quantity: c.quantity, unitPrice: c.unitPrice,
-            discount: 0, serialNumberIds: c.serialNumberIds,
+            itemId: c.itemId,
+            name: c.name,
+            quantity: c.quantity,
+            unitPrice: c.unitPrice,
+            discount: c.discount || 0,
+            serialNumberIds: c.serialNumberIds,
           })),
           paymentMethod: ['cash', 'card', 'bank_transfer'].includes(paymentMethod) ? paymentMethod : 'cash',
-          amountPaid: parseFloat(amountPaid) || 0,
-          refundMethod: 'cash',
+          amountPaid: netDifference > 0 ? (parseFloat(amountPaid) || netDifference) : 0,
+          refundMethod: refundMethod === 'card' ? 'card' : 'cash',
           warehouseId: posWarehouse?.id,
           posOpeningEntryId: activeShift?.id,
           customerId: selectedCustomer?.id,
           clientSaleId: ensureClientSaleId(),
+          reason: exchangeFrom.reason || (exchangeFrom.isManual ? 'Manual Exchange' : undefined),
         }),
       })
       const data = await res.json()
@@ -2393,13 +2528,16 @@ export default function POSPage() {
       }
       const diff = Number(data.net?.difference || 0)
       clearCart()
+      setExchangeFrom(null)
       setShowPayment(false)
       setAmountPaid('')
       setCreditAmount('')
       fetchItems(debouncedItemSearch || undefined, posWarehouse?.id, selectedCategory)
-      toast.success(diff >= 0
-        ? `Exchange done: ${data.returnSale?.invoiceNo} → ${data.sale?.invoiceNo}, collected ${diff.toFixed(2)}`
-        : `Exchange done: ${data.returnSale?.invoiceNo} → ${data.sale?.invoiceNo}, refund ${Math.abs(diff).toFixed(2)}`)
+      toast.success(diff > 0
+        ? `Exchange complete: collected ${diff.toFixed(2)}`
+        : diff < 0
+        ? `Exchange complete: refund ${Math.abs(diff).toFixed(2)} via ${refundMethod || 'cash'}`
+        : 'Exchange complete: even exchange')
       setLastSale({ invoiceNo: data.sale?.invoiceNo, total: Math.abs(diff), isReturn: diff < 0 })
       setLastSaleId(data.sale?.id)
     } catch (error) {
@@ -3042,7 +3180,7 @@ export default function POSPage() {
       case 'recallHeld': setShowHeldSalesModal(true); break
       case 'quickAdd': handleOpenQuickAdd(); break
       case 'discount': if (allowDiscount && cart.length > 0) setShowDiscountModal(true); break
-      case 'returnSale': if (cart.length > 0) setReturnModeConfirm(true); else setShowReturnLookupModal(true); break
+      case 'returnSale': setShowReturnLookupModal(true); break
       case 'priceCheck': setShowPriceCheckModal(true); break
       case 'lock': if (activeShift) handleSetTerminalLocked(true); break
       case 'payment':
@@ -3906,7 +4044,7 @@ export default function POSPage() {
     { id: 'reprintLast', label: 'Reprint last bill', icon: Printer, shortcut: 'Alt+R', keywords: 'receipt print again', run: () => runPosAction('reprintLast') },
     { id: 'fastBill', label: 'Fast bill (exact cash)', icon: Zap, shortcut: 'Alt+F', keywords: 'fast bill cash exact checkout instant quick', disabledReason: isReturnMode ? 'Not in return mode' : cart.length === 0 ? 'Cart is empty' : null, tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('fastBill') },
     { id: 'priceCheck', label: 'Price & stock check', icon: Tag, shortcut: 'F7', keywords: 'inquiry lookup', tone: 'bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400', run: () => runPosAction('priceCheck') },
-    { id: 'returnSale', label: 'Return / refund', icon: RotateCcw, shortcut: 'F6', keywords: 'refund exchange', disabledReason: isReturnMode ? 'Already in return mode' : null, tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('returnSale') },
+    { id: 'returnSale', label: 'Return / Exchange', icon: RotateCcw, shortcut: 'F6', keywords: 'refund exchange return', disabledReason: isReturnMode ? 'Already in return mode' : null, tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('returnSale') },
     { id: 'quickAdd', label: 'Quick add item', icon: PlusCircle, shortcut: 'F4', keywords: 'new item create', disabledReason: isReturnMode ? 'Not in return mode' : null, run: () => runPosAction('quickAdd') },
     { id: 'recallHeld', label: heldSales.length ? `Recall held (${heldSales.length})` : 'Recall held sale', icon: History, shortcut: 'F3', keywords: 'hold parked', disabledReason: heldSales.length ? null : 'No held sales', tone: 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400', run: () => runPosAction('recallHeld') },
     { id: 'saveQuotation', label: 'Save as quotation', icon: FileText, shortcut: 'Alt+Q', keywords: 'quote estimate proforma',
@@ -3942,21 +4080,41 @@ export default function POSPage() {
     <div className="flex flex-col h-[calc(100dvh-48px)] bg-gray-100 dark:bg-gray-950 -m-5 overflow-hidden font-sans">
       <OfflineStatusBanner />
       {exchangeFrom && (
-        <div className="w-full bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center justify-between text-sm shrink-0">
-          <span className="text-amber-900">
-            Exchange for <span className="font-semibold">{exchangeFrom.sale.invoiceNo}</span> — credit{' '}
-            <span className="font-mono font-semibold">{exchangeFrom.credit.toFixed(2)}</span>
+        <div className="w-full bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-amber-500/5 border-b border-amber-300 dark:border-amber-700/60 px-4 py-2 flex items-center justify-between text-sm shrink-0">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider bg-amber-500 text-white shadow-sm">
+              Exchange Active
+            </span>
+            <span className="text-amber-950 dark:text-amber-100 font-medium">
+              Credit: <span className="font-mono font-bold text-amber-700 dark:text-amber-400">{currencyCode} {exchangeFrom.credit.toFixed(2)}</span>
+              {exchangeFrom.sale?.invoiceNo && (
+                <span className="text-xs text-amber-800/80 dark:text-amber-300/80 ml-1.5">
+                  (Ref: {exchangeFrom.sale.invoiceNo})
+                </span>
+              )}
+            </span>
             {cart.length > 0 && (
-              <> · {total - exchangeFrom.credit >= 0 ? 'to collect' : 'to refund'}{' '}
-                <span className="font-mono font-semibold">{Math.abs(total - exchangeFrom.credit).toFixed(2)}</span></>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                Math.round((total - exchangeFrom.credit) * 100) / 100 > 0
+                  ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+                  : Math.round((total - exchangeFrom.credit) * 100) / 100 < 0
+                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-300'
+                  : 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
+              }`}>
+                {Math.round((total - exchangeFrom.credit) * 100) / 100 > 0
+                  ? `To Collect: ${currencyCode} ${(total - exchangeFrom.credit).toFixed(2)}`
+                  : Math.round((total - exchangeFrom.credit) * 100) / 100 < 0
+                  ? `To Refund: ${currencyCode} ${(exchangeFrom.credit - total).toFixed(2)}`
+                  : 'Even Exchange (No balance)'}
+              </span>
             )}
-          </span>
+          </div>
           <button
             type="button"
-            onClick={() => { setExchangeFrom(null); toast.info('Exchange cancelled') }}
-            className="text-amber-800 hover:text-amber-950 underline text-xs"
+            onClick={() => { setExchangeFrom(null); toast.info('Exchange mode cancelled') }}
+            className="text-amber-900 dark:text-amber-200 hover:text-red-600 dark:hover:text-red-400 font-medium text-xs flex items-center gap-1 px-2.5 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white/60 dark:bg-gray-900/60 transition-colors"
           >
-            Cancel exchange
+            Cancel Exchange
           </button>
         </div>
       )}
@@ -4071,6 +4229,8 @@ export default function POSPage() {
         onClearCart={handleClearCartRequest}
         onCancelReturnMode={cancelReturnMode}
         onStartExchange={returnAgainstSale ? startExchange : undefined}
+        exchangeCredit={exchangeFrom?.credit || 0}
+        exchangeInvoiceNo={exchangeFrom?.sale?.invoiceNo}
         subtotal={subtotal}
         itemCount={itemCount}
         discountAmount={discountAmount}
@@ -4124,6 +4284,12 @@ export default function POSPage() {
         extraTenders={extraTenders}
         setExtraTenders={setExtraTenders}
         total={exchangeFrom ? Math.max(0, total - exchangeFrom.credit) : total}
+        exchangeInfo={exchangeFrom ? {
+          credit: exchangeFrom.credit,
+          newTotal: total,
+          difference: Math.round((total - exchangeFrom.credit) * 100) / 100,
+          invoiceNo: exchangeFrom.sale?.invoiceNo,
+        } : null}
         loyaltyRedeemValue={loyaltyRedeemValue}
         selectedCustomer={selectedCustomer}
         processing={processing}
@@ -4172,8 +4338,9 @@ export default function POSPage() {
       <ReturnLookupModal
         isOpen={showReturnLookupModal}
         onClose={() => { setShowReturnLookupModal(false); setReturnSearchQuery(''); setReturnSearchResults([]) }}
-        onLoadSaleForReturn={loadSaleForReturn}
-        onManualReturnMode={() => { setShowReturnLookupModal(false); setIsReturnMode(true); setReturnAgainstSale(null); toast.info('Manual return mode - add items from product list') }}
+        onConfirmReturn={handleConfirmReturn}
+        onConfirmExchange={handleConfirmExchange}
+        onSearchInvoiceExact={searchInvoiceExact}
         returnSearchQuery={returnSearchQuery}
         setReturnSearchQuery={setReturnSearchQuery}
         returnSearchResults={returnSearchResults}

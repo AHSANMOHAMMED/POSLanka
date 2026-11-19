@@ -44,7 +44,7 @@ import { SaleReceiptModal } from '../../src/components/SaleReceiptModal'
 import { BarcodeScannerModal } from '../../src/components/BarcodeScannerModal'
 import { CustomerPickerModal, type Customer } from '../../src/components/CustomerPickerModal'
 import { HeldSalesModal, type HeldSale } from '../../src/components/HeldSalesModal'
-import { ReturnModal } from '../../src/components/ReturnModal'
+import { ReturnModal, type ReturnableSale, type ReturnModalLine } from '../../src/components/ReturnModal'
 import { LoadingView, ErrorView } from '../../src/components/StateViews'
 import { EmptyState, IconButton, ScreenHeader } from '../../src/components/ui'
 import { invoiceNoFromScan, loadBusinessInfo, type BusinessInfo } from '../../src/lib/receipt'
@@ -193,6 +193,11 @@ export default function PosScreen() {
   const [queueState, setQueueState] = useState<QueueState>(EMPTY_QUEUE)
   const [business, setBusiness] = useState<BusinessInfo | null>(null)
   const [returnQuery, setReturnQuery] = useState<string | null>(null)
+  const [exchangeFrom, setExchangeFrom] = useState<{
+    sale: ReturnableSale
+    returnLines: ReturnModalLine[]
+    credit: number
+  } | null>(null)
 
   // Modals
   const [scannerVisible, setScannerVisible] = useState(false)
@@ -714,8 +719,114 @@ export default function PosScreen() {
     ])
   }
 
+  function handleExchangeStart(sale: ReturnableSale, lines: ReturnModalLine[], credit: number) {
+    setExchangeFrom({
+      sale,
+      returnLines: lines,
+      credit,
+    })
+    setReturnQuery(null)
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined)
+    setToastMessage(`Exchange credit of ${formatLKR(credit)} applied! Scan or select replacement items.`)
+    setTimeout(() => setToastMessage(null), 3500)
+  }
+
+  async function completeMobileExchange(paymentMethod = 'cash', refundMethod = 'cash', amountPaid = 0) {
+    if (!exchangeFrom || !shift) return
+    const netDiff = roundCurrency(cartTotalPayable - exchangeFrom.credit)
+    const payload = {
+      originalSaleId: exchangeFrom.sale.id,
+      returnLines: exchangeFrom.returnLines.map(rl => ({
+        originalSaleItemId: rl.originalSaleItemId,
+        itemId: rl.itemId,
+        name: rl.name,
+        quantity: rl.quantity,
+        unitPrice: rl.unitPrice,
+        total: rl.total,
+      })),
+      newCartItems: cart.map(c => ({
+        itemId: c.itemId,
+        name: c.name,
+        quantity: c.quantity,
+        unitPrice: c.sellingPrice,
+        discount: c.manualDiscount || 0,
+        serialNumberIds: c.serialNumberIds,
+      })),
+      paymentMethod,
+      amountPaid: netDiff > 0 ? (amountPaid || netDiff) : 0,
+      refundMethod,
+      warehouseId: shift.warehouseId,
+      posOpeningEntryId: shift.id,
+      customerId: customer?.id || exchangeFrom.sale.customerId || undefined,
+      clientSaleId: clientSaleId,
+    }
+
+    try {
+      const res = await apiPost<any>('/api/sales/exchange', payload)
+      if (!res.ok) {
+        Alert.alert('Exchange Failed', res.error || 'Failed to process exchange')
+        return
+      }
+      const data = res.data
+      const diff = Number(data.net?.difference || 0)
+      setExchangeFrom(null)
+      setCart([])
+      setClientSaleId(Crypto.randomUUID())
+      fetchItems(1, false)
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined)
+      Alert.alert(
+        'Exchange Complete',
+        diff > 0
+          ? `Exchange complete: collected ${formatLKR(diff)} for invoice ${data.sale?.invoiceNo}`
+          : diff < 0
+          ? `Exchange complete: refund ${formatLKR(Math.abs(diff))} via ${refundMethod.toUpperCase()}`
+          : `Even exchange complete (${data.sale?.invoiceNo})`
+      )
+    } catch (err) {
+      Alert.alert('Error', 'An error occurred while processing the exchange')
+    }
+  }
+
   function openTender() {
     Keyboard.dismiss()
+    if (exchangeFrom) {
+      if (cart.length === 0) {
+        Alert.alert('Add Replacement Items', 'Please add items to exchange before checking out.')
+        return
+      }
+      const netDiff = roundCurrency(cartTotalPayable - exchangeFrom.credit)
+      if (netDiff > 0) {
+        Alert.alert(
+          'Exchange: Collect Balance',
+          `New items: ${formatLKR(cartTotalPayable)}\nExchange credit: −${formatLKR(exchangeFrom.credit)}\n\nNet to collect: ${formatLKR(netDiff)}`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Cash', onPress: () => completeMobileExchange('cash', 'cash', netDiff) },
+            { text: 'Card', onPress: () => completeMobileExchange('card', 'cash', netDiff) },
+          ]
+        )
+      } else if (netDiff < 0) {
+        Alert.alert(
+          'Exchange: Refund Difference',
+          `New items: ${formatLKR(cartTotalPayable)}\nExchange credit: −${formatLKR(exchangeFrom.credit)}\n\nNet refund to customer: ${formatLKR(Math.abs(netDiff))}`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Refund Cash', onPress: () => completeMobileExchange('cash', 'cash', 0) },
+            { text: 'Refund Card', onPress: () => completeMobileExchange('cash', 'card', 0) },
+          ]
+        )
+      } else {
+        Alert.alert(
+          'Complete Even Exchange',
+          `New items exactly match exchange credit (${formatLKR(exchangeFrom.credit)}). Complete exchange?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Complete Exchange', onPress: () => completeMobileExchange('cash', 'cash', 0) },
+          ]
+        )
+      }
+      return
+    }
     setTenderVisible(true)
   }
 
@@ -1013,7 +1124,7 @@ export default function PosScreen() {
             {canReturn ? (
               <IconButton
                 name="return-down-back-outline"
-                label="Return"
+                label="Return / Exchange"
                 onPress={() => {
                   setQuery('')
                   setReturnQuery('INV-')
@@ -1047,10 +1158,10 @@ export default function PosScreen() {
                 setReturnQuery('INV-')
               }}
               accessibilityRole="button"
-              accessibilityLabel="Return"
+              accessibilityLabel="Return / Exchange"
             >
               <Ionicons name="return-down-back-outline" size={18} color={THEME.colors.text} />
-              <Text style={styles.moreMenuText}>Return</Text>
+              <Text style={styles.moreMenuText}>Return / Exchange</Text>
             </Pressable>
           ) : null}
           <Pressable style={styles.moreMenuItem} onPress={() => { setMoreMenuOpen(false); router.push('/shifts') }} accessibilityRole="button" accessibilityLabel="Shift">
@@ -1075,6 +1186,42 @@ export default function PosScreen() {
         <View style={styles.offlineModeBanner}>
           <Ionicons name="cloud-offline-outline" size={14} color={THEME.colors.onSecondaryContainer} />
           <Text style={styles.offlineModeText}>Offline mode — sales are saved and will sync</Text>
+        </View>
+      ) : null}
+
+      {exchangeFrom ? (
+        <View style={styles.exchangeBanner}>
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={styles.exchangeBadge}>
+                <Text style={styles.exchangeBadgeText}>EXCHANGE</Text>
+              </View>
+              <Text style={styles.exchangeInvoiceText} numberOfLines={1}>
+                {exchangeFrom.sale.invoiceNo}
+              </Text>
+            </View>
+            <Text style={styles.exchangeCreditText}>
+              Credit: {formatLKR(exchangeFrom.credit)}
+              {cart.length > 0 ? (
+                ` · ${
+                  cartTotalPayable - exchangeFrom.credit > 0
+                    ? `To Collect: ${formatLKR(cartTotalPayable - exchangeFrom.credit)}`
+                    : cartTotalPayable - exchangeFrom.credit < 0
+                    ? `To Refund: ${formatLKR(exchangeFrom.credit - cartTotalPayable)}`
+                    : 'Even Exchange'
+                }`
+              ) : ''}
+            </Text>
+          </View>
+          <Pressable
+            style={styles.exchangeCancelBtn}
+            onPress={() => {
+              setExchangeFrom(null)
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => undefined)
+            }}
+          >
+            <Text style={styles.exchangeCancelText}>Cancel</Text>
+          </Pressable>
         </View>
       ) : null}
 
@@ -1397,11 +1544,30 @@ export default function PosScreen() {
                   <Ionicons name="trash-outline" size={20} color={THEME.colors.error} />
                   <Text style={[styles.iconActionLabel, { color: THEME.colors.error }]}>Clear</Text>
                 </Pressable>
-                <Pressable style={({ pressed }) => [styles.chargeBtn, pressed && { opacity: 0.9 }]} onPress={openTender} accessibilityRole="button" accessibilityLabel={`Pay ${formatLKR(cartTotalPayable)}`}>
+                <Pressable
+                  style={({ pressed }) => [styles.chargeBtn, pressed && { opacity: 0.9 }, exchangeFrom && { backgroundColor: '#D97706' }]}
+                  onPress={openTender}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    exchangeFrom
+                      ? `Exchange ${formatLKR(cartTotalPayable - exchangeFrom.credit)}`
+                      : `Pay ${formatLKR(cartTotalPayable)}`
+                  }
+                >
                   <View style={styles.chargeCol}>
-                    <Text style={styles.chargeSub}>Pay</Text>
+                    <Text style={styles.chargeSub}>
+                      {exchangeFrom
+                        ? cartTotalPayable - exchangeFrom.credit > 0
+                          ? 'Collect Diff'
+                          : cartTotalPayable - exchangeFrom.credit < 0
+                          ? 'Refund Diff'
+                          : 'Even Exchange'
+                        : 'Pay'}
+                    </Text>
                     <Text style={styles.chargeVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
-                      {formatLKR(cartTotalPayable)}
+                      {exchangeFrom
+                        ? formatLKR(Math.abs(cartTotalPayable - exchangeFrom.credit))
+                        : formatLKR(cartTotalPayable)}
                     </Text>
                   </View>
                   <Ionicons name="arrow-forward-circle" size={30} color="#FFF" />
@@ -1588,6 +1754,7 @@ export default function PosScreen() {
             fetchItems(1, false)
             runCatalogSync()
           }}
+          onExchange={handleExchangeStart}
         />
       )}
 
@@ -1805,4 +1972,51 @@ const styles = StyleSheet.create({
   chargeCol: { flex: 1, justifyContent: 'center', minWidth: 0 },
   chargeSub: { fontSize: 11, fontWeight: '800', color: 'rgba(255,255,255,0.85)', textTransform: 'uppercase', letterSpacing: 0.6 },
   chargeVal: { fontSize: 20, fontWeight: '900', color: '#FFFFFF' },
+  exchangeBanner: {
+    backgroundColor: '#FEF3C7',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F59E0B',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  exchangeBadge: {
+    backgroundColor: '#D97706',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  exchangeBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  exchangeInvoiceText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#78350F',
+  },
+  exchangeCreditText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#92400E',
+    marginTop: 2,
+  },
+  exchangeCancelBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#FDE68A',
+    borderWidth: 1,
+    borderColor: '#D97706',
+  },
+  exchangeCancelText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#92400E',
+  },
 })
