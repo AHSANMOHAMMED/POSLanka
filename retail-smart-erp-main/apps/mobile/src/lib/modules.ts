@@ -48,7 +48,7 @@ export const FEATURES: AppFeature[] = [
   { key: 'sales', title: 'Sales history', subtitle: 'Receipts & invoices', icon: 'receipt-outline', tone: 'primary', anyOf: ['createSales', 'manageSales', 'viewReports'], route: '/sales', group: 'sell' },
   { key: 'customers', title: 'Customers', subtitle: 'Balances & contacts', icon: 'people-circle-outline', tone: 'primary', anyOf: ['manageCustomers', 'createSales'], route: '/customers', group: 'sell' },
   { key: 'quotation-new', title: 'New quotation', subtitle: 'Create a quote', icon: 'document-attach-outline', tone: 'primary', anyOf: ['createSales'], route: '/quotation-new', flag: 'quotation', group: 'modules' },
-  { key: 'settings', title: 'Business settings', subtitle: 'Name, phone, address', icon: 'settings-outline', tone: 'muted', anyOf: ['manageSettings', 'manageUsers'], route: '/settings', group: 'manage' },
+  { key: 'settings', title: 'Business settings', subtitle: 'Profile, staff, receipts & tools', icon: 'settings-outline', tone: 'muted', anyOf: ['manageSettings', 'manageUsers'], route: '/settings', group: 'manage' },
   { key: 'money', title: 'Money out', subtitle: 'Expenses & cheques', icon: 'cash-outline', tone: 'warn', anyOf: ['createSales'], route: '/money', group: 'sell' },
 
   // Stock

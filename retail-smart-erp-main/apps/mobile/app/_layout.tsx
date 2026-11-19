@@ -45,6 +45,7 @@ export default function RootLayout() {
         <Stack.Screen name="labels" />
         <Stack.Screen name="money" />
         <Stack.Screen name="sales" />
+        <Stack.Screen name="settings" />
         <Stack.Screen name="module/[key]" />
       </Stack>
     </SafeAreaProvider>
