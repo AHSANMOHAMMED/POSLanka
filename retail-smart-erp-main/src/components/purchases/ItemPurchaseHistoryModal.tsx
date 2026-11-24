@@ -38,13 +38,16 @@ export function ItemPurchaseHistoryModal({
 
   useEffect(() => {
     if (!isOpen || !itemId) {
-      setRecords([])
-      setError(null)
       return
     }
 
-    setLoading(true)
-    setError(null)
+    let cancelled = false
+    Promise.resolve().then(() => {
+      if (!cancelled) {
+        setLoading(true)
+        setError(null)
+      }
+    })
 
     fetch(`/api/items/${itemId}/supplier-costs`)
       .then(async (res) => {
@@ -54,13 +57,21 @@ export function ItemPurchaseHistoryModal({
         return res.json()
       })
       .then((data) => {
-        setRecords(Array.isArray(data) ? data : [])
+        if (!cancelled) setRecords(Array.isArray(data) ? data : [])
       })
       .catch((err) => {
-        console.error('Error fetching purchase history:', err)
-        setError('Could not load purchase history for this item.')
+        if (!cancelled) {
+          console.error('Error fetching purchase history:', err)
+          setError('Could not load purchase history for this item.')
+        }
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [isOpen, itemId])
 
   return (

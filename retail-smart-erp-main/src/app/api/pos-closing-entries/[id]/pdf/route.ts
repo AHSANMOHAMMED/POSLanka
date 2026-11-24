@@ -47,7 +47,12 @@ export async function GET(
         where: eq(tenants.id, session.user.tenantId),
       })
 
-      const z = (closing.reportData as Record<string, any>) || {}
+      const z = (closing.reportData as {
+        cashOutAmount?: number
+        retainedFloatAmount?: number
+        cashMovements?: { paidOut?: number }
+        externalBills?: unknown[]
+      }) || {}
       const cashRec = closing.reconciliation.find(r => r.paymentMethod === 'cash')
       const openingCash = cashRec ? parseFloat(cashRec.openingAmount) : 0
       const actualCash = cashRec ? parseFloat(cashRec.actualAmount) : 0

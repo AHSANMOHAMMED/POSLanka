@@ -105,7 +105,7 @@ export function PaymentMethodReconciliationTable({
           <span>Understanding Cash & Tender Variance:</span>
         </div>
         <p>
-          • <strong>Expected Amount</strong> = Starting Balance + Today's Sales. (If your shift started with 0 and you sold Rs. 5,000, Expected is Rs. 5,000).
+          • <strong>Expected Amount</strong> = Starting Balance + Today&apos;s Sales. (If your shift started with 0 and you sold Rs. 5,000, Expected is Rs. 5,000).
         </p>
         <p>
           • <strong>Actual Counted</strong> = Physical money counted in your drawer or on your card terminal.

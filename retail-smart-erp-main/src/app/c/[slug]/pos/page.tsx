@@ -2179,7 +2179,7 @@ export default function POSPage() {
         ...(cartItem.uom ? { uom: cartItem.uom, uomFactor: factor } : {}),
         ...(cartItem.sizeSpec && adjustedQty === cartItem.quantity ? { sizeSpec: cartItem.sizeSpec } : {}),
         sku: cartItem.sku ?? item?.sku ?? null,
-        taxTemplateId: (cartItem as any).taxTemplateId ?? item?.taxTemplateId ?? null,
+        taxTemplateId: (cartItem as { taxTemplateId?: string | null }).taxTemplateId ?? item?.taxTemplateId ?? null,
       }))
     }
 

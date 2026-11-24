@@ -452,7 +452,7 @@ export function ShiftCloseModal({ isOpen, shift, onClose, onShiftClosed }: Shift
                 onChange={(e) => setCarryForwardFloat(e.target.checked)}
                 className="rounded text-blue-600 focus:ring-blue-500 w-3.5 h-3.5"
               />
-              Auto-fill next morning's shift opening float with this retained cash ({formatCurrency(Math.max(0, (actualAmounts['cash'] || 0) - cashOutHandover))})
+              Auto-fill next morning&apos;s shift opening float with this retained cash ({formatCurrency(Math.max(0, (actualAmounts['cash'] || 0) - cashOutHandover))})
             </label>
           </div>
 
