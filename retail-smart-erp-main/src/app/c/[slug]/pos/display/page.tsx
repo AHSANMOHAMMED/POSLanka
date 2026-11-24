@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from 'react'
 import { useParams } from 'next/navigation'
-import { Store, ShoppingBag, CheckCircle2, CreditCard, Wifi, WifiOff, Maximize2, Sparkles, HeartHandshake } from 'lucide-react'
+import { Store, ShoppingBag, CheckCircle2, CreditCard, WifiOff, Maximize2, Sparkles, HeartHandshake } from 'lucide-react'
 import { useCompanyOptional } from '@/components/providers/CompanyContextProvider'
 import { useFeatureFlags } from '@/hooks/useFeatureFlag'
 import {

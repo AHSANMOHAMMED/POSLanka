@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Modal } from '@/components/ui/modal'
 import { toast } from '@/components/ui/toast'
-import { Loader2, Printer, FileText, MessageCircle, Plus, Trash2, ArrowRight } from 'lucide-react'
+import { Loader2, Printer, FileText, MessageCircle, Plus, Trash2 } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils/currency'
 import { usePrinter, closingToZReportInput, type ZReportSource } from '@/hooks/usePrinter'
 import { fetchTenantInfo } from '@/lib/print/receipt-loader'

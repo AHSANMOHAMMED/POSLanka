@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { notInRecycleBin } from '@/lib/recycle-bin'
 import { authWithCompany } from '@/lib/auth'
-import { requirePermission, requireAnyPermission, requireModule } from '@/lib/auth/roles'
+import { requireAnyPermission, requireModule } from '@/lib/auth/roles'
 import { canViewCostPrices, redactItemCost } from '@/lib/auth/field-access'
 import { withTenant, withTenantTransaction } from '@/lib/db'
 import { items, users, workOrderParts, workOrders, heldSales, insuranceEstimates, insuranceEstimateItems, warehouseStock, warehouses, stockMovements } from '@/lib/db/schema'

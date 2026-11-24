@@ -1688,7 +1688,6 @@ export default function POSPage() {
         }
       }
     } catch { /* ignore */ }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.slug])
 
   // Persist draft cart across refresh/locks
@@ -2264,93 +2263,8 @@ export default function POSPage() {
     return null
   }
 
-  async function loadSaleForReturn(listed: SaleForReturn) {
-    // Always refresh through the lookup endpoint: remaining quantities + server refund prices
-    let sale: SaleForReturn = listed
-    try {
-      const res = await fetch(`/api/sales/lookup?code=${encodeURIComponent(listed.invoiceNo)}`)
-      if (res.ok) {
-        const found = await res.json()
-        if (found?.sale) sale = found.sale
-      }
-    } catch {
-      // fall back to the listed sale (server still validates everything)
-    }
-
-    // Filter out gift card items — they are non-returnable — and fully returned lines
-    const giftCount = sale.items.filter(item => item.isGiftCard || item.item?.isGiftCard).length
-    const returnableItems = sale.items.filter(item =>
-      !(item.isGiftCard || item.item?.isGiftCard)
-      && parseFloat(item.quantity) > 0
-      && (item.remainingQuantity === undefined || item.remainingQuantity > 0))
-
-    if (returnableItems.length === 0) {
-      toast.error(giftCount > 0 && giftCount === sale.items.length
-        ? 'This sale contains only gift card items which cannot be returned'
-        : `Invoice ${sale.invoiceNo} has already been fully returned`)
-      return
-    }
-
-    setCart([])
-    setIsReturnMode(true)
-    setReturnAgainstSale(sale)
-    if (sale.customer) setSelectedCustomer(sale.customer)
-    // Default refund: back to the original payment method(s)
-    {
-      const paid = Object.entries(sale.paidByMethod || {})
-        .filter(([m, amt]) => amt > 0 && !['credit', 'gift_card', 'loyalty'].includes(m))
-      setRefundMethod(paid.length > 1 ? 'original' : paid[0]?.[0] === 'card' ? 'card' : 'cash')
-    }
-
-    if (giftCount > 0) {
-      toast.warning(`${giftCount} gift card item(s) excluded from return — gift cards are non-returnable`)
-    }
-
-    const returnItems: CartItem[] = []
-    for (const item of returnableItems) {
-      const localItem = item.itemId ? items.find(i => i.id === item.itemId) : null
-      const remaining = item.remainingQuantity ?? Math.abs(parseFloat(item.quantity))
-      const unitPrice = item.refundUnitAmount ?? (Math.abs(parseFloat(item.total)) / Math.abs(parseFloat(item.quantity) || 1))
-      const serialIds = item.remainingSerialNumberIds ?? (item.serialNumberIds as string[] | undefined) ?? []
-      if (serialIds.length) {
-        for (let i = 0; i < Math.min(serialIds.length, remaining); i++) {
-          returnItems.push({
-            cartLineId: `return-${item.id}-${Date.now()}-${i}`,
-            itemId: item.itemId ?? '',
-            name: item.itemName,
-            quantity: -1,
-            unitPrice,
-            total: -unitPrice,
-            serialNumberIds: [serialIds[i]],
-            originalSaleItemId: item.id,
-            maxReturnQuantity: 1,
-            sku: localItem?.sku ?? null,
-          })
-        }
-      } else {
-        returnItems.push({
-          cartLineId: `return-${item.id}-${Date.now()}-0`,
-          itemId: item.itemId ?? '',
-          name: item.itemName,
-          quantity: -remaining,
-          unitPrice,
-          total: -Math.round(remaining * unitPrice * 100) / 100,
-          originalSaleItemId: item.id,
-          maxReturnQuantity: remaining,
-          sku: localItem?.sku ?? null,
-        })
-      }
-    }
-
-    setCart(returnItems)
-    setShowReturnLookupModal(false)
-    setReturnSearchQuery('')
-    setReturnSearchResults([])
-    toast.info(`Loaded invoice ${sale.invoiceNo} for return`)
-  }
-
   /** Confirm Return & Refund from modal: populates cart with negative lines for refund */
-  function handleConfirmReturn(sale: SaleForReturn | null, selectedLines: SelectedReturnLine[], reason?: string) {
+  function handleConfirmReturn(sale: SaleForReturn | null, selectedLines: SelectedReturnLine[], _reason?: string) {
     if (selectedLines.length === 0) {
       toast.error('Please select at least one item to return')
       return
@@ -3912,12 +3826,12 @@ export default function POSPage() {
     }
   }
 
-  const handleFastCash = useCallback(async () => {
+  async function handleFastCash() {
     if (cart.length === 0 || processing || isReturnMode || exchangeFrom) return
     const tip = config.enableTips ? tipAmount : 0
     const payableTotal = Math.max(0, total - loyaltyRedeemValue + tip)
     await completeSale({ paymentMethod: 'cash', amountPaid: payableTotal })
-  }, [cart.length, processing, isReturnMode, exchangeFrom, config.enableTips, tipAmount, total, loyaltyRedeemValue, completeSale])
+  }
 
   // ─── Receipt Printing ─────────────────────────────────────────
 

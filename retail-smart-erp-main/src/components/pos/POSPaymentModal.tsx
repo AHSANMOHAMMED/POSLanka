@@ -310,7 +310,7 @@ export function POSPaymentModal({
     }
     window.addEventListener('keydown', onMethodKey)
     return () => window.removeEventListener('keydown', onMethodKey)
-  }, [isOpen, processing, isReturnMode, enabledRefundMethods, enabledPaymentMethods, selectedCustomer, setRefundMethod, setPaymentMethod, setAmountPaid, cashCardPaid, remainingAfterCredit, hirePurchase, multi])
+  }, [isOpen, processing, effectiveReturnMode, enabledRefundMethods, enabledPaymentMethods, selectedCustomer, setRefundMethod, setPaymentMethod, setAmountPaid, cashCardPaid, remainingAfterCredit, hirePurchase, multi])
 
   function toggleHirePurchase() {
     if (!setHirePurchase) return

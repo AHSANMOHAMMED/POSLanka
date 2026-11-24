@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo } from 'react'
 import {
-  Search, X, Package, Loader2, ArrowLeft, CheckCircle2,
+  Search, X, Package, Loader2, ArrowLeft,
   RefreshCw, RotateCcw, AlertTriangle, ChevronRight, Plus, Minus
 } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
@@ -522,6 +522,13 @@ export function ReturnLookupModal({
                   inputSize="md"
                   autoFocus
                 />
+
+                {manualSearching && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <Loader2 size={14} className="animate-spin" />
+                    Searching items...
+                  </div>
+                )}
 
                 {manualSearchResults.length > 0 && (
                   <div className="mt-2 border border-gray-200 dark:border-gray-700 rounded-xl max-h-48 overflow-y-auto bg-white dark:bg-gray-900 shadow-lg divide-y divide-gray-100 dark:divide-gray-800">

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { withTenant } from '@/lib/db'
-import { posClosingEntries, posOpeningEntries, tenants } from '@/lib/db/schema'
+import { posClosingEntries, tenants } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
 import { logError } from '@/lib/ai/error-logger'
 import { validateParams } from '@/lib/validation/helpers'
@@ -50,8 +50,10 @@ export async function GET(
       const z = (closing.reportData as {
         cashOutAmount?: number
         retainedFloatAmount?: number
-        cashMovements?: { paidOut?: number }
-        externalBills?: unknown[]
+        tax?: { total?: number }
+        discounts?: { total?: number }
+        cashMovements?: { paidIn?: number; paidOut?: number }
+        externalBills?: Array<{ billNo: string; description: string; amount: number; paymentMethod: string }>
       }) || {}
       const cashRec = closing.reconciliation.find(r => r.paymentMethod === 'cash')
       const openingCash = cashRec ? parseFloat(cashRec.openingAmount) : 0

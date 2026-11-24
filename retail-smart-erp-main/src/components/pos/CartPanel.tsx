@@ -1,6 +1,6 @@
 'use client'
 
-import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText, MessageCircle, ScanBarcode, Zap } from 'lucide-react'
+import { Plus, Minus, Trash2, ShoppingBag, Pause, Clock, ChevronRight, User, Car, Tag, Star, Heart, FileText, MessageCircle, Zap } from 'lucide-react'
 import { normalizePhoneForWhatsApp } from '@/lib/whatsapp'
 import { CreatableSelect } from '@/components/ui/creatable-select'
 import { FormInput } from '@/components/ui/form-elements'
