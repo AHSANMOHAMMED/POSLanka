@@ -8,6 +8,7 @@ import { OrderTypeSelector } from './OrderTypeSelector'
 import { TableSelector } from './TableSelector'
 import { useTerminology } from '@/hooks/useTerminology'
 import { useCurrency } from '@/hooks/useCurrency'
+import { useI18n } from '@/hooks/useI18n'
 import type { CartItem, Customer, Vehicle, HeldSale, SaleForReturn, LoyaltyProgram, POSBusinessConfig, RestaurantTable } from './types'
 import { useEffect, useRef } from 'react'
 import { Kbd } from './Kbd'
@@ -175,6 +176,7 @@ export function CartPanel({
 }: CartPanelProps) {
   const terms = useTerminology()
   const { currency: currencyCode } = useCurrency()
+  const { locale, t } = useI18n()
   const listRef = useRef<HTMLDivElement>(null)
 
   // Keep the selected line in view
@@ -191,7 +193,7 @@ export function CartPanel({
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className={`text-xl min-[1920px]:text-2xl font-bold ${isReturnMode ? 'text-red-700' : 'text-gray-900 dark:text-white'}`}>
-              {isReturnMode ? 'Return' : terms.currentSale}
+              {isReturnMode ? t('pos.returnMode', 'Return') : locale === 'en' ? terms.currentSale : t('pos.cart', terms.currentSale)}
             </h2>
             {isReturnMode && returnAgainstSale && (
               <p className="text-sm text-red-600">Invoice: {returnAgainstSale.invoiceNo}</p>
@@ -230,7 +232,7 @@ export function CartPanel({
                 value={selectedCustomer?.id || ''}
                 onChange={(value) => onCustomerChange(customers.find(c => c.id === value) || null)}
                 onCreateNew={(name) => onCreateCustomer(name)}
-                placeholder={terms.walkInCustomer}
+                placeholder={locale === 'en' ? terms.walkInCustomer : t('pos.walkInCustomer', terms.walkInCustomer)}
                 createLabel="Add customer"
               />
             </div>
@@ -649,7 +651,7 @@ export function CartPanel({
         {/* Totals */}
         <div className="px-5 py-4 space-y-2">
           <div className="flex justify-between text-gray-600">
-            <span>Items ({itemCount})</span>
+            <span>{t('pos.itemsLabel', 'Items')} ({itemCount})</span>
             <span>{currencyCode} {Math.abs(subtotal).toFixed(2)}</span>
           </div>
           {/* H5: cart promotions + coupon */}
@@ -661,7 +663,7 @@ export function CartPanel({
           ))}
           {!isReturnMode && onCouponChange && (
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-gray-500">Coupon</span>
+              <span className="text-gray-500">{t('pos.coupon', 'Coupon')}</span>
               <input
                 aria-label="Coupon code"
                 key={`coupon-${couponCode || ''}`}
@@ -684,7 +686,7 @@ export function CartPanel({
             >
               <span className="flex items-center gap-1">
                 <Tag size={14} />
-                Discount
+                {t('pos.discount', 'Discount')}
                 {allowDiscount && <Kbd className="ml-0.5">F5</Kbd>}
                 {saleDiscount.value > 0 && (
                   <span className="text-xs">
@@ -701,7 +703,7 @@ export function CartPanel({
           {tax > 0 && (
             <div className="flex justify-between text-gray-600">
               <span>
-                Tax
+                {t('pos.tax', 'Tax')}
                 {isTaxExempt && <span className="text-xs text-amber-600 ml-1">Exempt</span>}
               </span>
               <span>{currencyCode} {tax.toFixed(2)}</span>
@@ -712,7 +714,7 @@ export function CartPanel({
             <div className="flex justify-between items-center text-gray-600">
               <span className="flex items-center gap-1">
                 <Heart size={14} />
-                Tip
+                {t('pos.tip', 'Tip')}
               </span>
               <FormInput
                 type="number"
@@ -735,20 +737,20 @@ export function CartPanel({
             <div className="flex justify-between text-purple-600">
               <span className="flex items-center gap-1">
                 <Star size={14} />
-                Points ({loyaltyRedeemPoints} pts)
+                {t('pos.points', 'Points')} ({loyaltyRedeemPoints} pts)
               </span>
               <span>-{currencyCode} {loyaltyRedeemValue.toFixed(2)}</span>
             </div>
           )}
           {exchangeCredit !== undefined && exchangeCredit > 0 && (
             <div className="flex justify-between text-amber-600 dark:text-amber-400 font-bold text-sm">
-              <span>Exchange Credit ({exchangeInvoiceNo || 'Return'})</span>
+              <span>{t('pos.exchange', 'Exchange Credit')} ({exchangeInvoiceNo || 'Return'})</span>
               <span>-{currencyCode} {exchangeCredit.toFixed(2)}</span>
             </div>
           )}
           <div className={`flex justify-between items-baseline gap-2 text-2xl font-black pt-3 border-t border-slate-200 ${isReturnMode ? 'text-red-700' : 'text-slate-900 dark:text-white font-mono'}`}>
             <span className="text-sm min-[1920px]:text-base font-sans font-bold text-slate-500 uppercase tracking-wider">
-              {isReturnMode ? 'Refund Due' : exchangeCredit !== undefined && exchangeCredit > 0 ? (total - exchangeCredit >= 0 ? 'To Collect' : 'To Refund') : 'Total Payable'}
+              {isReturnMode ? t('pos.refundDue', 'Refund Due') : exchangeCredit !== undefined && exchangeCredit > 0 ? (total - exchangeCredit >= 0 ? t('pos.toCollect', 'To Collect') : t('pos.toRefund', 'To Refund')) : t('pos.totalPayable', 'Total Payable')}
             </span>
             <span className={`text-2xl min-[1920px]:text-3xl min-[2560px]:text-4xl font-mono font-black break-all text-right ${isReturnMode ? 'text-red-600' : exchangeCredit && total - exchangeCredit < 0 ? 'text-emerald-600' : 'theme-text-primary'}`}>
               {currencyCode} {Math.abs(isReturnMode ? total : exchangeCredit ? (total - exchangeCredit) : Math.max(0, total - loyaltyRedeemValue + (config.enableTips ? (tipAmount || 0) : 0))).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -797,7 +799,7 @@ export function CartPanel({
               className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold shadow-md hover:shadow-lg transition-all active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2"
             >
               <Zap size={18} className="fill-current" />
-              <span>Fast Bill (Exact Cash)</span>
+              <span>{t('pos.fastBill', 'Fast Bill (Exact Cash)')}</span>
               <Kbd tone="dark">Alt+F</Kbd>
             </button>
           </div>
@@ -811,7 +813,7 @@ export function CartPanel({
             title="New sale / clear cart (Ctrl+Del or Alt+N)"
             className="py-3.5 min-[1920px]:py-4 bg-slate-100 text-slate-700 rounded-xl font-bold hover:bg-slate-200 transition-colors disabled:opacity-50 flex flex-col items-center justify-center leading-tight"
           >
-            Clear
+            {t('pos.clear', 'Clear')}
             <Kbd className="mt-0.5">Ctrl+Del</Kbd>
           </button>
           {!isReturnMode && (
@@ -822,7 +824,7 @@ export function CartPanel({
               className="py-3.5 min-[1920px]:py-4 bg-amber-50 text-amber-800 border border-amber-200 rounded-xl font-bold hover:bg-amber-100 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5 flex-wrap"
             >
               <Pause size={17} />
-              Hold
+              {t('pos.hold', 'Hold')}
               <Kbd>F2</Kbd>
             </button>
           )}
@@ -837,14 +839,14 @@ export function CartPanel({
             }`}
           >
             {isReturnMode
-              ? 'Process Refund'
+              ? t('pos.processRefund', 'Process Refund')
               : exchangeCredit !== undefined && exchangeCredit > 0
               ? total - exchangeCredit > 0
-                ? `Collect Diff (${currencyCode} ${(total - exchangeCredit).toFixed(2)}) →`
+                ? `${t('pos.collect', 'Collect')} (${currencyCode} ${(total - exchangeCredit).toFixed(2)}) →`
                 : total - exchangeCredit < 0
-                ? `Refund Diff (${currencyCode} ${Math.abs(total - exchangeCredit).toFixed(2)}) →`
-                : 'Even Exchange (0.00) →'
-              : `${terms.payNow} →`}
+                ? `${t('pos.refund', 'Refund')} (${currencyCode} ${Math.abs(total - exchangeCredit).toFixed(2)}) →`
+                : `${t('pos.evenExchange', 'Even Exchange')} (0.00) →`
+              : `${locale === 'en' ? terms.payNow : t('pos.pay', terms.payNow)} →`}
             <Kbd tone="dark">F9</Kbd>
           </button>
         </div>

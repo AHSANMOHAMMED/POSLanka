@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { X, Loader2, Wallet, Gift, Banknote, CreditCard, Building2, Smartphone, Search, CheckCircle, AlertTriangle, RotateCcw, FileText, CalendarClock, Plus, Trash2, Calculator, User, UserCheck, Check, Sparkles, ArrowRight } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
+import { useI18n } from '@/hooks/useI18n'
 import { getCurrencyNotes } from '@/lib/utils/countries'
 import { roundCurrency } from '@/lib/utils/currency'
 import { settleTenders } from '@/lib/pos/tenders'
@@ -168,6 +169,7 @@ export function POSPaymentModal({
 
   const hirePurchase = !effectiveReturnMode && !!setHirePurchase && hirePurchaseProp
   const { currency: currencyCode } = useCurrency()
+  const { t } = useI18n()
   const multi = !effectiveReturnMode && !hirePurchase && extraTenders.length > 0
   // Line the number pad / quick cash buttons type into: 0 = first payment, n = extraTenders[n - 1]
   const [activeLine, setActiveLine] = useState(0)
@@ -506,7 +508,7 @@ export function POSPaymentModal({
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <h2 className={`text-xl font-bold ${effectiveReturnMode ? 'text-red-700 dark:text-red-300' : 'text-white'}`}>
-                {isReturnMode ? 'Process Refund' : isExchangeRefund ? 'Exchange Refund' : isEvenExchange ? 'Even Exchange' : 'Payment'}
+                {isReturnMode ? t('pos.processRefund', 'Process Refund') : isExchangeRefund ? t('pos.exchangeRefund', 'Exchange Refund') : isEvenExchange ? t('pos.evenExchange', 'Even Exchange') : t('pos.payment', 'Payment')}
               </h2>
               {selectedCustomer && <p className={`text-sm truncate ${effectiveReturnMode ? 'text-red-600' : 'text-white/80'}`}>{selectedCustomer.name}{selectedCustomer.phone ? ` · ${selectedCustomer.phone}` : ''}</p>}
             </div>
@@ -1356,21 +1358,21 @@ export function POSPaymentModal({
         <div className="px-5 sm:px-6 py-4 bg-gray-50 dark:bg-gray-950/60 border-t border-gray-100 dark:border-gray-800 flex gap-3">
           <button onClick={onClose} disabled={processing}
             className="flex-1 py-3.5 border-2 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 rounded-xl font-semibold hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
-            Cancel
+            {t('common.cancel', 'Cancel')}
           </button>
           <button onClick={onCompleteSale} disabled={completeDisabled}
             className={`flex-[2] py-3.5 text-white rounded-xl font-bold text-base shadow-lg transition-all disabled:opacity-50 ${
               effectiveReturnMode ? 'bg-gradient-to-r from-red-600 to-red-500' : balanceDue > 0 && !hirePurchase ? 'bg-gradient-to-r from-amber-500 to-orange-500' : 'theme-btn-primary'
             }`}>
             {processing ? (
-              <span className="flex items-center justify-center gap-2"><Loader2 className="animate-spin" size={20} /> Processing...</span>
-            ) : isReturnMode ? 'Process Refund'
-              : isExchangeRefund ? `Refund ${currencyCode} ${money(exchangeRefundAmount)} & Complete Exchange`
-              : isEvenExchange ? 'Complete Even Exchange — Enter'
+              <span className="flex items-center justify-center gap-2"><Loader2 className="animate-spin" size={20} /> {t('common.processing', 'Processing...')}</span>
+            ) : isReturnMode ? t('pos.processRefund', 'Process Refund')
+              : isExchangeRefund ? `${t('pos.refund', 'Refund')} ${currencyCode} ${money(exchangeRefundAmount)} & Complete`
+              : isEvenExchange ? `${t('pos.completeEvenExchange', 'Complete Even Exchange')} — Enter`
               : hirePurchase ? 'Complete & set up plan'
               : balanceDue > 0 ? `Complete (balance ${money(balanceDue)}) — Enter`
-              : change > 0 ? `Complete · Change ${money(change)} — Enter`
-              : 'Complete Sale — Enter'}
+              : change > 0 ? `Complete · ${t('pos.change', 'Change')} ${money(change)} — Enter`
+              : `${t('pos.completeSale', 'Complete Sale')} — Enter`}
           </button>
         </div>
       </div>

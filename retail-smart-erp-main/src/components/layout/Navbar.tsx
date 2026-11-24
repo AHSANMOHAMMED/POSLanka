@@ -295,7 +295,6 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
 
         {/* Company switcher (desktop only) */}
         <div className="hidden lg:flex items-center">
-          <LanguageSwitcher />
           <CompanySwitcher currentSlug={companySlug} />
         </div>
 
@@ -312,7 +311,8 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
       <div className="flex-1" />
 
       {/* Right section */}
-      <div className="flex items-center gap-0.5 shrink-0 ml-auto px-3">
+      <div className="flex items-center gap-1.5 shrink-0 ml-auto px-3">
+        <LanguageSwitcher className="text-xs bg-white/10 hover:bg-white/15 border border-white/20 text-white rounded px-2 py-1 font-medium cursor-pointer focus:outline-none [&>option]:text-gray-900 [&>option]:bg-white" />
         {/* Search - Expanded overlay on compact mode */}
         {isCompact && searchExpanded ? (
           <div className="absolute top-0 left-0 right-0 h-12 flex items-center px-3 z-[60]" style={{ backgroundColor: 'var(--navbar-bg)' }}>

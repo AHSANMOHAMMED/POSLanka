@@ -48,7 +48,7 @@ import { SerialPickerModal } from '@/components/pos/SerialPickerModal'
 import { ModifierPickerModal } from '@/components/pos/ModifierPickerModal'
 import { PrinterSettingsModal } from '@/components/pos/PrinterSettingsModal'
 import { CameraScanModal } from '@/components/pos/CameraScanModal'
-import { LanguageSwitcher } from '@/components/layout/LanguageSwitcher'
+import { useI18n } from '@/hooks/useI18n'
 import type {
   Item,
   Category,
@@ -124,6 +124,7 @@ const RECEIPT_CODE_RE = /^(INV|RTN|OFF)-/i
 
 export default function POSPage() {
   const { currency: currencyCode } = useCurrency()
+  const { t } = useI18n()
   // Shift Management State (the shift's counter decides the till mode for a mall)
   const [activeShift, setActiveShift] = useState<ActiveShift | null>(null)
   const counterSegment = activeShift?.posProfile?.businessSegment ?? null
@@ -3950,19 +3951,19 @@ export default function POSPage() {
   const openModuleTab = (path: string) => { window.open(`/c/${params.slug}${path}`, '_blank', 'noopener') }
   const actionTiles: PosActionTile[] = [
     activeShift
-      ? { id: 'closeShift', label: `Close shift ${activeShift.entryNumber}`, icon: Power, shortcut: 'Alt+X', keywords: 'end day z report', tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('closeShift') }
-      : { id: 'openShift', label: 'Open shift', icon: Play, shortcut: 'Alt+O', keywords: 'start day', tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('openShift') },
-    { id: 'cashMovement', label: 'Cash in / out', icon: ArrowDownUp, shortcut: 'Alt+M', keywords: 'paid in paid out petty', disabledReason: noShift, run: () => runPosAction('cashMovement') },
-    { id: 'floatDrop', label: 'Float / safe drop', icon: Wallet, shortcut: 'F10', keywords: 'drawer cash', disabledReason: noShift, tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('floatDrop') },
-    { id: 'billsHistory', label: 'Bills history', icon: Clock, shortcut: 'Alt+B', keywords: 'recent sales receipts whatsapp', tone: 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400', run: () => runPosAction('billsHistory') },
-    { id: 'reprintLast', label: 'Reprint last bill', icon: Printer, shortcut: 'Alt+R', keywords: 'receipt print again', run: () => runPosAction('reprintLast') },
-    { id: 'fastBill', label: 'Fast bill (exact cash)', icon: Zap, shortcut: 'Alt+F', keywords: 'fast bill cash exact checkout instant quick', disabledReason: isReturnMode ? 'Not in return mode' : cart.length === 0 ? 'Cart is empty' : null, tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('fastBill') },
-    { id: 'priceCheck', label: 'Price & stock check', icon: Tag, shortcut: 'F7', keywords: 'inquiry lookup', tone: 'bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400', run: () => runPosAction('priceCheck') },
-    { id: 'returnSale', label: 'Return / Exchange', icon: RotateCcw, shortcut: 'F6', keywords: 'refund exchange return', disabledReason: isReturnMode ? 'Already in return mode' : null, tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('returnSale') },
-    { id: 'quickAdd', label: 'Quick add item', icon: PlusCircle, shortcut: 'F4', keywords: 'new item create', disabledReason: isReturnMode ? 'Not in return mode' : null, run: () => runPosAction('quickAdd') },
-    { id: 'recallHeld', label: heldSales.length ? `Recall held (${heldSales.length})` : 'Recall held sale', icon: History, shortcut: 'F3', keywords: 'hold parked', disabledReason: heldSales.length ? null : 'No held sales', tone: 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400', run: () => runPosAction('recallHeld') },
-    { id: 'saveQuotation', label: 'Save as quotation', icon: FileText, shortcut: 'Alt+Q', keywords: 'quote estimate proforma',
-      disabledReason: !quotationsEnabled ? 'Quotations are switched off' : isReturnMode || exchangeFrom ? 'Not during a return' : cart.length === 0 ? 'Cart is empty' : null,
+      ? { id: 'closeShift', label: `${t('pos.closeShift', 'Close shift')} ${activeShift.entryNumber}`, icon: Power, shortcut: 'Alt+X', keywords: 'end day z report', tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('closeShift') }
+      : { id: 'openShift', label: t('pos.openShift', 'Open shift'), icon: Play, shortcut: 'Alt+O', keywords: 'start day', tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('openShift') },
+    { id: 'cashMovement', label: t('pos.cashMovement', 'Cash in / out'), icon: ArrowDownUp, shortcut: 'Alt+M', keywords: 'paid in paid out petty', disabledReason: noShift, run: () => runPosAction('cashMovement') },
+    { id: 'floatDrop', label: t('pos.floatDrop', 'Float / safe drop'), icon: Wallet, shortcut: 'F10', keywords: 'drawer cash', disabledReason: noShift, tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('floatDrop') },
+    { id: 'billsHistory', label: t('pos.billsHistory', 'Bills history'), icon: Clock, shortcut: 'Alt+B', keywords: 'recent sales receipts whatsapp', tone: 'bg-blue-100 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400', run: () => runPosAction('billsHistory') },
+    { id: 'reprintLast', label: t('pos.reprintLast', 'Reprint last bill'), icon: Printer, shortcut: 'Alt+R', keywords: 'receipt print again', run: () => runPosAction('reprintLast') },
+    { id: 'fastBill', label: t('pos.fastBill', 'Fast bill (exact cash)'), icon: Zap, shortcut: 'Alt+F', keywords: 'fast bill cash exact checkout instant quick', disabledReason: isReturnMode ? 'Not in return mode' : cart.length === 0 ? t('pos.emptyCart', 'Cart is empty') : null, tone: 'bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400', run: () => runPosAction('fastBill') },
+    { id: 'priceCheck', label: t('pos.priceCheck', 'Price & stock check'), icon: Tag, shortcut: 'F7', keywords: 'inquiry lookup', tone: 'bg-indigo-100 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-400', run: () => runPosAction('priceCheck') },
+    { id: 'returnSale', label: t('pos.returnExchangeAction', 'Return / Exchange'), icon: RotateCcw, shortcut: 'F6', keywords: 'refund exchange return', disabledReason: isReturnMode ? 'Already in return mode' : null, tone: 'bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-400', run: () => runPosAction('returnSale') },
+    { id: 'quickAdd', label: t('items.quickAdd', 'Quick add item'), icon: PlusCircle, shortcut: 'F4', keywords: 'new item create', disabledReason: isReturnMode ? 'Not in return mode' : null, run: () => runPosAction('quickAdd') },
+    { id: 'recallHeld', label: heldSales.length ? `${t('pos.recallBill', 'Recall held')} (${heldSales.length})` : t('pos.recallBill', 'Recall held sale'), icon: History, shortcut: 'F3', keywords: 'hold parked', disabledReason: heldSales.length ? null : 'No held sales', tone: 'bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-400', run: () => runPosAction('recallHeld') },
+    { id: 'saveQuotation', label: t('pos.saveQuotation', 'Save as quotation'), icon: FileText, shortcut: 'Alt+Q', keywords: 'quote estimate proforma',
+      disabledReason: !quotationsEnabled ? 'Quotations are switched off' : isReturnMode || exchangeFrom ? 'Not during a return' : cart.length === 0 ? t('pos.emptyCart', 'Cart is empty') : null,
       tone: 'theme-badge-primary', run: () => runPosAction('saveQuotation') },
     { id: 'quotations', label: 'Quotations list', icon: Files, keywords: 'quote estimate', disabledReason: quotationsEnabled ? null : 'Quotations are switched off',
       run: () => { window.open(`/c/${params.slug}/quotations`, '_blank', 'noopener') } },
@@ -3997,10 +3998,10 @@ export default function POSPage() {
         <div className="w-full bg-gradient-to-r from-amber-500/15 via-amber-500/10 to-amber-500/5 border-b border-amber-300 dark:border-amber-700/60 px-4 py-2 flex items-center justify-between text-sm shrink-0">
           <div className="flex items-center gap-2.5 flex-wrap">
             <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-bold uppercase tracking-wider bg-amber-500 text-white shadow-sm">
-              Exchange Active
+              {t('pos.exchangeActive', 'Exchange Active')}
             </span>
             <span className="text-amber-950 dark:text-amber-100 font-medium">
-              Credit: <span className="font-mono font-bold text-amber-700 dark:text-amber-400">{currencyCode} {exchangeFrom.credit.toFixed(2)}</span>
+              {t('pos.credit', 'Credit')}: <span className="font-mono font-bold text-amber-700 dark:text-amber-400">{currencyCode} {exchangeFrom.credit.toFixed(2)}</span>
               {exchangeFrom.sale?.invoiceNo && (
                 <span className="text-xs text-amber-800/80 dark:text-amber-300/80 ml-1.5">
                   (Ref: {exchangeFrom.sale.invoiceNo})
@@ -4016,10 +4017,10 @@ export default function POSPage() {
                   : 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300'
               }`}>
                 {Math.round((total - exchangeFrom.credit) * 100) / 100 > 0
-                  ? `To Collect: ${currencyCode} ${(total - exchangeFrom.credit).toFixed(2)}`
+                  ? `${t('pos.toCollect', 'To Collect')}: ${currencyCode} ${(total - exchangeFrom.credit).toFixed(2)}`
                   : Math.round((total - exchangeFrom.credit) * 100) / 100 < 0
-                  ? `To Refund: ${currencyCode} ${(exchangeFrom.credit - total).toFixed(2)}`
-                  : 'Even Exchange (No balance)'}
+                  ? `${t('pos.toRefund', 'To Refund')}: ${currencyCode} ${(exchangeFrom.credit - total).toFixed(2)}`
+                  : `${t('pos.evenExchange', 'Even Exchange')} (0.00)`}
               </span>
             )}
           </div>
@@ -4028,7 +4029,7 @@ export default function POSPage() {
             onClick={() => { setExchangeFrom(null); toast.info('Exchange mode cancelled') }}
             className="text-amber-900 dark:text-amber-200 hover:text-red-600 dark:hover:text-red-400 font-medium text-xs flex items-center gap-1 px-2.5 py-1 rounded border border-amber-300 dark:border-amber-700 bg-white/60 dark:bg-gray-900/60 transition-colors"
           >
-            Cancel Exchange
+            {t('pos.cancelExchange', 'Cancel Exchange')}
           </button>
         </div>
       )}
@@ -4047,12 +4048,12 @@ export default function POSPage() {
           <span className="text-slate-600">•</span>
           <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded font-bold border ${online ? 'bg-emerald-950 text-emerald-400 border-emerald-800/80' : 'bg-red-950 text-red-300 border-red-800/80'}`}>
             <span className={`w-1.5 h-1.5 rounded-full ${online ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
-            {online ? 'Online' : 'Offline'}
+            {online ? t('pos.online', 'Online') : t('pos.offlineStatus', 'Offline')}
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="text-amber-400 font-bold">
-            {activeShift ? `Shift ${activeShift.entryNumber}` : 'No open shift'}
+            {activeShift ? `${t('pos.shift', 'Shift')} ${activeShift.entryNumber}` : t('pos.noOpenShift', 'No open shift')}
           </span>
           <button
             type="button"
@@ -4061,13 +4062,9 @@ export default function POSPage() {
             title="Actions: shift, cash in/out, bills history, reprint, price check, return, quotation … (Alt+A or Ctrl+K)"
           >
             <LayoutGrid className="w-3.5 h-3.5" />
-            Actions
+            {t('pos.actions', 'Actions')}
             <Kbd tone="dark">Alt+A</Kbd>
           </button>
-          <div className="flex items-center gap-1.5 bg-slate-800/90 px-2 py-0.5 rounded-lg border border-slate-700/80 text-slate-300" title="Language Switcher (English, Sinhala, Tamil)">
-            <span className="text-[10px] uppercase font-bold text-slate-400 hidden xl:inline">Lang</span>
-            <LanguageSwitcher className="text-xs bg-slate-900 border-slate-700 text-slate-200 rounded px-1.5 py-0.5 font-semibold focus:outline-none focus:ring-1 theme-ring-primary cursor-pointer" />
-          </div>
         </div>
       </div>
       {pharmacyTill && <PatientAlertBanner customerId={selectedCustomer?.id} slug={String(params.slug || '')} />}

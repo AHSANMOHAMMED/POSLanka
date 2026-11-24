@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { FormInput } from '@/components/ui/form-elements'
 import { useCurrency } from '@/hooks/useCurrency'
+import { useI18n } from '@/hooks/useI18n'
 import type { SaleForReturn } from './types'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 
@@ -54,6 +55,7 @@ export function ReturnLookupModal({
   onSearchInvoiceExact,
 }: ReturnLookupModalProps) {
   const { currency: currencyCode } = useCurrency()
+  const { t } = useI18n()
 
   // State
   const [selectedSale, setSelectedSale] = useState<SaleForReturn | null>(null)
@@ -245,7 +247,7 @@ export function ReturnLookupModal({
             <div>
               <h2 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
                 <RefreshCw size={20} className="text-amber-500" />
-                Return & Exchange Hub
+                {t('pos.returnAndExchange', 'Return & Exchange Hub')}
               </h2>
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 {selectedSale

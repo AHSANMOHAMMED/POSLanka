@@ -8,6 +8,7 @@ import { useCurrency } from '@/hooks/useCurrency'
 import type { Item, Category, ActiveShift, POSBusinessConfig } from './types'
 import { POS_ITEMS_LIMIT } from './types'
 import { useTerminology } from '@/hooks/useTerminology'
+import { useI18n } from '@/hooks/useI18n'
 import { getItemPartNumber } from '@/lib/utils/item-display'
 import { BarcodeBadge } from '@/components/ui/BarcodePreview'
 
@@ -164,6 +165,7 @@ export function ProductGrid({
     }
   }
   const terms = useTerminology()
+  const { locale, t } = useI18n()
   const { currency: currencyCode } = useCurrency()
 
   const filteredItems = useMemo(() => {
@@ -232,7 +234,7 @@ export function ProductGrid({
             <FormInput
               id={POS_SEARCH_INPUT_ID}
               type="text"
-              placeholder={`${terms.searchPlaceholder}  (F1)`}
+              placeholder={`${locale === 'en' ? terms.searchPlaceholder : t('pos.searchPlaceholder', terms.searchPlaceholder)}  (F1)`}
               title="Search / scan (F1 or Esc). ↓ = results or cart · * = cart · ? = all shortcuts"
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
@@ -281,7 +283,7 @@ export function ProductGrid({
             categories={categories}
             selectedCategory={selectedCategory}
             onCategoryChange={onCategoryChange}
-            allLabel={`All ${terms.items}`}
+            allLabel={locale === 'en' ? `All ${terms.items}` : t('pos.allCategories', `All ${terms.items}`)}
           />
         </div>
 
@@ -378,7 +380,7 @@ export function ProductGrid({
                             : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400'
                         }`}
                       >
-                        {isOutOfStock ? 'Out' : `${stock.toFixed(0)} in stock`}
+                        {isOutOfStock ? t('pos.outOfStock', 'Out') : `${stock.toFixed(0)} ${t('pos.inStock', 'in stock')}`}
                       </span>
                     )}
                   </div>
