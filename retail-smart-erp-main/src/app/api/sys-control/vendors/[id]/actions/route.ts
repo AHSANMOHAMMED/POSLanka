@@ -62,6 +62,7 @@ const dueFields = {
   dueDate: z.string().trim().max(40).optional(),
   billingPeriod: z.string().trim().max(120).optional(),
   contactNote: z.string().trim().max(300).optional(),
+  bannerTone: z.enum(['auto', 'green', 'amber', 'red']).optional(),
 }
 
 const actionSchema = z.discriminatedUnion('action', [
@@ -204,6 +205,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           billingPeriod: input.billingPeriod || null,
           contactNote: input.contactNote || null,
           showToCashier: input.showToCashier ?? false,
+          bannerTone: input.bannerTone || 'auto',
           updatedAt: now.toISOString(),
         })
         await db.update(tenants)

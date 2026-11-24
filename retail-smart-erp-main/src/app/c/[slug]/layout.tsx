@@ -273,7 +273,7 @@ export default async function CompanyLayout({
                 <main className="flex-1 min-w-0">
                   <ImpersonationBanner />
                   <SystemAnnouncement />
-                  <DueNoticeBanner notice={readDueNoticeFromSettings(tenant.settings)} tenantId={tenant.id} userRole={userRecord.role} />
+                  <DueNoticeBanner notice={readDueNoticeFromSettings(tenant.settings)} tenantId={tenant.id} companySlug={slug} userRole={userRecord.role} />
                   <TrialBanner companySlug={slug} />
                   <StorageBanner companySlug={slug} />
                   <div className="p-5">

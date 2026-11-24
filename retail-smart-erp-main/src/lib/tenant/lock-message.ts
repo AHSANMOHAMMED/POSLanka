@@ -88,6 +88,8 @@ export interface LockDetails {
   updatedAt?: string
 }
 
+export type DueBannerTone = 'auto' | 'green' | 'amber' | 'red'
+
 export interface DueNotice {
   enabled: boolean
   scenario: PauseScenario
@@ -99,7 +101,63 @@ export interface DueNotice {
   billingPeriod?: string | null
   contactNote?: string | null
   showToCashier?: boolean
+  bannerTone?: DueBannerTone | null
   updatedAt: string
+}
+
+export interface ResolvedDueUrgency {
+  color: 'green' | 'amber' | 'red'
+  label: string
+  daysRemaining: number | null
+  countdownText: string | null
+}
+
+/**
+ * Resolve traffic-light ("road lamp") color & countdown from a DueNotice.
+ * Auto mode: >7 days = green (upcoming), 1–7 days = amber (due soon), <=0 days = red (due today/overdue).
+ */
+export function resolveDueNoticeUrgency(
+  notice: Pick<DueNotice, 'dueDate' | 'bannerTone' | 'scenario'>
+): ResolvedDueUrgency {
+  let daysRemaining: number | null = null
+  let countdownText: string | null = null
+
+  if (notice.dueDate) {
+    const parsed = new Date(notice.dueDate)
+    if (!Number.isNaN(parsed.getTime())) {
+      const now = new Date()
+      const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+      const dueUtc = Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate())
+      daysRemaining = Math.round((dueUtc - todayUtc) / 86_400_000)
+
+      if (daysRemaining > 1) countdownText = `Due in ${daysRemaining} days`
+      else if (daysRemaining === 1) countdownText = 'Due tomorrow'
+      else if (daysRemaining === 0) countdownText = 'Due today'
+      else if (daysRemaining === -1) countdownText = 'Overdue by 1 day'
+      else countdownText = `Overdue by ${Math.abs(daysRemaining)} days`
+    }
+  }
+
+  const manual = notice.bannerTone && notice.bannerTone !== 'auto' ? notice.bannerTone : null
+  let color: 'green' | 'amber' | 'red'
+  if (manual) {
+    color = manual
+  } else if (daysRemaining !== null) {
+    color = daysRemaining > 7 ? 'green' : daysRemaining >= 1 ? 'amber' : 'red'
+  } else {
+    color = notice.scenario === 'subscription_overdue' ? 'red' : 'amber'
+  }
+
+  const label =
+    color === 'green'
+      ? 'UPCOMING'
+      : color === 'red'
+      ? daysRemaining !== null && daysRemaining === 0
+        ? 'DUE TODAY'
+        : 'OVERDUE'
+      : 'DUE SOON'
+
+  return { color, label, daysRemaining, countdownText }
 }
 
 export interface LockMessage {
@@ -298,6 +356,10 @@ export function readDueNoticeFromSettings(settings: unknown): DueNotice | null {
         ? obj.contactNote.trim().slice(0, 300)
         : null,
     showToCashier: Boolean(obj.showToCashier),
+    bannerTone:
+      obj.bannerTone === 'green' || obj.bannerTone === 'amber' || obj.bannerTone === 'red' || obj.bannerTone === 'auto'
+        ? obj.bannerTone
+        : 'auto',
     updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : new Date().toISOString(),
   }
 }

@@ -80,6 +80,8 @@ import {
   formatDueAmount,
   readDueNoticeFromSettings,
   readLockDetailsFromSettings,
+  resolveDueNoticeUrgency,
+  type DueBannerTone,
   type PauseScenario,
 } from '@/lib/tenant/lock-message'
 
@@ -465,10 +467,11 @@ export default function VendorDetailPage() {
         const dueNotice = readDueNoticeFromSettings(v.settings)
         if (!dueNotice) return null
         const dueFormatted = formatDueAmount(dueNotice.dueAmount, dueNotice.dueCurrency)
+        const urgency = resolveDueNoticeUrgency(dueNotice)
         return (
           <Alert
-            tone="warning"
-            title={`Active due notice — ${PAUSE_SCENARIO_LABELS[dueNotice.scenario]}${dueFormatted ? ` (${dueFormatted})` : ''}`}
+            tone={urgency.color === 'red' ? 'danger' : urgency.color === 'amber' ? 'warning' : 'success'}
+            title={`Active due notice [${urgency.label}] — ${PAUSE_SCENARIO_LABELS[dueNotice.scenario]}${dueFormatted ? ` (${dueFormatted})` : ''}`}
             action={canManage ? (
               <div className="flex flex-wrap gap-2">
                 <Button size="sm" variant="ghost" onClick={async () => {
@@ -1401,6 +1404,9 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
   const [showToCashier, setShowToCashier] = useState(
     dialog === 'due_notice' ? Boolean(existingNotice?.showToCashier) : false
   )
+  const [bannerTone, setBannerTone] = useState<DueBannerTone>(
+    dialog === 'due_notice' ? (existingNotice?.bannerTone ?? 'auto') : 'auto'
+  )
   const [reason, setReason] = useState(
     dialog === 'due_notice'
       ? (existingNotice?.message ?? PAUSE_SCENARIO_DEFAULTS.server_monthly_due.message)
@@ -1556,20 +1562,74 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
         <Textarea id="act-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} />
       </Field>
       {isNotice && (
-        <Checkbox
-          label="Also show reminder strip on Cashier POS screen"
-          description="If unchecked, only Owner & Manager dashboards show the payment due banner."
-          checked={showToCashier}
-          onChange={(e) => setShowToCashier(e.target.checked)}
-        />
+        <div className="space-y-3">
+          <div>
+            <p className="text-[12.5px] font-medium text-adm-fg mb-1.5">
+              Banner Background Color (Traffic Light / Road Lamp)
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {([
+                { id: 'auto', label: 'Auto (Due Date)', hint: '>7d Green · 1-7d Amber · ≤0d Red', dot: 'bg-gradient-to-r from-emerald-500 via-amber-400 to-red-500' },
+                { id: 'green', label: 'Green (Upcoming)', hint: 'Advance reminder', dot: 'bg-emerald-500' },
+                { id: 'amber', label: 'Amber (Due Soon)', hint: 'Next week / soon', dot: 'bg-amber-400' },
+                { id: 'red', label: 'Red (Overdue)', hint: 'Urgent / due today', dot: 'bg-red-500' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setBannerTone(opt.id)}
+                  className={`text-left rounded-lg border p-2 transition-colors ${
+                    bannerTone === opt.id
+                      ? 'border-adm-accent bg-adm-surface-2 ring-1 ring-adm-accent'
+                      : 'border-adm-border bg-adm-surface hover:bg-adm-surface-2'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 text-[12px] font-semibold text-adm-fg">
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${opt.dot}`} />
+                    {opt.label}
+                  </div>
+                  <div className="text-[11px] text-adm-muted mt-0.5">{opt.hint}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+          <Checkbox
+            label="Also show reminder strip on Cashier POS screen"
+            description="If unchecked, only Owner & Manager dashboards show the payment due banner."
+            checked={showToCashier}
+            onChange={(e) => setShowToCashier(e.target.checked)}
+          />
+        </div>
       )}
-      <div className="rounded-lg border border-adm-border bg-adm-surface-2 p-3 text-[12.5px]">
-        <p className="font-semibold text-adm-fg">
-          Preview: {customTitle.trim() || PAUSE_SCENARIO_DEFAULTS[scenario].title}
-          {previewAmount ? ` · ${previewAmount}` : ''}
-        </p>
-        <p className="mt-1 text-adm-muted">{reason.trim() || '—'}</p>
-      </div>
+      {(() => {
+        const previewUrgency = resolveDueNoticeUrgency({
+          dueDate: dueDate.trim() || null,
+          bannerTone: isNotice ? bannerTone : 'red',
+          scenario,
+        })
+        const previewBg =
+          previewUrgency.color === 'green'
+            ? 'bg-emerald-700 text-white border-emerald-800'
+            : previewUrgency.color === 'red'
+            ? 'bg-red-600 text-white border-red-700'
+            : 'bg-amber-600 text-white border-amber-700'
+        return (
+          <div className={`rounded-lg border p-3 text-[12.5px] ${previewBg}`}>
+            <div className="flex flex-wrap items-center gap-2 font-semibold">
+              <span className="inline-flex items-center gap-1 bg-black/30 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                <span className={`w-2 h-2 rounded-full ${previewUrgency.color === 'red' ? 'bg-red-400' : 'bg-white/25'}`} />
+                <span className={`w-2 h-2 rounded-full ${previewUrgency.color === 'amber' ? 'bg-amber-300' : 'bg-white/25'}`} />
+                <span className={`w-2 h-2 rounded-full ${previewUrgency.color === 'green' ? 'bg-emerald-300' : 'bg-white/25'}`} />
+                <span className="ml-1">{previewUrgency.label}</span>
+              </span>
+              <span>{customTitle.trim() || PAUSE_SCENARIO_DEFAULTS[scenario].title}</span>
+              {previewAmount && <span className="rounded bg-white/20 px-1.5 py-0.5 text-[11px]">Due: {previewAmount}</span>}
+              {previewUrgency.countdownText && <span className="text-[11px] opacity-90">({previewUrgency.countdownText})</span>}
+            </div>
+            <p className="mt-1 opacity-95">{reason.trim() || '—'}</p>
+          </div>
+        )
+      })()}
     </div>
   )
 
@@ -1583,7 +1643,7 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
       )
     case 'due_notice':
       return (
-        <AdminModal open onClose={onClose} title={`Payment due notice — ${v.name}`} description="Vendor keeps working normally while a persistent payment-due banner is shown at the top of their dashboard." footer={footer('Save due notice', () => run({ action: 'set_due_notice', ...duePayload, showToCashier }), 'primary', !reasonOk || !dueAmountValid)}>
+        <AdminModal open onClose={onClose} title={`Payment due notice — ${v.name}`} description="Vendor keeps working normally while a persistent payment-due banner is shown at the top of their dashboard." footer={footer('Save due notice', () => run({ action: 'set_due_notice', ...duePayload, showToCashier, bannerTone }), 'primary', !reasonOk || !dueAmountValid)}>
           {err}
           {renderScenarioFields(true)}
         </AdminModal>
