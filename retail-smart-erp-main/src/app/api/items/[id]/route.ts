@@ -15,6 +15,8 @@ import { DuplicateError, toApiError } from '@/lib/db/errors'
 import { recordItemChange } from '@/lib/inventory/item-audit'
 import { bumpItemCodeSequence } from '@/lib/inventory/item-codes'
 import { moveToRecycleBin } from '@/lib/recycle-bin'
+import { getTenantFeatureFlags } from '@/lib/features/check'
+import { isFeatureEnabled } from '@/lib/features/flags'
 
 class StaleItemError extends Error {
   constructor(public readonly currentVersion: number) {
@@ -198,6 +200,12 @@ export async function PUT(
           await bumpItemCodeSequence(tx, tenantId, newItemCode)
         }
 
+        const flags = await getTenantFeatureFlags(tenantId)
+        const allowCostPriceEdit = isFeatureEnabled(flags, 'owner_edit_item_cost_price')
+        const effectiveCostPrice = allowCostPriceEdit
+          ? (costPrice ? String(costPrice) : '0')
+          : (currentItem.costPrice || '0')
+
         const [updated] = await tx.update(items)
           .set({
             name,
@@ -205,7 +213,7 @@ export async function PUT(
             sku: sku || null,
             barcode: barcode || null,
             categoryId: categoryId || null,
-            costPrice: costPrice ? String(costPrice) : '0',
+            costPrice: effectiveCostPrice,
             sellingPrice: String(sellingPrice),
             unit: unit || 'pcs',
             isActive: isActive !== undefined ? isActive : true,
@@ -277,7 +285,7 @@ export async function PUT(
         })
 
         // Log cost change if costPrice was manually adjusted
-        const newCostPriceVal = parseFloat(costPrice ? String(costPrice) : '0')
+        const newCostPriceVal = parseFloat(effectiveCostPrice)
         if (oldCostPrice !== newCostPriceVal) {
           // Get total stock across all warehouses for context
           const [stockData] = await tx
@@ -333,7 +341,7 @@ export async function PUT(
 
       // AI: Price change anomaly detection (fire-and-forget)
       const newSellingPrice = parseFloat(String(sellingPrice))
-      const newCostPrice = parseFloat(String(costPrice || '0'))
+      const newCostPrice = parseFloat(String(result.costPrice || '0'))
       if (oldSellingPrice !== newSellingPrice || oldCostPrice !== newCostPrice) {
         checkPriceChangeAnomalies(session!.user.tenantId, {
           itemId: id,
@@ -388,6 +396,14 @@ export async function DELETE(
     if (!paramsParsed.success) return paramsParsed.response
     const { id } = paramsParsed.data
     const tenantId = session!.user.tenantId
+
+    const flags = await getTenantFeatureFlags(tenantId)
+    if (!isFeatureEnabled(flags, 'owner_delete_items')) {
+      return NextResponse.json(
+        { error: 'Deleting items is disabled for this business by the platform administrator.' },
+        { status: 403 }
+      )
+    }
 
     // Vendors never hard-delete an item: it is archived (hidden from lists and the POS, history kept)
     // and goes to the recycle bin, where only a super admin can restore or purge it.

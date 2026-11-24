@@ -59,13 +59,19 @@ export const FEATURE_FLAGS = [
   'sms',
   'staff_chat',
   'api_access',
+  // Inventory & Owner CRUD
+  'owner_edit_item_cost_price',
+  'owner_bulk_price_update',
+  'owner_delete_items',
+  'owner_direct_stock_adjust',
+  'owner_recycle_bin',
 ] as const
 
 export type FeatureFlag = (typeof FEATURE_FLAGS)[number]
 export type FeatureFlagsMap = Record<FeatureFlag, boolean>
 
-export type FeatureGroup = 'Sales & POS' | 'Stock' | 'Buying & finance' | 'Industry' | 'Communication & platform'
-export const FEATURE_GROUPS: FeatureGroup[] = ['Sales & POS', 'Stock', 'Buying & finance', 'Industry', 'Communication & platform']
+export type FeatureGroup = 'Sales & POS' | 'Stock' | 'Buying & finance' | 'Industry' | 'Communication & platform' | 'Inventory & Owner CRUD'
+export const FEATURE_GROUPS: FeatureGroup[] = ['Sales & POS', 'Stock', 'Buying & finance', 'Industry', 'Communication & platform', 'Inventory & Owner CRUD']
 
 export interface FeatureDef {
   key: FeatureFlag
@@ -256,6 +262,23 @@ export const FEATURE_DEFS: FeatureDef[] = [
     description: 'Messages between staff.', hrefs: ['/chat'], api: ['/api/chat'] },
   { key: 'api_access', group: 'Communication & platform', default: true, label: 'API keys & integrations',
     description: 'API keys for other systems (/api/v1).', hrefs: ['/settings/api-keys'], api: ['/api/settings/api-keys', '/api/v1'] },
+
+  // ------------------------------------------------------------------ Inventory & Owner CRUD
+  { key: 'owner_edit_item_cost_price', group: 'Inventory & Owner CRUD', default: false, label: 'Edit item cost price after creation',
+    description: 'Allow the vendor owner / authorized staff to change Purchase / Cost Price when updating an existing item.',
+    offEffect: 'Cost Price stays locked after an item is created (only Super Admin or purchases update it).' },
+  { key: 'owner_bulk_price_update', group: 'Inventory & Owner CRUD', default: true, label: 'Bulk price & cost updates',
+    description: 'Allow bulk price / cost updates across multiple items at once.',
+    hrefs: ['/items/bulk-price-update'], api: ['/api/items/bulk-price-update'] },
+  { key: 'owner_delete_items', group: 'Inventory & Owner CRUD', default: true, label: 'Delete items to recycle bin',
+    description: 'Allow moving items and categories to the recycle bin (soft-delete; no data is permanently lost).',
+    offEffect: 'Items cannot be deleted by the vendor; only deactivated.' },
+  { key: 'owner_direct_stock_adjust', group: 'Inventory & Owner CRUD', default: true, label: 'Direct stock adjustments',
+    description: 'Allow manual stock adjustments outside of purchases and stock-takes.',
+    offEffect: 'Stock changes must go through purchases, sales, or stock-takes.' },
+  { key: 'owner_recycle_bin', group: 'Inventory & Owner CRUD', default: true, label: 'Settings → Recycle bin (restore)',
+    description: 'Allow the vendor owner to view deleted items and records in Settings → Recycle Bin and restore them safely (permanent purge stays Super Admin only).',
+    hrefs: ['/settings/recycle-bin'], api: ['/api/recycle-bin'] },
 ]
 
 const DEF_BY_KEY = new Map(FEATURE_DEFS.map((d) => [d.key, d]))

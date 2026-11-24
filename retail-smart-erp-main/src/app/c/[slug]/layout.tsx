@@ -17,6 +17,8 @@ import { ActivityTracker } from '@/components/auth/ActivityTracker'
 import { CompanyContextProvider } from '@/components/providers/CompanyContextProvider'
 import { SystemAnnouncement } from '@/components/layout/SystemAnnouncement'
 import { TrialBanner } from '@/components/layout/TrialBanner'
+import { DueNoticeBanner } from '@/components/layout/DueNoticeBanner'
+import { readDueNoticeFromSettings } from '@/lib/tenant/lock-message'
 import { StorageBanner } from '@/components/layout/StorageBanner'
 import { ImpersonationBanner } from '@/components/layout/ImpersonationBanner'
 import { ChatHub } from '@/components/chat/ChatHub'
@@ -271,6 +273,7 @@ export default async function CompanyLayout({
                 <main className="flex-1 min-w-0">
                   <ImpersonationBanner />
                   <SystemAnnouncement />
+                  <DueNoticeBanner notice={readDueNoticeFromSettings(tenant.settings)} tenantId={tenant.id} userRole={userRecord.role} />
                   <TrialBanner companySlug={slug} />
                   <StorageBanner companySlug={slug} />
                   <div className="p-5">

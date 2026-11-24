@@ -148,6 +148,7 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
   const isPrintStudio = !!businessType && scope.primary === 'print_studio'
   const [showSizePricing, setShowSizePricing] = useState(isPrintStudio)
   const variantsOn = useFeatureFlag('variants')
+  const canEditCostPrice = useFeatureFlag('owner_edit_item_cost_price')
   // Freshness tab (PLU, shelf life, storage temperature, expiry): supermarket and pharmacy
   const isSupermarket = runs('supermarket') || isPharmacy
   // Warranty months: vehicle businesses; a mall also for its electronics department
@@ -869,8 +870,13 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                       onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
                       placeholder="0.00"
                       required
-                      disabled={editItem !== null}
+                      disabled={editItem !== null && !canEditCostPrice}
                     />
+                    {editItem !== null && !canEditCostPrice && (
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        Cost price editing after creation is locked by platform admin.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <FormLabel required>Selling Price</FormLabel>
@@ -1245,8 +1251,13 @@ export function ItemFormModal({ isOpen, onClose, onSaved, editItem }: ItemFormMo
                     min="0"
                     value={formData.costPrice}
                     onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
-                    disabled={editItem !== null}
+                    disabled={editItem !== null && !canEditCostPrice}
                   />
+                  {editItem !== null && !canEditCostPrice && (
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Cost price editing after creation is locked by platform admin.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <FormLabel required>Selling Price</FormLabel>

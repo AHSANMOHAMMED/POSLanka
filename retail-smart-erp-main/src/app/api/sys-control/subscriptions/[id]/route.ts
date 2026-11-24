@@ -9,6 +9,7 @@ import { sysUpdateSubscriptionSchema } from '@/lib/validation/schemas/sys-contro
 import { idParamSchema } from '@/lib/validation/schemas/common'
 import { resumedSubscriptionStatus, syncTenantPlanExpiry } from '@/lib/billing/subscription-state'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
+import { withLockMessage } from '@/lib/tenant/lock-message'
 
 export async function PUT(
   request: NextRequest,
@@ -118,6 +119,7 @@ export async function PUT(
             lockedReason: 'admin_locked', // the free-text reason goes to the audit log / lockout event
             // A manual lock never schedules the automatic data deletion that billing lockouts do.
             deletionScheduledAt: null,
+            settings: withLockMessage(tenant?.settings, lockReason || reason || null),
           })
           .where(eq(tenants.id, subscription.tenantId))
 

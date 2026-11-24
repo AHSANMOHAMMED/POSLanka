@@ -109,8 +109,26 @@ function SuspendedLoginGate({ company }: { company: CompanyInfo }) {
         title={company.lockTitle || 'Access paused'}
         description={company.lockDescription || 'This business cannot sign in right now. Ask your owner or skyERPOS support.'}
       />
+      {(company.lockFormattedDueAmount || company.lockBillingPeriod || company.lockDueDate) && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+          {company.lockScenarioLabel && (
+            <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">{company.lockScenarioLabel}</p>
+          )}
+          {company.lockFormattedDueAmount && (
+            <p className="mt-1 text-lg font-bold text-slate-900">Amount Due: {company.lockFormattedDueAmount}</p>
+          )}
+          {(company.lockBillingPeriod || company.lockDueDate) && (
+            <p className="mt-1 text-xs text-amber-800">
+              {[company.lockBillingPeriod, company.lockDueDate ? `Due ${company.lockDueDate}` : null].filter(Boolean).join(' · ')}
+            </p>
+          )}
+          {company.lockContactNote && (
+            <p className="mt-2 text-xs text-slate-700">{company.lockContactNote}</p>
+          )}
+        </div>
+      )}
       <Alert tone="warning" title={company.status === 'suspended' ? 'Suspended' : company.status === 'locked' ? 'Locked' : 'Unavailable'}>
-        Sales and staff sign-in stay off until the platform reactivates this company (usually after payment).
+        Sales and staff sign-in stay off until the platform reactivates this company. All business data is safely preserved.
       </Alert>
       <div className="mt-6 space-y-3">
         <LinkButton href="/contact" variant="primary" size="lg" fullWidth>Contact skyERPOS</LinkButton>

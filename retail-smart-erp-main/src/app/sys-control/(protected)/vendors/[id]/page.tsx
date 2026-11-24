@@ -73,6 +73,15 @@ import { VendorBusinessTab } from './VendorBusinessTab'
 import { BusinessTypeChips, BusinessTypeChangeSummary, ChangeBusinessTypeDialog, type BusinessTypeChangeResult } from '@/components/admin/MallSegments'
 import type { BusinessScope } from '@/lib/business-types/scope'
 import { ADJUSTMENT_REASON_CODES, ADJUSTMENT_REASON_LABELS, type AdjustmentReasonCode } from '@/lib/inventory/adjustment-reasons'
+import {
+  PAUSE_SCENARIO_DEFAULTS,
+  PAUSE_SCENARIO_LABELS,
+  SUPPORTED_DUE_CURRENCIES,
+  formatDueAmount,
+  readDueNoticeFromSettings,
+  readLockDetailsFromSettings,
+  type PauseScenario,
+} from '@/lib/tenant/lock-message'
 
 /* ------------------------------------------------------------------ types */
 
@@ -107,8 +116,8 @@ interface Detail {
     status: string
     lockedAt: string | null
     lockedReason: string | null
-    /** Free-text reason shown on the vendor lock screen (from settings.lockMessage) */
-    settings?: { lockMessage?: string } | null
+    /** Free-text reason & structured pause/due metadata (from settings) */
+    settings?: Record<string, unknown> | null
     deletionScheduledAt: string | null
     planExpiresAt: string | null
     einvoiceEnabled: boolean
@@ -158,7 +167,7 @@ interface Totals { netSales: number; receipts: number; avgBasket: number }
 interface Analytics { totals: { today: Totals; '7d': Totals; '30d': Totals } }
 
 type Tab = 'overview' | 'business' | 'staff' | 'stock' | 'billing' | 'features' | 'activity'
-type Dialog = null | 'suspend' | 'reactivate' | 'extend' | 'plan' | 'password' | 'welcome' | 'archive' | 'impersonate'
+type Dialog = null | 'suspend' | 'due_notice' | 'reactivate' | 'extend' | 'plan' | 'password' | 'welcome' | 'archive' | 'impersonate'
 
 const ROLE_LABEL: Record<string, string> = {
   owner: 'Owner', manager: 'Manager', cashier: 'Cashier', technician: 'Technician', chef: 'Chef', waiter: 'Waiter',
@@ -429,18 +438,61 @@ export default function VendorDetailPage() {
           </div>
         </Alert>
       )}
-      {!isActive && (
-        <Alert tone={v.status === 'locked' || v.status === 'suspended' ? 'danger' : 'warning'} title={`${labelFor(VENDOR_STATUS_LABEL, v.status)}${v.lockedReason ? ` — ${labelFor(LOCK_REASON_LABEL, v.lockedReason)}` : ''}`}>
-          Staff cannot sign in or sell{v.lockedAt ? ` since ${fmtDateTime(v.lockedAt)}` : ''}. Their app and dashboard show a full reason screen.
-          {typeof v.settings?.lockMessage === 'string' && v.settings.lockMessage.trim() ? (
-            <span className="mt-2 block rounded-lg bg-adm-surface-2 px-3 py-2 text-[13px] text-adm-fg">“{v.settings.lockMessage.trim()}”</span>
-          ) : null}
-          {v.deletionScheduledAt && ` The billing job will permanently delete this vendor’s data on ${fmtDate(v.deletionScheduledAt)} unless the subscription is renewed or extended.`}
-          {v.status !== 'active' && canBill ? (
-            <span className="mt-2 block text-[13px]">Use <strong>Reactivate</strong> after payment to restore sales and staff sign-in.</span>
-          ) : null}
-        </Alert>
-      )}
+      {!isActive && (() => {
+        const lockDetails = readLockDetailsFromSettings(v.settings)
+        const dueFormatted = formatDueAmount(lockDetails?.dueAmount, lockDetails?.dueCurrency)
+        return (
+          <Alert tone={v.status === 'locked' || v.status === 'suspended' ? 'danger' : 'warning'} title={`${labelFor(VENDOR_STATUS_LABEL, v.status)}${lockDetails?.scenario ? ` — ${PAUSE_SCENARIO_LABELS[lockDetails.scenario]}` : v.lockedReason ? ` — ${labelFor(LOCK_REASON_LABEL, v.lockedReason)}` : ''}`}>
+            Staff cannot sign in or sell{v.lockedAt ? ` since ${fmtDateTime(v.lockedAt)}` : ''}. Their app and dashboard show a full reason screen. All business data is safely preserved.
+            {(dueFormatted || lockDetails?.dueDate || lockDetails?.billingPeriod) && (
+              <div className="mt-2 flex flex-wrap gap-2 text-[12.5px]">
+                {dueFormatted && <span className="rounded-md bg-adm-surface-2 px-2.5 py-1 font-semibold text-adm-fg">Amount due: {dueFormatted}</span>}
+                {lockDetails?.billingPeriod && <span className="rounded-md bg-adm-surface-2 px-2.5 py-1 text-adm-muted">{lockDetails.billingPeriod}</span>}
+                {lockDetails?.dueDate && <span className="rounded-md bg-adm-surface-2 px-2.5 py-1 text-adm-muted">Due: {lockDetails.dueDate}</span>}
+              </div>
+            )}
+            {typeof v.settings?.lockMessage === 'string' && v.settings.lockMessage.trim() ? (
+              <span className="mt-2 block rounded-lg bg-adm-surface-2 px-3 py-2 text-[13px] text-adm-fg">“{v.settings.lockMessage.trim()}”</span>
+            ) : null}
+            {v.deletionScheduledAt && ` The billing job will permanently delete this vendor’s data on ${fmtDate(v.deletionScheduledAt)} unless the subscription is renewed or extended.`}
+            {v.status !== 'active' && canBill ? (
+              <span className="mt-2 block text-[13px]">Use <strong>Reactivate</strong> after payment to restore sales and staff sign-in.</span>
+            ) : null}
+          </Alert>
+        )
+      })()}
+      {isActive && (() => {
+        const dueNotice = readDueNoticeFromSettings(v.settings)
+        if (!dueNotice) return null
+        const dueFormatted = formatDueAmount(dueNotice.dueAmount, dueNotice.dueCurrency)
+        return (
+          <Alert
+            tone="warning"
+            title={`Active due notice — ${PAUSE_SCENARIO_LABELS[dueNotice.scenario]}${dueFormatted ? ` (${dueFormatted})` : ''}`}
+            action={canManage ? (
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="ghost" onClick={async () => {
+                  try {
+                    const res = await adminFetch<{ message: string }>(`/api/sys-control/vendors/${v.id}/actions`, { method: 'POST', json: { action: 'clear_due_notice' } })
+                    setFlash({ tone: 'success', text: res.message })
+                    await load()
+                  } catch (e) {
+                    setFlash({ tone: 'danger', text: e instanceof Error ? e.message : 'Failed to clear notice' })
+                  }
+                }}>Clear notice</Button>
+                <Button size="sm" variant="danger-soft" onClick={() => setDialog('suspend')}>Pause access now</Button>
+              </div>
+            ) : undefined}
+          >
+            <p className="text-[13px]">{dueNotice.message}</p>
+            {(dueNotice.billingPeriod || dueNotice.dueDate) && (
+              <p className="mt-1 text-[12px] text-adm-muted">
+                {[dueNotice.billingPeriod, dueNotice.dueDate ? `Due ${dueNotice.dueDate}` : null].filter(Boolean).join(' · ')}
+              </p>
+            )}
+          </Alert>
+        )
+      })()}
 
       <StatGrid>
         <StatCard label="Net sales today" icon={CreditCard} loading={loading && !analytics} value={analytics ? fmtLKR(analytics.totals.today.netSales) : '—'} hint={analytics ? `${fmtNumber(analytics.totals.today.receipts)} receipts` : 'Sales data unavailable'} />
@@ -712,7 +764,10 @@ export default function VendorDetailPage() {
             <AdminCard title="Manage vendor" description="Every action asks for confirmation and is recorded in the audit log.">
               <div className="grid grid-cols-1 gap-2">
                 {!canManage ? null : isActive ? (
-                  <Button icon={PauseCircle} variant="danger-soft" onClick={() => setDialog('suspend')} className="justify-start">Suspend sign-in</Button>
+                  <>
+                    <Button icon={PauseCircle} variant="danger-soft" onClick={() => setDialog('suspend')} className="justify-start">Pause / Suspend vendor</Button>
+                    <Button icon={CreditCard} onClick={() => setDialog('due_notice')} className="justify-start">Send payment due notice</Button>
+                  </>
                 ) : (
                   <Button icon={PlayCircle} variant="primary" onClick={() => setDialog('reactivate')} className="justify-start">Reactivate</Button>
                 )}
@@ -1321,7 +1376,38 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
   const v = data.vendor
   const sub = data.subscription
   // State starts fresh for every dialog: the parent remounts this component per dialog (key)
-  const [reason, setReason] = useState('')
+  const existingNotice = readDueNoticeFromSettings(v.settings)
+  const [scenario, setScenario] = useState<PauseScenario>(
+    dialog === 'due_notice' ? (existingNotice?.scenario ?? 'server_monthly_due') : 'server_monthly_due'
+  )
+  const [customTitle, setCustomTitle] = useState(
+    dialog === 'due_notice' ? (existingNotice?.title ?? PAUSE_SCENARIO_DEFAULTS.server_monthly_due.title) : ''
+  )
+  const [dueAmount, setDueAmount] = useState(
+    dialog === 'due_notice' && existingNotice?.dueAmount ? String(existingNotice.dueAmount) : ''
+  )
+  const [dueCurrency, setDueCurrency] = useState(
+    dialog === 'due_notice' && existingNotice?.dueCurrency ? existingNotice.dueCurrency : 'USD'
+  )
+  const [dueDate, setDueDate] = useState(
+    dialog === 'due_notice' && existingNotice?.dueDate ? existingNotice.dueDate : ''
+  )
+  const [billingPeriod, setBillingPeriod] = useState(
+    dialog === 'due_notice' && existingNotice?.billingPeriod ? existingNotice.billingPeriod : ''
+  )
+  const [contactNote, setContactNote] = useState(
+    dialog === 'due_notice' && existingNotice?.contactNote ? existingNotice.contactNote : ''
+  )
+  const [showToCashier, setShowToCashier] = useState(
+    dialog === 'due_notice' ? Boolean(existingNotice?.showToCashier) : false
+  )
+  const [reason, setReason] = useState(
+    dialog === 'due_notice'
+      ? (existingNotice?.message ?? PAUSE_SCENARIO_DEFAULTS.server_monthly_due.message)
+      : dialog === 'suspend'
+        ? PAUSE_SCENARIO_DEFAULTS.server_monthly_due.message
+        : ''
+  )
   const [days, setDays] = useState('14')
   const [tierId, setTierId] = useState(sub?.tier?.id ?? '')
   const [cycle, setCycle] = useState<'monthly' | 'yearly'>((sub?.billingCycle as 'monthly' | 'yearly') || 'monthly')
@@ -1409,28 +1495,97 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
   const targetTier = data.tiers.find((t) => t.id === tierId)
   const targetFree = targetTier ? Number(targetTier.priceMonthly ?? 0) === 0 && Number(targetTier.priceYearly ?? 0) === 0 : false
 
+  const parsedDueAmount = dueAmount.trim() !== '' ? Number(dueAmount) : null
+  const dueAmountValid = parsedDueAmount === null || (Number.isFinite(parsedDueAmount) && parsedDueAmount > 0)
+  const previewAmount = formatDueAmount(parsedDueAmount, dueCurrency)
+
+  const applyScenario = (next: PauseScenario) => {
+    setScenario(next)
+    const def = PAUSE_SCENARIO_DEFAULTS[next]
+    setCustomTitle(def.title)
+    setReason(def.message)
+  }
+
+  const duePayload = {
+    scenario,
+    customTitle: customTitle.trim() || undefined,
+    reason: reason.trim(),
+    dueAmount: parsedDueAmount && parsedDueAmount > 0 ? parsedDueAmount : undefined,
+    dueCurrency: parsedDueAmount && parsedDueAmount > 0 ? dueCurrency.trim().toUpperCase() : undefined,
+    dueDate: dueDate.trim() || undefined,
+    billingPeriod: billingPeriod.trim() || undefined,
+    contactNote: contactNote.trim() || undefined,
+  }
+
+  const renderScenarioFields = (isNotice: boolean) => (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Scenario" htmlFor="act-scenario" required>
+          <Select id="act-scenario" value={scenario} onChange={(e) => applyScenario(e.target.value as PauseScenario)}>
+            {(Object.keys(PAUSE_SCENARIO_LABELS) as PauseScenario[]).map((k) => (
+              <option key={k} value={k}>{PAUSE_SCENARIO_LABELS[k]}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Heading shown to vendor" htmlFor="act-title" hint="Defaults to the scenario title if blank.">
+          <Input id="act-title" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} placeholder={PAUSE_SCENARIO_DEFAULTS[scenario].title} maxLength={140} />
+        </Field>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <Field label="Due amount (optional)" htmlFor="act-amount" error={!dueAmountValid ? 'Enter a positive amount' : undefined}>
+          <Input id="act-amount" type="number" step="0.01" min="0" value={dueAmount} onChange={(e) => setDueAmount(e.target.value)} placeholder="e.g. 29.00" />
+        </Field>
+        <Field label="Currency" htmlFor="act-currency">
+          <Select id="act-currency" value={dueCurrency} onChange={(e) => setDueCurrency(e.target.value)}>
+            {SUPPORTED_DUE_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          </Select>
+        </Field>
+        <Field label="Due date (optional)" htmlFor="act-duedate">
+          <Input id="act-duedate" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </Field>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Billing period / reference" htmlFor="act-period" hint="e.g. Monthly Server Fee · Nov 2026">
+          <Input id="act-period" value={billingPeriod} onChange={(e) => setBillingPeriod(e.target.value)} placeholder="Monthly Server Subscription" maxLength={120} />
+        </Field>
+        <Field label="Payment / contact note" htmlFor="act-contact" hint="Optional WhatsApp, bank, or support note.">
+          <Input id="act-contact" value={contactNote} onChange={(e) => setContactNote(e.target.value)} placeholder="WhatsApp +94 77 000 0000 after transfer" maxLength={300} />
+        </Field>
+      </div>
+      <Field label="Message shown on Owner & Vendor UI" htmlFor="act-reason" required hint="Cashiers see a clean store-paused notice; Owners see this full message and due amount.">
+        <Textarea id="act-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} />
+      </Field>
+      {isNotice && (
+        <Checkbox
+          label="Also show reminder strip on Cashier POS screen"
+          description="If unchecked, only Owner & Manager dashboards show the payment due banner."
+          checked={showToCashier}
+          onChange={(e) => setShowToCashier(e.target.checked)}
+        />
+      )}
+      <div className="rounded-lg border border-adm-border bg-adm-surface-2 p-3 text-[12.5px]">
+        <p className="font-semibold text-adm-fg">
+          Preview: {customTitle.trim() || PAUSE_SCENARIO_DEFAULTS[scenario].title}
+          {previewAmount ? ` · ${previewAmount}` : ''}
+        </p>
+        <p className="mt-1 text-adm-muted">{reason.trim() || '—'}</p>
+      </div>
+    </div>
+  )
+
   switch (dialog) {
     case 'suspend':
       return (
-        <AdminModal open onClose={onClose} title={`Suspend ${v.name}?`} description="Staff are signed out and cannot sell on the web or the app. Their dashboard shows your reason in full. No data is deleted — Reactivate restores access after payment." footer={footer('Suspend access', () => run({ action: 'suspend', reason }), 'danger', !reasonOk)}>
+        <AdminModal open onClose={onClose} title={`Pause / Suspend ${v.name}?`} description="Staff are signed out and POS/dashboard show your pause screen. All vendor data is safely preserved (never deleted) — Reactivate restores access immediately." footer={footer('Pause vendor access', () => run({ action: 'suspend', ...duePayload }), 'danger', !reasonOk || !dueAmountValid)}>
           {err}
-          <div className="mb-3 flex flex-wrap gap-2">
-            {[
-              'Suspended for non-payment — renew the subscription to restore sales.',
-              'Suspended pending payment confirmation from accounts.',
-              'Temporarily suspended by platform support — contact skyERPOS.',
-            ].map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                className="rounded-full border border-adm-border bg-adm-surface-2 px-3 py-1 text-[12px] text-adm-muted hover:border-adm-primary hover:text-adm-primary"
-                onClick={() => setReason(preset)}
-              >
-                {preset.slice(0, 42)}…
-              </button>
-            ))}
-          </div>
-          {reasonField()}
+          {renderScenarioFields(false)}
+        </AdminModal>
+      )
+    case 'due_notice':
+      return (
+        <AdminModal open onClose={onClose} title={`Payment due notice — ${v.name}`} description="Vendor keeps working normally while a persistent payment-due banner is shown at the top of their dashboard." footer={footer('Save due notice', () => run({ action: 'set_due_notice', ...duePayload, showToCashier }), 'primary', !reasonOk || !dueAmountValid)}>
+          {err}
+          {renderScenarioFields(true)}
         </AdminModal>
       )
     case 'reactivate':

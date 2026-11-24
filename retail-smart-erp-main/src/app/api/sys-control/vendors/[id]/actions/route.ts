@@ -23,13 +23,21 @@ import { sendStaffInviteEmail } from '@/lib/email/system-email'
 import { createOwnerResetLink, sendOwnerResetEmail, sendOwnerWelcomeEmail, type OwnerMailTarget } from '@/lib/admin/vendor-emails'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { isPlaceholderLogin } from '@/lib/users/generated-login'
-import { withLockMessage } from '@/lib/tenant/lock-message'
+import {
+  withLockMessage,
+  withLockDetails,
+  withDueNotice,
+  PAUSE_SCENARIO_DEFAULTS,
+  type PauseScenario,
+} from '@/lib/tenant/lock-message'
 
 /**
  * POST /api/sys-control/vendors/[id]/actions — vendor lifecycle actions for the super admin.
  * Every action needs the admin session, is rate limited and written to the admin audit log.
  *
- *   suspend           { reason }                         sign-in blocked (web + app), data kept
+ *   suspend           { reason, scenario?, ... }         sign-in blocked (web + app), data kept
+ *   set_due_notice    { scenario, title?, reason, ... }  shows soft payment-due banner without locking
+ *   clear_due_notice  {}                                 clears the soft payment-due banner
  *   reactivate        { reason?, extendDays? }           lifts a suspension, archive or billing lock
  *   extend            { days, reason }                   adds days to the trial or the paid period
  *   change_plan       { tierId, billingCycle?, reason }  moves the subscription to another tier (no charge)
@@ -37,10 +45,29 @@ import { withLockMessage } from '@/lib/tenant/lock-message'
  *   resend_welcome    {}                                  owner invite (not yet accepted) or sign-in details
  *   archive           { reason, confirm }                 soft-archive: sign-in blocked, nothing deleted
  */
-const reason = z.string().trim().min(3, 'Give a short reason (3+ characters)').max(500)
+const reason = z.string().trim().min(3, 'Give a short reason (3+ characters)').max(1000)
+const scenarioSchema = z.enum([
+  'server_monthly_due',
+  'subscription_overdue',
+  'payment_verification',
+  'policy_hold',
+  'maintenance',
+  'custom',
+])
+const dueFields = {
+  scenario: scenarioSchema.optional(),
+  customTitle: z.string().trim().max(140).optional(),
+  dueAmount: z.coerce.number().positive().max(10_000_000).optional(),
+  dueCurrency: z.string().trim().min(2).max(10).optional(),
+  dueDate: z.string().trim().max(40).optional(),
+  billingPeriod: z.string().trim().max(120).optional(),
+  contactNote: z.string().trim().max(300).optional(),
+}
 
 const actionSchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('suspend'), reason }),
+  z.object({ action: z.literal('suspend'), reason, ...dueFields }),
+  z.object({ action: z.literal('set_due_notice'), reason, showToCashier: z.boolean().optional(), ...dueFields }),
+  z.object({ action: z.literal('clear_due_notice') }),
   z.object({ action: z.literal('reactivate'), reason: z.string().trim().max(500).optional(), extendDays: z.number().int().min(1).max(366).optional() }),
   z.object({ action: z.literal('extend'), days: z.number().int().min(1).max(366), reason }),
   // alias kept for clarity in API clients
@@ -127,25 +154,88 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       case 'suspend': {
         if (tenant.status === 'suspended') throw new ActionError('This vendor is already suspended.')
         if (tenant.status === 'cancelled') throw new ActionError('This vendor is archived. Reactivate it first.')
+        const scenario: PauseScenario = input.scenario ?? 'custom'
+        const withMsg = withLockMessage(tenant.settings, input.reason)
+        const nextSettings = withLockDetails(withMsg, {
+          scenario,
+          title: input.customTitle?.trim() || PAUSE_SCENARIO_DEFAULTS[scenario].title,
+          message: input.reason,
+          dueAmount: input.dueAmount ?? null,
+          dueCurrency: input.dueCurrency ? input.dueCurrency.toUpperCase() : null,
+          dueDate: input.dueDate || null,
+          billingPeriod: input.billingPeriod || null,
+          contactNote: input.contactNote || null,
+          updatedAt: now.toISOString(),
+        })
         await db.update(tenants)
           .set({
             status: 'suspended',
             lockedAt: now,
             lockedReason: 'admin_suspended',
             deletionScheduledAt: null,
-            settings: withLockMessage(tenant.settings, input.reason),
+            settings: nextSettings,
             updatedAt: now,
           })
           .where(eq(tenants.id, tenantId))
-        await audit('update', { reason: input.reason, before: { status: tenant.status }, after: { status: 'suspended' } })
+        await audit('update', {
+          reason: input.reason,
+          scenario,
+          dueAmount: input.dueAmount ?? null,
+          dueCurrency: input.dueCurrency ?? null,
+          dueDate: input.dueDate ?? null,
+          before: { status: tenant.status },
+          after: { status: 'suspended' },
+        })
         invalidatePermissionCache(tenantId) // staff sessions re-check (and fail) on their next request
-        return NextResponse.json({ success: true, status: 'suspended', message: `${tenant.name} is suspended. Its staff cannot sign in.` })
+        return NextResponse.json({ success: true, status: 'suspended', message: `${tenant.name} is paused. Staff cannot sell or sign in; all data is safely preserved.` })
+      }
+
+      /* ---------------------------------------------------------------- due notice (soft banner) */
+      case 'set_due_notice': {
+        const scenario: PauseScenario = input.scenario ?? 'server_monthly_due'
+        const nextSettings = withDueNotice(tenant.settings, {
+          enabled: true,
+          scenario,
+          title: input.customTitle?.trim() || PAUSE_SCENARIO_DEFAULTS[scenario].title,
+          message: input.reason,
+          dueAmount: input.dueAmount ?? null,
+          dueCurrency: input.dueCurrency ? input.dueCurrency.toUpperCase() : null,
+          dueDate: input.dueDate || null,
+          billingPeriod: input.billingPeriod || null,
+          contactNote: input.contactNote || null,
+          showToCashier: input.showToCashier ?? false,
+          updatedAt: now.toISOString(),
+        })
+        await db.update(tenants)
+          .set({ settings: nextSettings, updatedAt: now })
+          .where(eq(tenants.id, tenantId))
+        await audit('update', {
+          op: 'set_due_notice',
+          scenario,
+          dueAmount: input.dueAmount ?? null,
+          dueCurrency: input.dueCurrency ?? null,
+          dueDate: input.dueDate ?? null,
+          reason: input.reason,
+        })
+        invalidatePermissionCache(tenantId)
+        return NextResponse.json({ success: true, message: `Payment due notice is now shown on ${tenant.name}'s dashboard.` })
+      }
+
+      case 'clear_due_notice': {
+        const nextSettings = withDueNotice(tenant.settings, null)
+        await db.update(tenants)
+          .set({ settings: nextSettings, updatedAt: now })
+          .where(eq(tenants.id, tenantId))
+        await audit('update', { op: 'clear_due_notice' })
+        invalidatePermissionCache(tenantId)
+        return NextResponse.json({ success: true, message: `Due notice cleared for ${tenant.name}.` })
       }
 
       /* ---------------------------------------------------------------- reactivate */
       case 'reactivate': {
         if (tenant.status === 'active') throw new ActionError('This vendor is already active.')
         let warning: string | undefined
+        const clearedSettings = withDueNotice(withLockDetails(withLockMessage(tenant.settings, null), null), null)
         await db.transaction(async (tx) => {
           await tx.update(tenants)
             .set({
@@ -153,7 +243,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
               lockedAt: null,
               lockedReason: null,
               deletionScheduledAt: null,
-              settings: withLockMessage(tenant.settings, null),
+              settings: clearedSettings,
               updatedAt: now,
             })
             .where(eq(tenants.id, tenantId))

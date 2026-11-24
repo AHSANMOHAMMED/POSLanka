@@ -15,6 +15,11 @@ export interface CompanyInfo {
   status: string
   lockTitle?: string | null
   lockDescription?: string | null
+  lockScenarioLabel?: string | null
+  lockFormattedDueAmount?: string | null
+  lockDueDate?: string | null
+  lockBillingPeriod?: string | null
+  lockContactNote?: string | null
 }
 
 /**
@@ -49,6 +54,11 @@ export const getCompanyForSignIn = cache(async (slug: string): Promise<CompanyIn
       status: t.status,
       lockTitle: lock?.title ?? null,
       lockDescription: lock?.description ?? null,
+      lockScenarioLabel: lock?.scenarioLabel ?? null,
+      lockFormattedDueAmount: lock?.formattedDueAmount ?? null,
+      lockDueDate: lock?.dueDate ?? null,
+      lockBillingPeriod: lock?.billingPeriod ?? null,
+      lockContactNote: lock?.contactNote ?? null,
     }
   } catch {
     return null

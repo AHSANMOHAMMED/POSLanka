@@ -9,7 +9,7 @@ import {
   ChevronDown, ChevronUp, ChevronRight, Users, Car, ClipboardList,
   Bell, FolderTree, Home, User, CreditCard, Warehouse, Monitor, Gift,
   Loader2, LogOut, DollarSign, ArrowLeftRight, Sparkles,
-  FileText, Bookmark, ShieldCheck, Image, Bot, Receipt,
+  FileText, Bookmark, ShieldCheck, Image, Bot, Receipt, Trash2,
 } from 'lucide-react'
 import Link from 'next/link'
 import { DocumentType, PaperSize, PrintSettings, DocumentPrintSettings, DEFAULT_PRINT_SETTINGS, PAPER_SIZES } from '@/lib/print/types'
@@ -18,6 +18,7 @@ import { hasPermission } from '@/lib/auth/roles'
 import { broadcastAuthEvent } from '@/lib/auth/events'
 import { useCompany } from '@/components/providers/CompanyContextProvider'
 import { useBusinessScope } from '@/hooks/useBusinessScope'
+import { useFeatureFlag } from '@/hooks/useFeatureFlag'
 import { AIConsentModal } from '@/components/modals'
 import { SectionCard, Field, FieldGrid } from '@/components/ui/section-card'
 import { LogoUpload } from '@/components/ui/logo-upload'
@@ -217,6 +218,7 @@ export default function SettingsPage() {
 
   const { has: runsBusinessType } = useBusinessScope()
   const isVehicleBusiness = runsBusinessType(['auto_service', 'dealership'])
+  const canViewRecycleBin = useFeatureFlag('owner_recycle_bin')
 
   // Build nav cards data for filtering
   const allNavCards = useMemo(() => {
@@ -239,9 +241,10 @@ export default function SettingsPage() {
       { href: `/c/${tenantSlug}/settings/letter-heads`, icon: <FileText size={20} className="text-orange-600 dark:text-orange-400" />, iconBg: 'bg-orange-100 dark:bg-orange-900/30', title: 'Letter Heads', description: 'Company branding for prints', visible: true },
       { href: `/c/${tenantSlug}/settings/print-templates`, icon: <Bookmark size={20} className="text-violet-600 dark:text-violet-400" />, iconBg: 'bg-violet-100 dark:bg-violet-900/30', title: 'Print Templates', description: 'Configure print layouts', visible: true },
       { href: `/c/${tenantSlug}/settings/system-audit`, icon: <ShieldCheck size={20} className="text-blue-600 dark:text-blue-400" />, iconBg: 'bg-blue-100 dark:bg-blue-900/30', title: 'System Audit', description: 'Integrity checks and diagnostics', visible: hasPermission(role, 'manageSettings') },
+      { href: `/c/${tenantSlug}/settings/recycle-bin`, icon: <Trash2 size={20} className="text-rose-600 dark:text-rose-400" />, iconBg: 'bg-rose-100 dark:bg-rose-900/30', title: 'Recycle Bin', description: 'Restore deleted items and records', visible: hasPermission(role, 'manageSettings') && canViewRecycleBin },
     ]
     return cards.filter(c => c.visible)
-  }, [tenantSlug, session?.user?.role, isVehicleBusiness])
+  }, [tenantSlug, session?.user?.role, isVehicleBusiness, canViewRecycleBin])
 
   const filteredNavCards = useMemo(() => {
     if (!settingsSearch.trim()) return allNavCards

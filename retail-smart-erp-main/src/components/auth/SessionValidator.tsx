@@ -64,7 +64,19 @@ export function SessionValidator({
         const res = await fetch(validateUrl, {
           method: 'GET',
           credentials: 'include',
+          cache: 'no-store',
         })
+
+        if (res.status === 403 && scope === 'company' && tenantSlug) {
+          const data = await res.json().catch(() => null)
+          if (data?.code === 'TENANT_LOCKED') {
+            setIsValid(false)
+            if (typeof window !== 'undefined' && !window.location.pathname.endsWith('/locked')) {
+              window.location.assign(`/c/${tenantSlug}/locked`)
+            }
+            return
+          }
+        }
 
         if (res.status === 401) {
           // In POS cashier mode, station lock handles terminal security; never force logout cashiers
@@ -86,6 +98,21 @@ export function SessionValidator({
     }
 
     validateSession()
+    if (scope !== 'company' || !tenantSlug) return
+
+    // Re-check when tab regains focus and every 60s so open Cashier POS / Owner tabs react
+    // promptly when Super Admin pauses or suspends the vendor.
+    const onFocus = () => {
+      if (document.visibilityState === 'visible') void validateSession()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    const timer = window.setInterval(validateSession, 60_000)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+      window.clearInterval(timer)
+    }
     // Keyed on the user id, not the session object: next-auth hands out a new object on every
     // session refresh / tab focus, which re-ran this check (and its request) each time.
     // eslint-disable-next-line react-hooks/exhaustive-deps

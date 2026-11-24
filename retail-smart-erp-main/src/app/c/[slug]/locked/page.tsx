@@ -1,7 +1,7 @@
 import { auth } from '@/lib/auth'
 import { redirect } from 'next/navigation'
-import { db } from '@/lib/db'
-import { tenants, subscriptions, tenantUsage, pricingTiers, accountTenants } from '@/lib/db/schema'
+import { db, withTenant } from '@/lib/db'
+import { tenants, subscriptions, tenantUsage, pricingTiers, accountTenants, users } from '@/lib/db/schema'
 import { eq, and } from 'drizzle-orm'
 import Link from 'next/link'
 import { BrandWordmark } from '@/components/ui/logo'
@@ -64,6 +64,15 @@ export default async function LockedPage({ params }: LockedPageProps) {
     }
   }
 
+  const userRole = await withTenant(tenant.id, async (tdb) => {
+    const u = await tdb.query.users.findFirst({
+      where: eq(users.id, session.user.id),
+      columns: { role: true },
+    })
+    return u?.role ?? session.user.role ?? 'cashier'
+  })
+  const isBillingRole = ['owner', 'manager', 'system_manager'].includes(userRole)
+
   const subscription = await db.query.subscriptions.findFirst({
     where: eq(subscriptions.tenantId, tenant.id),
   })
@@ -121,14 +130,37 @@ export default async function LockedPage({ params }: LockedPageProps) {
 
         <p className="text-center text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
           {statusLabel}
+          {reason.scenarioLabel ? ` · ${reason.scenarioLabel}` : ''}
           {tenant.lockedAt ? ` · since ${new Date(tenant.lockedAt).toLocaleDateString()}` : ''}
         </p>
         <h1 className="text-2xl font-bold text-slate-900 text-center mb-2 tracking-tight">
-          {reason.title}
+          {isBillingRole ? reason.title : 'POS & Store Access Paused'}
         </h1>
         <p className="text-slate-600 text-center mb-6 leading-relaxed">
-          {reason.description}
+          {isBillingRole
+            ? reason.description
+            : 'Sales and register operations for this store are temporarily paused. Please inform your Store Owner or Manager to restore access. All records are safely preserved.'}
         </p>
+
+        {isBillingRole && (reason.formattedDueAmount || reason.billingPeriod || reason.dueDate || reason.contactNote) && (
+          <div className={`${tone.panel} border rounded-xl p-4 mb-6 space-y-2`}>
+            {reason.formattedDueAmount && (
+              <div className="flex items-baseline justify-between gap-2">
+                <span className={`text-xs font-semibold uppercase tracking-wider ${tone.panelSub}`}>Amount Due</span>
+                <span className={`text-xl font-bold ${tone.panelText}`}>{reason.formattedDueAmount}</span>
+              </div>
+            )}
+            {(reason.billingPeriod || reason.dueDate) && (
+              <div className={`flex flex-wrap items-center justify-between gap-2 text-xs ${tone.panelSub}`}>
+                {reason.billingPeriod && <span>{reason.billingPeriod}</span>}
+                {reason.dueDate && <span>Due: {new Date(reason.dueDate).toLocaleDateString()}</span>}
+              </div>
+            )}
+            {reason.contactNote && (
+              <p className={`text-xs pt-1 border-t border-current/15 ${tone.panelText}`}>{reason.contactNote}</p>
+            )}
+          </div>
+        )}
 
         {daysUntilDeletion !== null && (
           <div className={`${tone.panel} border rounded-xl p-4 mb-6`}>
@@ -185,7 +217,7 @@ export default async function LockedPage({ params }: LockedPageProps) {
         )}
 
         <div className="space-y-3">
-          {ctaHref && (
+          {isBillingRole && ctaHref && (
             <Link
               href={ctaHref}
               className="w-full flex items-center justify-center px-4 py-3 bg-[#0050c0] text-white rounded-xl font-semibold hover:bg-[#00419e] transition-colors shadow-md shadow-[rgba(0,80,192,0.25)]"
@@ -193,17 +225,27 @@ export default async function LockedPage({ params }: LockedPageProps) {
               {reason.ctaLabel || 'Continue'}
             </Link>
           )}
+          {!isBillingRole && (
+            <Link
+              href={`/c/${slug}/dashboard`}
+              className="w-full flex items-center justify-center px-4 py-3 bg-[#0050c0] text-white rounded-xl font-semibold hover:bg-[#00419e] transition-colors shadow-md shadow-[rgba(0,80,192,0.25)]"
+            >
+              Check if access is restored
+            </Link>
+          )}
+          {isBillingRole && (
+            <Link
+              href="/account"
+              className="w-full flex items-center justify-center px-4 py-3 bg-slate-100 text-slate-800 rounded-xl font-medium hover:bg-slate-200 transition-colors"
+            >
+              Back to account
+            </Link>
+          )}
           <Link
-            href="/account"
-            className="w-full flex items-center justify-center px-4 py-3 bg-slate-100 text-slate-800 rounded-xl font-medium hover:bg-slate-200 transition-colors"
-          >
-            Back to account
-          </Link>
-          <Link
-            href="/contact"
+            href={isBillingRole ? '/contact' : `/c/${slug}/login`}
             className="w-full flex items-center justify-center px-4 py-3 text-[#0050c0] font-medium hover:underline"
           >
-            Contact skyERPOS support
+            {isBillingRole ? 'Contact skyERPOS support' : 'Switch user / Sign in'}
           </Link>
         </div>
 

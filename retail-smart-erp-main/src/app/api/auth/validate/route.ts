@@ -25,17 +25,21 @@ export async function GET() {
     // Validate tenant and user
     if (tenantId) {
       const tenant = await db.query.tenants.findFirst({
-        where: and(
-          eq(tenants.id, tenantId),
-          eq(tenants.status, 'active')
-        ),
-        columns: { id: true },
+        where: eq(tenants.id, tenantId),
+        columns: { id: true, status: true },
       })
 
       if (!tenant) {
         return NextResponse.json(
-          { valid: false, reason: 'Business not found or inactive' },
+          { valid: false, reason: 'Business not found' },
           { status: 401 }
+        )
+      }
+
+      if (tenant.status !== 'active') {
+        return NextResponse.json(
+          { valid: false, code: 'TENANT_LOCKED', status: tenant.status, reason: 'Business access paused' },
+          { status: 403 }
         )
       }
 
