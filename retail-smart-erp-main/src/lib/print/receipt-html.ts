@@ -149,7 +149,7 @@ function itemHtml(l: ReceiptModelLine, model: ReceiptModel, paperWidth: 58 | 80,
   const out: string[] = []
   // Hide barcode from printed customer bills as requested, unless SKU is explicitly enabled
   const codes = Array.from(
-    new Set([model.showItemSku ? l.sku : null].filter(Boolean))
+    new Set([model.showItemSku ? l.sku : null, model.showItemBarcode ? l.barcode : null].filter(Boolean))
   ) as string[]
   const qty = `${e(l.qtyText)}${l.unit ? ` ${e(l.unit)}` : ''}`
   if (model.itemLayout === 'one_line' && paperWidth === 80) {
