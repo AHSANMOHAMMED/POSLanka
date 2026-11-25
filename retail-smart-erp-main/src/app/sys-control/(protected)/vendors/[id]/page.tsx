@@ -169,7 +169,7 @@ interface Totals { netSales: number; receipts: number; avgBasket: number }
 interface Analytics { totals: { today: Totals; '7d': Totals; '30d': Totals } }
 
 type Tab = 'overview' | 'business' | 'staff' | 'stock' | 'billing' | 'features' | 'activity'
-type Dialog = null | 'suspend' | 'due_notice' | 'reactivate' | 'extend' | 'plan' | 'password' | 'welcome' | 'archive' | 'impersonate'
+type Dialog = null | 'suspend' | 'due_notice' | 'payment_received' | 'reactivate' | 'extend' | 'plan' | 'password' | 'welcome' | 'archive' | 'impersonate'
 
 const ROLE_LABEL: Record<string, string> = {
   owner: 'Owner', manager: 'Manager', cashier: 'Cashier', technician: 'Technician', chef: 'Chef', waiter: 'Waiter',
@@ -474,6 +474,9 @@ export default function VendorDetailPage() {
             title={`Active due notice [${urgency.label}] — ${PAUSE_SCENARIO_LABELS[dueNotice.scenario]}${dueFormatted ? ` (${dueFormatted})` : ''}`}
             action={canManage ? (
               <div className="flex flex-wrap gap-2">
+                {dueNotice.status !== 'paid' && (
+                  <Button size="sm" variant="primary" onClick={() => setDialog('payment_received')}>Mark payment received</Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={async () => {
                   try {
                     const res = await adminFetch<{ message: string }>(`/api/sys-control/vendors/${v.id}/actions`, { method: 'POST', json: { action: 'clear_due_notice' } })
@@ -483,14 +486,20 @@ export default function VendorDetailPage() {
                     setFlash({ tone: 'danger', text: e instanceof Error ? e.message : 'Failed to clear notice' })
                   }
                 }}>Clear notice</Button>
-                <Button size="sm" variant="danger-soft" onClick={() => setDialog('suspend')}>Pause access now</Button>
+                {dueNotice.status !== 'paid' && (
+                  <Button size="sm" variant="danger-soft" onClick={() => setDialog('suspend')}>Pause access now</Button>
+                )}
               </div>
             ) : undefined}
           >
             <p className="text-[13px]">{dueNotice.message}</p>
-            {(dueNotice.billingPeriod || dueNotice.dueDate) && (
+            {(dueNotice.billingPeriod || dueNotice.dueDate || dueNotice.paidDetails) && (
               <p className="mt-1 text-[12px] text-adm-muted">
-                {[dueNotice.billingPeriod, dueNotice.dueDate ? `Due ${dueNotice.dueDate}` : null].filter(Boolean).join(' · ')}
+                {[
+                  dueNotice.billingPeriod,
+                  dueNotice.dueDate ? `Due ${dueNotice.dueDate}${dueNotice.dueTime ? ` ${dueNotice.dueTime}` : ''}` : null,
+                  dueNotice.paidDetails ? `Paid via ${dueNotice.paidDetails.method || 'Bank'}${dueNotice.paidDetails.reference ? ` (${dueNotice.paidDetails.reference})` : ''}` : null,
+                ].filter(Boolean).join(' · ')}
               </p>
             )}
           </Alert>
@@ -1395,6 +1404,9 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
   const [dueDate, setDueDate] = useState(
     dialog === 'due_notice' && existingNotice?.dueDate ? existingNotice.dueDate : ''
   )
+  const [dueTime, setDueTime] = useState(
+    dialog === 'due_notice' && existingNotice?.dueTime ? existingNotice.dueTime : '23:59'
+  )
   const [billingPeriod, setBillingPeriod] = useState(
     dialog === 'due_notice' && existingNotice?.billingPeriod ? existingNotice.billingPeriod : ''
   )
@@ -1402,7 +1414,17 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
     dialog === 'due_notice' && existingNotice?.contactNote ? existingNotice.contactNote : ''
   )
   const [showToCashier, setShowToCashier] = useState(
-    dialog === 'due_notice' ? Boolean(existingNotice?.showToCashier) : false
+    dialog === 'due_notice' || dialog === 'payment_received' ? Boolean(existingNotice?.showToCashier ?? true) : false
+  )
+  const [sendEmail, setSendEmail] = useState(true)
+  const [paidMethod, setPaidMethod] = useState('Bank Transfer')
+  const [paidReference, setPaidReference] = useState('')
+  const [paidNote, setPaidNote] = useState('Thank you! Your server & subscription payment has been received and verified.')
+  const [paidAmount, setPaidAmount] = useState(
+    existingNotice?.dueAmount ? String(existingNotice.dueAmount) : ''
+  )
+  const [paidCurrency, setPaidCurrency] = useState(
+    existingNotice?.dueCurrency || 'USD'
   )
   const [bannerTone, setBannerTone] = useState<DueBannerTone>(
     dialog === 'due_notice' ? (existingNotice?.bannerTone ?? 'auto') : 'auto'
@@ -1519,6 +1541,7 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
     dueAmount: parsedDueAmount && parsedDueAmount > 0 ? parsedDueAmount : undefined,
     dueCurrency: parsedDueAmount && parsedDueAmount > 0 ? dueCurrency.trim().toUpperCase() : undefined,
     dueDate: dueDate.trim() || undefined,
+    dueTime: dueDate.trim() && dueTime.trim() ? dueTime.trim() : undefined,
     billingPeriod: billingPeriod.trim() || undefined,
     contactNote: contactNote.trim() || undefined,
   }
@@ -1526,39 +1549,44 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
   const renderScenarioFields = (isNotice: boolean) => (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Scenario" htmlFor="act-scenario" required>
+        <Field label="Scenario" htmlFor="act-scenario" required className="min-w-0">
           <Select id="act-scenario" value={scenario} onChange={(e) => applyScenario(e.target.value as PauseScenario)}>
             {(Object.keys(PAUSE_SCENARIO_LABELS) as PauseScenario[]).map((k) => (
               <option key={k} value={k}>{PAUSE_SCENARIO_LABELS[k]}</option>
             ))}
           </Select>
         </Field>
-        <Field label="Heading shown to vendor" htmlFor="act-title" hint="Defaults to the scenario title if blank.">
+        <Field label="Heading shown to vendor" htmlFor="act-title" hint="Defaults to the scenario title if blank." className="min-w-0">
           <Input id="act-title" value={customTitle} onChange={(e) => setCustomTitle(e.target.value)} placeholder={PAUSE_SCENARIO_DEFAULTS[scenario].title} maxLength={140} />
         </Field>
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <Field label="Due amount (optional)" htmlFor="act-amount" error={!dueAmountValid ? 'Enter a positive amount' : undefined}>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Due amount (optional)" htmlFor="act-amount" error={!dueAmountValid ? 'Enter a positive amount' : undefined} className="min-w-0">
           <Input id="act-amount" type="number" step="0.01" min="0" value={dueAmount} onChange={(e) => setDueAmount(e.target.value)} placeholder="e.g. 29.00" />
         </Field>
-        <Field label="Currency" htmlFor="act-currency">
+        <Field label="Currency" htmlFor="act-currency" className="min-w-0">
           <Select id="act-currency" value={dueCurrency} onChange={(e) => setDueCurrency(e.target.value)}>
             {SUPPORTED_DUE_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
           </Select>
         </Field>
-        <Field label="Due date (optional)" htmlFor="act-duedate">
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <Field label="Due date (optional)" htmlFor="act-duedate" className="min-w-0">
           <Input id="act-duedate" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+        </Field>
+        <Field label="Due time (for live countdown)" htmlFor="act-duetime" className="min-w-0">
+          <Input id="act-duetime" type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
         </Field>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Billing period / reference" htmlFor="act-period" hint="e.g. Monthly Server Fee · Nov 2026">
+        <Field label="Billing period / reference" htmlFor="act-period" hint="e.g. Monthly Server Fee · Nov 2026" className="min-w-0">
           <Input id="act-period" value={billingPeriod} onChange={(e) => setBillingPeriod(e.target.value)} placeholder="Monthly Server Subscription" maxLength={120} />
         </Field>
-        <Field label="Payment / contact note" htmlFor="act-contact" hint="Optional WhatsApp, bank, or support note.">
+        <Field label="Payment / contact note" htmlFor="act-contact" hint="Optional WhatsApp, bank, or support note." className="min-w-0">
           <Input id="act-contact" value={contactNote} onChange={(e) => setContactNote(e.target.value)} placeholder="WhatsApp +94 77 000 0000 after transfer" maxLength={300} />
         </Field>
       </div>
-      <Field label="Message shown on Owner & Vendor UI" htmlFor="act-reason" required hint="Cashiers see a clean store-paused notice; Owners see this full message and due amount.">
+      <Field label="Message shown on Owner & Vendor UI" htmlFor="act-reason" required hint="Cashiers see a clean countdown strip; Owners see this full message and due amount.">
         <Textarea id="act-reason" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} />
       </Field>
       {isNotice && (
@@ -1567,7 +1595,7 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
             <p className="text-[12.5px] font-medium text-adm-fg mb-1.5">
               Banner Background Color (Traffic Light / Road Lamp)
             </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {([
                 { id: 'auto', label: 'Auto (Due Date)', hint: '>7d Green · 1-7d Amber · ≤0d Red', dot: 'bg-gradient-to-r from-emerald-500 via-amber-400 to-red-500' },
                 { id: 'green', label: 'Green (Upcoming)', hint: 'Advance reminder', dot: 'bg-emerald-500' },
@@ -1578,7 +1606,7 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
                   key={opt.id}
                   type="button"
                   onClick={() => setBannerTone(opt.id)}
-                  className={`text-left rounded-lg border p-2 transition-colors ${
+                  className={`text-left rounded-lg border p-2.5 transition-colors min-w-0 ${
                     bannerTone === opt.id
                       ? 'border-adm-accent bg-adm-surface-2 ring-1 ring-adm-accent'
                       : 'border-adm-border bg-adm-surface hover:bg-adm-surface-2'
@@ -1594,16 +1622,23 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
             </div>
           </div>
           <Checkbox
-            label="Also show reminder strip on Cashier POS screen"
-            description="If unchecked, only Owner & Manager dashboards show the payment due banner."
+            label="Also show live countdown reminder strip on Cashier POS screen"
+            description="Both Owner & Cashier will see the traffic-light day & time countdown."
             checked={showToCashier}
             onChange={(e) => setShowToCashier(e.target.checked)}
+          />
+          <Checkbox
+            label="Also email billing statement & invoice to Owner"
+            description="Sends an itemized HTML invoice with usage details to the owner's email."
+            checked={sendEmail}
+            onChange={(e) => setSendEmail(e.target.checked)}
           />
         </div>
       )}
       {(() => {
         const previewUrgency = resolveDueNoticeUrgency({
           dueDate: dueDate.trim() || null,
+          dueTime: dueTime.trim() || null,
           bannerTone: isNotice ? bannerTone : 'red',
           scenario,
         })
@@ -1624,7 +1659,7 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
               </span>
               <span>{customTitle.trim() || PAUSE_SCENARIO_DEFAULTS[scenario].title}</span>
               {previewAmount && <span className="rounded bg-white/20 px-1.5 py-0.5 text-[11px]">Due: {previewAmount}</span>}
-              {previewUrgency.countdownText && <span className="text-[11px] opacity-90">({previewUrgency.countdownText})</span>}
+              {previewUrgency.liveCountdown && <span className="rounded bg-black/25 px-1.5 py-0.5 text-[11px] font-mono">{previewUrgency.liveCountdown}</span>}
             </div>
             <p className="mt-1 opacity-95">{reason.trim() || '—'}</p>
           </div>
@@ -1636,18 +1671,81 @@ function ActionDialogs({ dialog, data, onClose, onDone }: {
   switch (dialog) {
     case 'suspend':
       return (
-        <AdminModal open onClose={onClose} title={`Pause / Suspend ${v.name}?`} description="Staff are signed out and POS/dashboard show your pause screen. All vendor data is safely preserved (never deleted) — Reactivate restores access immediately." footer={footer('Pause vendor access', () => run({ action: 'suspend', ...duePayload }), 'danger', !reasonOk || !dueAmountValid)}>
+        <AdminModal open size="lg" onClose={onClose} title={`Pause / Suspend ${v.name}?`} description="Staff are signed out and POS/dashboard show your pause screen. All vendor data is safely preserved (never deleted) — Reactivate restores access immediately." footer={footer('Pause vendor access', () => run({ action: 'suspend', ...duePayload }), 'danger', !reasonOk || !dueAmountValid)}>
           {err}
           {renderScenarioFields(false)}
         </AdminModal>
       )
     case 'due_notice':
       return (
-        <AdminModal open onClose={onClose} title={`Payment due notice — ${v.name}`} description="Vendor keeps working normally while a persistent payment-due banner is shown at the top of their dashboard." footer={footer('Save due notice', () => run({ action: 'set_due_notice', ...duePayload, showToCashier, bannerTone }), 'primary', !reasonOk || !dueAmountValid)}>
+        <AdminModal open size="lg" onClose={onClose} title={`Payment due notice — ${v.name}`} description="Vendor keeps working normally while a persistent payment-due banner is shown at the top of their dashboard." footer={footer('Save due notice', () => run({ action: 'set_due_notice', ...duePayload, showToCashier, bannerTone, sendEmail }), 'primary', !reasonOk || !dueAmountValid)}>
           {err}
           {renderScenarioFields(true)}
         </AdminModal>
       )
+    case 'payment_received': {
+      const parsedPaid = paidAmount.trim() !== '' ? Number(paidAmount) : undefined
+      const paidValid = parsedPaid === undefined || (Number.isFinite(parsedPaid) && parsedPaid > 0)
+      return (
+        <AdminModal
+          open
+          size="lg"
+          onClose={onClose}
+          title={`Mark Payment Received — ${v.name}`}
+          description="Switches the active banner to an official green Payment Received confirmation for Owner & Cashier and optionally emails a receipt."
+          footer={footer('Confirm Payment Received', () => run({
+            action: 'mark_payment_received',
+            amount: parsedPaid,
+            currency: paidCurrency,
+            method: paidMethod,
+            reference: paidReference.trim() || undefined,
+            note: paidNote.trim() || undefined,
+            showToCashier,
+            sendEmail,
+          }), 'primary', !paidValid)}
+        >
+          {err}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Amount received" htmlFor="pr-amount" error={!paidValid ? 'Enter a valid amount' : undefined} className="min-w-0">
+                <Input id="pr-amount" type="number" step="0.01" min="0" value={paidAmount} onChange={(e) => setPaidAmount(e.target.value)} placeholder="e.g. 29.00" />
+              </Field>
+              <Field label="Currency" htmlFor="pr-currency" className="min-w-0">
+                <Select id="pr-currency" value={paidCurrency} onChange={(e) => setPaidCurrency(e.target.value)}>
+                  {SUPPORTED_DUE_CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </Select>
+              </Field>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <Field label="Payment method" htmlFor="pr-method" className="min-w-0">
+                <Select id="pr-method" value={paidMethod} onChange={(e) => setPaidMethod(e.target.value)}>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="Card / PayHere">Card / PayHere</option>
+                  <option value="Cash">Cash</option>
+                  <option value="Cheque">Cheque</option>
+                </Select>
+              </Field>
+              <Field label="Transaction / Slip reference" htmlFor="pr-ref" className="min-w-0">
+                <Input id="pr-ref" value={paidReference} onChange={(e) => setPaidReference(e.target.value)} placeholder="e.g. TXN-98421" maxLength={120} />
+              </Field>
+            </div>
+            <Field label="Confirmation message shown to Owner" htmlFor="pr-note">
+              <Textarea id="pr-note" rows={2} value={paidNote} onChange={(e) => setPaidNote(e.target.value)} maxLength={300} />
+            </Field>
+            <Checkbox
+              label="Also show confirmation strip on Cashier POS screen"
+              checked={showToCashier}
+              onChange={(e) => setShowToCashier(e.target.checked)}
+            />
+            <Checkbox
+              label="Email official Payment Receipt to Owner"
+              checked={sendEmail}
+              onChange={(e) => setSendEmail(e.target.checked)}
+            />
+          </div>
+        </AdminModal>
+      )
+    }
     case 'reactivate':
       return (
         <AdminModal open onClose={onClose} title={`Reactivate ${v.name}?`} description="Staff can sign in again straight away." footer={footer('Reactivate', () => run({ action: 'reactivate', reason: reason.trim() || undefined }))}>

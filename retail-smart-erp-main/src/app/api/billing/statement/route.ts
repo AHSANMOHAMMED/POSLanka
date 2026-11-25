@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { authWithCompany } from '@/lib/auth'
 import { db } from '@/lib/db'
 import {
+  accounts,
   tenants,
   subscriptions,
   pricingTiers,
@@ -42,6 +43,7 @@ export async function GET() {
         id: true,
         name: true,
         slug: true,
+        email: true,
         currency: true,
         status: true,
         primaryOwnerId: true,
@@ -69,6 +71,13 @@ export async function GET() {
     })
 
     const billingAccountId = subscription?.billingAccountId || tenant.primaryOwnerId
+    const ownerAccount = billingAccountId
+      ? await db.query.accounts.findFirst({
+          where: eq(accounts.id, billingAccountId),
+          columns: { email: true },
+        })
+      : null
+    const ownerEmail = ownerAccount?.email || tenant.email || null
     const recentInvoices = billingAccountId
       ? await db
           .select()
@@ -104,6 +113,7 @@ export async function GET() {
         slug: tenant.slug,
         currency: tenant.currency,
         status: tenant.status,
+        ownerEmail,
       },
       subscription: subscription
         ? {

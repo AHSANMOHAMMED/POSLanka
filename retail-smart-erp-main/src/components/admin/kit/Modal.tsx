@@ -60,7 +60,7 @@ export function AdminModal({ open, onClose, title, description, footer, size = '
           widths[size]
         )}
       >
-        <div className="flex items-start justify-between gap-4 border-b border-adm-border px-5 py-4">
+        <div className="flex shrink-0 items-start justify-between gap-4 border-b border-adm-border px-5 py-4">
           <div className="min-w-0">
             <h2 id={titleId} className="text-[16px] font-semibold text-adm-fg">{title}</h2>
             {description && <p className="mt-0.5 text-[13px] text-adm-muted">{description}</p>}
@@ -75,8 +75,8 @@ export function AdminModal({ open, onClose, title, description, footer, size = '
             <X size={18} aria-hidden />
           </button>
         </div>
-        {children !== undefined && <div className="adm-scroll overflow-y-auto px-5 py-4">{children}</div>}
-        {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-adm-border px-5 py-3.5">{footer}</div>}
+        {children !== undefined && <div className="adm-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>}
+        {footer && <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-adm-border px-5 py-3.5">{footer}</div>}
       </div>
     </div>
   )

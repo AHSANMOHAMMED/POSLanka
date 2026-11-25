@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, use } from 'react'
+import { useState, useCallback, useEffect, use } from 'react'
 import Link from 'next/link'
 import { useRealtimeData } from '@/hooks'
 import {
@@ -8,10 +8,12 @@ import {
   ArrowLeft,
   Calendar,
   CheckCircle2,
+  Clock,
   CreditCard,
   Database,
   FileText,
   HardDrive,
+  Mail,
   Printer,
   Receipt,
   ShoppingBag,
@@ -19,6 +21,7 @@ import {
   ExternalLink,
 } from 'lucide-react'
 import { formatCurrencyWithSymbol } from '@/lib/utils/currency'
+import { resolveDueNoticeUrgency } from '@/lib/tenant/lock-message'
 
 interface StatementResponse {
   company: {
@@ -27,6 +30,7 @@ interface StatementResponse {
     slug: string
     currency: string
     status: string
+    ownerEmail?: string | null
   }
   subscription: {
     id: string
@@ -62,6 +66,7 @@ interface StatementResponse {
   }
   dueNotice: {
     enabled: boolean
+    status?: 'due' | 'paid'
     scenario: string
     title: string
     message: string
@@ -69,13 +74,23 @@ interface StatementResponse {
     dueCurrency: string | null
     formattedAmount: string | null
     dueDate: string | null
+    dueTime?: string | null
     billingPeriod: string | null
     contactNote: string | null
+    paidDetails?: {
+      amount?: number | null
+      currency?: string | null
+      method?: string | null
+      reference?: string | null
+      paidAt: string
+      note?: string | null
+    } | null
     urgency: {
       color: 'green' | 'amber' | 'red'
       label: string
       daysRemaining: number | null
       countdownText: string | null
+      liveCountdown?: string | null
     } | null
   } | null
   currentStatement: {
@@ -171,6 +186,33 @@ export default function TenantBillingPage({
   const [data, setData] = useState<StatementResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [emailing, setEmailing] = useState(false)
+  const [emailNotice, setEmailNotice] = useState<{ tone: 'ok' | 'err'; text: string } | null>(null)
+  const [nowMs, setNowMs] = useState<number>(() => Date.now())
+
+  useEffect(() => {
+    if (!data?.dueNotice?.dueDate || data.dueNotice.status === 'paid') return
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [data?.dueNotice?.dueDate, data?.dueNotice?.status])
+
+  async function handleEmailInvoice() {
+    setEmailing(true)
+    setEmailNotice(null)
+    try {
+      const res = await fetch('/api/billing/email-invoice', { method: 'POST' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setEmailNotice({ tone: 'err', text: body.error || 'Failed to email invoice' })
+        return
+      }
+      setEmailNotice({ tone: 'ok', text: body.message || 'Invoice sent to owner email' })
+    } catch {
+      setEmailNotice({ tone: 'err', text: 'Network error while emailing invoice' })
+    } finally {
+      setEmailing(false)
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -256,7 +298,17 @@ export default function TenantBillingPage({
             Monthly server hosting, resource usage breakdown, and payment invoices for {data.company.name}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={handleEmailInvoice}
+            disabled={emailing}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-sm font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/50 disabled:opacity-50"
+            title={data.company.ownerEmail ? `Send statement to ${data.company.ownerEmail}` : 'Send statement to owner email'}
+          >
+            <Mail className="w-4 h-4" />
+            {emailing ? 'Sending...' : 'Email Invoice to Owner'}
+          </button>
           <button
             type="button"
             onClick={() => window.print()}
@@ -276,51 +328,94 @@ export default function TenantBillingPage({
         </div>
       </div>
 
-      {/* Active Payment Due Alert (Traffic-light styled) */}
-      {notice && (
-        <div className={`rounded-2xl border-2 p-5 ${noticeCardClass}`}>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-1.5 flex-1 min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Road Lamp dots */}
-                <span className="inline-flex items-center gap-1 bg-black/80 px-2 py-1 rounded-full">
-                  <span className={`w-2.5 h-2.5 rounded-full ${urgencyColor === 'red' ? 'bg-red-400' : 'bg-white/25'}`} />
-                  <span className={`w-2.5 h-2.5 rounded-full ${urgencyColor === 'amber' ? 'bg-amber-300' : 'bg-white/25'}`} />
-                  <span className={`w-2.5 h-2.5 rounded-full ${urgencyColor === 'green' ? 'bg-emerald-400' : 'bg-white/25'}`} />
-                </span>
-                <span className="px-2 py-0.5 rounded text-xs font-extrabold uppercase bg-black/10 dark:bg-white/10">
-                  {notice.urgency?.label || 'PAYMENT NOTICE'}
-                </span>
-                {notice.urgency?.countdownText && (
-                  <span className="inline-flex items-center gap-1 text-xs font-bold">
-                    <Calendar className="w-3.5 h-3.5" />
-                    {notice.urgency.countdownText}
-                    {notice.dueDate ? ` (${new Date(notice.dueDate).toLocaleDateString()})` : ''}
-                  </span>
-                )}
-              </div>
-              <h2 className="text-lg font-bold">{notice.title}</h2>
-              <p className="text-sm opacity-90">{notice.message}</p>
-              {notice.contactNote && (
-                <p className="text-xs font-semibold pt-1">
-                  Payment / Support Instructions: {notice.contactNote}
-                </p>
-              )}
-            </div>
-            {notice.formattedAmount && (
-              <div className="bg-white/80 dark:bg-gray-900/80 rounded-xl px-4 py-3 text-right border border-black/10 dark:border-white/10 shrink-0">
-                <div className="text-[11px] uppercase tracking-wider font-bold opacity-70">Amount Due</div>
-                <div className="text-2xl font-black font-mono text-gray-900 dark:text-white">
-                  {notice.formattedAmount}
-                </div>
-                {notice.billingPeriod && (
-                  <div className="text-xs opacity-75 mt-0.5">{notice.billingPeriod}</div>
-                )}
-              </div>
-            )}
-          </div>
+      {emailNotice && (
+        <div className={`rounded-xl border px-4 py-3 text-sm font-medium flex items-center justify-between print:hidden ${
+          emailNotice.tone === 'ok'
+            ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-200'
+            : 'bg-red-50 border-red-200 text-red-800 dark:bg-red-950/30 dark:border-red-800 dark:text-red-200'
+        }`}>
+          <span>{emailNotice.text}</span>
+          <button type="button" onClick={() => setEmailNotice(null)} className="text-xs underline ml-4">Dismiss</button>
         </div>
       )}
+
+      {/* Active Payment Due / Payment Received Card */}
+      {notice && (() => {
+        const liveUrgency = resolveDueNoticeUrgency(
+          {
+            dueDate: notice.dueDate,
+            dueTime: notice.dueTime,
+            bannerTone: notice.urgency?.color || 'auto',
+            scenario: 'server_monthly_due',
+            status: notice.status,
+          },
+          nowMs
+        )
+        const isPaid = notice.status === 'paid'
+        return (
+          <div className={`rounded-2xl border-2 p-5 ${noticeCardClass}`}>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="space-y-1.5 flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  {isPaid ? (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                  ) : (
+                    <span className="inline-flex items-center gap-1 bg-black/80 px-2 py-1 rounded-full">
+                      <span className={`w-2.5 h-2.5 rounded-full ${urgencyColor === 'red' ? 'bg-red-400' : 'bg-white/25'}`} />
+                      <span className={`w-2.5 h-2.5 rounded-full ${urgencyColor === 'amber' ? 'bg-amber-300' : 'bg-white/25'}`} />
+                      <span className={`w-2.5 h-2.5 rounded-full ${urgencyColor === 'green' ? 'bg-emerald-400' : 'bg-white/25'}`} />
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 rounded text-xs font-extrabold uppercase bg-black/10 dark:bg-white/10">
+                    {liveUrgency.label}
+                  </span>
+                  {!isPaid && liveUrgency.liveCountdown && (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded bg-black/15 dark:bg-white/15 font-mono text-xs font-bold">
+                      <Clock className="w-3.5 h-3.5" />
+                      {liveUrgency.liveCountdown}
+                    </span>
+                  )}
+                  {!isPaid && notice.dueDate && (
+                    <span className="inline-flex items-center gap-1 text-xs font-bold">
+                      <Calendar className="w-3.5 h-3.5" />
+                      {liveUrgency.countdownText ? `${liveUrgency.countdownText} · ` : ''}
+                      {new Date(notice.dueDate).toLocaleDateString()}
+                      {notice.dueTime ? ` ${notice.dueTime}` : ''}
+                    </span>
+                  )}
+                </div>
+                <h2 className="text-lg font-bold">{notice.title}</h2>
+                <p className="text-sm opacity-90">{notice.message}</p>
+                {isPaid && notice.paidDetails && (
+                  <p className="text-xs font-semibold pt-1">
+                    Method: {notice.paidDetails.method || 'Bank Transfer'}
+                    {notice.paidDetails.reference ? ` · Reference: ${notice.paidDetails.reference}` : ''}
+                    {notice.paidDetails.paidAt ? ` · Verified: ${new Date(notice.paidDetails.paidAt).toLocaleString()}` : ''}
+                  </p>
+                )}
+                {!isPaid && notice.contactNote && (
+                  <p className="text-xs font-semibold pt-1">
+                    Payment / Support Instructions: {notice.contactNote}
+                  </p>
+                )}
+              </div>
+              {notice.formattedAmount && (
+                <div className="bg-white/80 dark:bg-gray-900/80 rounded-xl px-4 py-3 text-right border border-black/10 dark:border-white/10 shrink-0">
+                  <div className="text-[11px] uppercase tracking-wider font-bold opacity-70">
+                    {isPaid ? 'Amount Paid' : 'Amount Due'}
+                  </div>
+                  <div className="text-2xl font-black font-mono text-gray-900 dark:text-white">
+                    {notice.formattedAmount}
+                  </div>
+                  {notice.billingPeriod && (
+                    <div className="text-xs opacity-75 mt-0.5">{notice.billingPeriod}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Postpaid Resource Usage Breakdown */}
       <div>

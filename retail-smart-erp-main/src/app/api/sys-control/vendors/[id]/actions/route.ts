@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs'
 import { randomBytes, randomInt } from 'crypto'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { db, withTenant } from '@/lib/db'
-import { accountTenants, pricingTiers, staffInvites, subscriptions, tenants, users } from '@/lib/db/schema'
+import { accounts, accountTenants, pricingTiers, staffInvites, subscriptions, tenants, tenantUsage, users } from '@/lib/db/schema'
 import { adminAuthError, adminAudit, logAdminAction, requireAdminPermission, validateAdminSession, withRateLimit, STRICT_LIMIT, type AdminPermission } from '@/lib/admin'
 import { validateBody, validateParams } from '@/lib/validation'
 import { idParamSchema } from '@/lib/validation/schemas/common'
@@ -20,6 +20,7 @@ import {
 } from '@/lib/billing/subscription-state'
 import { revokeAllSessions } from '@/lib/auth/session-manager'
 import { sendStaffInviteEmail } from '@/lib/email/system-email'
+import { sendBillingStatementEmail } from '@/lib/email/billing-email'
 import { createOwnerResetLink, sendOwnerResetEmail, sendOwnerWelcomeEmail, type OwnerMailTarget } from '@/lib/admin/vendor-emails'
 import { invalidatePermissionCache } from '@/lib/auth/permission-cache'
 import { isPlaceholderLogin } from '@/lib/users/generated-login'
@@ -27,6 +28,7 @@ import {
   withLockMessage,
   withLockDetails,
   withDueNotice,
+  readDueNoticeFromSettings,
   PAUSE_SCENARIO_DEFAULTS,
   type PauseScenario,
 } from '@/lib/tenant/lock-message'
@@ -60,6 +62,7 @@ const dueFields = {
   dueAmount: z.coerce.number().positive().max(10_000_000).optional(),
   dueCurrency: z.string().trim().min(2).max(10).optional(),
   dueDate: z.string().trim().max(40).optional(),
+  dueTime: z.string().trim().max(10).optional(),
   billingPeriod: z.string().trim().max(120).optional(),
   contactNote: z.string().trim().max(300).optional(),
   bannerTone: z.enum(['auto', 'green', 'amber', 'red']).optional(),
@@ -67,7 +70,17 @@ const dueFields = {
 
 const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('suspend'), reason, ...dueFields }),
-  z.object({ action: z.literal('set_due_notice'), reason, showToCashier: z.boolean().optional(), ...dueFields }),
+  z.object({ action: z.literal('set_due_notice'), reason, showToCashier: z.boolean().optional(), sendEmail: z.boolean().optional(), ...dueFields }),
+  z.object({
+    action: z.literal('mark_payment_received'),
+    amount: z.coerce.number().positive().max(10_000_000).optional(),
+    currency: z.string().trim().min(2).max(10).optional(),
+    method: z.string().trim().max(60).optional(),
+    reference: z.string().trim().max(120).optional(),
+    note: z.string().trim().max(300).optional(),
+    showToCashier: z.boolean().optional(),
+    sendEmail: z.boolean().optional(),
+  }),
   z.object({ action: z.literal('clear_due_notice') }),
   z.object({ action: z.literal('reactivate'), reason: z.string().trim().max(500).optional(), extendDays: z.number().int().min(1).max(366).optional() }),
   z.object({ action: z.literal('extend'), days: z.number().int().min(1).max(366), reason }),
@@ -194,20 +207,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       /* ---------------------------------------------------------------- due notice (soft banner) */
       case 'set_due_notice': {
         const scenario: PauseScenario = input.scenario ?? 'server_monthly_due'
-        const nextSettings = withDueNotice(tenant.settings, {
+        const noticeObj = {
           enabled: true,
+          status: 'due' as const,
           scenario,
           title: input.customTitle?.trim() || PAUSE_SCENARIO_DEFAULTS[scenario].title,
           message: input.reason,
           dueAmount: input.dueAmount ?? null,
           dueCurrency: input.dueCurrency ? input.dueCurrency.toUpperCase() : null,
           dueDate: input.dueDate || null,
+          dueTime: input.dueTime || null,
           billingPeriod: input.billingPeriod || null,
           contactNote: input.contactNote || null,
           showToCashier: input.showToCashier ?? false,
-          bannerTone: input.bannerTone || 'auto',
+          bannerTone: input.bannerTone || ('auto' as const),
+          paidDetails: null,
           updatedAt: now.toISOString(),
-        })
+        }
+        const nextSettings = withDueNotice(tenant.settings, noticeObj)
         await db.update(tenants)
           .set({ settings: nextSettings, updatedAt: now })
           .where(eq(tenants.id, tenantId))
@@ -217,10 +234,137 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           dueAmount: input.dueAmount ?? null,
           dueCurrency: input.dueCurrency ?? null,
           dueDate: input.dueDate ?? null,
+          dueTime: input.dueTime ?? null,
           reason: input.reason,
         })
         invalidatePermissionCache(tenantId)
-        return NextResponse.json({ success: true, message: `Payment due notice is now shown on ${tenant.name}'s dashboard.` })
+
+        let emailWarning: string | undefined
+        if (input.sendEmail) {
+          try {
+            const sub = await db.query.subscriptions.findFirst({ where: eq(subscriptions.tenantId, tenantId) })
+            const ownerId = sub?.billingAccountId || tenant.primaryOwnerId
+            const ownerAcc = ownerId
+              ? await db.query.accounts.findFirst({ where: eq(accounts.id, ownerId), columns: { email: true, fullName: true } })
+              : null
+            const toEmail = ownerAcc?.email || tenant.email
+            if (toEmail) {
+              const tier = sub ? await db.query.pricingTiers.findFirst({ where: eq(pricingTiers.id, sub.tierId) }) : null
+              const usage = await db.query.tenantUsage.findFirst({ where: eq(tenantUsage.tenantId, tenantId) })
+              const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
+              await sendBillingStatementEmail({
+                to: toEmail,
+                ownerName: ownerAcc?.fullName || tenant.name,
+                companyName: tenant.name,
+                statementNo: `STMT-${tenant.slug.toUpperCase().slice(0, 8)}-${now.toISOString().slice(0, 7).replace('-', '')}`,
+                billingPeriod: noticeObj.billingPeriod || now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+                tierName: tier?.displayName || 'Platform',
+                amountDue: noticeObj.dueAmount || 0,
+                currency: noticeObj.dueCurrency || tenant.currency || 'LKR',
+                dueDate: noticeObj.dueDate,
+                dueTime: noticeObj.dueTime,
+                usage: usage ? {
+                  databaseBytes: usage.storageBytes || 0,
+                  fileStorageBytes: usage.fileStorageBytes || 0,
+                  usersCount: usage.usersCount || 0,
+                  salesCount: usage.salesCount || 0,
+                  itemsCount: usage.itemsCount || 0,
+                  customersCount: usage.customersCount || 0,
+                } : null,
+                dueNotice: noticeObj,
+                billingUrl: appUrl ? `${appUrl}/c/${tenant.slug}/billing` : undefined,
+              })
+            } else {
+              emailWarning = 'Owner email not found; notice saved without email.'
+            }
+          } catch (mailErr) {
+            emailWarning = mailErr instanceof Error ? `Email failed: ${mailErr.message}` : 'Email send failed.'
+          }
+        }
+        return NextResponse.json({
+          success: true,
+          message: `Payment due notice is now shown on ${tenant.name}'s dashboard.`,
+          warning: emailWarning,
+        })
+      }
+
+      case 'mark_payment_received': {
+        const prev = readDueNoticeFromSettings(tenant.settings)
+        const paidAmount = input.amount ?? prev?.dueAmount ?? null
+        const paidCurrency = (input.currency || prev?.dueCurrency || tenant.currency || 'LKR').toUpperCase()
+        const paidNotice = {
+          enabled: true,
+          status: 'paid' as const,
+          scenario: prev?.scenario ?? ('server_monthly_due' as const),
+          title: 'Payment Received — Thank You',
+          message: input.note?.trim() || 'Your server & platform subscription payment has been received and verified. All services remain active.',
+          dueAmount: paidAmount,
+          dueCurrency: paidCurrency,
+          dueDate: prev?.dueDate || null,
+          dueTime: prev?.dueTime || null,
+          billingPeriod: prev?.billingPeriod || null,
+          contactNote: prev?.contactNote || null,
+          showToCashier: input.showToCashier ?? prev?.showToCashier ?? true,
+          bannerTone: 'green' as const,
+          paidDetails: {
+            amount: paidAmount,
+            currency: paidCurrency,
+            method: input.method?.trim() || 'Bank Transfer',
+            reference: input.reference?.trim() || null,
+            paidAt: now.toISOString(),
+            note: input.note?.trim() || null,
+          },
+          updatedAt: now.toISOString(),
+        }
+        const nextSettings = withDueNotice(tenant.settings, paidNotice)
+        await db.update(tenants)
+          .set({ settings: nextSettings, updatedAt: now })
+          .where(eq(tenants.id, tenantId))
+        await audit('update', {
+          op: 'mark_payment_received',
+          amount: paidAmount,
+          currency: paidCurrency,
+          method: paidNotice.paidDetails.method,
+          reference: paidNotice.paidDetails.reference,
+        })
+        invalidatePermissionCache(tenantId)
+
+        let emailWarning: string | undefined
+        if (input.sendEmail) {
+          try {
+            const sub = await db.query.subscriptions.findFirst({ where: eq(subscriptions.tenantId, tenantId) })
+            const ownerId = sub?.billingAccountId || tenant.primaryOwnerId
+            const ownerAcc = ownerId
+              ? await db.query.accounts.findFirst({ where: eq(accounts.id, ownerId), columns: { email: true, fullName: true } })
+              : null
+            const toEmail = ownerAcc?.email || tenant.email
+            if (toEmail) {
+              const tier = sub ? await db.query.pricingTiers.findFirst({ where: eq(pricingTiers.id, sub.tierId) }) : null
+              const appUrl = process.env.NEXT_PUBLIC_APP_URL || ''
+              await sendBillingStatementEmail({
+                to: toEmail,
+                ownerName: ownerAcc?.fullName || tenant.name,
+                companyName: tenant.name,
+                statementNo: `RCPT-${tenant.slug.toUpperCase().slice(0, 8)}-${now.toISOString().slice(0, 7).replace('-', '')}`,
+                billingPeriod: paidNotice.billingPeriod || now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+                tierName: tier?.displayName || 'Platform',
+                amountDue: paidAmount || 0,
+                currency: paidCurrency,
+                dueNotice: paidNotice,
+                billingUrl: appUrl ? `${appUrl}/c/${tenant.slug}/billing` : undefined,
+              })
+            } else {
+              emailWarning = 'Owner email not found; receipt saved without email.'
+            }
+          } catch (mailErr) {
+            emailWarning = mailErr instanceof Error ? `Receipt email failed: ${mailErr.message}` : 'Receipt email failed.'
+          }
+        }
+        return NextResponse.json({
+          success: true,
+          message: `Payment received confirmation is now visible to ${tenant.name}.`,
+          warning: emailWarning,
+        })
       }
 
       case 'clear_due_notice': {

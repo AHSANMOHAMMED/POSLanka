@@ -90,18 +90,30 @@ export interface LockDetails {
 
 export type DueBannerTone = 'auto' | 'green' | 'amber' | 'red'
 
+export interface DueNoticePaidDetails {
+  amount?: number | null
+  currency?: string | null
+  method?: string | null
+  reference?: string | null
+  paidAt: string
+  note?: string | null
+}
+
 export interface DueNotice {
   enabled: boolean
+  status?: 'due' | 'paid'
   scenario: PauseScenario
   title: string
   message: string
   dueAmount?: number | null
   dueCurrency?: string | null
   dueDate?: string | null
+  dueTime?: string | null
   billingPeriod?: string | null
   contactNote?: string | null
   showToCashier?: boolean
   bannerTone?: DueBannerTone | null
+  paidDetails?: DueNoticePaidDetails | null
   updatedAt: string
 }
 
@@ -110,31 +122,64 @@ export interface ResolvedDueUrgency {
   label: string
   daysRemaining: number | null
   countdownText: string | null
+  liveCountdown: string | null
 }
 
 /**
- * Resolve traffic-light ("road lamp") color & countdown from a DueNotice.
- * Auto mode: >7 days = green (upcoming), 1–7 days = amber (due soon), <=0 days = red (due today/overdue).
+ * Resolve traffic-light ("road lamp") color & live day/time countdown from a DueNotice.
+ * Auto mode: >7 days = green (upcoming), 1–7 days = amber (due soon), <=0 = red (due today/overdue).
  */
 export function resolveDueNoticeUrgency(
-  notice: Pick<DueNotice, 'dueDate' | 'bannerTone' | 'scenario'>
+  notice: Pick<DueNotice, 'dueDate' | 'dueTime' | 'bannerTone' | 'scenario' | 'status'>,
+  nowMs?: number
 ): ResolvedDueUrgency {
+  if (notice.status === 'paid') {
+    return {
+      color: 'green',
+      label: 'PAYMENT RECEIVED',
+      daysRemaining: null,
+      countdownText: 'Paid & Verified',
+      liveCountdown: null,
+    }
+  }
+
   let daysRemaining: number | null = null
   let countdownText: string | null = null
+  let liveCountdown: string | null = null
+  let diffMs: number | null = null
 
   if (notice.dueDate) {
-    const parsed = new Date(notice.dueDate)
-    if (!Number.isNaN(parsed.getTime())) {
-      const now = new Date()
-      const todayUtc = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
-      const dueUtc = Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate())
+    const datePart = notice.dueDate.slice(0, 10)
+    const timePart = notice.dueTime && /^\d{2}:\d{2}/.test(notice.dueTime) ? notice.dueTime.slice(0, 5) : '23:59'
+    const target = new Date(`${datePart}T${timePart}:00`)
+    if (!Number.isNaN(target.getTime())) {
+      const now = nowMs ?? Date.now()
+      diffMs = target.getTime() - now
+
+      const nowDate = new Date(now)
+      const todayUtc = Date.UTC(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate())
+      const dueUtc = Date.UTC(target.getFullYear(), target.getMonth(), target.getDate())
       daysRemaining = Math.round((dueUtc - todayUtc) / 86_400_000)
 
-      if (daysRemaining > 1) countdownText = `Due in ${daysRemaining} days`
-      else if (daysRemaining === 1) countdownText = 'Due tomorrow'
-      else if (daysRemaining === 0) countdownText = 'Due today'
-      else if (daysRemaining === -1) countdownText = 'Overdue by 1 day'
-      else countdownText = `Overdue by ${Math.abs(daysRemaining)} days`
+      if (diffMs < 0) {
+        countdownText = daysRemaining < -1 ? `Overdue by ${Math.abs(daysRemaining)} days` : daysRemaining === -1 ? 'Overdue by 1 day' : 'Overdue'
+      } else if (daysRemaining > 1) {
+        countdownText = `Due in ${daysRemaining} days`
+      } else if (daysRemaining === 1) {
+        countdownText = 'Due tomorrow'
+      } else {
+        countdownText = 'Due today'
+      }
+
+      const absSec = Math.floor(Math.abs(diffMs) / 1000)
+      const d = Math.floor(absSec / 86400)
+      const h = Math.floor((absSec % 86400) / 3600)
+      const m = Math.floor((absSec % 3600) / 60)
+      const s = absSec % 60
+      const pad = (n: number) => String(n).padStart(2, '0')
+      liveCountdown = diffMs >= 0
+        ? `${d > 0 ? `${d}d ` : ''}${pad(h)}h ${pad(m)}m ${pad(s)}s`
+        : `${d > 0 ? `${d}d ` : ''}${pad(h)}h ${pad(m)}m overdue`
     }
   }
 
@@ -142,8 +187,8 @@ export function resolveDueNoticeUrgency(
   let color: 'green' | 'amber' | 'red'
   if (manual) {
     color = manual
-  } else if (daysRemaining !== null) {
-    color = daysRemaining > 7 ? 'green' : daysRemaining >= 1 ? 'amber' : 'red'
+  } else if (diffMs !== null && daysRemaining !== null) {
+    color = diffMs < 0 || daysRemaining <= 0 ? 'red' : daysRemaining > 7 ? 'green' : 'amber'
   } else {
     color = notice.scenario === 'subscription_overdue' ? 'red' : 'amber'
   }
@@ -152,12 +197,12 @@ export function resolveDueNoticeUrgency(
     color === 'green'
       ? 'UPCOMING'
       : color === 'red'
-      ? daysRemaining !== null && daysRemaining === 0
+      ? diffMs !== null && diffMs >= 0 && daysRemaining === 0
         ? 'DUE TODAY'
         : 'OVERDUE'
       : 'DUE SOON'
 
-  return { color, label, daysRemaining, countdownText }
+  return { color, label, daysRemaining, countdownText, liveCountdown }
 }
 
 export interface LockMessage {
@@ -336,8 +381,20 @@ export function readDueNoticeFromSettings(settings: unknown): DueNotice | null {
     typeof obj.title === 'string' && obj.title.trim()
       ? obj.title.trim().slice(0, 140)
       : PAUSE_SCENARIO_DEFAULTS[scenario].title
+  const rawPaid = obj.paidDetails && typeof obj.paidDetails === 'object' ? (obj.paidDetails as Record<string, unknown>) : null
+  const paidDetails: DueNoticePaidDetails | null = rawPaid
+    ? {
+        amount: typeof rawPaid.amount === 'number' && Number.isFinite(rawPaid.amount) ? rawPaid.amount : null,
+        currency: typeof rawPaid.currency === 'string' && rawPaid.currency.trim() ? rawPaid.currency.trim().toUpperCase().slice(0, 10) : null,
+        method: typeof rawPaid.method === 'string' && rawPaid.method.trim() ? rawPaid.method.trim().slice(0, 60) : null,
+        reference: typeof rawPaid.reference === 'string' && rawPaid.reference.trim() ? rawPaid.reference.trim().slice(0, 120) : null,
+        paidAt: typeof rawPaid.paidAt === 'string' ? rawPaid.paidAt : new Date().toISOString(),
+        note: typeof rawPaid.note === 'string' && rawPaid.note.trim() ? rawPaid.note.trim().slice(0, 300) : null,
+      }
+    : null
   return {
     enabled: true,
+    status: obj.status === 'paid' ? 'paid' : 'due',
     scenario,
     title,
     message,
@@ -347,6 +404,7 @@ export function readDueNoticeFromSettings(settings: unknown): DueNotice | null {
         ? obj.dueCurrency.trim().toUpperCase().slice(0, 10)
         : null,
     dueDate: typeof obj.dueDate === 'string' && obj.dueDate.trim() ? obj.dueDate.trim() : null,
+    dueTime: typeof obj.dueTime === 'string' && obj.dueTime.trim() ? obj.dueTime.trim().slice(0, 10) : null,
     billingPeriod:
       typeof obj.billingPeriod === 'string' && obj.billingPeriod.trim()
         ? obj.billingPeriod.trim().slice(0, 120)
@@ -360,6 +418,7 @@ export function readDueNoticeFromSettings(settings: unknown): DueNotice | null {
       obj.bannerTone === 'green' || obj.bannerTone === 'amber' || obj.bannerTone === 'red' || obj.bannerTone === 'auto'
         ? obj.bannerTone
         : 'auto',
+    paidDetails,
     updatedAt: typeof obj.updatedAt === 'string' ? obj.updatedAt : new Date().toISOString(),
   }
 }
