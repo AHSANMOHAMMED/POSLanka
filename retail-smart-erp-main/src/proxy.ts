@@ -191,7 +191,6 @@ export async function proxy(request: NextRequest) {
   const originalHostHeader = request.headers.get('x-original-host')
   const candidateHost = forwardedHost || hostHeader || originalHostHeader || hostname
   const hostOnly = candidateHost.split(':')[0].toLowerCase()
-  const proto = request.headers.get('x-forwarded-proto') || request.nextUrl.protocol.replace(':', '')
 
   if (hostOnly === '168.144.216.104' || hostOnly.endsWith('.sslip.io')) {
     const targetHost = pathname === '/' ? LANDING_DOMAIN : APP_DOMAIN
