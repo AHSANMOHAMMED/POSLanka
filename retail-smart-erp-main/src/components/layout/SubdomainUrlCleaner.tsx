@@ -3,7 +3,7 @@
 import { useLayoutEffect } from 'react'
 import { usePathname } from 'next/navigation'
 
-const BASE_DOMAIN = (process.env.NEXT_PUBLIC_BASE_DOMAIN || 'retailsmarterp.com').toLowerCase()
+const BASE_DOMAIN = (process.env.NEXT_PUBLIC_BASE_DOMAIN || 'skyerpos.com').toLowerCase()
 
 /**
  * Strips the redundant `/c/{slug}` prefix from the browser URL when on a subdomain.

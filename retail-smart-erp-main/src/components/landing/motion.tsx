@@ -36,7 +36,7 @@ export function FadeIn({ children, className = '', delay = 0 }: RevealProps) {
     <motion.div
       initial={{ opacity: 0, y: 24 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: '-60px' }}
+      viewport={{ once: true, amount: 'some' }}
       transition={{ duration: 0.6, delay, ease: [0.25, 0.4, 0.25, 1] }}
       className={className}
     >
@@ -50,7 +50,7 @@ export function FadeInLeft({ children, className = '', delay = 0 }: RevealProps)
     <motion.div
       initial={{ opacity: 0, x: -40 }}
       whileInView={{ opacity: 1, x: 0 }}
-      viewport={{ once: true, margin: '-60px' }}
+      viewport={{ once: true, amount: 'some' }}
       transition={{ duration: 0.6, delay, ease: [0.25, 0.4, 0.25, 1] }}
       className={className}
     >
@@ -64,7 +64,7 @@ export function FadeInRight({ children, className = '', delay = 0 }: RevealProps
     <motion.div
       initial={{ opacity: 0, x: 40 }}
       whileInView={{ opacity: 1, x: 0 }}
-      viewport={{ once: true, margin: '-60px' }}
+      viewport={{ once: true, amount: 'some' }}
       transition={{ duration: 0.6, delay, ease: [0.25, 0.4, 0.25, 1] }}
       className={className}
     >
@@ -78,7 +78,7 @@ export function ScaleIn({ children, className = '', delay = 0 }: RevealProps) {
     <motion.div
       initial={{ opacity: 0, scale: 0.9 }}
       whileInView={{ opacity: 1, scale: 1 }}
-      viewport={{ once: true, margin: '-60px' }}
+      viewport={{ once: true, amount: 'some' }}
       transition={{ duration: 0.5, delay, ease: [0.25, 0.4, 0.25, 1] }}
       className={className}
     >
@@ -92,7 +92,7 @@ export function BlurFadeIn({ children, className = '', delay = 0 }: RevealProps)
     <motion.div
       initial={{ opacity: 0, y: 16, filter: 'blur(8px)' }}
       whileInView={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-      viewport={{ once: true, margin: '-60px' }}
+      viewport={{ once: true, amount: 'some' }}
       transition={{ duration: 0.7, delay, ease: 'easeOut' }}
       className={className}
     >
@@ -106,7 +106,7 @@ export function SpringIn({ children, className = '', delay = 0 }: RevealProps) {
     <motion.div
       initial={{ opacity: 0, y: 30, scale: 0.95 }}
       whileInView={{ opacity: 1, y: 0, scale: 1 }}
-      viewport={{ once: true, margin: '-60px' }}
+      viewport={{ once: true, amount: 'some' }}
       transition={{ type: 'spring', stiffness: 100, damping: 15, delay }}
       className={className}
     >
@@ -138,7 +138,7 @@ export function StaggerContainer({ children, className = '', staggerDelay = 0.08
     <motion.div
       initial="hidden"
       whileInView="visible"
-      viewport={{ once: true, margin: '-40px' }}
+      viewport={{ once: true, amount: 'some' }}
       variants={{ hidden: {}, visible: { transition: { staggerChildren: staggerDelay } } }}
       className={className}
     >
@@ -228,10 +228,10 @@ export function AnimatedCounter({ value, suffix = '', prefix = '', duration = 2 
 
 export function PageWrapper({ children }: { children: ReactNode }) {
   return (
-    <main className="animate-fade-in">
+    <div className="animate-fade-in">
       <ScrollProgressBar />
       {children}
-    </main>
+    </div>
   )
 }
 
@@ -347,7 +347,7 @@ export function WordReveal({ text, className = '', delay = 0 }: WordRevealProps)
     <motion.span
       initial="hidden"
       whileInView="visible"
-      viewport={{ once: true, margin: '-40px' }}
+      viewport={{ once: true, amount: 'some' }}
       variants={{ hidden: {}, visible: { transition: { staggerChildren: 0.06, delayChildren: delay } } }}
       className={className}
     >
@@ -550,7 +550,7 @@ export function TextReveal({ text, className = '', delay = 0, byWord = true }: T
     <motion.span
       initial="hidden"
       whileInView="visible"
-      viewport={{ once: true, margin: '-40px' }}
+      viewport={{ once: true, amount: 'some' }}
       variants={{
         hidden: {},
         visible: { transition: { staggerChildren: byWord ? 0.06 : 0.02, delayChildren: delay } },

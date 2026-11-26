@@ -38,7 +38,13 @@ export function AdminPage({ title, description, actions, breadcrumbs, titleAside
             <div className="inline-flex items-center gap-0.5 rounded-lg border border-adm-border bg-adm-surface p-0.5 shadow-2xs">
               <button
                 type="button"
-                onClick={() => router.back()}
+                onClick={() => {
+                  if (typeof window !== 'undefined' && window.history.length > 1) {
+                    router.back()
+                  } else {
+                    router.push('/sys-control')
+                  }
+                }}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-adm-fg hover:bg-adm-surface-2 rounded-md transition-all active:scale-95"
                 title="Go back (Alt+Left)"
               >

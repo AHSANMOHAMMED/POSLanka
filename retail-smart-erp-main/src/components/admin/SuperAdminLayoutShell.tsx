@@ -198,7 +198,13 @@ function ShellInner({ children, adminEmail, adminName }: SuperAdminLayoutShellPr
             <div className="flex items-center gap-0.5 text-adm-muted shrink-0 ml-1">
               <button
                 type="button"
-                onClick={() => router.back()}
+                onClick={() => {
+                  if (typeof window !== 'undefined' && window.history.length > 1) {
+                    router.back()
+                  } else {
+                    router.push('/sys-control')
+                  }
+                }}
                 aria-label="Go back"
                 className="adm-focus flex h-8 w-8 items-center justify-center rounded-lg hover:bg-adm-surface-2 hover:text-adm-fg transition-colors"
                 title="Go back (Alt+Left)"

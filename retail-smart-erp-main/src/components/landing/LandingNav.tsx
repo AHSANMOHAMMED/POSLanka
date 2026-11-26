@@ -173,10 +173,10 @@ export default function LandingNav() {
                 <a href={`${appBase}/login`} className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-sky-300 transition-colors">
                   Log In
                 </a>
-                <a href={`${appBase}/register`} className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-md transition-all shadow-lg shadow-[rgba(0,80,192,0.35)] hover:shadow-[rgba(0,80,192,0.5)]">
-                  Start Free Forever
+                <Link href="/contact" className="flex items-center gap-1.5 px-5 py-2 text-sm font-semibold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-md transition-all shadow-lg shadow-[rgba(0,80,192,0.35)] hover:shadow-[rgba(0,80,192,0.5)]">
+                  Book Free Demo
                   <ArrowRight size={14} />
-                </a>
+                </Link>
               </>
             )}
           </div>
@@ -272,9 +272,9 @@ export default function LandingNav() {
                       <a href={`${appBase}/login`} className="block w-full px-4 py-2.5 text-sm font-medium text-center text-zinc-300 border border-white/10 rounded-md hover:bg-white/5">
                         Log In
                       </a>
-                      <a href={`${appBase}/register`} className="block w-full px-4 py-2.5 text-sm font-semibold text-center text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] rounded-md">
-                        Start Free Forever
-                      </a>
+                      <Link href="/contact" className="block w-full px-4 py-2.5 text-sm font-semibold text-center text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] rounded-md">
+                        Book Free Demo
+                      </Link>
                     </>
                   )}
                 </div>

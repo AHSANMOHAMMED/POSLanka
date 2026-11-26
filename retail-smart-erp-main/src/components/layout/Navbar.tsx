@@ -275,7 +275,13 @@ export function Navbar({ tenantName, userEmail, appVersion, companySlug }: Navba
         <div className="flex items-center gap-0.5 ml-1 text-white/70">
           <button
             type="button"
-            onClick={() => router.back()}
+            onClick={() => {
+              if (typeof window !== 'undefined' && window.history.length > 1) {
+                router.back()
+              } else {
+                router.push(`${basePath}/dashboard`)
+              }
+            }}
             className="p-1 rounded-lg hover:bg-white/10 hover:text-white transition-colors"
             title="Go back (Alt+Left)"
             aria-label="Back"
