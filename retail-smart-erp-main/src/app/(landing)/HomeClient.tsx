@@ -4,11 +4,12 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import {
-  Shield, Users, Store, ShoppingCart,
+  Users, Store, ShoppingCart,
   Package, Calculator, Utensils, Monitor, Wrench, Car, Brain,
   Check, UserPlus, Settings, Rocket, ArrowRight, Phone,
   MessageCircle, Printer, ScanBarcode, Smartphone, Fingerprint,
-  AlertTriangle, CheckCircle2, Tag, MapPin,
+  AlertTriangle, CheckCircle2, Tag, MapPin, Laptop, Tablet,
+  Pill, Cpu, Hammer, Layers, Briefcase, Scissors, Building2,
 } from 'lucide-react'
 import {
   PageWrapper, FadeIn, BlurFadeIn, HeroBadge, TrustBar,
@@ -29,16 +30,16 @@ import {
 /* ── All features by category ── */
 const allFeatures = [
   { category: 'Point of Sale', color: 'bg-[#0050c0]', items: ['Fast LKR Checkout', 'Barcode Scanning', 'Held Sales & Layaway', 'Returns & Exchanges', 'Split Payments', 'Gift Cards & Loyalty', 'Sinhala & English Receipts', 'Daily Shift Summary'] },
-  { category: 'Inventory', color: 'bg-sky-500', items: ['Multi-Warehouse', 'Stock Transfers', 'Reorder Alerts', 'Batch & Expiry Tracking', 'Stock Movements', 'Purchase Orders', 'Supplier Ledgers'] },
-  { category: 'Accounting', color: 'bg-indigo-500', items: ['Chart of Accounts', 'Journal Entries', 'Bank Reconciliation', 'Budgets & Cost Centers', 'Tax Templates', 'Profit & Loss / Balance Sheet'] },
-  { category: 'HR & Payroll', color: 'bg-violet-500', items: ['Employee Records', 'Salary Structures', 'Payroll Runs & Slips', 'Employee Advances', 'ZKTeco Biometric Sync', 'Leave Management'] },
-  { category: 'Restaurant', color: 'bg-orange-500', items: ['Kitchen Display (KDS)', 'Table Floor Plan', 'KOT Thermal Printing', 'Reservations', 'Recipe Costing', 'Waste Tracking'] },
-  { category: 'Auto Service', color: 'bg-rose-500', items: ['Job Cards & Work Orders', 'Vehicle History', 'Multi-Point Inspections', 'Insurance Estimates', 'Parts Management', 'Labor Guides'] },
-  { category: 'Platform & Mobile', color: 'bg-blue-400', items: ['Android POS & Admin Apps', 'Offline Queue Sync', 'AI Error & Sales Insights', 'Role-Based Permissions', 'WhatsApp & Email Alerts', 'Export Excel / PDF'] },
+  { category: 'Inventory', color: 'bg-[#1666e0]', items: ['Multi-Warehouse', 'Stock Transfers', 'Reorder Alerts', 'Batch & Expiry Tracking', 'Stock Movements', 'Purchase Orders', 'Supplier Ledgers'] },
+  { category: 'Accounting', color: 'bg-[#F87000]', items: ['Chart of Accounts', 'Journal Entries', 'Bank Reconciliation', 'Budgets & Cost Centers', 'Tax Templates', 'Profit & Loss / Balance Sheet'] },
+  { category: 'HR & Payroll', color: 'bg-indigo-600', items: ['Employee Records', 'Salary Structures', 'Payroll Runs & Slips', 'Employee Advances', 'ZKTeco Biometric Sync', 'Leave Management'] },
+  { category: 'Restaurant & KDS', color: 'bg-orange-600', items: ['Kitchen Display (KDS)', 'Table Floor Plan', 'KOT Thermal Printing', 'Reservations', 'Recipe Costing', 'Waste Tracking'] },
+  { category: 'Auto Service', color: 'bg-violet-600', items: ['Job Cards & Work Orders', 'Vehicle History', 'Multi-Point Inspections', 'Insurance Estimates', 'Parts Management', 'Labor Guides'] },
+  { category: 'Platform & Mobile', color: 'bg-sky-600', items: ['Android POS & Admin Apps', 'Offline Queue Sync', 'AI Error & Sales Insights', 'Role-Based Permissions', 'WhatsApp & Email Alerts', 'Export Excel / PDF'] },
 ]
 
-/* ── Business types: Problem → POS Solution + Devices ── */
-const businessSolutions = [
+/* ── 5 Flagship Business Types with Local Images + Problem → Solution + Devices ── */
+const flagshipBusinesses = [
   {
     title: 'Retail Shops & Boutiques',
     href: '/retail',
@@ -47,41 +48,33 @@ const businessSolutions = [
     problem: 'Manual price tags, slow hand-written bills, staff pricing errors, and missing stock counts at month-end.',
     solution: 'Scan barcodes in under 1 second, print branded 80mm/58mm receipts, track every size/color variant, and monitor profit from your phone.',
     devices: ['Touchscreen POS', '2D Barcode Scanner', '80mm Thermal Printer', 'Android POS App'],
-    accent: 'text-sky-300',
-    badgeBg: 'bg-[#0050c0]/80 border-sky-400/40',
   },
   {
     title: 'Supermarkets & Mini-Marts',
     href: '/supermarket',
     icon: ShoppingCart,
-    image: 'https://images.unsplash.com/photo-1604719312566-8912e9227c6a?w=1200',
+    image: '/images/landing/biz-supermarket.jpg',
     problem: 'Long customer queues during rush hours, expired shelf stock, and multi-counter cash mismatches.',
     solution: 'Dual-screen checkout with live Customer Display, batch & expiry alerts, barcode label printing, and instant shift reconciliation.',
     devices: ['Dual-Screen POS', 'Customer Display', 'Barcode Label Printer', 'Cash Drawer'],
-    accent: 'text-emerald-300',
-    badgeBg: 'bg-emerald-700/80 border-emerald-400/40',
   },
   {
     title: 'Restaurants, Cafes & Bakeries',
     href: '/restaurant',
     icon: Utensils,
-    image: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200',
+    image: '/images/landing/biz-retail.jpg',
     problem: 'Lost paper KOTs, delayed kitchen orders, table bill confusion, and untracked ingredient waste.',
     solution: 'Waiters punch orders on tablets, KOTs print or appear live on the Kitchen Display System (KDS), and tables split/merge cleanly.',
     devices: ['Tablet POS', 'Kitchen Display (KDS)', 'Thermal KOT Printer', 'Mobile Waiter App'],
-    accent: 'text-orange-300',
-    badgeBg: 'bg-orange-700/80 border-orange-400/40',
   },
   {
     title: 'Auto Service & Garages',
     href: '/auto-service',
     icon: Wrench,
-    image: 'https://images.unsplash.com/photo-1487754180451-c456f719a1fc?w=1200',
+    image: '/images/landing/biz-autoservice.jpg',
     problem: 'Lost job cards, unbilled spare parts, messy insurance estimates, and no vehicle service history.',
     solution: 'Digital work orders by vehicle plate number, mechanic bay tracking, spare parts deduction, and one-click insurance & customer invoices.',
     devices: ['Workshop Tablet', 'Desktop ERP', 'A4 / Thermal Printer', 'Parts Barcode Scanner'],
-    accent: 'text-violet-300',
-    badgeBg: 'bg-violet-700/80 border-violet-400/40',
   },
   {
     title: 'Dealerships, Hardware & Wholesale',
@@ -91,18 +84,39 @@ const businessSolutions = [
     problem: 'Credit/installment balances slipping through cracks, multi-warehouse stock blind spots, and staff attendance disputes.',
     solution: 'Centralized multi-branch stock transfers, customer credit ledgers, ZKTeco fingerprint attendance sync, and Super Admin mobile control.',
     devices: ['Desktop / Laptop ERP', 'ZKTeco Fingerprint', 'Warehouse Scanner', 'skyERPOS Admin App'],
-    accent: 'text-cyan-300',
-    badgeBg: 'bg-cyan-800/80 border-cyan-400/40',
     wide: true,
   },
 ]
 
-/* ── Hardware & Device Ecosystem ── */
+/* ── All 12 Supported Industries in the Project ── */
+const allTwelveIndustries = [
+  { icon: Store, name: 'Retail Store', problem: 'Slow billing & stock loss', solution: 'Fast barcode POS + live stock ledger' },
+  { icon: ShoppingCart, name: 'Supermarket', problem: 'Long queues & expiry waste', solution: 'Multi-counter POS + batch/expiry alerts' },
+  { icon: Utensils, name: 'Restaurant & Cafe', problem: 'Lost KOTs & table mix-ups', solution: 'Live Kitchen Display (KDS) + floor plan' },
+  { icon: Wrench, name: 'Auto Service', problem: 'Missing job cards & parts', solution: 'Vehicle work orders + insurance estimates' },
+  { icon: Car, name: 'Vehicle Dealership', problem: 'Installment & unit tracking', solution: 'VIN/chassis inventory + credit ledgers' },
+  { icon: Pill, name: 'Pharmacy & Medical', problem: 'Batch expiry & dosage lookup', solution: 'FEFO expiry warnings + batch search' },
+  { icon: Cpu, name: 'Electronics & Mobile', problem: 'IMEI / serial warranty claims', solution: 'Serial number tracking + warranty print' },
+  { icon: Hammer, name: 'Hardware & Timber', problem: 'Unit conversions & credit bills', solution: 'Box/piece/meter units + customer dues' },
+  { icon: Layers, name: 'Print Studio & Press', problem: 'Job pricing & paper stock', solution: 'Custom print job quotes + order tracking' },
+  { icon: Briefcase, name: 'Office & Services', problem: 'Recurring invoices & payroll', solution: 'Recurring billing + ZKTeco attendance' },
+  { icon: Scissors, name: 'Textile & Garment', problem: 'Size/color matrix & tailoring', solution: 'Variant barcodes + measurement orders' },
+  { icon: Building2, name: 'Shopping Mall / Chains', problem: 'Multi-counter consolidated view', solution: 'Multi-segment branches + Super Admin app' },
+]
+
+/* ── Any OS & Device Ecosystem ── */
+const osPlatforms = [
+  { icon: Laptop, name: 'Windows & macOS', detail: 'Chrome, Edge, Safari — instant WebUSB thermal printing & Print Agent' },
+  { icon: Monitor, name: 'Linux & ChromeOS', detail: 'Lightweight cloud POS runs smoothly on older counter PCs & thin clients' },
+  { icon: Smartphone, name: 'Android Phones & Tablets', detail: 'Native skyERPOS & skyERPOS Admin apps with offline queue & Bluetooth print' },
+  { icon: Tablet, name: 'iPhone & iPad', detail: 'Responsive web POS & owner dashboard from Safari anywhere' },
+]
+
 const supportedDevices = [
   {
     icon: Monitor,
-    title: 'Touchscreen POS & Desktop',
-    detail: 'Works on any Windows, Mac, or Linux browser plus dedicated dual-screen POS counters with live Customer Display.',
+    title: 'Touchscreen POS & Dual Display',
+    detail: 'Works on any all-in-one touchscreen counter, laptop, or desktop with live Customer Facing Display.',
   },
   {
     icon: Smartphone,
@@ -117,7 +131,7 @@ const supportedDevices = [
   {
     icon: ScanBarcode,
     title: '1D/2D Barcode Scanners',
-    detail: 'Instant SKU, weight-embedded, and batch scanning via USB, wireless dongle, or Android camera.',
+    detail: 'Instant SKU, weight-embedded, and batch scanning via USB, wireless dongle, or Android phone camera.',
   },
   {
     icon: Fingerprint,
@@ -221,40 +235,23 @@ export default function HomeClient() {
 
   /* ── Feature tab data with mockups ── */
   const featureTabs = [
-    { key: 'pos', label: 'Point of Sale', icon: ShoppingCart, gradient: 'from-[#0050c0] to-[#2563eb]', mockup: <MockPOS />, description: 'Fast LKR checkout with barcode scanning, split payments, returns/exchanges, and thermal receipt printing.', features: ['Barcode & SKU scanning', 'Cash, Card, Bank & Credit', 'Held sales & layaway', 'Instant returns & exchanges', '80mm / 58mm thermal printing', 'Gift cards & loyalty points'] },
-    { key: 'inventory', label: 'Inventory', icon: Package, gradient: 'from-sky-500 to-blue-600', mockup: <MockInventory />, description: 'Multi-warehouse tracking with reorder alerts, stock transfers, and batch/expiry control.', features: ['Multi-warehouse support', 'Low-stock reorder alerts', 'Branch stock transfers', 'Batch & expiry tracking', 'Purchase orders & GRN', 'Supplier ledger history'] },
-    { key: 'accounting', label: 'Accounting', icon: Calculator, gradient: 'from-indigo-500 to-[#0050c0]', mockup: <MockAccounting />, description: 'Double-entry accounting with chart of accounts, journal entries, bank reconciliation, and tax reports.', features: ['Chart of accounts', 'Journal entries', 'Bank reconciliation', 'Profit & Loss statements', 'Tax templates', 'Expense tracking'] },
-    { key: 'hr', label: 'HR & Payroll', icon: Users, gradient: 'from-violet-500 to-indigo-600', mockup: <MockDashboard />, description: 'Employee profiles, ZKTeco biometric attendance, salary structures, advances, and monthly payroll.', features: ['Employee profiles', 'ZKTeco fingerprint sync', 'Salary structures', 'Monthly payroll runs', 'Salary advances', 'Leave management'] },
-    { key: 'kitchen', label: 'Restaurant KDS', icon: Utensils, gradient: 'from-orange-500 to-red-500', mockup: <MockKitchenDisplay />, description: 'Real-time kitchen display system with order queues, KOT thermal printing, and table status.', features: ['Live kitchen order queue', 'Thermal KOT printing', 'Priority ordering', 'Cook time tracking', 'Multi-station routing', 'Dine-in & takeaway'] },
-    { key: 'tables', label: 'Tables', icon: Monitor, gradient: 'from-rose-500 to-pink-600', mockup: <MockTables />, description: 'Visual restaurant floor plan with real-time table status, merging, splitting, and waiter orders.', features: ['Floor plan designer', 'Live table status', 'Table merge & split', 'Reservations', 'Waiter assignment', 'QR menu support'] },
-    { key: 'workorders', label: 'Auto Service', icon: Wrench, gradient: 'from-blue-600 to-violet-600', mockup: <MockWorkOrders />, description: 'Complete garage job cards with vehicle plate history, inspections, spare parts, and insurance estimates.', features: ['Vehicle job cards', 'Service history by plate', 'Multi-point inspections', 'Insurance estimates', 'Spare parts deduction', 'Labor charge guides'] },
-    { key: 'dashboard', label: 'AI Dashboard', icon: Brain, gradient: 'from-[#0050c0] to-cyan-500', mockup: <MockDashboard />, description: 'Real-time owner analytics with AI insights, error monitoring, and branch-by-branch sales.', features: ['Live sales & profit KPIs', 'AI business assistant', 'Sales trend forecasts', 'Low-margin warnings', 'Daily owner reports', 'Export Excel & PDF'] },
+    { key: 'pos', label: 'Point of Sale', icon: ShoppingCart, gradient: 'from-[#0050c0] to-[#1666e0]', mockup: <MockPOS />, description: 'Fast LKR checkout with barcode scanning, split payments, returns/exchanges, and thermal receipt printing.', features: ['Barcode & SKU scanning', 'Cash, Card, Bank & Credit', 'Held sales & layaway', 'Instant returns & exchanges', '80mm / 58mm thermal printing', 'Gift cards & loyalty points'] },
+    { key: 'inventory', label: 'Inventory', icon: Package, gradient: 'from-[#1666e0] to-sky-600', mockup: <MockInventory />, description: 'Multi-warehouse tracking with reorder alerts, stock transfers, and batch/expiry control.', features: ['Multi-warehouse support', 'Low-stock reorder alerts', 'Branch stock transfers', 'Batch & expiry tracking', 'Purchase orders & GRN', 'Supplier ledger history'] },
+    { key: 'accounting', label: 'Accounting', icon: Calculator, gradient: 'from-[#0050c0] to-indigo-600', mockup: <MockAccounting />, description: 'Double-entry accounting with chart of accounts, journal entries, bank reconciliation, and tax reports.', features: ['Chart of accounts', 'Journal entries', 'Bank reconciliation', 'Profit & Loss statements', 'Tax templates', 'Expense tracking'] },
+    { key: 'hr', label: 'HR & Payroll', icon: Users, gradient: 'from-indigo-600 to-[#0050c0]', mockup: <MockDashboard />, description: 'Employee profiles, ZKTeco biometric attendance, salary structures, advances, and monthly payroll.', features: ['Employee profiles', 'ZKTeco fingerprint sync', 'Salary structures', 'Monthly payroll runs', 'Salary advances', 'Leave management'] },
+    { key: 'kitchen', label: 'Restaurant KDS', icon: Utensils, gradient: 'from-[#F87000] to-red-600', mockup: <MockKitchenDisplay />, description: 'Real-time kitchen display system with order queues, KOT thermal printing, and table status.', features: ['Live kitchen order queue', 'Thermal KOT printing', 'Priority ordering', 'Cook time tracking', 'Multi-station routing', 'Dine-in & takeaway'] },
+    { key: 'tables', label: 'Tables', icon: Monitor, gradient: 'from-rose-600 to-[#F87000]', mockup: <MockTables />, description: 'Visual restaurant floor plan with real-time table status, merging, splitting, and waiter orders.', features: ['Floor plan designer', 'Live table status', 'Table merge & split', 'Reservations', 'Waiter assignment', 'QR menu support'] },
+    { key: 'workorders', label: 'Auto Service', icon: Wrench, gradient: 'from-[#0050c0] to-violet-600', mockup: <MockWorkOrders />, description: 'Complete garage job cards with vehicle plate history, inspections, spare parts, and insurance estimates.', features: ['Vehicle job cards', 'Service history by plate', 'Multi-point inspections', 'Insurance estimates', 'Spare parts deduction', 'Labor charge guides'] },
+    { key: 'dashboard', label: 'AI Dashboard', icon: Brain, gradient: 'from-[#0050c0] to-[#F87000]', mockup: <MockDashboard />, description: 'Real-time owner analytics with AI insights, error monitoring, and branch-by-branch sales.', features: ['Live sales & profit KPIs', 'AI business assistant', 'Sales trend forecasts', 'Low-margin warnings', 'Daily owner reports', 'Export Excel & PDF'] },
   ]
 
   return (
     <PageWrapper>
       {/* ══════════════════════════════════════════════
-          Section 1 — Hero (Realistic POS & Hardware)
+          Section 1 — Bright White & Brand Blue Hero (visible on all screens)
          ══════════════════════════════════════════════ */}
-      <section className="relative min-h-screen flex items-center overflow-hidden pt-16">
-        <Image
-          src="/images/landing/hero-pos-devices.jpg"
-          alt="skyERPOS touchscreen terminal, thermal receipt printer, barcode scanner and mobile POS"
-          fill
-          priority
-          quality={90}
-          className="object-cover object-center"
-          sizes="100vw"
-        />
-        <div
-          className="absolute inset-0"
-          style={{
-            background: 'linear-gradient(105deg, rgba(6,10,22,0.94) 0%, rgba(6,16,42,0.86) 52%, rgba(0,40,110,0.58) 100%)',
-          }}
-        />
-        <div className="noise-overlay" />
-
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28 w-full">
+      <section className="relative overflow-hidden pt-28 pb-16 sm:pt-32 sm:pb-24 bg-linear-to-br from-[#f5f8ff] via-white to-[#e8effb] border-b border-[#e2e6ec]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
           <div className="grid lg:grid-cols-12 gap-10 lg:gap-12 items-center">
             {/* Left column */}
             <BlurFadeIn className="lg:col-span-7">
@@ -263,31 +260,32 @@ export default function HomeClient() {
                   <HeroBadge
                     text="skyERPOS · By Skyloom Techno"
                     icon={<span className="h-2 w-2 rounded-full bg-[#F87000]" />}
-                    className="bg-[#0050c0]/30! border-[#6aa5ff]/40! text-white! backdrop-blur-sm mb-0!"
+                    className="bg-[#e8effb]! border-[#0050c0]/25! text-[#0050c0]! mb-0!"
                   />
-                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#F87000]/20 border border-[#F87000]/45 text-[#FFB067] backdrop-blur-sm">
+                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#fff3e6] border border-[#F87000]/35 text-[#c2410c]">
                     <Tag className="w-3.5 h-3.5 text-[#F87000]" />
                     25% Off Annual Plans · Affordable LKR
                   </span>
                 </div>
 
-                <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] font-extrabold leading-[1.08] text-white tracking-tight">
+                <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] font-extrabold leading-[1.08] text-[#0f172a] tracking-tight">
                   Complete POS &amp; ERP for{' '}
-                  <span className="text-[#FFB067]">
-                    Sri Lankan Businesses
+                  <span className="text-[#0050c0]">
+                    Every Sri Lankan Business
                   </span>
                 </h1>
 
-                <p className="mt-6 text-lg sm:text-xl text-zinc-200 leading-relaxed max-w-2xl">
-                  Solve slow billing, stock theft, and messy accounts with one fast system.
-                  Works on <strong className="text-white">Touchscreen POS, Laptops &amp; Android Phones</strong> with
-                  80mm thermal printers, barcode scanners, and <strong className="text-[#FFB067]">LKR / Sinhala / English</strong> support.
+                <p className="mt-6 text-lg sm:text-xl text-[#556070] leading-relaxed max-w-2xl">
+                  Stop losing money to slow billing, stock theft, and manual books.
+                  Run <strong className="text-[#0f172a]">12+ business types</strong> across{' '}
+                  <strong className="text-[#0050c0]">Windows, Mac, Linux, Android &amp; iOS</strong> with
+                  thermal printers, barcode scanners, and <strong className="text-[#F87000]">LKR / Sinhala / English</strong> receipts.
                 </p>
 
-                <div className="mt-8 flex flex-wrap items-center gap-4">
+                <div className="mt-8 flex flex-wrap items-center gap-3.5">
                   <Link
                     href="/contact"
-                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-bold text-white bg-linear-to-r from-[#F87000] to-[#e06200] hover:from-[#e06200] hover:to-[#c95500] rounded-lg transition-all shadow-lg shadow-[#F87000]/30 hover:-translate-y-0.5"
+                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-bold text-white bg-linear-to-r from-[#F87000] to-[#e06200] hover:from-[#e06200] hover:to-[#c95500] rounded-lg transition-all shadow-lg shadow-[#F87000]/25 hover:-translate-y-0.5"
                   >
                     Book Free Demo
                     <ArrowRight className="w-5 h-5" />
@@ -296,77 +294,81 @@ export default function HomeClient() {
                     href="https://wa.me/94741228682?text=Hi%20skyERPOS%2C%20I%20would%20like%20a%20free%20demo%20and%20LKR%20pricing"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-semibold text-white bg-[#0050c0] hover:bg-[#00419e] rounded-lg transition-all shadow-lg shadow-[#0050c0]/35 hover:-translate-y-0.5"
+                    className="inline-flex items-center gap-2 px-6 py-4 text-base font-semibold text-white bg-[#0050c0] hover:bg-[#00419e] rounded-lg transition-all shadow-md shadow-[#0050c0]/25 hover:-translate-y-0.5"
                   >
                     <MessageCircle className="w-5 h-5" />
                     WhatsApp +94 74 122 8682
                   </a>
                   <a
                     href={appLoginUrl}
-                    className="inline-flex items-center gap-2 px-6 py-4 text-base font-semibold border border-white/25 text-white hover:bg-white/10 rounded-lg transition-all"
+                    className="inline-flex items-center gap-2 px-6 py-4 text-base font-semibold border-2 border-[#0050c0] text-[#0050c0] bg-white hover:bg-[#e8effb] rounded-lg transition-all"
                   >
                     Sign In to Store
                   </a>
                 </div>
 
-                <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-zinc-300">
+                <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm font-medium text-[#556070]">
                   <div className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-sky-400" />
+                    <CheckCircle2 className="w-4 h-4 text-[#0050c0]" />
                     Plans from Rs. 1,490/mo
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Users className="w-4 h-4 text-sky-400" />
+                    <Users className="w-4 h-4 text-[#0050c0]" />
                     Unlimited Staff Users
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Smartphone className="w-4 h-4 text-sky-400" />
-                    Offline Android POS Included
+                    <Smartphone className="w-4 h-4 text-[#0050c0]" />
+                    Works on Any OS &amp; Offline
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <MapPin className="w-4 h-4 text-sky-400" />
+                    <MapPin className="w-4 h-4 text-[#F87000]" />
                     Kalpitiya, Puttalam · Islandwide Support
                   </div>
                 </div>
               </div>
             </BlurFadeIn>
 
-            {/* Right column — Realistic Hardware + Live UI card */}
-            <FadeIn className="lg:col-span-5 hidden lg:block" delay={0.2}>
+            {/* Right column — Realistic Hardware + Live UI card (visible on mobile & desktop!) */}
+            <FadeIn className="lg:col-span-5" delay={0.15}>
               <FloatingMockup>
-                <div className="rounded-2xl overflow-hidden border border-white/15 bg-zinc-950/75 backdrop-blur-md shadow-2xl shadow-[#0050c0]/25">
-                  <div className="relative h-60 w-full">
+                <div className="rounded-2xl overflow-hidden border border-[#e2e6ec] bg-white shadow-xl shadow-[#0050c0]/10">
+                  <div className="relative h-56 sm:h-64 w-full bg-[#e8effb]">
                     <Image
                       src="/images/landing/hero-pos-devices.jpg"
-                      alt="All-in-one POS terminal, thermal printer, barcode scanner and Android mobile app"
+                      alt="skyERPOS touchscreen terminal, thermal receipt printer, barcode scanner and mobile POS"
                       fill
+                      priority
+                      unoptimized
                       className="object-cover"
                       sizes="(max-width: 1024px) 100vw, 42vw"
                     />
-                    <div className="absolute inset-0 bg-linear-to-t from-zinc-950 via-transparent to-transparent" />
                     <span className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold bg-[#0050c0] text-white shadow">
                       Hardware + Cloud Ready
+                    </span>
+                    <span className="absolute top-3 right-3 px-3 py-1 rounded-full text-xs font-bold bg-[#F87000] text-white shadow">
+                      Any OS
                     </span>
                   </div>
                   <div className="p-5 space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold text-white">Complete Counter &amp; Mobile Setup</span>
-                      <span className="text-xs font-semibold text-sky-300">app.skyerpos.com</span>
+                      <span className="text-sm font-bold text-[#0f172a]">Complete Counter &amp; Mobile Setup</span>
+                      <span className="text-xs font-semibold text-[#0050c0]">app.skyerpos.com</span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs text-zinc-300">
-                      <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
-                        <Monitor className="w-4 h-4 text-sky-400 shrink-0" />
+                    <div className="grid grid-cols-2 gap-2 text-xs font-medium text-[#0f172a]">
+                      <div className="flex items-center gap-2 bg-[#f5f6f8] rounded-lg px-3 py-2 border border-[#e2e6ec]">
+                        <Monitor className="w-4 h-4 text-[#0050c0] shrink-0" />
                         <span>Touchscreen POS</span>
                       </div>
-                      <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
-                        <Printer className="w-4 h-4 text-sky-400 shrink-0" />
+                      <div className="flex items-center gap-2 bg-[#f5f6f8] rounded-lg px-3 py-2 border border-[#e2e6ec]">
+                        <Printer className="w-4 h-4 text-[#0050c0] shrink-0" />
                         <span>80mm Thermal Print</span>
                       </div>
-                      <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
-                        <ScanBarcode className="w-4 h-4 text-sky-400 shrink-0" />
+                      <div className="flex items-center gap-2 bg-[#f5f6f8] rounded-lg px-3 py-2 border border-[#e2e6ec]">
+                        <ScanBarcode className="w-4 h-4 text-[#0050c0] shrink-0" />
                         <span>2D Barcode Scan</span>
                       </div>
-                      <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
-                        <Smartphone className="w-4 h-4 text-sky-400 shrink-0" />
+                      <div className="flex items-center gap-2 bg-[#f5f6f8] rounded-lg px-3 py-2 border border-[#e2e6ec]">
+                        <Smartphone className="w-4 h-4 text-[#F87000] shrink-0" />
                         <span>Android POS App</span>
                       </div>
                     </div>
@@ -381,7 +383,7 @@ export default function HomeClient() {
       {/* ══════════════════════════════════════════════
           Section 2 — Capability Marquee
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-white py-10">
+      <section className="section-bg-white py-8">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <LogoMarquee speed={30}>
             {[
@@ -405,51 +407,52 @@ export default function HomeClient() {
          ══════════════════════════════════════════════ */}
       <TrustBar
         metrics={[
-          { value: 'Rs. 1,490', label: 'Starting / Month', icon: <Tag className="w-5 h-5 text-sky-400" /> },
-          { value: 'Unlimited', label: 'Staff Users', icon: <Users className="w-5 h-5 text-blue-400" /> },
-          { value: '5+', label: 'Business Types', icon: <Store className="w-5 h-5 text-cyan-400" /> },
-          { value: '24/7', label: 'Cloud & Offline Sync', icon: <Shield className="w-5 h-5 text-emerald-400" /> },
+          { value: 'Rs. 1,490', label: 'Starting / Month (LKR)', icon: <Tag className="w-5 h-5 text-[#F87000]" /> },
+          { value: 'Unlimited', label: 'Staff Users', icon: <Users className="w-5 h-5 text-[#0050c0]" /> },
+          { value: '12', label: 'Business Types', icon: <Store className="w-5 h-5 text-[#0050c0]" /> },
+          { value: 'Any OS', label: 'Windows · Mac · Linux · Android · iOS', icon: <Laptop className="w-5 h-5 text-[#0050c0]" /> },
         ]}
       />
 
       {/* ══════════════════════════════════════════════
-          Section 4 — Business Types: Problem → Solution + Devices
+          Section 4 — Flagship Business Types: Visual Problem → Solution + Devices
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-white py-20 sm:py-28">
+      <section className="section-bg-white py-20 sm:py-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
             badge="Problems Solved"
             title="Real business problems solved with skyERPOS &amp; devices"
             highlight="skyERPOS &amp; devices"
-            subtitle="Every business type faces daily bottlenecks. See how skyERPOS software + affordable POS hardware fix them from day one."
+            subtitle="Every business faces daily losses from manual billing and stock leaks. See how skyERPOS software + real POS hardware solve them."
           />
 
           <StaggerContainer staggerDelay={0.08} className="grid md:grid-cols-2 gap-7">
-            {businessSolutions.map((biz) => (
+            {flagshipBusinesses.map((biz) => (
               <StaggerItem key={biz.title} className={biz.wide ? 'md:col-span-2' : ''}>
                 <div className="group relative overflow-hidden rounded-2xl border border-[#e2e6ec] bg-white shadow-md hover:shadow-xl transition-shadow flex flex-col justify-between min-h-107.5">
-                  {/* Background image */}
-                  <div className="relative h-52 sm:h-56 w-full overflow-hidden">
+                  {/* Local high-res image (100% reliable, never hidden) */}
+                  <div className="relative h-52 sm:h-56 w-full overflow-hidden bg-[#e8effb]">
                     <Image
                       src={biz.image}
                       alt={biz.title}
                       fill
+                      unoptimized
                       className="object-cover transition-transform duration-500 group-hover:scale-105"
                       sizes={biz.wide ? '100vw' : '(max-width: 768px) 100vw, 50vw'}
                     />
-                    <div className="absolute inset-0 bg-linear-to-t from-zinc-950 via-zinc-950/45 to-transparent" />
-                    <div className="absolute bottom-4 left-6 right-6 flex items-center justify-between">
+                    <div className="absolute inset-0 bg-linear-to-t from-[#062f73]/90 via-[#0050c0]/35 to-transparent" />
+                    <div className="absolute bottom-4 left-6 right-6 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5">
-                        <span className={`p-2 rounded-lg border ${biz.badgeBg} text-white backdrop-blur-sm`}>
+                        <span className="p-2 rounded-lg bg-[#0050c0] border border-white/25 text-white shadow">
                           <biz.icon className="w-5 h-5" />
                         </span>
                         <h3 className="text-xl sm:text-2xl font-bold text-white">{biz.title}</h3>
                       </div>
                       <Link
                         href={biz.href}
-                        className={`inline-flex items-center gap-1 text-sm font-semibold ${biz.accent} hover:text-white transition-colors`}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-white text-[#0050c0] text-xs font-bold hover:bg-[#e8effb] transition-colors shrink-0 shadow"
                       >
-                        Preview <ArrowRight className="w-4 h-4" />
+                        Preview <ArrowRight className="w-3.5 h-3.5" />
                       </Link>
                     </div>
                   </div>
@@ -497,16 +500,66 @@ export default function HomeClient() {
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 5 — Supported POS Hardware & Devices
+          Section 4B — All 12 Business Types in skyERPOS
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-subtle py-20 sm:py-28">
+      <section className="section-bg-subtle py-20 sm:py-24 border-y border-[#e2e6ec]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
-            badge="Devices &amp; Hardware"
-            title="Works with real POS hardware &amp; Android phones"
-            highlight="real POS hardware"
-            subtitle="Use your existing laptop or Android phone, or pair skyERPOS with thermal printers, barcode scanners, and biometric devices."
+            badge="All 12 Business Types"
+            title="Tailored workflows for 12 industries"
+            highlight="12 industries"
+            subtitle="Choose your exact business type during setup — skyERPOS automatically enables the screens, units, and reports your industry needs."
           />
+
+          <StaggerContainer staggerDelay={0.04} className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+            {allTwelveIndustries.map((ind) => (
+              <StaggerItem key={ind.name}>
+                <div className="h-full rounded-2xl border border-[#e2e6ec] bg-white p-5 shadow-xs hover:border-[#0050c0]/40 hover:shadow-md transition-all">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#e8effb] text-[#0050c0] shrink-0">
+                      <ind.icon className="w-5 h-5" />
+                    </span>
+                    <h3 className="text-base font-bold text-[#0f172a]">{ind.name}</h3>
+                  </div>
+                  <p className="text-xs font-medium text-rose-700 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5 mb-2">
+                    Problem: {ind.problem}
+                  </p>
+                  <p className="text-xs font-medium text-[#003a8c] bg-[#e8effb] border border-[#0050c0]/15 rounded-lg px-2.5 py-1.5">
+                    Solved: {ind.solution}
+                  </p>
+                </div>
+              </StaggerItem>
+            ))}
+          </StaggerContainer>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════
+          Section 5 — Runs on Any OS & Any POS Hardware
+         ══════════════════════════════════════════════ */}
+      <section className="section-bg-white py-20 sm:py-24">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <SectionHeading
+            badge="Any OS · Any Hardware"
+            title="Works on Windows, Mac, Linux, Android &amp; iOS"
+            highlight="Windows, Mac, Linux, Android &amp; iOS"
+            subtitle="Never get locked into expensive proprietary terminals. Run skyERPOS on the computers, phones, printers, and scanners you already own."
+          />
+
+          {/* Any-OS strip */}
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-10">
+            {osPlatforms.map((os) => (
+              <div key={os.name} className="rounded-2xl border-2 border-[#0050c0]/15 bg-[#f5f8ff] p-5">
+                <div className="flex items-center gap-2.5 mb-2">
+                  <span className="p-2 rounded-lg bg-[#0050c0] text-white">
+                    <os.icon className="w-4 h-4" />
+                  </span>
+                  <h3 className="text-sm font-bold text-[#0f172a]">{os.name}</h3>
+                </div>
+                <p className="text-xs text-[#556070] leading-relaxed">{os.detail}</p>
+              </div>
+            ))}
+          </div>
 
           <StaggerContainer staggerDelay={0.06} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {supportedDevices.map((device) => (
@@ -527,7 +580,7 @@ export default function HomeClient() {
       {/* ══════════════════════════════════════════════
           Section 6 — Interactive Software Preview Tabs
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-white py-20 sm:py-28">
+      <section className="section-bg-subtle py-20 sm:py-24 border-t border-[#e2e6ec]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
             badge="Live Preview"
@@ -540,23 +593,23 @@ export default function HomeClient() {
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 7 — AI Intelligence Showcase
+          Section 7 — AI Intelligence Showcase (Brand Blue)
          ══════════════════════════════════════════════ */}
       <section className="cta-mesh-dark py-20 sm:py-24 relative overflow-hidden">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             <FadeIn>
               <AIBadge />
               <h2 className="mt-4 text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
                 Smart alerts that protect your cash &amp; stock
               </h2>
-              <p className="mt-4 text-lg text-zinc-300 leading-relaxed">
+              <p className="mt-4 text-lg text-white/85 leading-relaxed">
                 Get instant low-stock warnings, slow-moving item insights, daily owner summaries, and automated payment due reminders — without needing an IT team.
               </p>
               <div className="mt-8 flex flex-wrap gap-4">
                 <Link
                   href="/features"
-                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-[#0050c0] hover:bg-[#00419e] rounded-lg transition-colors"
+                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-[#F87000] hover:bg-[#e06200] rounded-lg transition-colors shadow-lg"
                 >
                   Explore All Features
                   <ArrowRight className="w-4 h-4" />
@@ -575,7 +628,7 @@ export default function HomeClient() {
       {/* ══════════════════════════════════════════════
           Section 8 — Complete Feature Grid
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-subtle py-20 sm:py-28">
+      <section className="section-bg-subtle py-20 sm:py-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
             badge="All Features"
@@ -607,13 +660,13 @@ export default function HomeClient() {
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 9 — Stats Counter
+          Section 9 — Stats Counter (Brand Blue)
          ══════════════════════════════════════════════ */}
-      <section className="cta-mesh-dark py-20 sm:py-24 relative overflow-hidden">
+      <section className="cta-mesh-dark py-16 sm:py-20 relative overflow-hidden">
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <StaggerContainer staggerDelay={0.12} className="grid grid-cols-2 lg:grid-cols-4 gap-8">
             {[
-              { value: 5, label: 'Business Types', suffix: '+' },
+              { value: 12, label: 'Supported Business Types', suffix: '' },
               { value: 15, label: 'Role Permissions', suffix: '+' },
               { value: 25, label: 'Annual Discount', suffix: '%' },
               { value: 65, label: 'Secured Modules', suffix: '+' },
@@ -623,7 +676,7 @@ export default function HomeClient() {
                   <div className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white tracking-tight">
                     <CountUpOnView value={stat.value} suffix={stat.suffix} />
                   </div>
-                  <div className="mt-2 text-sm font-medium text-zinc-300">{stat.label}</div>
+                  <div className="mt-2 text-sm font-medium text-white/80">{stat.label}</div>
                 </div>
               </StaggerItem>
             ))}
@@ -634,7 +687,7 @@ export default function HomeClient() {
       {/* ══════════════════════════════════════════════
           Section 10 — How It Works (3 Steps)
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-white py-20 sm:py-28">
+      <section className="section-bg-white py-20 sm:py-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
             badge="Fast Onboarding"
@@ -643,7 +696,7 @@ export default function HomeClient() {
           />
           <div className="max-w-3xl mx-auto">
             <StaggerContainer staggerDelay={0.15} className="relative">
-              <div className="absolute left-6 top-12 bottom-12 w-0.5 bg-linear-to-b from-[#0050c0] to-sky-400 hidden sm:block" />
+              <div className="absolute left-6 top-12 bottom-12 w-0.5 bg-linear-to-b from-[#0050c0] to-[#F87000] hidden sm:block" />
               <div className="space-y-12">
                 {[
                   {
@@ -667,7 +720,7 @@ export default function HomeClient() {
                 ].map((step) => (
                   <StaggerItem key={step.number}>
                     <div className="flex gap-6 items-start">
-                      <div className="relative z-10 shrink-0 w-12 h-12 rounded-full bg-linear-to-br from-[#0050c0] to-[#2563eb] text-white flex items-center justify-center font-bold text-lg shadow-lg shadow-[#0050c0]/30">
+                      <div className="relative z-10 shrink-0 w-12 h-12 rounded-full bg-linear-to-br from-[#0050c0] to-[#1666e0] text-white flex items-center justify-center font-bold text-lg shadow-lg shadow-[#0050c0]/25">
                         {step.number}
                       </div>
                       <div className="pt-1">
@@ -689,7 +742,7 @@ export default function HomeClient() {
       {/* ══════════════════════════════════════════════
           Section 11 — Testimonials
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-subtle py-20 sm:py-28">
+      <section className="section-bg-subtle py-20 sm:py-24 border-t border-[#e2e6ec]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
             badge="Trusted Across Sri Lanka"
@@ -703,7 +756,7 @@ export default function HomeClient() {
       {/* ══════════════════════════════════════════════
           Section 12 — Sri Lankan Affordable LKR Pricing + Discounts
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-white py-20 sm:py-28">
+      <section className="section-bg-white py-20 sm:py-24 border-t border-[#e2e6ec]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
             badge="Affordable LKR Pricing"
@@ -712,7 +765,6 @@ export default function HomeClient() {
             subtitle="No per-user fees. Switch to Annual billing to save 25% — plus up to 30% extra discount for multi-branch businesses."
           />
 
-          {/* Billing cycle toggle */}
           <FadeIn className="flex flex-col items-center -mt-4 mb-10 gap-4">
             <div className="inline-flex items-center p-1 rounded-full bg-[#f5f6f8] border border-[#e2e6ec]">
               <button

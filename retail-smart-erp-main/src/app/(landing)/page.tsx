@@ -3,19 +3,37 @@ import { generateBreadcrumbJsonLd } from '@/lib/seo/breadcrumbs'
 import HomeClient from './HomeClient'
 
 export const metadata: Metadata = {
-  title: 'skyERPOS - AI-Powered POS & Business Management for Everyone',
-  description: 'All-in-one cloud POS and ERP with AI features for retail, restaurants, supermarkets, and auto service. Unlimited users. All features on every plan. Free forever.',
-  keywords: ['POS system', 'point of sale', 'ERP software', 'AI business management', 'retail POS', 'restaurant management', 'inventory management', 'free POS system', 'cloud ERP', 'unlimited users', 'supermarket POS', 'auto service software'],
+  title: 'skyERPOS — Best Cloud & Offline POS System in Sri Lanka (LKR, Sinhala & English)',
+  description:
+    'Affordable Sri Lankan POS & ERP software by Skyloom Techno (Kalpitiya, Puttalam). Built for Retail, Supermarkets, Restaurants, Pharmacies, Auto Service, Hardware & Dealerships. Runs on Windows, Mac, Linux, Android & iOS.',
+  keywords: [
+    'POS system Sri Lanka',
+    'POS software Sri Lanka',
+    'best POS Sri Lanka',
+    'supermarket POS Sri Lanka',
+    'restaurant POS Sri Lanka',
+    'pharmacy POS software Sri Lanka',
+    'auto service garage software Sri Lanka',
+    'hardware shop billing software LKR',
+    'Android POS app Sri Lanka',
+    'offline POS app',
+    'Sinhala English POS billing',
+    'thermal receipt printer POS',
+    'skyERPOS',
+    'Skyloom Techno',
+    'POS Kalpitiya Puttalam',
+  ],
   openGraph: {
-    title: 'skyERPOS - AI-Powered POS & Business Management',
-    description: 'Unlimited users. AI-assisted insights. All features on every plan. Free to start.',
+    title: 'skyERPOS — All-in-One POS & ERP for Sri Lankan Businesses',
+    description:
+      '12 business types, any OS (Windows, Mac, Linux, Android, iOS), thermal printers, barcode scanners & affordable LKR plans with 25% annual discount.',
     url: 'https://www.skyerpos.com/',
-    images: [{ url: '/og/home', width: 1200, height: 630, alt: 'skyERPOS - AI-Powered POS & Business Management' }],
+    images: [{ url: '/og/home', width: 1200, height: 630, alt: 'skyERPOS — Sri Lanka Cloud & Offline POS' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'skyERPOS - AI-Powered POS & Business Management',
-    description: 'Unlimited users. AI-assisted insights. All features on every plan.',
+    title: 'skyERPOS — Best POS & ERP Software in Sri Lanka',
+    description: 'Fast LKR billing, inventory, KDS, auto service & accounting on any OS and Android.',
     images: ['/og/home'],
   },
   alternates: {
@@ -24,9 +42,7 @@ export const metadata: Metadata = {
 }
 
 export default function HomePage() {
-  const breadcrumb = generateBreadcrumbJsonLd([
-    { name: 'Home' },
-  ])
+  const breadcrumb = generateBreadcrumbJsonLd([{ name: 'Home' }])
 
   return (
     <>
@@ -36,60 +52,48 @@ export default function HomePage() {
           __html: JSON.stringify([
             breadcrumb,
             {
-              "@context": "https://schema.org",
-              "@type": "WebSite",
-              "name": "skyERPOS",
-              "url": "https://www.skyerpos.com",
-              "description": "All-in-one AI-powered cloud POS and ERP for retail, restaurants, supermarkets, and auto service.",
-              "potentialAction": {
-                "@type": "SearchAction",
-                "target": "https://www.skyerpos.com/features?q={search_term_string}",
-                "query-input": "required name=search_term_string"
-              }
+              '@context': 'https://schema.org',
+              '@type': 'WebSite',
+              name: 'skyERPOS',
+              url: 'https://www.skyerpos.com',
+              description: 'All-in-one cloud and offline POS & ERP for 12 business types in Sri Lanka.',
+              potentialAction: {
+                '@type': 'SearchAction',
+                target: 'https://www.skyerpos.com/features?q={search_term_string}',
+                'query-input': 'required name=search_term_string',
+              },
             },
             {
-              "@context": "https://schema.org",
-              "@type": "Organization",
-              "name": "skyERPOS",
-              "url": "https://www.skyerpos.com",
-              "logo": "https://www.skyerpos.com/icons/icon-512.png",
-              "description": "Cloud POS and business management platform with AI features for retail, restaurants, supermarkets, and auto service centers. Unlimited users on every plan.",
-              "sameAs": [
-                "https://www.skyerpos.com"
-              ]
+              '@context': 'https://schema.org',
+              '@type': 'Organization',
+              name: 'skyERPOS (Skyloom Techno)',
+              url: 'https://www.skyerpos.com',
+              logo: 'https://www.skyerpos.com/icons/icon-512.png',
+              telephone: '+94 741228682',
+              email: 'skyloomtechno@gmail.com',
+              address: {
+                '@type': 'PostalAddress',
+                addressLocality: 'Kalpitiya',
+                addressRegion: 'Puttalam',
+                addressCountry: 'LK',
+              },
             },
             {
-              "@context": "https://schema.org",
-              "@type": "SoftwareApplication",
-              "name": "skyERPOS",
-              "applicationCategory": "BusinessApplication",
-              "operatingSystem": "Web",
-              "url": "https://www.skyerpos.com",
-              "downloadUrl": "https://www.skyerpos.com/register",
-              "screenshot": "https://www.skyerpos.com/og/home",
-              "softwareVersion": "1.0",
-              "description": "All-in-one cloud POS and ERP with AI features for retail, restaurants, supermarkets, and auto service. Unlimited users. All features on every plan.",
-              "featureList": [
-                "Point of Sale",
-                "Inventory Management",
-                "Double-Entry Accounting",
-                "HR & Payroll",
-                "Kitchen Display System",
-                "Work Order Management",
-                "AI Analytics",
-                "Multi-Currency",
-                "Real-Time Sync",
-                "Unlimited Users"
-              ],
-              "offers": {
-                "@type": "Offer",
-                "price": "0",
-                "priceCurrency": "LKR",
-                "name": "Free Forever",
-                "description": "All features, unlimited users, 80 MB database, 100 MB file storage"
-              }
-            }
-          ])
+              '@context': 'https://schema.org',
+              '@type': 'SoftwareApplication',
+              name: 'skyERPOS',
+              applicationCategory: 'BusinessApplication',
+              operatingSystem: 'Windows, macOS, Linux, Android, iOS',
+              url: 'https://www.skyerpos.com',
+              screenshot: 'https://www.skyerpos.com/og/home',
+              offers: {
+                '@type': 'Offer',
+                price: '1490',
+                priceCurrency: 'LKR',
+                name: 'Starter Annual Plan (25% Off)',
+              },
+            },
+          ]),
         }}
       />
       <HomeClient />

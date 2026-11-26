@@ -2777,42 +2777,43 @@ html {
   50% { background-position: 100% 50%; }
 }
 
-/* Dark CTA gradient mesh (skyERPOS Brand Blue + Orange) */
+/* Brand Blue CTA mesh (skyERPOS Login Brand Blue #0050C0 + Orange #F87000 — no black) */
 .cta-mesh-dark {
   position: relative;
-  background: linear-gradient(135deg, #06142e 0%, #0050c0 52%, #062f73 100%);
+  background: radial-gradient(120% 90% at 0% 0%, #1666e0 0%, #0050c0 45%, #062f73 100%);
   overflow: hidden;
 }
 
 .cta-mesh-dark::before {
   content: '';
+  position: relative;
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(at 18% 45%, rgba(22,102,224,0.32) 0%, transparent 52%),
-    radial-gradient(at 82% 20%, rgba(248,112,0,0.2) 0%, transparent 50%),
-    radial-gradient(at 50% 85%, rgba(106,165,255,0.16) 0%, transparent 50%);
+    radial-gradient(at 18% 45%, rgba(255,255,255,0.12) 0%, transparent 52%),
+    radial-gradient(at 82% 20%, rgba(248,112,0,0.22) 0%, transparent 50%),
+    radial-gradient(at 50% 85%, rgba(106,165,255,0.18) 0%, transparent 50%);
   animation: cta-mesh-drift 15s ease-in-out infinite;
 }
 
 @keyframes cta-mesh-drift {
   0%, 100% {
     background:
-      radial-gradient(at 18% 45%, rgba(22,102,224,0.32) 0%, transparent 52%),
-      radial-gradient(at 82% 20%, rgba(248,112,0,0.2) 0%, transparent 50%),
-      radial-gradient(at 50% 85%, rgba(106,165,255,0.16) 0%, transparent 50%);
+      radial-gradient(at 18% 45%, rgba(255,255,255,0.12) 0%, transparent 52%),
+      radial-gradient(at 82% 20%, rgba(248,112,0,0.22) 0%, transparent 50%),
+      radial-gradient(at 50% 85%, rgba(106,165,255,0.18) 0%, transparent 50%);
   }
   50% {
     background:
-      radial-gradient(at 38% 30%, rgba(22,102,224,0.28) 0%, transparent 52%),
-      radial-gradient(at 65% 60%, rgba(248,112,0,0.22) 0%, transparent 50%),
-      radial-gradient(at 30% 70%, rgba(106,165,255,0.18) 0%, transparent 50%);
+      radial-gradient(at 38% 30%, rgba(255,255,255,0.1) 0%, transparent 52%),
+      radial-gradient(at 65% 60%, rgba(248,112,0,0.24) 0%, transparent 50%),
+      radial-gradient(at 30% 70%, rgba(106,165,255,0.2) 0%, transparent 50%);
   }
 }
 
-/* Footer gradient */
+/* Footer gradient (skyERPOS Brand Blue — matches login panel) */
 .footer-gradient {
-  background: linear-gradient(180deg, #071124 0%, #062f73 100%);
+  background: linear-gradient(180deg, #0050c0 0%, #062f73 100%);
 }
 
 /* Auth page animated mesh */

@@ -68,7 +68,7 @@ export default function LandingFooter() {
             <div className="inline-flex rounded-xl bg-white px-3 py-1.5 shadow-sm">
               <Logo variant="full" size={26} />
             </div>
-            <p className="mt-4 text-sm text-gray-400 max-w-xs leading-relaxed">
+            <p className="mt-4 text-sm text-white/80 max-w-xs leading-relaxed">
               Cloud POS & ERP with AI features for retail, restaurants, supermarkets, auto service centers, and vehicle dealerships. Unlimited users on every plan.
             </p>
           </div>
