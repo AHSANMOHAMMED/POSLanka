@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Contact skyERPOS',
     description: 'Questions? Our team is ready to help you get started with AI-powered business management.',
-    url: 'https://www.retailsmarterp.com/contact',
+    url: 'https://www.skyerpos.com/contact',
     images: [{ url: '/og/contact', width: 1200, height: 630, alt: 'Contact skyERPOS' }],
   },
   twitter: {
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     images: ['/og/contact'],
   },
   alternates: {
-    canonical: 'https://www.retailsmarterp.com/contact',
+    canonical: 'https://www.skyerpos.com/contact',
   },
 }
 
@@ -44,11 +44,11 @@ export default function ContactPage() {
             "@context": "https://schema.org",
             "@type": "Organization",
             "name": "skyERPOS",
-            "url": "https://www.retailsmarterp.com",
-            "logo": "https://www.retailsmarterp.com/icons/icon-512.png",
+            "url": "https://www.skyerpos.com",
+            "logo": "https://www.skyerpos.com/icons/icon-512.png",
             "contactPoint": {
               "@type": "ContactPoint",
-              "email": "support@retailsmarterp.com",
+              "email": "skyloomtechno@gmail.com",
               "contactType": "customer support",
               "availableLanguage": ["English"]
             }

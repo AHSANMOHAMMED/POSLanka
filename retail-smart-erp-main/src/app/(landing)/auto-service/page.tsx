@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Auto Service Management System | skyERPOS',
     description: 'Work orders, vehicle tracking, inspections, insurance estimates. AI-powered. Unlimited users.',
-    url: 'https://www.retailsmarterp.com/auto-service',
+    url: 'https://www.skyerpos.com/auto-service',
     images: [{ url: '/og/auto-service', width: 1200, height: 630, alt: 'skyERPOS Auto Service Management' }],
   },
   twitter: {
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     images: ['/og/auto-service'],
   },
   alternates: {
-    canonical: 'https://www.retailsmarterp.com/auto-service',
+    canonical: 'https://www.skyerpos.com/auto-service',
   },
 }
 
@@ -52,7 +52,7 @@ export default function AutoServicePage() {
             "offers": {
               "@type": "Offer",
               "price": "0",
-              "priceCurrency": "USD"
+              "priceCurrency": "LKR"
             }
           })
         }}

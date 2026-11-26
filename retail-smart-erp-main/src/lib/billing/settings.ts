@@ -80,12 +80,12 @@ export interface ContactInfo {
 }
 
 const DEFAULT_CONTACT_INFO: ContactInfo = {
-  email: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'support@skyerpos.com',
-  phone: '+94 11 234 5678',
-  whatsapp: '+94 77 123 4567',
-  address: 'Colombo, Sri Lanka',
+  email: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'skyloomtechno@gmail.com',
+  phone: '+94 741228682',
+  whatsapp: '+94 741228682',
+  address: 'Kalpitiya, Puttalam, Sri Lanka',
   companyName: process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS',
-  businessHours: 'Mon-Fri 9:00 AM - 6:00 PM (Asia/Colombo)',
+  businessHours: 'Mon-Sat 8:30 AM - 7:00 PM (Asia/Colombo)',
 }
 
 export async function getContactInfo(): Promise<ContactInfo> {

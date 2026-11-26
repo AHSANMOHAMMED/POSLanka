@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Retail POS System with AI Analytics | skyERPOS',
     description: 'Lightning-fast checkout, smart inventory, loyalty programs. Unlimited users. All features included.',
-    url: 'https://www.retailsmarterp.com/retail',
+    url: 'https://www.skyerpos.com/retail',
     images: [{ url: '/og/retail', width: 1200, height: 630, alt: 'skyERPOS Retail POS' }],
   },
   twitter: {
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     images: ['/og/retail'],
   },
   alternates: {
-    canonical: 'https://www.retailsmarterp.com/retail',
+    canonical: 'https://www.skyerpos.com/retail',
   },
 }
 
@@ -52,7 +52,7 @@ export default function RetailPage() {
             "offers": {
               "@type": "Offer",
               "price": "0",
-              "priceCurrency": "USD"
+              "priceCurrency": "LKR"
             }
           })
         }}

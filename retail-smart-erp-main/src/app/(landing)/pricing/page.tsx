@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Simple, Transparent Pricing | skyERPOS',
     description: 'All features. Unlimited users. Free forever. Only pay for storage as you grow.',
-    url: 'https://www.retailsmarterp.com/pricing',
+    url: 'https://www.skyerpos.com/pricing',
     images: [{ url: '/og/pricing', width: 1200, height: 630, alt: 'skyERPOS Pricing' }],
   },
   twitter: {
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     images: ['/og/pricing'],
   },
   alternates: {
-    canonical: 'https://www.retailsmarterp.com/pricing',
+    canonical: 'https://www.skyerpos.com/pricing',
   },
 }
 
@@ -123,7 +123,7 @@ export default function PricingPage() {
               "offers": {
                 "@type": "Offer",
                 "price": "0",
-                "priceCurrency": "USD",
+                "priceCurrency": "LKR",
                 "availability": "https://schema.org/InStock",
                 "description": "Free plan - All features included, unlimited users, 20 MB storage"
               }

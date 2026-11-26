@@ -197,7 +197,7 @@ export default function RestaurantClient() {
             {/* Right: Hero mockup */}
             <FadeInRight className="hidden lg:block">
               <FloatingMockup>
-                <BrowserMockup url="retailsmarterp.com/kitchen">
+                <BrowserMockup url="skyerpos.com/kitchen">
                   <MockKitchenDisplay />
                 </BrowserMockup>
               </FloatingMockup>

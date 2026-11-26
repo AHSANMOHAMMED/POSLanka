@@ -4,9 +4,11 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import {
-  Sparkles, Shield, Users, Store, BarChart3, ShoppingCart,
+  Sparkles, Shield, Users, Store, ShoppingCart,
   Package, Calculator, Utensils, Monitor, Wrench, Car, Brain,
-  ShieldCheck, Check, UserPlus, Settings, Rocket, ArrowRight, Gift,
+  Check, UserPlus, Settings, Rocket, ArrowRight, Phone,
+  MessageCircle, Printer, ScanBarcode, Smartphone, Fingerprint,
+  AlertTriangle, CheckCircle2, Tag, MapPin,
 } from 'lucide-react'
 import {
   PageWrapper, FadeIn, BlurFadeIn, HeroBadge, TrustBar,
@@ -23,17 +25,110 @@ import {
   MockWorkOrders, MockInventory, MockAccounting, MockTables,
   MockBrowserFrame,
 } from '@/components/landing/mockups'
-import { useCurrencyDisplay } from '@/hooks'
 
 /* ── All features by category ── */
 const allFeatures = [
-  { category: 'Point of Sale', color: 'bg-emerald-500', items: ['Fast Checkout', 'Barcode Scanning', 'Held Sales', 'Layaway', 'Split Payments', 'Gift Cards', 'Loyalty Points', 'Daily Summary'] },
-  { category: 'Inventory', color: 'bg-amber-500', items: ['Multi-Warehouse', 'Stock Transfers', 'Reorder Alerts', 'Batch Tracking', 'Stock Movements', 'Purchase Orders', 'Suppliers'] },
-  { category: 'Accounting', color: 'bg-sky-500', items: ['Chart of Accounts', 'Journal Entries', 'Bank Accounts', 'Budgets', 'Cost Centers', 'Tax Templates', 'Period Closing'] },
-  { category: 'HR & Payroll', color: 'bg-violet-500', items: ['Employee Records', 'Salary Structures', 'Payroll Runs', 'Salary Slips', 'Employee Advances', 'Attendance'] },
-  { category: 'Restaurant', color: 'bg-orange-500', items: ['Kitchen Display', 'Table Management', 'Floor Plan', 'Reservations', 'Recipe Costing', 'Waste Tracking', 'Deliveries'] },
-  { category: 'Auto Service', color: 'bg-rose-500', items: ['Work Orders', 'Vehicle Tracking', 'Inspections', 'Insurance Estimates', 'Parts Management', 'Labor Guides'] },
-  { category: 'Platform', color: 'bg-stone-500', items: ['Real-time sync', 'AI Intelligence', 'Multi-Currency', 'Role-Based Access', 'Custom Reports', 'Export Excel/PDF'] },
+  { category: 'Point of Sale', color: 'bg-[#0050c0]', items: ['Fast LKR Checkout', 'Barcode Scanning', 'Held Sales & Layaway', 'Returns & Exchanges', 'Split Payments', 'Gift Cards & Loyalty', 'Sinhala & English Receipts', 'Daily Shift Summary'] },
+  { category: 'Inventory', color: 'bg-sky-500', items: ['Multi-Warehouse', 'Stock Transfers', 'Reorder Alerts', 'Batch & Expiry Tracking', 'Stock Movements', 'Purchase Orders', 'Supplier Ledgers'] },
+  { category: 'Accounting', color: 'bg-indigo-500', items: ['Chart of Accounts', 'Journal Entries', 'Bank Reconciliation', 'Budgets & Cost Centers', 'Tax Templates', 'Profit & Loss / Balance Sheet'] },
+  { category: 'HR & Payroll', color: 'bg-violet-500', items: ['Employee Records', 'Salary Structures', 'Payroll Runs & Slips', 'Employee Advances', 'ZKTeco Biometric Sync', 'Leave Management'] },
+  { category: 'Restaurant', color: 'bg-orange-500', items: ['Kitchen Display (KDS)', 'Table Floor Plan', 'KOT Thermal Printing', 'Reservations', 'Recipe Costing', 'Waste Tracking'] },
+  { category: 'Auto Service', color: 'bg-rose-500', items: ['Job Cards & Work Orders', 'Vehicle History', 'Multi-Point Inspections', 'Insurance Estimates', 'Parts Management', 'Labor Guides'] },
+  { category: 'Platform & Mobile', color: 'bg-blue-400', items: ['Android POS & Admin Apps', 'Offline Queue Sync', 'AI Error & Sales Insights', 'Role-Based Permissions', 'WhatsApp & Email Alerts', 'Export Excel / PDF'] },
+]
+
+/* ── Business types: Problem → POS Solution + Devices ── */
+const businessSolutions = [
+  {
+    title: 'Retail Shops & Boutiques',
+    href: '/retail',
+    icon: Store,
+    image: '/images/landing/biz-retail.jpg',
+    problem: 'Manual price tags, slow hand-written bills, staff pricing errors, and missing stock counts at month-end.',
+    solution: 'Scan barcodes in under 1 second, print branded 80mm/58mm receipts, track every size/color variant, and monitor profit from your phone.',
+    devices: ['Touchscreen POS', '2D Barcode Scanner', '80mm Thermal Printer', 'Android POS App'],
+    accent: 'text-sky-300',
+    badgeBg: 'bg-[#0050c0]/80 border-sky-400/40',
+  },
+  {
+    title: 'Supermarkets & Mini-Marts',
+    href: '/supermarket',
+    icon: ShoppingCart,
+    image: 'https://images.unsplash.com/photo-1604719312566-8912e9227c6a?w=1200',
+    problem: 'Long customer queues during rush hours, expired shelf stock, and multi-counter cash mismatches.',
+    solution: 'Dual-screen checkout with live Customer Display, batch & expiry alerts, barcode label printing, and instant shift reconciliation.',
+    devices: ['Dual-Screen POS', 'Customer Display', 'Barcode Label Printer', 'Cash Drawer'],
+    accent: 'text-emerald-300',
+    badgeBg: 'bg-emerald-700/80 border-emerald-400/40',
+  },
+  {
+    title: 'Restaurants, Cafes & Bakeries',
+    href: '/restaurant',
+    icon: Utensils,
+    image: 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=1200',
+    problem: 'Lost paper KOTs, delayed kitchen orders, table bill confusion, and untracked ingredient waste.',
+    solution: 'Waiters punch orders on tablets, KOTs print or appear live on the Kitchen Display System (KDS), and tables split/merge cleanly.',
+    devices: ['Tablet POS', 'Kitchen Display (KDS)', 'Thermal KOT Printer', 'Mobile Waiter App'],
+    accent: 'text-orange-300',
+    badgeBg: 'bg-orange-700/80 border-orange-400/40',
+  },
+  {
+    title: 'Auto Service & Garages',
+    href: '/auto-service',
+    icon: Wrench,
+    image: 'https://images.unsplash.com/photo-1487754180451-c456f719a1fc?w=1200',
+    problem: 'Lost job cards, unbilled spare parts, messy insurance estimates, and no vehicle service history.',
+    solution: 'Digital work orders by vehicle plate number, mechanic bay tracking, spare parts deduction, and one-click insurance & customer invoices.',
+    devices: ['Workshop Tablet', 'Desktop ERP', 'A4 / Thermal Printer', 'Parts Barcode Scanner'],
+    accent: 'text-violet-300',
+    badgeBg: 'bg-violet-700/80 border-violet-400/40',
+  },
+  {
+    title: 'Dealerships, Hardware & Wholesale',
+    href: '/dealership',
+    icon: Car,
+    image: '/images/landing/biz-dealership.jpg',
+    problem: 'Credit/installment balances slipping through cracks, multi-warehouse stock blind spots, and staff attendance disputes.',
+    solution: 'Centralized multi-branch stock transfers, customer credit ledgers, ZKTeco fingerprint attendance sync, and Super Admin mobile control.',
+    devices: ['Desktop / Laptop ERP', 'ZKTeco Fingerprint', 'Warehouse Scanner', 'skyERPOS Admin App'],
+    accent: 'text-cyan-300',
+    badgeBg: 'bg-cyan-800/80 border-cyan-400/40',
+    wide: true,
+  },
+]
+
+/* ── Hardware & Device Ecosystem ── */
+const supportedDevices = [
+  {
+    icon: Monitor,
+    title: 'Touchscreen POS & Desktop',
+    detail: 'Works on any Windows, Mac, or Linux browser plus dedicated dual-screen POS counters with live Customer Display.',
+  },
+  {
+    icon: Smartphone,
+    title: 'Android POS & Admin Apps',
+    detail: 'Official skyERPOS & skyERPOS Admin apps with offline billing queue, Bluetooth printing, and instant owner alerts.',
+  },
+  {
+    icon: Printer,
+    title: 'Thermal & Label Printers',
+    detail: 'Plug-and-play 80mm / 58mm thermal receipt & KOT printers (USB, LAN, Bluetooth) plus ZPL/TSPL barcode stickers.',
+  },
+  {
+    icon: ScanBarcode,
+    title: '1D/2D Barcode Scanners',
+    detail: 'Instant SKU, weight-embedded, and batch scanning via USB, wireless dongle, or Android camera.',
+  },
+  {
+    icon: Fingerprint,
+    title: 'ZKTeco Biometric Attendance',
+    detail: 'Direct ADMS push integration for staff check-in/out synced straight into monthly Sri Lankan payroll runs.',
+  },
+  {
+    icon: MessageCircle,
+    title: 'WhatsApp & Email Receipts',
+    detail: 'Send digital LKR invoices, payment due reminders, and daily owner summaries automatically.',
+  },
 ]
 
 /* ── Pricing helpers ── */
@@ -41,6 +136,7 @@ interface ApiTier {
   name: string
   displayName: string
   priceMonthly: string | null
+  priceYearly?: string | null
   currency: string
   maxDatabaseBytes: number | null
   maxFileStorageBytes: number | null
@@ -54,20 +150,42 @@ function formatBytesShort(bytes: number | null): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
-const fallbackPricingTiers = [
-  { name: 'Free', price: 'Free', period: 'forever', features: ['All Features', 'Unlimited Users', '80 MB Database', '100 MB Files'] },
-  { name: 'Starter', price: 'Rs 1,990', period: 'month', features: ['All Features', 'Unlimited Users', '500 MB Database', '500 MB Files'] },
-  { name: 'Professional', price: 'Rs 4,990', period: 'month', features: ['All Features', 'Unlimited Users', '3 GB Database', '2 GB Files'], popular: true },
+interface PricingCardData {
+  name: string
+  monthlyLkr: number | null
+  features: string[]
+  popular?: boolean
+  isCustom?: boolean
+}
+
+const fallbackPricingTiers: PricingCardData[] = [
+  {
+    name: 'Starter Shop',
+    monthlyLkr: 1990,
+    features: ['All POS & ERP Features', 'Unlimited Staff Users', '500 MB Database', '500 MB File Storage', 'WhatsApp & Email Support'],
+  },
+  {
+    name: 'Business Growth',
+    monthlyLkr: 3990,
+    popular: true,
+    features: ['All POS & ERP Features', 'Unlimited Staff Users', '3 GB Database', '2 GB File Storage', 'Multi-Warehouse & KDS', 'Priority Setup & Training'],
+  },
+  {
+    name: 'Multi-Branch Enterprise',
+    monthlyLkr: 7990,
+    features: ['All POS & ERP Features', 'Unlimited Branches & Users', '10 GB+ Database', '5 GB+ File Storage', 'ZKTeco & Custom Onboarding', 'Up to 30% Multi-Branch Discount'],
+  },
 ]
 
+const appDomain = process.env.NEXT_PUBLIC_APP_DOMAIN || 'app.skyerpos.com'
+const appLoginUrl = `https://${appDomain}/login`
+
 export default function HomeClient() {
-  const [pricingTiers, setPricingTiers] = useState(fallbackPricingTiers)
-  const { currency, symbol, loading: currencyLoading, convertFromLKR } = useCurrencyDisplay('geoip')
+  const [tiers, setTiers] = useState<PricingCardData[]>(fallbackPricingTiers)
+  const [annual, setAnnual] = useState(true)
 
   useEffect(() => {
-    if (currencyLoading) return
     let cancelled = false
-
     async function loadPricing() {
       try {
         const res = await fetch('/api/public/pricing-tiers')
@@ -75,154 +193,185 @@ export default function HomeClient() {
         const data: ApiTier[] = await res.json()
         if (!Array.isArray(data) || data.length === 0 || cancelled) return
 
-        const isConverted = currency !== 'LKR'
-        const preview = data.slice(0, 3).map((tier) => {
+        const paid = data.filter((t) => t.priceMonthly == null || Number(t.priceMonthly) > 0)
+        const source = paid.length >= 3 ? paid.slice(0, 3) : data.slice(0, 3)
+
+        const mapped: PricingCardData[] = source.map((tier, idx) => {
           const isCustom = tier.priceMonthly == null
-          if (isCustom) {
-            return {
-              name: tier.displayName,
-              price: 'Custom',
-              period: 'custom',
-              features: [
-                'All Features',
-                'Unlimited Users',
-                tier.maxDatabaseBytes ? `${formatBytesShort(tier.maxDatabaseBytes)} Database` : 'Custom Storage',
-              ],
-              popular: tier.name === 'professional',
-              isCustom: true,
-            }
-          }
-          const priceLKR = Number(tier.priceMonthly)
-          const isFree = priceLKR === 0
-          let priceDisplay: string
-          if (isFree) {
-            priceDisplay = 'Free'
-          } else if (isConverted) {
-            const converted = convertFromLKR(priceLKR)
-            priceDisplay = `~${symbol}${converted.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-          } else {
-            priceDisplay = `Rs ${priceLKR.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-          }
-          const features: string[] = ['All Features', 'Unlimited Users']
+          const features: string[] = ['All POS & ERP Features', 'Unlimited Users']
           if (tier.maxDatabaseBytes) features.push(`${formatBytesShort(tier.maxDatabaseBytes)} Database`)
           if (tier.maxFileStorageBytes) features.push(`${formatBytesShort(tier.maxFileStorageBytes)} Files`)
+          features.push('Free Setup & Training')
           return {
             name: tier.displayName,
-            price: priceDisplay,
-            period: isFree ? 'forever' : 'month',
+            monthlyLkr: isCustom ? null : Number(tier.priceMonthly),
             features,
-            popular: tier.name === 'professional',
-            isCustom: false,
+            popular: tier.name === 'professional' || idx === 1,
+            isCustom,
           }
         })
-        if (!cancelled) setPricingTiers(preview)
+        if (!cancelled && mapped.length > 0) setTiers(mapped)
       } catch {
-        /* Keep fallback */
+        /* Keep Sri Lankan LKR fallback tiers */
       }
     }
     loadPricing()
     return () => { cancelled = true }
-  }, [currency, symbol, currencyLoading, convertFromLKR])
+  }, [])
 
   /* ── Feature tab data with mockups ── */
   const featureTabs = [
-    { key: 'pos', label: 'Point of Sale', icon: ShoppingCart, gradient: 'from-emerald-500 to-teal-500', mockup: <MockPOS />, description: 'Fast, intuitive checkout with barcode scanning, multiple payment methods, and real-time inventory updates.', features: ['Barcode & SKU scanning', 'Multiple payment methods', 'Held sales & layaway', 'Returns and exchanges', 'Receipt printing & email', 'Gift card support'] },
-    { key: 'inventory', label: 'Inventory', icon: Package, gradient: 'from-amber-500 to-orange-500', mockup: <MockInventory />, description: 'Multi-warehouse tracking with reorder alerts, stock transfers, and complete movement history.', features: ['Multi-warehouse support', 'Smart reorder alerts', 'Stock transfers', 'Batch & serial tracking', 'Min/max stock levels', 'Movement history'] },
-    { key: 'accounting', label: 'Accounting', icon: Calculator, gradient: 'from-sky-500 to-blue-500', mockup: <MockAccounting />, description: 'Complete double-entry accounting with chart of accounts, journal entries, bank reconciliation, and financial insights.', features: ['Chart of accounts', 'Journal entries', 'Bank reconciliation', 'Financial statements', 'Tax management', 'Budget tracking'] },
-    { key: 'hr', label: 'HR & Payroll', icon: Users, gradient: 'from-violet-500 to-purple-500', mockup: <MockDashboard />, description: 'Employee management, salary structures, payroll runs, advances, attendance tracking, and leave management.', features: ['Employee profiles', 'Salary structures', 'Payroll processing', 'Employee advances', 'Attendance tracking', 'Leave management'] },
-    { key: 'kitchen', label: 'Restaurant Kitchen', icon: Utensils, gradient: 'from-orange-500 to-red-500', mockup: <MockKitchenDisplay />, description: 'Real-time kitchen display system with order queues, status tracking, and automatic notifications.', features: ['Order queue management', 'Status tracking', 'Priority ordering', 'Cook time tracking', 'Auto-notifications', 'Multi-station support'] },
-    { key: 'tables', label: 'Tables', icon: Monitor, gradient: 'from-rose-500 to-pink-500', mockup: <MockTables />, description: 'Visual table management with floor plan designer, real-time status updates, and reservation integration.', features: ['Floor plan designer', 'Real-time table status', 'Table merging & splitting', 'Reservation linking', 'Capacity management', 'Waiter assignment'] },
-    { key: 'workorders', label: 'Auto Service', icon: Wrench, gradient: 'from-indigo-500 to-violet-500', mockup: <MockWorkOrders />, description: 'Complete work order management with vehicle tracking, inspections, and insurance estimate integration.', features: ['Work order management', 'Vehicle tracking', 'Multi-point inspections', 'Insurance estimates', 'Parts management', 'Labor guides'] },
-    { key: 'dashboard', label: 'AI Dashboard', icon: Brain, gradient: 'from-emerald-600 to-amber-500', mockup: <MockDashboard />, description: 'Real-time dashboards with AI chat assistant, sales analytics, and business intelligence.', features: ['Real-time metrics', 'AI chat assistant', 'Sales trend analysis', 'Smart warnings', 'Custom reports', 'Export to Excel/PDF'] },
+    { key: 'pos', label: 'Point of Sale', icon: ShoppingCart, gradient: 'from-[#0050c0] to-[#2563eb]', mockup: <MockPOS />, description: 'Fast LKR checkout with barcode scanning, split payments, returns/exchanges, and thermal receipt printing.', features: ['Barcode & SKU scanning', 'Cash, Card, Bank & Credit', 'Held sales & layaway', 'Instant returns & exchanges', '80mm / 58mm thermal printing', 'Gift cards & loyalty points'] },
+    { key: 'inventory', label: 'Inventory', icon: Package, gradient: 'from-sky-500 to-blue-600', mockup: <MockInventory />, description: 'Multi-warehouse tracking with reorder alerts, stock transfers, and batch/expiry control.', features: ['Multi-warehouse support', 'Low-stock reorder alerts', 'Branch stock transfers', 'Batch & expiry tracking', 'Purchase orders & GRN', 'Supplier ledger history'] },
+    { key: 'accounting', label: 'Accounting', icon: Calculator, gradient: 'from-indigo-500 to-[#0050c0]', mockup: <MockAccounting />, description: 'Double-entry accounting with chart of accounts, journal entries, bank reconciliation, and tax reports.', features: ['Chart of accounts', 'Journal entries', 'Bank reconciliation', 'Profit & Loss statements', 'Tax templates', 'Expense tracking'] },
+    { key: 'hr', label: 'HR & Payroll', icon: Users, gradient: 'from-violet-500 to-indigo-600', mockup: <MockDashboard />, description: 'Employee profiles, ZKTeco biometric attendance, salary structures, advances, and monthly payroll.', features: ['Employee profiles', 'ZKTeco fingerprint sync', 'Salary structures', 'Monthly payroll runs', 'Salary advances', 'Leave management'] },
+    { key: 'kitchen', label: 'Restaurant KDS', icon: Utensils, gradient: 'from-orange-500 to-red-500', mockup: <MockKitchenDisplay />, description: 'Real-time kitchen display system with order queues, KOT thermal printing, and table status.', features: ['Live kitchen order queue', 'Thermal KOT printing', 'Priority ordering', 'Cook time tracking', 'Multi-station routing', 'Dine-in & takeaway'] },
+    { key: 'tables', label: 'Tables', icon: Monitor, gradient: 'from-rose-500 to-pink-600', mockup: <MockTables />, description: 'Visual restaurant floor plan with real-time table status, merging, splitting, and waiter orders.', features: ['Floor plan designer', 'Live table status', 'Table merge & split', 'Reservations', 'Waiter assignment', 'QR menu support'] },
+    { key: 'workorders', label: 'Auto Service', icon: Wrench, gradient: 'from-blue-600 to-violet-600', mockup: <MockWorkOrders />, description: 'Complete garage job cards with vehicle plate history, inspections, spare parts, and insurance estimates.', features: ['Vehicle job cards', 'Service history by plate', 'Multi-point inspections', 'Insurance estimates', 'Spare parts deduction', 'Labor charge guides'] },
+    { key: 'dashboard', label: 'AI Dashboard', icon: Brain, gradient: 'from-[#0050c0] to-cyan-500', mockup: <MockDashboard />, description: 'Real-time owner analytics with AI insights, error monitoring, and branch-by-branch sales.', features: ['Live sales & profit KPIs', 'AI business assistant', 'Sales trend forecasts', 'Low-margin warnings', 'Daily owner reports', 'Export Excel & PDF'] },
   ]
 
   return (
     <PageWrapper>
       {/* ══════════════════════════════════════════════
-          Section 1 — Hero (full viewport, image bg)
+          Section 1 — Hero (Realistic POS & Hardware)
          ══════════════════════════════════════════════ */}
-      <section className="relative min-h-screen flex items-center overflow-hidden">
-        {/* Background image */}
+      <section className="relative min-h-screen flex items-center overflow-hidden pt-16">
         <Image
-          src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?w=1920"
-          alt=""
+          src="/images/landing/hero-pos-devices.jpg"
+          alt="skyERPOS touchscreen terminal, thermal receipt printer, barcode scanner and mobile POS"
           fill
           priority
           quality={90}
-          className="object-cover"
+          className="object-cover object-center"
           sizes="100vw"
         />
-        <div className="hero-image-overlay" />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: 'linear-gradient(105deg, rgba(6,10,22,0.94) 0%, rgba(6,16,42,0.86) 52%, rgba(0,40,110,0.58) 100%)',
+          }}
+        />
         <div className="noise-overlay" />
 
-        {/* Content */}
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 sm:py-32">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28 w-full">
+          <div className="grid lg:grid-cols-12 gap-10 lg:gap-12 items-center">
             {/* Left column */}
-            <BlurFadeIn>
+            <BlurFadeIn className="lg:col-span-7">
               <div>
                 <div className="flex flex-wrap items-center gap-3 mb-6">
                   <HeroBadge
-                    text="AI-Powered Business Platform"
-                    icon={<Sparkles className="w-4 h-4 text-emerald-600" />}
-                    className="!bg-white/10 !border-white/20 !text-white backdrop-blur-sm !mb-0"
+                    text="skyERPOS · By Skyloom Techno"
+                    icon={<Sparkles className="w-4 h-4 text-sky-400" />}
+                    className="!bg-[#0050c0]/25 !border-sky-400/35 !text-white backdrop-blur-sm !mb-0"
                   />
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 backdrop-blur-sm">
-                    <Check className="w-3.5 h-3.5" />
-                    Free Forever
+                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-full bg-emerald-500/15 border border-emerald-400/35 text-emerald-300 backdrop-blur-sm">
+                    <Tag className="w-3.5 h-3.5" />
+                    25% Off Annual Plans · Affordable LKR
                   </span>
                 </div>
-                <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-[1.1] text-white tracking-tight">
-                  The Smart ERP for{' '}
-                  <span className="gradient-text-animate">Every Business</span>
+
+                <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] font-extrabold leading-[1.08] text-white tracking-tight">
+                  Complete POS &amp; ERP for{' '}
+                  <span className="bg-gradient-to-r from-sky-300 via-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                    Sri Lankan Businesses
+                  </span>
                 </h1>
-                <p className="mt-6 text-lg sm:text-xl text-white/80 leading-relaxed max-w-xl">
-                  POS, inventory, accounting, HR, and AI analytics — all in one platform.
-                  Built for retail, restaurants, supermarkets, and auto service.{' '}
-                  <strong className="text-white">Free Forever. Unlimited Users. No Credit Card.</strong>
+
+                <p className="mt-6 text-lg sm:text-xl text-zinc-200 leading-relaxed max-w-2xl">
+                  Solve slow billing, stock theft, and messy accounts with one fast system.
+                  Works on <strong className="text-white">Touchscreen POS, Laptops &amp; Android Phones</strong> with
+                  80mm thermal printers, barcode scanners, and <strong className="text-sky-300">LKR / Sinhala / English</strong> support.
                 </p>
-                <div className="mt-8 flex flex-wrap gap-4">
+
+                <div className="mt-8 flex flex-wrap items-center gap-4">
                   <Link
-                    href="/register"
-                    className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-700 hover:to-emerald-600 rounded-md transition-all shadow-lg shadow-emerald-600/25 hover:shadow-emerald-600/40 hover:-translate-y-0.5"
+                    href="/contact"
+                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-bold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-lg transition-all shadow-lg shadow-[#0050c0]/35 hover:-translate-y-0.5"
                   >
-                    Get Started Free
+                    Book Free Demo
                     <ArrowRight className="w-5 h-5" />
                   </Link>
-                  <Link
-                    href="/features"
-                    className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold border border-white/30 text-white hover:bg-white/10 rounded-md transition-all hover:-translate-y-0.5"
+                  <a
+                    href="https://wa.me/94741228682?text=Hi%20skyERPOS%2C%20I%20would%20like%20a%20free%20demo%20and%20LKR%20pricing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-semibold text-white bg-emerald-600/90 hover:bg-emerald-600 rounded-lg transition-all shadow-lg shadow-emerald-600/20 hover:-translate-y-0.5"
                   >
-                    See All Features
-                  </Link>
+                    <MessageCircle className="w-5 h-5" />
+                    WhatsApp +94 74 122 8682
+                  </a>
+                  <a
+                    href={appLoginUrl}
+                    className="inline-flex items-center gap-2 px-6 py-4 text-base font-semibold border border-white/25 text-white hover:bg-white/10 rounded-lg transition-all"
+                  >
+                    Sign In to Store
+                  </a>
                 </div>
-                <div className="mt-8 flex flex-wrap items-center gap-6 text-sm text-white/60">
+
+                <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-zinc-300">
                   <div className="flex items-center gap-1.5">
-                    <Gift className="w-4 h-4 text-emerald-400" />
-                    Free Forever
+                    <CheckCircle2 className="w-4 h-4 text-sky-400" />
+                    Plans from Rs. 1,490/mo
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Users className="w-4 h-4 text-emerald-400" />
-                    Unlimited Users
+                    <Users className="w-4 h-4 text-sky-400" />
+                    Unlimited Staff Users
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Shield className="w-4 h-4 text-amber-400" />
-                    Advanced Security
+                    <Smartphone className="w-4 h-4 text-sky-400" />
+                    Offline Android POS Included
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-rose-400" />
-                    AI-Powered
+                    <MapPin className="w-4 h-4 text-sky-400" />
+                    Kalpitiya, Puttalam · Islandwide Support
                   </div>
                 </div>
               </div>
             </BlurFadeIn>
 
-            {/* Right column — Dashboard mockup */}
-            <FadeIn className="hidden lg:block" delay={0.3}>
+            {/* Right column — Realistic Hardware + Live UI card */}
+            <FadeIn className="lg:col-span-5 hidden lg:block" delay={0.2}>
               <FloatingMockup>
-                <MockBrowserFrame url="app.skyerpos.com/dashboard">
-                  <MockDashboard />
-                </MockBrowserFrame>
+                <div className="rounded-2xl overflow-hidden border border-white/15 bg-zinc-950/75 backdrop-blur-md shadow-2xl shadow-[#0050c0]/25">
+                  <div className="relative h-60 w-full">
+                    <Image
+                      src="/images/landing/hero-pos-devices.jpg"
+                      alt="All-in-one POS terminal, thermal printer, barcode scanner and Android mobile app"
+                      fill
+                      className="object-cover"
+                      sizes="(max-width: 1024px) 100vw, 42vw"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent" />
+                    <span className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold bg-[#0050c0] text-white shadow">
+                      Hardware + Cloud Ready
+                    </span>
+                  </div>
+                  <div className="p-5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-white">Complete Counter &amp; Mobile Setup</span>
+                      <span className="text-xs font-semibold text-sky-300">app.skyerpos.com</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs text-zinc-300">
+                      <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
+                        <Monitor className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                        <span>Touchscreen POS</span>
+                      </div>
+                      <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
+                        <Printer className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                        <span>80mm Thermal Print</span>
+                      </div>
+                      <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
+                        <ScanBarcode className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                        <span>2D Barcode Scan</span>
+                      </div>
+                      <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
+                        <Smartphone className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                        <span>Android POS App</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </FloatingMockup>
             </FadeIn>
           </div>
@@ -230,23 +379,19 @@ export default function HomeClient() {
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 2 — Logo Marquee (tech stack)
+          Section 2 — Capability Marquee
          ══════════════════════════════════════════════ */}
-      <section className="section-bg-white py-12">
+      <section className="section-bg-white py-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <FadeIn className="text-center mb-8">
-            <p className="text-sm font-semibold uppercase tracking-widest text-zinc-500">
-              Built with Modern Technology
-            </p>
-          </FadeIn>
           <LogoMarquee speed={30}>
             {[
-              'Modern Stack', 'Real-Time Sync', 'Complete Data Isolation',
-              'AI Analytics', 'Advanced Security', 'Multi-Currency', 'Mobile Ready', 'Cloud Native',
+              'LKR & Multi-Currency', 'Sinhala & English Receipts', 'Offline Android POS',
+              '80mm & 58mm Thermal Print', 'ZKTeco Biometric Sync', 'WhatsApp Invoices',
+              'Multi-Branch Inventory', 'Double-Entry Accounting', '25% Annual Discount',
             ].map((tech) => (
               <span
                 key={tech}
-                className="inline-flex items-center px-5 py-2.5 rounded-full bg-white/10 text-zinc-300 text-sm font-semibold border border-white/10 whitespace-nowrap"
+                className="inline-flex items-center px-5 py-2 rounded-full bg-[#0050c0]/10 text-sky-200 text-sm font-semibold border border-[#0050c0]/30 whitespace-nowrap"
               >
                 {tech}
               </span>
@@ -260,237 +405,90 @@ export default function HomeClient() {
          ══════════════════════════════════════════════ */}
       <TrustBar
         metrics={[
-          { value: 'High', label: 'Availability', icon: <Shield className="w-5 h-5 text-emerald-600" /> },
-          { value: 'Unlimited', label: 'Users', icon: <Users className="w-5 h-5 text-amber-600" /> },
-          { value: '5', label: 'Business Types', icon: <Store className="w-5 h-5 text-rose-600" /> },
-          { value: 'AI', label: 'Powered', icon: <Sparkles className="w-5 h-5 text-violet-600" /> },
+          { value: 'Rs. 1,490', label: 'Starting / Month', icon: <Tag className="w-5 h-5 text-sky-400" /> },
+          { value: 'Unlimited', label: 'Staff Users', icon: <Users className="w-5 h-5 text-blue-400" /> },
+          { value: '5+', label: 'Business Types', icon: <Store className="w-5 h-5 text-cyan-400" /> },
+          { value: '24/7', label: 'Cloud & Offline Sync', icon: <Shield className="w-5 h-5 text-emerald-400" /> },
         ]}
       />
 
       {/* ══════════════════════════════════════════════
-          Section 4 — Feature Tabs
-         ══════════════════════════════════════════════ */}
-      <section className="section-bg-subtle py-20 sm:py-28">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <SectionHeading
-            badge="Live Preview"
-            title="Explore by category"
-            highlight="category"
-            subtitle="Click any tab to see exactly how RetailSmart works for your business."
-          />
-          <FeatureTabSwitcher tabs={featureTabs} />
-        </div>
-      </section>
-
-      {/* ══════════════════════════════════════════════
-          Section 5 — Business Types (2x2 image cards)
+          Section 4 — Business Types: Problem → Solution + Devices
          ══════════════════════════════════════════════ */}
       <section className="section-bg-white py-20 sm:py-28">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
-            badge="Built For You"
-            title="Built for your business type"
-            highlight="your business"
+            badge="Problems Solved"
+            title="Real business problems solved with skyERPOS &amp; devices"
+            highlight="skyERPOS &amp; devices"
+            subtitle="Every business type faces daily bottlenecks. See how skyERPOS software + affordable POS hardware fix them from day one."
           />
-          <StaggerContainer staggerDelay={0.1} className="grid md:grid-cols-2 gap-6">
-            {/* Retail */}
-            <StaggerItem>
-              <Link href="/retail" className="group relative block overflow-hidden rounded-2xl h-80">
-                <Image
-                  src="https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=800"
-                  alt="Retail store"
-                  fill
-                  className="object-cover transition-transform duration-500 group-hover:scale-105"
-                  sizes="(max-width: 768px) 100vw, 50vw"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-blue-900/90 via-sky-600/50 to-transparent" />
-                <div className="absolute inset-0 p-6 flex flex-col justify-end">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Store className="w-5 h-5 text-sky-300" />
-                    <h3 className="text-xl font-bold text-white">Retail Store</h3>
-                  </div>
-                  <p className="text-white/80 text-sm max-w-sm mb-3">
-                    Complete POS with barcode scanning, multi-warehouse inventory, loyalty programs, and layaway.
-                  </p>
-                  <span className="inline-flex items-center gap-1 text-sm font-semibold text-sky-300 group-hover:text-white transition-colors">
-                    Explore <ArrowRight className="w-4 h-4" />
-                  </span>
-                </div>
-                <div className="absolute top-4 right-4 w-24 opacity-60 group-hover:opacity-80 transition-opacity">
-                  <div className="transform scale-[0.15] origin-top-right">
-                    <MockPOS />
-                  </div>
-                </div>
-              </Link>
-            </StaggerItem>
 
-            {/* Restaurant */}
-            <StaggerItem>
-              <Link href="/restaurant" className="group relative block overflow-hidden rounded-2xl h-80">
-                <Image
-                  src="https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800"
-                  alt="Restaurant"
-                  fill
-                  className="object-cover transition-transform duration-500 group-hover:scale-105"
-                  sizes="(max-width: 768px) 100vw, 50vw"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-red-900/90 via-orange-600/50 to-transparent" />
-                <div className="absolute inset-0 p-6 flex flex-col justify-end">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Utensils className="w-5 h-5 text-orange-300" />
-                    <h3 className="text-xl font-bold text-white">Restaurant</h3>
+          <StaggerContainer staggerDelay={0.08} className="grid md:grid-cols-2 gap-7">
+            {businessSolutions.map((biz) => (
+              <StaggerItem key={biz.title} className={biz.wide ? 'md:col-span-2' : ''}>
+                <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/90 shadow-xl flex flex-col justify-between min-h-[430px]">
+                  {/* Background image */}
+                  <div className="relative h-52 sm:h-56 w-full overflow-hidden">
+                    <Image
+                      src={biz.image}
+                      alt={biz.title}
+                      fill
+                      className="object-cover transition-transform duration-500 group-hover:scale-105"
+                      sizes={biz.wide ? '100vw' : '(max-width: 768px) 100vw, 50vw'}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/45 to-transparent" />
+                    <div className="absolute bottom-4 left-6 right-6 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`p-2 rounded-lg border ${biz.badgeBg} text-white backdrop-blur-sm`}>
+                          <biz.icon className="w-5 h-5" />
+                        </span>
+                        <h3 className="text-xl sm:text-2xl font-bold text-white">{biz.title}</h3>
+                      </div>
+                      <Link
+                        href={biz.href}
+                        className={`inline-flex items-center gap-1 text-sm font-semibold ${biz.accent} hover:text-white transition-colors`}
+                      >
+                        Preview <ArrowRight className="w-4 h-4" />
+                      </Link>
+                    </div>
                   </div>
-                  <p className="text-white/80 text-sm max-w-sm mb-3">
-                    Kitchen display, table management, reservations, recipe costing, and multi-channel orders.
-                  </p>
-                  <span className="inline-flex items-center gap-1 text-sm font-semibold text-orange-300 group-hover:text-white transition-colors">
-                    Explore <ArrowRight className="w-4 h-4" />
-                  </span>
-                </div>
-                <div className="absolute top-4 right-4 w-24 opacity-60 group-hover:opacity-80 transition-opacity">
-                  <div className="transform scale-[0.15] origin-top-right">
-                    <MockKitchenDisplay />
-                  </div>
-                </div>
-              </Link>
-            </StaggerItem>
 
-            {/* Supermarket */}
-            <StaggerItem>
-              <Link href="/supermarket" className="group relative block overflow-hidden rounded-2xl h-80">
-                <Image
-                  src="https://images.unsplash.com/photo-1604719312566-8912e9227c6a?w=800"
-                  alt="Supermarket"
-                  fill
-                  className="object-cover transition-transform duration-500 group-hover:scale-105"
-                  sizes="(max-width: 768px) 100vw, 50vw"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-emerald-900/90 via-green-600/50 to-transparent" />
-                <div className="absolute inset-0 p-6 flex flex-col justify-end">
-                  <div className="flex items-center gap-2 mb-2">
-                    <ShoppingCart className="w-5 h-5 text-emerald-300" />
-                    <h3 className="text-xl font-bold text-white">Supermarket</h3>
-                  </div>
-                  <p className="text-white/80 text-sm max-w-sm mb-3">
-                    High-volume checkout, department management, batch tracking, and category analytics.
-                  </p>
-                  <span className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-300 group-hover:text-white transition-colors">
-                    Explore <ArrowRight className="w-4 h-4" />
-                  </span>
-                </div>
-                <div className="absolute top-4 right-4 w-24 opacity-60 group-hover:opacity-80 transition-opacity">
-                  <div className="transform scale-[0.15] origin-top-right">
-                    <MockInventory />
-                  </div>
-                </div>
-              </Link>
-            </StaggerItem>
+                  {/* Problem + Solution + Devices */}
+                  <div className="p-6 space-y-4 flex-1 flex flex-col justify-between">
+                    <div className={`grid gap-3 ${biz.wide ? 'md:grid-cols-2' : ''}`}>
+                      <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-3.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-rose-300 mb-1">
+                          <AlertTriangle className="w-3.5 h-3.5" />
+                          The Problem &amp; Need
+                        </div>
+                        <p className="text-sm text-zinc-300 leading-relaxed">{biz.problem}</p>
+                      </div>
+                      <div className="rounded-xl bg-[#0050c0]/15 border border-[#0050c0]/35 p-3.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-sky-300 mb-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          skyERPOS Solution
+                        </div>
+                        <p className="text-sm text-zinc-200 leading-relaxed">{biz.solution}</p>
+                      </div>
+                    </div>
 
-            {/* Auto Service */}
-            <StaggerItem>
-              <Link href="/auto-service" className="group relative block overflow-hidden rounded-2xl h-80">
-                <Image
-                  src="https://images.unsplash.com/photo-1487754180451-c456f719a1fc?w=800"
-                  alt="Auto service workshop"
-                  fill
-                  className="object-cover transition-transform duration-500 group-hover:scale-105"
-                  sizes="(max-width: 768px) 100vw, 50vw"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-purple-900/90 via-violet-600/50 to-transparent" />
-                <div className="absolute inset-0 p-6 flex flex-col justify-end">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Wrench className="w-5 h-5 text-violet-300" />
-                    <h3 className="text-xl font-bold text-white">Auto Service</h3>
+                    <div>
+                      <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                        Recommended POS &amp; Devices
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {biz.devices.map((dev) => (
+                          <span
+                            key={dev}
+                            className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-white/5 text-zinc-200 border border-white/10"
+                          >
+                            {dev}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
                   </div>
-                  <p className="text-white/80 text-sm max-w-sm mb-3">
-                    Work orders, vehicle tracking, inspections, insurance estimates, and parts management.
-                  </p>
-                  <span className="inline-flex items-center gap-1 text-sm font-semibold text-violet-300 group-hover:text-white transition-colors">
-                    Explore <ArrowRight className="w-4 h-4" />
-                  </span>
-                </div>
-                <div className="absolute top-4 right-4 w-24 opacity-60 group-hover:opacity-80 transition-opacity">
-                  <div className="transform scale-[0.15] origin-top-right">
-                    <MockWorkOrders />
-                  </div>
-                </div>
-              </Link>
-            </StaggerItem>
-
-            {/* Vehicle Dealership */}
-            <StaggerItem className="md:col-span-2">
-              <Link href="/dealership" className="group relative block overflow-hidden rounded-2xl h-80">
-                <Image
-                  src="https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=1200"
-                  alt="Vehicle dealership showroom"
-                  fill
-                  className="object-cover transition-transform duration-500 group-hover:scale-105"
-                  sizes="100vw"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-cyan-900/90 via-teal-600/50 to-transparent" />
-                <div className="absolute inset-0 p-6 flex flex-col justify-end">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Car className="w-5 h-5 text-cyan-300" />
-                    <h3 className="text-xl font-bold text-white">Vehicle Dealership</h3>
-                  </div>
-                  <p className="text-white/80 text-sm max-w-lg mb-3">
-                    New and used vehicle sales, trade-in management, test drive scheduling, financing, and full inventory tracking for cars, motorbikes, and more.
-                  </p>
-                  <span className="inline-flex items-center gap-1 text-sm font-semibold text-cyan-300 group-hover:text-white transition-colors">
-                    Explore <ArrowRight className="w-4 h-4" />
-                  </span>
-                </div>
-              </Link>
-            </StaggerItem>
-          </StaggerContainer>
-        </div>
-      </section>
-
-      {/* ══════════════════════════════════════════════
-          Section 6 — AI Showcase (dark section)
-         ══════════════════════════════════════════════ */}
-      <section className="bg-stone-900 py-20 sm:py-28 relative overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-          <div className="absolute top-0 left-1/4 w-96 h-96 bg-emerald-600/10 rounded-full blur-[120px]" />
-          <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-amber-500/10 rounded-full blur-[120px]" />
-        </div>
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <SectionHeading
-            badge="AI Intelligence"
-            title="Powered by AI Intelligence"
-            highlight="AI Intelligence"
-            gradientClass="gradient-text-emerald-gold"
-            className="[&_h2]:text-white [&_p]:text-stone-400 [&_span.inline-block]:!bg-gradient-to-r [&_span.inline-block]:from-amber-500/10 [&_span.inline-block]:to-emerald-500/10 [&_span.inline-block]:!text-amber-400 [&_span.inline-block]:!border-amber-500/30"
-          />
-          <StaggerContainer staggerDelay={0.1} className="grid sm:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {[
-              {
-                icon: Brain,
-                title: 'Smart Inventory Alerts',
-                description: 'Set min/max stock levels and get automated alerts when items need reordering, helping reduce stockouts and overstock.',
-                iconBg: 'from-emerald-500 to-emerald-600',
-              },
-              {
-                icon: BarChart3,
-                title: 'Sales Pattern Analysis',
-                description: 'Ask the AI chat assistant about your sales trends, peak hours, best-selling items, and more — get instant answers in natural language.',
-                iconBg: 'from-amber-500 to-amber-600',
-              },
-              {
-                icon: ShieldCheck,
-                title: 'Intelligent Error Detection',
-                description: 'Built-in smart warnings flag potential issues like unusual transactions, missing data, or configuration problems for your review.',
-                iconBg: 'from-rose-500 to-rose-600',
-              },
-            ].map((item) => (
-              <StaggerItem key={item.title}>
-                <div className="bg-white/5 backdrop-blur border border-white/10 rounded-2xl p-6 hover:bg-white/[0.08] transition-colors">
-                  <div className={`w-14 h-14 rounded-2xl bg-gradient-to-br ${item.iconBg} flex items-center justify-center mb-4 shadow-lg`}>
-                    <item.icon className="w-7 h-7 text-white" />
-                  </div>
-                  <AIBadge size="md" className="mb-3 !bg-amber-500/10 !text-amber-400 !border-amber-500/30" />
-                  <h3 className="text-lg font-bold text-white mb-2">{item.title}</h3>
-                  <p className="text-sm text-stone-400 leading-relaxed">{item.description}</p>
                 </div>
               </StaggerItem>
             ))}
@@ -499,7 +497,83 @@ export default function HomeClient() {
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 7 — Complete Feature Grid
+          Section 5 — Supported POS Hardware & Devices
+         ══════════════════════════════════════════════ */}
+      <section className="section-bg-subtle py-20 sm:py-28">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <SectionHeading
+            badge="Devices &amp; Hardware"
+            title="Works with real POS hardware &amp; Android phones"
+            highlight="real POS hardware"
+            subtitle="Use your existing laptop or Android phone, or pair skyERPOS with thermal printers, barcode scanners, and biometric devices."
+          />
+
+          <StaggerContainer staggerDelay={0.06} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+            {supportedDevices.map((device) => (
+              <StaggerItem key={device.title}>
+                <div className="h-full rounded-2xl border border-white/10 bg-white/5 p-6 hover:border-[#0050c0]/50 transition-colors">
+                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#0050c0] to-[#2563eb] text-white flex items-center justify-center mb-4 shadow-lg shadow-[#0050c0]/25">
+                    <device.icon className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-2">{device.title}</h3>
+                  <p className="text-sm text-zinc-300 leading-relaxed">{device.detail}</p>
+                </div>
+              </StaggerItem>
+            ))}
+          </StaggerContainer>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════
+          Section 6 — Interactive Software Preview Tabs
+         ══════════════════════════════════════════════ */}
+      <section className="section-bg-white py-20 sm:py-28">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <SectionHeading
+            badge="Live Preview"
+            title="Explore skyERPOS by module"
+            highlight="by module"
+            subtitle="Click any module below to preview how skyERPOS handles billing, stock, kitchen orders, garages, and accounts."
+          />
+          <FeatureTabSwitcher tabs={featureTabs} />
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════
+          Section 7 — AI Intelligence Showcase
+         ══════════════════════════════════════════════ */}
+      <section className="cta-mesh-dark py-20 sm:py-24 relative overflow-hidden">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid lg:grid-cols-2 gap-12 items-center">
+            <FadeIn>
+              <AIBadge />
+              <h2 className="mt-4 text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
+                Smart alerts that protect your cash &amp; stock
+              </h2>
+              <p className="mt-4 text-lg text-zinc-300 leading-relaxed">
+                Get instant low-stock warnings, slow-moving item insights, daily owner summaries, and automated payment due reminders — without needing an IT team.
+              </p>
+              <div className="mt-8 flex flex-wrap gap-4">
+                <Link
+                  href="/features"
+                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-bold text-white bg-[#0050c0] hover:bg-[#00419e] rounded-lg transition-colors"
+                >
+                  Explore All Features
+                  <ArrowRight className="w-4 h-4" />
+                </Link>
+              </div>
+            </FadeIn>
+            <FadeIn delay={0.15}>
+              <MockBrowserFrame url="app.skyerpos.com/dashboard">
+                <MockDashboard />
+              </MockBrowserFrame>
+            </FadeIn>
+          </div>
+        </div>
+      </section>
+
+      {/* ══════════════════════════════════════════════
+          Section 8 — Complete Feature Grid
          ══════════════════════════════════════════════ */}
       <section className="section-bg-subtle py-20 sm:py-28">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -507,20 +581,20 @@ export default function HomeClient() {
             badge="All Features"
             title="Everything your business needs"
             highlight="Everything"
-            subtitle="All features are included on every plan. No feature gating, no hidden costs."
+            subtitle="All modules included on every plan. No hidden per-user charges."
           />
-          <StaggerContainer staggerDelay={0.06} className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <StaggerContainer staggerDelay={0.05} className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {allFeatures.map((group) => (
               <StaggerItem key={group.category}>
-                <div className="bg-white/5 rounded-2xl border border-white/10 p-5 shadow-sm hover:shadow-md transition-shadow">
+                <div className="h-full bg-white/5 rounded-2xl border border-white/10 p-5 shadow-sm hover:border-[#0050c0]/40 transition-colors">
                   <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${group.color}`} />
                     {group.category}
                   </h3>
                   <ul className="space-y-1.5">
                     {group.items.map((item) => (
-                      <li key={item} className="flex items-center gap-2 text-sm text-zinc-400">
-                        <Check className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                      <li key={item} className="flex items-center gap-2 text-sm text-zinc-300">
+                        <Check className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
                         {item}
                       </li>
                     ))}
@@ -533,27 +607,23 @@ export default function HomeClient() {
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 8 — Stats Counter (dark)
+          Section 9 — Stats Counter
          ══════════════════════════════════════════════ */}
       <section className="cta-mesh-dark py-20 sm:py-24 relative overflow-hidden">
         <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <StaggerContainer staggerDelay={0.12} className="grid grid-cols-2 lg:grid-cols-4 gap-8">
             {[
-              { value: 4, label: 'Business Types', suffix: '' },
-              { value: 15, label: 'Access Roles', suffix: '+' },
-              { value: 8, label: 'Core Modules', suffix: '+' },
-              { value: 65, label: 'Secured Tables', suffix: '+' },
+              { value: 5, label: 'Business Types', suffix: '+' },
+              { value: 15, label: 'Role Permissions', suffix: '+' },
+              { value: 25, label: 'Annual Discount', suffix: '%' },
+              { value: 65, label: 'Secured Modules', suffix: '+' },
             ].map((stat) => (
               <StaggerItem key={stat.label}>
                 <div className="text-center">
                   <div className="text-4xl sm:text-5xl lg:text-6xl font-extrabold text-white tracking-tight">
-                    <CountUpOnView
-                      value={stat.value}
-                      suffix={stat.suffix}
-                      decimals={(stat as { decimals?: number }).decimals || 0}
-                    />
+                    <CountUpOnView value={stat.value} suffix={stat.suffix} />
                   </div>
-                  <div className="mt-2 text-sm font-medium text-stone-400">{stat.label}</div>
+                  <div className="mt-2 text-sm font-medium text-zinc-300">{stat.label}</div>
                 </div>
               </StaggerItem>
             ))}
@@ -562,51 +632,50 @@ export default function HomeClient() {
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 9 — How It Works
+          Section 10 — How It Works (3 Steps)
          ══════════════════════════════════════════════ */}
       <section className="section-bg-white py-20 sm:py-28">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
-            badge="Get Started"
-            title="Get started in 3 steps"
-            highlight="3 steps"
+            badge="Fast Onboarding"
+            title="Go live in 3 simple steps"
+            highlight="3 simple steps"
           />
           <div className="max-w-3xl mx-auto">
             <StaggerContainer staggerDelay={0.15} className="relative">
-              {/* Connecting gradient line */}
-              <div className="absolute left-6 top-12 bottom-12 w-0.5 bg-gradient-to-b from-emerald-500 to-amber-500 hidden sm:block" />
+              <div className="absolute left-6 top-12 bottom-12 w-0.5 bg-gradient-to-b from-[#0050c0] to-sky-400 hidden sm:block" />
               <div className="space-y-12">
                 {[
                   {
                     number: 1,
                     icon: UserPlus,
-                    title: 'Create Account',
-                    description: 'Sign up in seconds. Your first company is free forever. Choose your country and verify your email.',
+                    title: 'Book Your Free Demo',
+                    description: 'Call or WhatsApp +94 74 122 8682 (or message skyloomtechno@gmail.com). We tailor the demo to your exact shop type.',
                   },
                   {
                     number: 2,
                     icon: Settings,
-                    title: 'Configure Business',
-                    description: 'Select your business type. Add products, set up departments, configure staff roles and permissions.',
+                    title: 'We Set Up Your Store & Devices',
+                    description: 'We configure your business subdomain (<yourshop>.skyerpos.com), import items, connect thermal printers/scanners, and set staff permissions.',
                   },
                   {
                     number: 3,
                     icon: Rocket,
-                    title: 'Start Selling',
-                    description: 'Go live instantly. Process sales, track inventory, and grow your business with AI-powered insights.',
+                    title: 'Start Selling & Track Everything',
+                    description: 'Bill customers fast on desktop or Android, print LKR/Sinhala receipts, and watch live stock and profits from anywhere.',
                   },
                 ].map((step) => (
                   <StaggerItem key={step.number}>
                     <div className="flex gap-6 items-start">
-                      <div className="relative z-10 flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-emerald-600 to-amber-500 text-white flex items-center justify-center font-bold text-lg shadow-lg shadow-emerald-600/25">
+                      <div className="relative z-10 flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] text-white flex items-center justify-center font-bold text-lg shadow-lg shadow-[#0050c0]/30">
                         {step.number}
                       </div>
                       <div className="pt-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <step.icon className="w-5 h-5 text-emerald-600" />
+                          <step.icon className="w-5 h-5 text-sky-400" />
                           <h3 className="text-xl font-bold text-white">{step.title}</h3>
                         </div>
-                        <p className="mt-1 text-zinc-400 leading-relaxed">{step.description}</p>
+                        <p className="mt-1 text-zinc-300 leading-relaxed">{step.description}</p>
                       </div>
                     </div>
                   </StaggerItem>
@@ -618,71 +687,118 @@ export default function HomeClient() {
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 10 — Testimonials
+          Section 11 — Testimonials
          ══════════════════════════════════════════════ */}
       <section className="section-bg-subtle py-20 sm:py-28">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
-            badge="Testimonials"
-            title="Built for every business type"
-            highlight="every business"
+            badge="Trusted Across Sri Lanka"
+            title="Built for local shops &amp; growing chains"
+            highlight="local shops"
           />
           <TestimonialCarousel />
         </div>
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 11 — Pricing Preview
+          Section 12 — Sri Lankan Affordable LKR Pricing + Discounts
          ══════════════════════════════════════════════ */}
       <section className="section-bg-white py-20 sm:py-28">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <SectionHeading
-            badge="Pricing"
-            title="Simple, transparent pricing"
-            highlight="transparent pricing"
-            subtitle="All features on every plan. No per-user fees. Your first company is free forever."
+            badge="Affordable LKR Pricing"
+            title="Simple, affordable pricing in Sri Lankan Rupees"
+            highlight="Sri Lankan Rupees"
+            subtitle="No per-user fees. Switch to Annual billing to save 25% — plus up to 30% extra discount for multi-branch businesses."
           />
 
-          {/* All features badge */}
-          <FadeIn className="text-center -mt-6 mb-10">
-            <span className="inline-flex items-center gap-2 px-5 py-2 rounded-full bg-emerald-500/10 text-emerald-400 text-sm font-semibold border border-emerald-500/30">
-              <Check className="w-4 h-4" />
-              All features included on every plan
-            </span>
+          {/* Billing cycle toggle */}
+          <FadeIn className="flex flex-col items-center -mt-4 mb-10 gap-4">
+            <div className="inline-flex items-center p-1 rounded-full bg-white/5 border border-white/10">
+              <button
+                type="button"
+                onClick={() => setAnnual(false)}
+                className={`px-5 py-2 rounded-full text-sm font-semibold transition-all ${
+                  !annual ? 'bg-[#0050c0] text-white shadow' : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                Monthly
+              </button>
+              <button
+                type="button"
+                onClick={() => setAnnual(true)}
+                className={`px-5 py-2 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${
+                  annual ? 'bg-[#0050c0] text-white shadow' : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                Annual
+                <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                  SAVE 25%
+                </span>
+              </button>
+            </div>
           </FadeIn>
 
           <StaggerContainer staggerDelay={0.1} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-8 max-w-5xl mx-auto">
-            {pricingTiers.map((tier) => (
-              <StaggerItem key={tier.name}>
-                <PricingCard
-                  name={tier.name}
-                  price={tier.price}
-                  period={tier.period}
-                  features={tier.features}
-                  popular={tier.popular}
-                  isCustom={(tier as { isCustom?: boolean }).isCustom}
-                />
-              </StaggerItem>
-            ))}
+            {tiers.map((tier) => {
+              const monthly = tier.monthlyLkr
+              let priceStr = 'Custom'
+              let originalStr: string | undefined
+              let discountBadge: string | undefined
+
+              if (monthly != null) {
+                if (monthly === 0) {
+                  priceStr = 'Free'
+                } else if (annual) {
+                  const discounted = Math.round(monthly * 0.75)
+                  priceStr = `Rs. ${discounted.toLocaleString('en-US')}`
+                  originalStr = `Rs. ${monthly.toLocaleString('en-US')}/month`
+                  discountBadge = '25% Annual Discount'
+                } else {
+                  priceStr = `Rs. ${monthly.toLocaleString('en-US')}`
+                }
+              }
+
+              return (
+                <StaggerItem key={tier.name}>
+                  <PricingCard
+                    name={tier.name}
+                    price={priceStr}
+                    originalPrice={originalStr}
+                    discountBadge={discountBadge}
+                    period={monthly === 0 ? 'forever' : 'month'}
+                    features={tier.features}
+                    popular={tier.popular}
+                    currencyCode={monthly ? 'Sri Lankan Rupees (LKR) · Billed ' + (annual ? 'annually' : 'monthly') : undefined}
+                    isCustom={tier.isCustom}
+                  />
+                </StaggerItem>
+              )
+            })}
           </StaggerContainer>
-          <FadeIn className="text-center mt-10">
+
+          <FadeIn className="text-center mt-10 flex flex-wrap items-center justify-center gap-6">
             <Link
               href="/pricing"
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-400 hover:text-emerald-300 transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-400 hover:text-sky-300 transition-colors"
             >
-              View full pricing <ArrowRight className="w-4 h-4" />
+              View full LKR pricing &amp; volume discounts <ArrowRight className="w-4 h-4" />
             </Link>
+            <a
+              href="tel:+94741228682"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-300 hover:text-white transition-colors"
+            >
+              <Phone className="w-4 h-4 text-sky-400" />
+              Call +94 74 122 8682 for hardware bundle quotes
+            </a>
           </FadeIn>
         </div>
       </section>
 
       {/* ══════════════════════════════════════════════
-          Section 12 — CTA
+          Section 13 — CTA
          ══════════════════════════════════════════════ */}
-      <CTASection
-        title="Ready to transform your business?"
-        subtitle="Start managing your business with skyERPOS. All features included, unlimited users, free forever."
-      />
+      <CTASection />
     </PageWrapper>
   )
 }

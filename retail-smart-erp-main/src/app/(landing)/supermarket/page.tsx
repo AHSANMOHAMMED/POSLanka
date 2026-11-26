@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Supermarket POS & Department Management | skyERPOS',
     description: 'High-volume checkout, department management, batch tracking. AI-powered. Unlimited users.',
-    url: 'https://www.retailsmarterp.com/supermarket',
+    url: 'https://www.skyerpos.com/supermarket',
     images: [{ url: '/og/supermarket', width: 1200, height: 630, alt: 'skyERPOS Supermarket POS' }],
   },
   twitter: {
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     images: ['/og/supermarket'],
   },
   alternates: {
-    canonical: 'https://www.retailsmarterp.com/supermarket',
+    canonical: 'https://www.skyerpos.com/supermarket',
   },
 }
 
@@ -52,7 +52,7 @@ export default function SupermarketPage() {
             "offers": {
               "@type": "Offer",
               "price": "0",
-              "priceCurrency": "USD"
+              "priceCurrency": "LKR"
             }
           })
         }}

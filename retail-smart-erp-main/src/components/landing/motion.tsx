@@ -463,7 +463,7 @@ interface BrowserMockupProps {
   url?: string
 }
 
-export function BrowserMockup({ children, className = '', url = 'retailsmarterp.com' }: BrowserMockupProps) {
+export function BrowserMockup({ children, className = '', url = 'skyerpos.com' }: BrowserMockupProps) {
   return (
     <div className={`browser-mockup ${className}`}>
       <div className="browser-mockup-bar">

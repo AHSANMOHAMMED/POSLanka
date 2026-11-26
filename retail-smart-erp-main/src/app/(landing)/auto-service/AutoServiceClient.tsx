@@ -193,7 +193,7 @@ export default function AutoServiceClient() {
             {/* Right: Hero mockup */}
             <FadeInRight className="hidden lg:block">
               <FloatingMockup>
-                <BrowserMockup url="retailsmarterp.com/work-orders">
+                <BrowserMockup url="skyerpos.com/work-orders">
                   <MockWorkOrders />
                 </BrowserMockup>
               </FloatingMockup>

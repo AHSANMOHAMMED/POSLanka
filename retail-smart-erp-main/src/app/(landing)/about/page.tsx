@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'About skyERPOS - Building the Future of Business Management',
     description: 'Our mission: AI-powered business tools for every entrepreneur. Unlimited users, unlimited potential.',
-    url: 'https://www.retailsmarterp.com/about',
+    url: 'https://www.skyerpos.com/about',
     images: [{ url: '/og/about', width: 1200, height: 630, alt: 'About skyERPOS' }],
   },
   twitter: {
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     images: ['/og/about'],
   },
   alternates: {
-    canonical: 'https://www.retailsmarterp.com/about',
+    canonical: 'https://www.skyerpos.com/about',
   },
 }
 
@@ -44,12 +44,12 @@ export default function AboutPage() {
             "@context": "https://schema.org",
             "@type": "Organization",
             "name": "skyERPOS",
-            "url": "https://www.retailsmarterp.com",
-            "logo": "https://www.retailsmarterp.com/icons/icon-512.png",
+            "url": "https://www.skyerpos.com",
+            "logo": "https://www.skyerpos.com/icons/icon-512.png",
             "description": "Democratizing AI-powered business tools for every entrepreneur. All-in-one cloud POS and ERP for retail, restaurants, supermarkets, and auto service centers.",
             "foundingDate": "2024",
             "sameAs": [
-              "https://www.retailsmarterp.com"
+              "https://www.skyerpos.com"
             ]
           })
         }}

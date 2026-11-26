@@ -66,9 +66,9 @@ export default function LandingNav() {
       {showAnnouncement && (
         <div className="fixed top-0 left-0 right-0 z-[51] bg-gradient-to-r from-[#0050c0]/90 via-[#2563eb]/90 to-[#3b82f6]/90 backdrop-blur-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-center h-8 relative">
-            <a href={`${appBase}/register`} className="text-xs text-white/95 font-medium hover:text-white transition-colors group">
-              <span className="hidden sm:inline">Your first company is 100% free forever — no credit card, no expiry</span>
-              <span className="sm:hidden">First company free forever</span>
+            <a href="/contact" className="text-xs text-white/95 font-medium hover:text-white transition-colors group">
+              <span className="hidden sm:inline">Sri Lanka Launch Offer: Save 25% on Annual Plans + Free Setup &amp; Training</span>
+              <span className="sm:hidden">Save 25% Annual + Free Setup</span>
               <ArrowRight size={12} className="inline ml-1.5 group-hover:translate-x-0.5 transition-transform" />
             </a>
             <button

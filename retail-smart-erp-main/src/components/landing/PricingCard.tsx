@@ -7,6 +7,8 @@ import { motion } from 'framer-motion'
 interface PricingCardProps {
   name: string
   price: string
+  originalPrice?: string
+  discountBadge?: string
   period: string
   features: string[]
   popular?: boolean
@@ -20,6 +22,8 @@ interface PricingCardProps {
 export default function PricingCard({
   name,
   price,
+  originalPrice,
+  discountBadge,
   period,
   features,
   popular = false,
@@ -55,6 +59,14 @@ export default function PricingCard({
               <span className="inline-block mb-3 bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)] text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
                 Free Forever
               </span>
+            )}
+            {discountBadge && (
+              <span className="inline-block mb-3 bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
+                {discountBadge}
+              </span>
+            )}
+            {originalPrice && (
+              <div className="text-sm text-zinc-400 line-through mb-0.5">{originalPrice}</div>
             )}
             <div>
               <span className="text-4xl font-extrabold text-white tracking-tight">{currencyNote}{price}</span>

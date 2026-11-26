@@ -17,12 +17,12 @@ import ContactForm from '@/components/landing/ContactForm'
 import CTASection from '@/components/landing/CTASection'
 
 const defaultContactInfo = {
-  email: 'hello@retailsmarterp.com',
-  phone: '+94 77 840 7616',
-  whatsapp: '+94 77 840 7616',
-  address: 'No 31, Akuressa Road, Nupe, Matara, Sri Lanka',
-  companyName: 'Retail Smart ERP',
-  businessHours: 'Mon-Fri 9:00 AM - 6:00 PM (IST)',
+  email: 'skyloomtechno@gmail.com',
+  phone: '+94 741228682',
+  whatsapp: '+94 741228682',
+  address: 'Kalpitiya, Puttalam, Sri Lanka',
+  companyName: 'skyERPOS · Skyloom Techno',
+  businessHours: 'Mon-Sat 8:30 AM - 7:00 PM (Asia/Colombo)',
 }
 
 const trustItems = [

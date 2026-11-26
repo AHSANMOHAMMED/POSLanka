@@ -14,12 +14,12 @@ interface CTASectionProps {
 }
 
 export default function CTASection({
-  title = 'Ready to transform your business?',
-  subtitle = 'Start managing your business with skyERPOS. Your first company is free forever — no credit card, no expiry.',
-  ctaText = 'Get Started Free',
+  title = 'Ready to upgrade your shop with skyERPOS?',
+  subtitle = 'Built for Sri Lankan retail, supermarkets, restaurants, garages & dealerships. Fast LKR billing, Sinhala & English receipts, and offline-ready mobile POS.',
+  ctaText = 'Book Free Demo',
   ctaHref = '/contact',
-  secondaryText = 'Schedule a Demo',
-  secondaryHref = '/contact',
+  secondaryText = 'WhatsApp +94 74 122 8682',
+  secondaryHref = 'https://wa.me/94741228682?text=Hi%20skyERPOS%2C%20I%20would%20like%20a%20free%20demo',
 }: CTASectionProps) {
   return (
     <section className="cta-mesh-dark py-24 sm:py-32 relative overflow-hidden">
@@ -46,26 +46,28 @@ export default function CTASection({
               {ctaText}
               <ArrowRight className="w-5 h-5" />
             </Link>
-            <Link
+            <a
               href={secondaryHref}
+              target={secondaryHref.startsWith('http') ? '_blank' : undefined}
+              rel={secondaryHref.startsWith('http') ? 'noopener noreferrer' : undefined}
               className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white/90 border border-white/20 hover:border-white/40 hover:bg-white/5 rounded-md transition-all hover:-translate-y-0.5"
             >
               {secondaryText}
-            </Link>
+            </a>
           </div>
           {/* Trust badges */}
           <div className="mt-10 flex flex-wrap items-center justify-center gap-6 text-sm text-gray-400">
             <div className="flex items-center gap-1.5">
               <CreditCard className="w-4 h-4" />
-              Free Forever · No Credit Card
+              Affordable LKR Plans · 25% Annual Discount
             </div>
             <div className="flex items-center gap-1.5">
               <Clock className="w-4 h-4" />
-              Quick setup
+              Same-Day Onboarding
             </div>
             <div className="flex items-center gap-1.5">
               <Shield className="w-4 h-4" />
-              Advanced security
+              Islandwide Support · Kalpitiya, Puttalam
             </div>
           </div>
         </FadeIn>

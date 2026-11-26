@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'Restaurant Management with Kitchen Display | skyERPOS',
     description: 'KDS, table management, reservations, recipes. AI-powered analytics. Unlimited users.',
-    url: 'https://www.retailsmarterp.com/restaurant',
+    url: 'https://www.skyerpos.com/restaurant',
     images: [{ url: '/og/restaurant', width: 1200, height: 630, alt: 'skyERPOS Restaurant Management' }],
   },
   twitter: {
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     images: ['/og/restaurant'],
   },
   alternates: {
-    canonical: 'https://www.retailsmarterp.com/restaurant',
+    canonical: 'https://www.skyerpos.com/restaurant',
   },
 }
 
@@ -52,7 +52,7 @@ export default function RestaurantPage() {
             "offers": {
               "@type": "Offer",
               "price": "0",
-              "priceCurrency": "USD"
+              "priceCurrency": "LKR"
             }
           })
         }}

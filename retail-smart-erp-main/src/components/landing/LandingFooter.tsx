@@ -6,9 +6,10 @@ import { Mail, Phone, MapPin, Store, UtensilsCrossed, ShoppingCart, Wrench, Car 
 import { Logo } from '@/components/ui/logo'
 
 const defaultContact = {
-  email: 'hello@skyerpos.com',
-  phone: '077 840 7616',
-  address: 'No 31, Akuressa Road, Nupe, Matara, Sri Lanka',
+  email: 'skyloomtechno@gmail.com',
+  phone: '+94 741228682',
+  whatsapp: '+94 741228682',
+  address: 'Kalpitiya, Puttalam, Sri Lanka',
   companyName: 'skyERPOS',
 }
 
@@ -39,12 +40,14 @@ export default function LandingFooter() {
     fetch('/api/public/settings')
       .then(res => res.ok ? res.json() : null)
       .then(data => {
-        if (data) {
+        const info = data?.contactInfo || data
+        if (info) {
           setContact({
-            email: data.email || defaultContact.email,
-            phone: data.phone || defaultContact.phone,
-            address: data.address || defaultContact.address,
-            companyName: data.companyName || defaultContact.companyName,
+            email: info.email || defaultContact.email,
+            phone: info.phone || defaultContact.phone,
+            whatsapp: info.whatsapp || info.phone || defaultContact.whatsapp,
+            address: info.address || defaultContact.address,
+            companyName: info.companyName || defaultContact.companyName,
           })
         }
       })

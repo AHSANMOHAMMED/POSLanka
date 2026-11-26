@@ -84,7 +84,7 @@ export default function HomePage() {
               "offers": {
                 "@type": "Offer",
                 "price": "0",
-                "priceCurrency": "USD",
+                "priceCurrency": "LKR",
                 "name": "Free Forever",
                 "description": "All features, unlimited users, 80 MB database, 100 MB file storage"
               }
