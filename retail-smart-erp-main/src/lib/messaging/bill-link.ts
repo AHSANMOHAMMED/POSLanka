@@ -98,7 +98,7 @@ export function appBaseUrl(fallback?: string | Request | NextRequest | null): st
   // NEXTAUTH_URL fallback:
   let authUrl = (process.env.NEXTAUTH_URL || '').trim().replace(/\/$/, '')
   if (authUrl === 'http://168.144.216.104') {
-    authUrl = 'https://168-144-216-104.sslip.io'
+    authUrl = 'https://www.skyerpos.com'
   }
   if (authUrl && !authUrl.startsWith('http://localhost') && !authUrl.startsWith('http://127.0.0.1')) {
     if (authUrl.startsWith('http://') && fallbackOrigin?.startsWith('https://')) {

@@ -35,7 +35,7 @@ export async function sendSystemEmail(options: {
     return { success: true, dev: true }
   }
 
-  const senderEmail = process.env.SYSTEM_EMAIL_FROM || 'noreply@poslanka.lk'
+  const senderEmail = process.env.SYSTEM_EMAIL_FROM || 'noreply@skyerpos.com'
   const senderName = process.env.NEXT_PUBLIC_APP_NAME || 'skyERPOS'
 
   const res = await fetchWithTimeout('https://api.resend.com/emails', {

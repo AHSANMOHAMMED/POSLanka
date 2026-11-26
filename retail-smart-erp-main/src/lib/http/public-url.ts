@@ -1,8 +1,8 @@
 import type { NextRequest } from 'next/server'
 import { isTrustedOrigin } from '@/lib/security/origin'
 
-/** Deployed production origin for this project (DigitalOcean sslip). */
-export const PRODUCTION_PUBLIC_ORIGIN = 'https://168-144-216-104.sslip.io'
+/** Deployed production origin for this project. */
+export const PRODUCTION_PUBLIC_ORIGIN = 'https://www.skyerpos.com'
 
 function isLocalhostOrigin(origin: string): boolean {
   try {

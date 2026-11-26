@@ -26,7 +26,7 @@ if [ -z "${ANDROID_HOME:-}" ] && [ -d "$HOME/Library/Android/sdk" ]; then
 fi
 export PATH="${JAVA_HOME:+$JAVA_HOME/bin:}${ANDROID_HOME:+$ANDROID_HOME/platform-tools:}$PATH"
 
-API_URL="${API_URL:-https://168-144-216-104.sslip.io}"
+API_URL="${API_URL:-https://www.skyerpos.com}"
 # vendor = skyERPOS (lk.poslanka.app), admin = skyERPOS Admin (lk.poslanka.admin) — see app.config.js
 APP_VARIANT="${APP_VARIANT:-vendor}"
 export APP_VARIANT EXPO_PUBLIC_APP_VARIANT="$APP_VARIANT"

@@ -80,7 +80,7 @@ export interface ContactInfo {
 }
 
 const DEFAULT_CONTACT_INFO: ContactInfo = {
-  email: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'support@poslanka.lk',
+  email: process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'support@skyerpos.com',
   phone: '+94 11 234 5678',
   whatsapp: '+94 77 123 4567',
   address: 'Colombo, Sri Lanka',

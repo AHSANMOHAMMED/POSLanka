@@ -6,7 +6,7 @@ import { Mail, Phone, MapPin, Store, UtensilsCrossed, ShoppingCart, Wrench, Car 
 import { Logo } from '@/components/ui/logo'
 
 const defaultContact = {
-  email: 'hello@poslanka.lk',
+  email: 'hello@skyerpos.com',
   phone: '077 840 7616',
   address: 'No 31, Akuressa Road, Nupe, Matara, Sri Lanka',
   companyName: 'skyERPOS',

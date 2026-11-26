@@ -22,7 +22,7 @@ const BUSINESS_ID_KEY = 'poslanka_business_id'
 // Server the app talks to until the user changes it on the sign-in screen. Set per build with
 // EXPO_PUBLIC_API_URL (eas.json profiles, scripts/build-apk.sh). Expo inlines EXPO_PUBLIC_* only
 // for this exact `process.env.NAME` form — with `?.` the release APK silently fell back to localhost.
-export const PRODUCTION_ORIGIN = 'https://168-144-216-104.sslip.io'
+export const PRODUCTION_ORIGIN = 'https://www.skyerpos.com'
 export const DEFAULT_API_URL = (process.env.EXPO_PUBLIC_API_URL || PRODUCTION_ORIGIN).replace(/\/$/, '')
 export const DEFAULT_WEB_URL = (process.env.EXPO_PUBLIC_WEB_URL || process.env.EXPO_PUBLIC_API_URL || PRODUCTION_ORIGIN).replace(
   /\/$/,

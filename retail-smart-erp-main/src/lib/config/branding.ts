@@ -8,7 +8,7 @@ export const APP_TAGLINE =
   process.env.NEXT_PUBLIC_APP_TAGLINE ||
   'Powerful. Reliable. Complete POS solution for your business.'
 
-export const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'poslanka.lk'
+export const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'skyerpos.com'
 export const LANDING_DOMAIN =
   process.env.NEXT_PUBLIC_LANDING_DOMAIN || `www.${BASE_DOMAIN}`
 export const APP_DOMAIN = process.env.NEXT_PUBLIC_APP_DOMAIN || `app.${BASE_DOMAIN}`

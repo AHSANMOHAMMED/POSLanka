@@ -18,7 +18,7 @@ const inter = localFont({
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_LANDING_DOMAIN
     ? `https://${process.env.NEXT_PUBLIC_LANDING_DOMAIN.replace(/^https?:\/\//, '')}`
-    : 'https://www.poslanka.lk'),
+    : 'https://www.skyerpos.com'),
   title: {
     default: 'skyERPOS - All-in-one POS & ERP',
     template: '%s | skyERPOS',
@@ -32,7 +32,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     locale: 'en_LK',
-    url: 'https://www.poslanka.lk',
+    url: 'https://www.skyerpos.com',
     siteName: 'skyERPOS',
     title: 'skyERPOS - Sri Lanka POS & Light ERP',
     description: 'POS and light ERP for Sri Lankan shops. Fast billing, inventory, WhatsApp receipts, LKR-ready.',

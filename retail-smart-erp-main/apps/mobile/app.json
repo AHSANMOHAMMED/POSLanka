@@ -2,13 +2,13 @@
   "expo": {
     "name": "skyERPOS",
     "slug": "poslanka",
-    "version": "1.7.1",
+    "version": "1.7.2",
     "orientation": "portrait",
     "scheme": "poslanka",
     "userInterfaceStyle": "light",
     "android": {
       "package": "lk.poslanka.app",
-      "versionCode": 13,
+      "versionCode": 14,
       "permissions": [
         "CAMERA",
         "BLUETOOTH",
@@ -56,8 +56,8 @@
       "./plugins/withCleartextTraffic"
     ],
     "extra": {
-      "apiBaseUrl": "https://168-144-216-104.sslip.io",
-      "webBaseUrl": "https://168-144-216-104.sslip.io"
+      "apiBaseUrl": "https://www.skyerpos.com",
+      "webBaseUrl": "https://www.skyerpos.com"
     },
     "notification": {
       "color": "#0050C0",

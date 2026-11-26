@@ -75,8 +75,8 @@ services:
       - "443:443"
       - "443:443/udp"
     environment:
-      BASE_DOMAIN: ${BASE_DOMAIN:-poslanka.lk}
-      ACME_EMAIL: ${ACME_EMAIL:-admin@poslanka.lk}
+      BASE_DOMAIN: ${BASE_DOMAIN:-skyerpos.com}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@skyerpos.com}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
