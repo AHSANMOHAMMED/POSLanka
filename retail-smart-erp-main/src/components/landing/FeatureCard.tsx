@@ -45,7 +45,7 @@ export default function FeatureCard({
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       style={{ transform, transition: transform ? 'none' : 'transform 0.4s ease' }}
-      className="relative p-6 bg-white/5 rounded-2xl border border-white/[0.06] hover:shadow-xl transition-shadow overflow-hidden group"
+      className="relative p-6 bg-white rounded-2xl border border-[#e2e6ec] shadow-sm hover:shadow-xl hover:border-[#0050c0]/35 transition-all overflow-hidden group"
     >
       {/* Glare */}
       <div

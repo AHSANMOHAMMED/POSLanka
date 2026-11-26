@@ -27,8 +27,8 @@ export default function BusinessTypeCard({
 }: BusinessTypeCardProps) {
   return (
     <motion.div whileHover={{ y: -8 }} transition={{ duration: 0.25 }}>
-      <Link href={href} className="group block rounded-2xl overflow-hidden bg-white/5 border border-white/[0.06] hover:shadow-2xl transition-all duration-300">
-        <div className="relative h-48 overflow-hidden bg-gradient-to-br from-zinc-800 to-zinc-900">
+      <Link href={href} className="group block rounded-2xl overflow-hidden bg-white border border-[#e2e6ec] shadow-sm hover:shadow-xl transition-all duration-300">
+        <div className="relative h-48 overflow-hidden bg-[#f5f8ff]">
           {image && (
             <Image
               src={image}
@@ -51,10 +51,10 @@ export default function BusinessTypeCard({
           </div>
         </div>
         <div className="p-5">
-          <h3 className="text-lg font-bold text-white mb-1.5">{name}</h3>
-          <p className="text-sm text-zinc-400 mb-3 line-clamp-2 leading-relaxed">{description}</p>
-          <div className={`flex items-center gap-1.5 text-sm font-semibold bg-gradient-to-r ${gradient} bg-clip-text text-transparent group-hover:gap-2.5 transition-all`}>
-            Explore <ArrowRight className="w-4 h-4 text-sky-300" />
+          <h3 className="text-lg font-bold text-[#0f172a] mb-1.5">{name}</h3>
+          <p className="text-sm text-[#556070] mb-3 line-clamp-2 leading-relaxed">{description}</p>
+          <div className={`flex items-center gap-1.5 text-sm font-semibold text-[#0050c0] group-hover:gap-2.5 transition-all`}>
+            Explore <ArrowRight className="w-4 h-4 text-[#F87000]" />
           </div>
         </div>
       </Link>

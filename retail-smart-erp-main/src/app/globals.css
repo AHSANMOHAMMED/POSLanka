@@ -2924,6 +2924,51 @@ html {
   color: #556070 !important;
 }
 
+/* Ensure all landing subpages (/retail, /restaurant, /supermarket, /auto-service, /dealership, /features, /about, /pricing, /contact) stay readable & never overflow */
+.landing-root {
+  overflow-x: hidden;
+}
+
+.landing-root .section-bg-white h1,
+.landing-root .section-bg-white h2,
+.landing-root .section-bg-white h3,
+.landing-root .section-bg-white h4,
+.landing-root .section-bg-subtle h1,
+.landing-root .section-bg-subtle h2,
+.landing-root .section-bg-subtle h3,
+.landing-root .section-bg-subtle h4 {
+  color: #0f172a;
+}
+
+.landing-root .section-bg-white .text-white:not(.bg-linear-to-r *):not(.bg-gradient-to-r *),
+.landing-root .section-bg-subtle .text-white:not(.bg-linear-to-r *):not(.bg-gradient-to-r *) {
+  color: #0f172a;
+}
+
+.landing-root .section-bg-white a.text-white,
+.landing-root .section-bg-white button.text-white,
+.landing-root .section-bg-white span.text-white,
+.landing-root .section-bg-white .bg-\[\#0050c0\] .text-white,
+.landing-root .section-bg-white .bg-linear-to-t .text-white,
+.landing-root .section-bg-subtle a.text-white,
+.landing-root .section-bg-subtle button.text-white,
+.landing-root .section-bg-subtle span.text-white {
+  color: #ffffff;
+}
+
+.landing-root .section-bg-white .text-zinc-300,
+.landing-root .section-bg-white .text-zinc-400,
+.landing-root .section-bg-subtle .text-zinc-300,
+.landing-root .section-bg-subtle .text-zinc-400 {
+  color: #556070;
+}
+
+.landing-root .section-bg-white .bg-white\/5,
+.landing-root .section-bg-subtle .bg-white\/5 {
+  background-color: #ffffff;
+  border-color: #e2e6ec;
+}
+
 .auth-root {
   --background: 219 67% 8%;
   --foreground: 0 0% 98%;

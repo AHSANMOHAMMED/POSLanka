@@ -166,8 +166,8 @@ export default function SupermarketClient() {
         {/* Gradient Overlay */}
         <div className="absolute inset-0 bg-gradient-to-r from-[#062f73]/90 via-[#0b3a8c]/75 to-[#123f7a]/65" />
 
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full py-20 sm:py-24">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full pt-28 pb-16 sm:pt-32 sm:pb-24">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             {/* Left: Text content */}
             <div>
               <BlurFadeIn>
@@ -302,7 +302,7 @@ export default function SupermarketClient() {
       {/* ── Section 3: Feature Showcase - High-Volume POS ── */}
       <section className="py-20 sm:py-28 section-bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             <FadeInLeft>
               <FloatingMockup>
                 <MockBrowserFrame url="app.skyerpos.com/pos">
@@ -343,7 +343,7 @@ export default function SupermarketClient() {
       {/* ── Section 4: Feature Showcase - Department Management ── */}
       <section className="py-20 sm:py-28" style={{ backgroundColor: '#09090b' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             <FadeInLeft className="order-2 lg:order-1">
               <div>
                 <span className="inline-block px-3 py-1 text-xs font-bold uppercase tracking-widest rounded-full bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)] mb-4">
@@ -389,7 +389,7 @@ export default function SupermarketClient() {
       {/* ── Section 5: Feature Showcase - Analytics & Insights ── */}
       <section className="py-20 sm:py-28 section-bg-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             <FadeInLeft>
               <div className="relative rounded-2xl overflow-hidden shadow-2xl">
                 <Image

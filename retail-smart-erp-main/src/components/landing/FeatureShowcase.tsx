@@ -32,7 +32,7 @@ function FeatureList({ features, gradient = 'from-[#0050c0] to-[#2563eb]' }: { f
           <div className={`mt-0.5 w-5 h-5 rounded-full bg-gradient-to-br ${gradient} flex items-center justify-center flex-shrink-0`}>
             <Check className="w-3 h-3 text-white" />
           </div>
-          <span className="text-sm text-zinc-300 font-medium">{feature}</span>
+          <span className="text-sm text-[#556070] font-medium">{feature}</span>
         </motion.li>
       ))}
     </ul>
@@ -67,15 +67,15 @@ export default function FeatureShowcase({
   ) : null
 
   const TextBlock = (
-    <div className="flex flex-col justify-center">
-      <h2 className="text-2xl sm:text-3xl font-bold text-white">{title}</h2>
-      <p className="mt-4 text-zinc-400 leading-relaxed">{description}</p>
+    <div className="flex flex-col justify-center min-w-0">
+      <h2 className="text-2xl sm:text-3xl font-bold text-[#0f172a]">{title}</h2>
+      <p className="mt-4 text-[#556070] leading-relaxed">{description}</p>
       <FeatureList features={features} gradient={gradient} />
     </div>
   )
 
   return (
-    <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+    <div className="grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
       {reversed ? (
         <>
           <FadeInRight className="order-1 lg:order-2">{ImageBlock}</FadeInRight>

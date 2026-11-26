@@ -91,9 +91,9 @@ export default function LandingNav() {
           : 'bg-white border-b border-[#e2e6ec]'
       }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
-          {/* Logo */}
+          {/* Logo (medium) */}
           <Link href="/" className="shrink-0">
-            <Logo variant="full" size={24} />
+            <Logo variant="full" size={34} />
           </Link>
 
           {/* Desktop Nav */}

@@ -62,7 +62,8 @@ const flagshipBusinesses = [
     title: 'Restaurants, Cafes & Bakeries',
     href: '/restaurant',
     icon: Utensils,
-    image: '/images/landing/biz-retail.jpg',
+    image: '',
+    useKitchenMockup: true,
     problem: 'Lost paper KOTs, delayed kitchen orders, table bill confusion, and untracked ingredient waste.',
     solution: 'Waiters punch orders on tablets, KOTs print or appear live on the Kitchen Display System (KDS), and tables split/merge cleanly.',
     devices: ['Tablet POS', 'Kitchen Display (KDS)', 'Thermal KOT Printer', 'Mobile Waiter App'],
@@ -446,16 +447,24 @@ export default function HomeClient() {
             {flagshipBusinesses.map((biz) => (
               <StaggerItem key={biz.title} className={biz.wide ? 'md:col-span-2' : ''}>
                 <div className="group relative overflow-hidden rounded-2xl border border-[#e2e6ec] bg-white shadow-md hover:shadow-xl transition-shadow flex flex-col justify-between min-h-107.5">
-                  {/* Local high-res image (100% reliable, never hidden) */}
+                  {/* Local high-res image or live KDS mockup (100% unique per business type) */}
                   <div className="relative h-52 sm:h-56 w-full overflow-hidden bg-[#e8effb]">
-                    <Image
-                      src={biz.image}
-                      alt={biz.title}
-                      fill
-                      unoptimized
-                      className="object-cover transition-transform duration-500 group-hover:scale-105"
-                      sizes={biz.wide ? '100vw' : '(max-width: 768px) 100vw, 50vw'}
-                    />
+                    {biz.image ? (
+                      <Image
+                        src={biz.image}
+                        alt={biz.title}
+                        fill
+                        unoptimized
+                        className="object-cover transition-transform duration-500 group-hover:scale-105"
+                        sizes={biz.wide ? '100vw' : '(max-width: 768px) 100vw, 50vw'}
+                      />
+                    ) : (
+                      <div className="absolute inset-0 bg-[#f5f8ff] p-3 overflow-hidden">
+                        <div className="origin-top-left scale-[0.72] sm:scale-[0.78] w-[135%]">
+                          <MockKitchenDisplay />
+                        </div>
+                      </div>
+                    )}
                     <div className="absolute inset-0 bg-linear-to-t from-[#062f73]/90 via-[#0050c0]/35 to-transparent" />
                     <div className="absolute bottom-4 left-6 right-6 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5">

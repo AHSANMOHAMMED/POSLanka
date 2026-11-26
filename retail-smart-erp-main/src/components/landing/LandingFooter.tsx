@@ -65,8 +65,8 @@ export default function LandingFooter() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-10 lg:gap-8">
           {/* Brand */}
           <div className="sm:col-span-2 lg:col-span-1">
-            <div className="inline-flex rounded-xl bg-white px-3 py-1.5 shadow-sm">
-              <Logo variant="full" size={26} />
+            <div className="inline-flex rounded-xl bg-white px-3.5 py-2 shadow-sm">
+              <Logo variant="full" size={36} />
             </div>
             <p className="mt-4 text-sm text-white/80 max-w-xs leading-relaxed">
               Cloud POS & ERP with AI features for retail, restaurants, supermarkets, auto service centers, and vehicle dealerships. Unlimited users on every plan.

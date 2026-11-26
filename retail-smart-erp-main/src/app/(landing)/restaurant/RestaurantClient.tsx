@@ -129,8 +129,8 @@ export default function RestaurantClient() {
         />
         <div className="noise-overlay" />
 
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full py-20 sm:py-24">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full pt-28 pb-16 sm:pt-32 sm:pb-24">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             {/* Left: Text content */}
             <div>
               <BlurFadeIn>

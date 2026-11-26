@@ -104,8 +104,8 @@ export default function RetailClient() {
         {/* Gradient overlay */}
         <div className="absolute inset-0 bg-gradient-to-r from-sky-900/85 via-blue-900/70 to-sky-800/60" />
 
-        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full py-20 sm:py-24">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full pt-28 pb-16 sm:pt-32 sm:pb-24">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             {/* Left: Text content */}
             <div>
               <BlurFadeIn>
@@ -227,7 +227,7 @@ export default function RetailClient() {
       {/* ── Section 3: Feature Showcase - Point of Sale (mockup left) ── */}
       <section className="section-bg-subtle py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             <FadeInLeft>
               <MockBrowserFrame url="app.skyerpos.com/pos">
                 <MockPOS />
@@ -267,7 +267,7 @@ export default function RetailClient() {
       {/* ── Section 4: Feature Showcase - Smart Inventory (mockup right) ── */}
       <section className="section-bg-white py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             <FadeInLeft className="order-2 lg:order-1">
               <h2 className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
                 Smart Inventory
@@ -314,7 +314,7 @@ export default function RetailClient() {
       {/* ── Section 5: Feature Showcase - AI Analytics (mockup left) ── */}
       <section className="section-bg-subtle py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+          <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center min-w-0">
             <FadeInLeft>
               <div className="relative rounded-2xl overflow-hidden shadow-2xl">
                 <Image
