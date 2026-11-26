@@ -2865,21 +2865,46 @@ html {
 .sparkle-2 { animation: sparkle 2s ease-in-out infinite 0.5s; }
 .sparkle-3 { animation: sparkle 2s ease-in-out infinite 1s; }
 
-/* Section gradient backgrounds (skyERPOS deep navy theme) */
+/* Section backgrounds (clean white & soft slate matching login page) */
 .section-bg-subtle {
-  background: linear-gradient(180deg, #071124 0%, #0b1933 100%);
+  background: linear-gradient(180deg, #f5f6f8 0%, #ffffff 100%);
 }
 
 .section-bg-white {
-  background: #071124;
+  background: #ffffff;
 }
 
 .section-bg-warm {
-  background: #071124;
+  background: #f5f6f8;
 }
 
-/* ── Force dark brand navy on landing & auth pages ── */
-.landing-root,
+/* ── Light brand theme on landing pages (matches skyERPOS login page) ── */
+.landing-root {
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary-hsl: 215 100% 38%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 216 25% 96%;
+  --secondary-foreground: 222 47% 11%;
+  --muted: 216 25% 96%;
+  --muted-foreground: 215 14% 39%;
+  --accent: 216 25% 96%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 216 20% 91%;
+  --input: 216 20% 91%;
+  --ring: 215 100% 38%;
+  background-color: #ffffff;
+  color: #0f172a;
+  min-height: 100vh;
+  color-scheme: light;
+}
+
 .auth-root {
   --background: 219 67% 8%;
   --foreground: 0 0% 98%;

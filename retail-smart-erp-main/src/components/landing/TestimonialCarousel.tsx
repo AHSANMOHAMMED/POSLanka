@@ -72,7 +72,7 @@ export default function TestimonialCarousel() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.4 }}
-            className="glass-card-v2 p-8 sm:p-10 text-center"
+            className="bg-white border border-[#e2e6ec] rounded-2xl shadow-sm p-8 sm:p-10 text-center"
           >
             {/* Stars */}
             <div className="flex items-center justify-center gap-1 mb-6">

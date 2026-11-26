@@ -34,8 +34,8 @@ export default function FeatureTabSwitcher({ tabs }: FeatureTabSwitcherProps) {
             onClick={() => setActive(tab.key)}
             className={`relative flex items-center gap-2 px-4 py-2.5 rounded-md text-sm font-semibold transition-all ${
               active === tab.key
-                ? 'text-white shadow-lg'
-                : 'bg-white/5 border border-white/10 text-zinc-400 hover:border-[rgba(0,80,192,0.35)] hover:text-sky-300 hover:bg-[rgba(0,80,192,0.12)]'
+                ? 'text-white shadow-lg shadow-[#0050c0]/25'
+                : 'bg-white border border-[#e2e6ec] text-[#556070] hover:border-[#0050c0]/40 hover:text-[#0050c0] hover:bg-[#e8effb]/60'
             }`}
             style={
               active === tab.key
@@ -77,7 +77,7 @@ export default function FeatureTabSwitcher({ tabs }: FeatureTabSwitcherProps) {
 
             {/* Features */}
             <div>
-              <h3 className="text-2xl sm:text-3xl font-bold text-white mb-3">
+              <h3 className="text-2xl sm:text-3xl font-bold text-[#0f172a] mb-3">
                 {current.label}
               </h3>
               <p className="text-zinc-400 leading-relaxed mb-6">

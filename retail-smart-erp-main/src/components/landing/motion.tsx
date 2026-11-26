@@ -614,15 +614,15 @@ interface TrustBarProps {
 
 export function TrustBar({ metrics, className = '' }: TrustBarProps) {
   return (
-    <div className={`trust-bar py-6 ${className}`}>
+    <div className={`border-y border-[#e2e6ec] bg-white py-6 ${className}`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-wrap justify-center gap-8 sm:gap-12">
           {metrics.map((m) => (
-            <FadeIn key={m.label} className="flex items-center gap-2 text-center">
-              {m.icon}
+            <FadeIn key={m.label} className="flex items-center gap-3 text-left">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#e8effb] text-[#0050c0]">{m.icon}</span>
               <div>
-                <div className="text-lg font-bold text-white">{m.value}</div>
-                <div className="text-xs text-zinc-500 font-medium">{m.label}</div>
+                <div className="text-lg font-bold text-[#0f172a]">{m.value}</div>
+                <div className="text-xs text-[#556070] font-medium">{m.label}</div>
               </div>
             </FadeIn>
           ))}

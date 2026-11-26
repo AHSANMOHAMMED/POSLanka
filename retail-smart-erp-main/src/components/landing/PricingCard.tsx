@@ -39,55 +39,55 @@ export default function PricingCard({
       transition={{ duration: 0.25 }}
       className={`relative rounded-2xl p-7 ${
         popular
-          ? 'gradient-border-animated bg-white/5 shadow-2xl shadow-[rgba(0,80,192,0.08)]'
-          : 'bg-white/5 border border-white/10 hover:shadow-lg'
+          ? 'bg-white border-2 border-[#0050c0] shadow-xl shadow-[#0050c0]/12'
+          : 'bg-white border border-[#e2e6ec] shadow-sm hover:shadow-md'
       } transition-shadow`}
     >
       {popular && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1 px-4 py-1 bg-gradient-to-r from-[#0050c0] to-[#2563eb] text-white text-xs font-bold rounded-full shadow-lg">
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 inline-flex items-center gap-1 px-4 py-1 bg-linear-to-r from-[#F87000] to-[#e06200] text-white text-xs font-bold rounded-full shadow-md">
           <Star size={12} className="fill-white" /> Most Popular
         </span>
       )}
 
-      <h3 className="text-lg font-bold text-white">{name}</h3>
+      <h3 className="text-lg font-bold text-[#0f172a]">{name}</h3>
       <div className="mt-4 mb-5">
         {isCustom ? (
-          <span className="text-2xl font-bold text-white">Custom Pricing</span>
+          <span className="text-2xl font-bold text-[#0f172a]">Custom Pricing</span>
         ) : (
           <>
             {period === 'forever' && (
-              <span className="inline-block mb-3 bg-[rgba(0,80,192,0.12)] text-sky-300 border border-[rgba(0,80,192,0.35)] text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
+              <span className="inline-block mb-3 bg-[#e8effb] text-[#0050c0] border border-[#0050c0]/20 text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
                 Free Forever
               </span>
             )}
             {discountBadge && (
-              <span className="inline-block mb-3 bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
+              <span className="inline-block mb-3 bg-[#fff3e6] text-[#c2410c] border border-[#F87000]/35 text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full">
                 {discountBadge}
               </span>
             )}
             {originalPrice && (
-              <div className="text-sm text-zinc-400 line-through mb-0.5">{originalPrice}</div>
+              <div className="text-sm text-[#8a94a3] line-through mb-0.5">{originalPrice}</div>
             )}
             <div>
-              <span className="text-4xl font-extrabold text-white tracking-tight">{currencyNote}{price}</span>
+              <span className="text-4xl font-extrabold text-[#0f172a] tracking-tight">{currencyNote}{price}</span>
               {period === 'forever' ? (
-                <span className="text-sm text-sky-300/70 ml-1">/forever</span>
+                <span className="text-sm text-[#0050c0] ml-1">/forever</span>
               ) : (
-                <span className="text-sm text-zinc-500 ml-1">/{period}</span>
+                <span className="text-sm text-[#556070] ml-1">/{period}</span>
               )}
             </div>
-            {currencyCode && <p className="text-xs text-zinc-500 mt-1">{currencyCode}</p>}
+            {currencyCode && <p className="text-xs text-[#556070] mt-1">{currencyCode}</p>}
             {period === 'forever' && (
-              <p className="text-xs text-zinc-500 mt-2">No credit card &middot; No expiry</p>
+              <p className="text-xs text-[#556070] mt-2">No credit card &middot; No expiry</p>
             )}
           </>
         )}
       </div>
 
       {(storage || fileStorage) && (
-        <div className="mb-5 space-y-1 text-sm text-zinc-400">
-          {storage && <p>Database: <span className="font-semibold text-white">{storage}</span></p>}
-          {fileStorage && <p>File Storage: <span className="font-semibold text-white">{fileStorage}</span></p>}
+        <div className="mb-5 space-y-1 text-sm text-[#556070]">
+          {storage && <p>Database: <span className="font-semibold text-[#0f172a]">{storage}</span></p>}
+          {fileStorage && <p>File Storage: <span className="font-semibold text-[#0f172a]">{fileStorage}</span></p>}
         </div>
       )}
 
@@ -106,8 +106,8 @@ export default function PricingCard({
         href={isCustom ? '/contact' : '/contact'}
         className={`block w-full py-3 text-center text-sm font-semibold rounded-md transition-all ${
           popular
-            ? 'bg-gradient-to-r from-[#0050c0] to-[#2563eb] text-white hover:from-[#00419e] hover:to-[#1d4ed8] shadow-lg shadow-[rgba(0,80,192,0.35)]'
-            : 'border-2 border-white/10 text-white hover:border-[rgba(0,80,192,0.35)] hover:text-sky-300 hover:bg-[rgba(0,80,192,0.12)]'
+            ? 'bg-linear-to-r from-[#0050c0] to-[#1666e0] text-white hover:from-[#00419e] hover:to-[#0050c0] shadow-md shadow-[#0050c0]/25'
+            : 'border-2 border-[#e2e6ec] text-[#0f172a] hover:border-[#0050c0] hover:text-[#0050c0] hover:bg-[#e8effb]'
         }`}
       >
         {isCustom ? 'Contact Us' : period === 'forever' ? 'Get Started Free' : 'Get Started'}

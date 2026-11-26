@@ -5,7 +5,7 @@ import CookieConsent from '@/components/landing/CookieConsent'
 export default function LandingLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="landing-root">
-      <div className="fixed inset-0 -z-50 bg-[#071124]" aria-hidden="true" />
+      <div className="fixed inset-0 -z-50 bg-white" aria-hidden="true" />
       <LandingNav />
       <main>{children}</main>
       <LandingFooter />

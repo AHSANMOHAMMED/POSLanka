@@ -391,7 +391,7 @@ export default function HomeClient() {
             ].map((tech) => (
               <span
                 key={tech}
-                className="inline-flex items-center px-5 py-2 rounded-full bg-[#0050c0]/10 text-sky-200 text-sm font-semibold border border-[#0050c0]/30 whitespace-nowrap"
+                className="inline-flex items-center px-5 py-2 rounded-full bg-[#e8effb] text-[#003a8c] text-sm font-semibold border border-[#0050c0]/20 whitespace-nowrap"
               >
                 {tech}
               </span>
@@ -427,7 +427,7 @@ export default function HomeClient() {
           <StaggerContainer staggerDelay={0.08} className="grid md:grid-cols-2 gap-7">
             {businessSolutions.map((biz) => (
               <StaggerItem key={biz.title} className={biz.wide ? 'md:col-span-2' : ''}>
-                <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/90 shadow-xl flex flex-col justify-between min-h-107.5">
+                <div className="group relative overflow-hidden rounded-2xl border border-[#e2e6ec] bg-white shadow-md hover:shadow-xl transition-shadow flex flex-col justify-between min-h-107.5">
                   {/* Background image */}
                   <div className="relative h-52 sm:h-56 w-full overflow-hidden">
                     <Image
@@ -455,33 +455,33 @@ export default function HomeClient() {
                   </div>
 
                   {/* Problem + Solution + Devices */}
-                  <div className="p-6 space-y-4 flex-1 flex flex-col justify-between">
+                  <div className="p-6 space-y-4 flex-1 flex flex-col justify-between bg-white">
                     <div className={`grid gap-3 ${biz.wide ? 'md:grid-cols-2' : ''}`}>
-                      <div className="rounded-xl bg-rose-500/10 border border-rose-500/20 p-3.5">
-                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-rose-300 mb-1">
+                      <div className="rounded-xl bg-rose-50 border border-rose-200 p-3.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-rose-700 mb-1">
                           <AlertTriangle className="w-3.5 h-3.5" />
                           The Problem &amp; Need
                         </div>
-                        <p className="text-sm text-zinc-300 leading-relaxed">{biz.problem}</p>
+                        <p className="text-sm text-[#0f172a] leading-relaxed">{biz.problem}</p>
                       </div>
-                      <div className="rounded-xl bg-[#0050c0]/15 border border-[#0050c0]/35 p-3.5">
-                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-sky-300 mb-1">
+                      <div className="rounded-xl bg-[#e8effb] border border-[#0050c0]/20 p-3.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#0050c0] mb-1">
                           <CheckCircle2 className="w-3.5 h-3.5" />
                           skyERPOS Solution
                         </div>
-                        <p className="text-sm text-zinc-200 leading-relaxed">{biz.solution}</p>
+                        <p className="text-sm text-[#0f172a] leading-relaxed">{biz.solution}</p>
                       </div>
                     </div>
 
                     <div>
-                      <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">
+                      <div className="text-xs font-semibold uppercase tracking-wider text-[#556070] mb-2">
                         Recommended POS &amp; Devices
                       </div>
                       <div className="flex flex-wrap gap-2">
                         {biz.devices.map((dev) => (
                           <span
                             key={dev}
-                            className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-white/5 text-zinc-200 border border-white/10"
+                            className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-[#f5f6f8] text-[#0f172a] border border-[#e2e6ec]"
                           >
                             {dev}
                           </span>
@@ -511,12 +511,12 @@ export default function HomeClient() {
           <StaggerContainer staggerDelay={0.06} className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {supportedDevices.map((device) => (
               <StaggerItem key={device.title}>
-                <div className="h-full rounded-2xl border border-white/10 bg-white/5 p-6 hover:border-[#0050c0]/50 transition-colors">
-                  <div className="w-11 h-11 rounded-xl bg-linear-to-br from-[#0050c0] to-[#2563eb] text-white flex items-center justify-center mb-4 shadow-lg shadow-[#0050c0]/25">
+                <div className="h-full rounded-2xl border border-[#e2e6ec] bg-white p-6 shadow-sm hover:border-[#0050c0]/40 hover:shadow-md transition-all">
+                  <div className="w-11 h-11 rounded-xl bg-linear-to-br from-[#0050c0] to-[#1666e0] text-white flex items-center justify-center mb-4 shadow-md shadow-[#0050c0]/20">
                     <device.icon className="w-5 h-5" />
                   </div>
-                  <h3 className="text-lg font-bold text-white mb-2">{device.title}</h3>
-                  <p className="text-sm text-zinc-300 leading-relaxed">{device.detail}</p>
+                  <h3 className="text-lg font-bold text-[#0f172a] mb-2">{device.title}</h3>
+                  <p className="text-sm text-[#556070] leading-relaxed">{device.detail}</p>
                 </div>
               </StaggerItem>
             ))}
@@ -586,15 +586,15 @@ export default function HomeClient() {
           <StaggerContainer staggerDelay={0.05} className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {allFeatures.map((group) => (
               <StaggerItem key={group.category}>
-                <div className="h-full bg-white/5 rounded-2xl border border-white/10 p-5 shadow-sm hover:border-[#0050c0]/40 transition-colors">
-                  <h3 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                <div className="h-full bg-white rounded-2xl border border-[#e2e6ec] p-5 shadow-sm hover:border-[#0050c0]/40 transition-colors">
+                  <h3 className="text-sm font-bold text-[#0f172a] mb-3 flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${group.color}`} />
                     {group.category}
                   </h3>
                   <ul className="space-y-1.5">
                     {group.items.map((item) => (
-                      <li key={item} className="flex items-center gap-2 text-sm text-zinc-300">
-                        <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                      <li key={item} className="flex items-center gap-2 text-sm text-[#556070]">
+                        <Check className="w-3.5 h-3.5 text-[#0050c0] shrink-0" />
                         {item}
                       </li>
                     ))}
@@ -672,10 +672,10 @@ export default function HomeClient() {
                       </div>
                       <div className="pt-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <step.icon className="w-5 h-5 text-sky-400" />
-                          <h3 className="text-xl font-bold text-white">{step.title}</h3>
+                          <step.icon className="w-5 h-5 text-[#0050c0]" />
+                          <h3 className="text-xl font-bold text-[#0f172a]">{step.title}</h3>
                         </div>
-                        <p className="mt-1 text-zinc-300 leading-relaxed">{step.description}</p>
+                        <p className="mt-1 text-[#556070] leading-relaxed">{step.description}</p>
                       </div>
                     </div>
                   </StaggerItem>
@@ -714,12 +714,12 @@ export default function HomeClient() {
 
           {/* Billing cycle toggle */}
           <FadeIn className="flex flex-col items-center -mt-4 mb-10 gap-4">
-            <div className="inline-flex items-center p-1 rounded-full bg-white/5 border border-white/10">
+            <div className="inline-flex items-center p-1 rounded-full bg-[#f5f6f8] border border-[#e2e6ec]">
               <button
                 type="button"
                 onClick={() => setAnnual(false)}
                 className={`px-5 py-2 rounded-full text-sm font-semibold transition-all ${
-                  !annual ? 'bg-[#0050c0] text-white shadow' : 'text-zinc-300 hover:text-white'
+                  !annual ? 'bg-[#0050c0] text-white shadow' : 'text-[#556070] hover:text-[#0f172a]'
                 }`}
               >
                 Monthly
@@ -728,11 +728,11 @@ export default function HomeClient() {
                 type="button"
                 onClick={() => setAnnual(true)}
                 className={`px-5 py-2 rounded-full text-sm font-semibold transition-all flex items-center gap-2 ${
-                  annual ? 'bg-[#0050c0] text-white shadow' : 'text-zinc-300 hover:text-white'
+                  annual ? 'bg-[#0050c0] text-white shadow' : 'text-[#556070] hover:text-[#0f172a]'
                 }`}
               >
                 Annual
-                <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-[#F87000]/25 text-[#FFB067] border border-[#F87000]/45">
+                <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-[#F87000] text-white">
                   SAVE 25%
                 </span>
               </button>
@@ -780,15 +780,15 @@ export default function HomeClient() {
           <FadeIn className="text-center mt-10 flex flex-wrap items-center justify-center gap-6">
             <Link
               href="/pricing"
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-sky-400 hover:text-sky-300 transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#0050c0] hover:text-[#00419e] transition-colors"
             >
               View full LKR pricing &amp; volume discounts <ArrowRight className="w-4 h-4" />
             </Link>
             <a
               href="tel:+94741228682"
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-zinc-300 hover:text-white transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#0f172a] hover:text-[#0050c0] transition-colors"
             >
-              <Phone className="w-4 h-4 text-sky-400" />
+              <Phone className="w-4 h-4 text-[#F87000]" />
               Call +94 74 122 8682 for hardware bundle quotes
             </a>
           </FadeIn>
