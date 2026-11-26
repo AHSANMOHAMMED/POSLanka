@@ -64,12 +64,13 @@ export default function LandingNav() {
     <>
       {/* Announcement Bar */}
       {showAnnouncement && (
-        <div className="fixed top-0 left-0 right-0 z-[51] bg-gradient-to-r from-[#0050c0]/90 via-[#2563eb]/90 to-[#3b82f6]/90 backdrop-blur-sm">
+        <div className="fixed top-0 left-0 right-0 z-[51] bg-linear-to-r from-[#062f73] via-[#0050c0] to-[#1666e0] border-b border-[#F87000]/40 backdrop-blur-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-center h-8 relative">
-            <a href="/contact" className="text-xs text-white/95 font-medium hover:text-white transition-colors group">
+            <a href="/contact" className="text-xs text-white/95 font-medium hover:text-white transition-colors group flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-[#F87000]" />
               <span className="hidden sm:inline">Sri Lanka Launch Offer: Save 25% on Annual Plans + Free Setup &amp; Training</span>
               <span className="sm:hidden">Save 25% Annual + Free Setup</span>
-              <ArrowRight size={12} className="inline ml-1.5 group-hover:translate-x-0.5 transition-transform" />
+              <ArrowRight size={12} className="inline group-hover:translate-x-0.5 transition-transform text-[#FFB067]" />
             </a>
             <button
               onClick={() => setAnnouncementDismissed(true)}
@@ -86,13 +87,13 @@ export default function LandingNav() {
         showAnnouncement ? 'top-8' : 'top-0'
       } ${
         scrolled
-          ? 'bg-zinc-950/95 backdrop-blur-xl border-b border-white/10 shadow-sm'
-          : 'bg-zinc-950/60 backdrop-blur-sm'
+          ? 'bg-[#071124]/95 backdrop-blur-xl border-b border-[#1c3259] shadow-lg shadow-[#0050c0]/10'
+          : 'bg-[#071124]/75 backdrop-blur-md border-b border-white/5'
       }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
           {/* Logo */}
-          <Link href="/" className="flex-shrink-0">
-            <Logo variant="full" size={28} />
+          <Link href="/" className="shrink-0 rounded-xl bg-white px-2.5 py-1 shadow-sm">
+            <Logo variant="full" size={24} />
           </Link>
 
           {/* Desktop Nav */}
@@ -193,7 +194,7 @@ export default function LandingNav() {
 
         {/* Scroll progress gradient line */}
         {scrolled && (
-          <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent" />
+          <div className="absolute bottom-0 left-0 right-0 h-px bg-linear-to-r from-transparent via-[#F87000]/40 to-transparent" />
         )}
       </nav>
 
@@ -213,7 +214,7 @@ export default function LandingNav() {
               animate={{ x: 0 }}
               exit={{ x: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="fixed top-0 right-0 bottom-0 w-[300px] max-w-[85vw] bg-zinc-950 shadow-2xl z-[56] lg:hidden overflow-y-auto"
+              className="fixed top-0 right-0 bottom-0 w-[300px] max-w-[85vw] bg-[#071124] border-l border-[#1c3259] shadow-2xl z-[56] lg:hidden overflow-y-auto"
             >
               <div className="p-6">
                 <div className="flex items-center justify-end mb-6">

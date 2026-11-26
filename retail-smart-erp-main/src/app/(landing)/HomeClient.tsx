@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
 import {
-  Sparkles, Shield, Users, Store, ShoppingCart,
+  Shield, Users, Store, ShoppingCart,
   Package, Calculator, Utensils, Monitor, Wrench, Car, Brain,
   Check, UserPlus, Settings, Rocket, ArrowRight, Phone,
   MessageCircle, Printer, ScanBarcode, Smartphone, Fingerprint,
@@ -262,18 +262,18 @@ export default function HomeClient() {
                 <div className="flex flex-wrap items-center gap-3 mb-6">
                   <HeroBadge
                     text="skyERPOS · By Skyloom Techno"
-                    icon={<Sparkles className="w-4 h-4 text-sky-400" />}
-                    className="!bg-[#0050c0]/25 !border-sky-400/35 !text-white backdrop-blur-sm !mb-0"
+                    icon={<span className="h-2 w-2 rounded-full bg-[#F87000]" />}
+                    className="bg-[#0050c0]/30! border-[#6aa5ff]/40! text-white! backdrop-blur-sm mb-0!"
                   />
-                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-full bg-emerald-500/15 border border-emerald-400/35 text-emerald-300 backdrop-blur-sm">
-                    <Tag className="w-3.5 h-3.5" />
+                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#F87000]/20 border border-[#F87000]/45 text-[#FFB067] backdrop-blur-sm">
+                    <Tag className="w-3.5 h-3.5 text-[#F87000]" />
                     25% Off Annual Plans · Affordable LKR
                   </span>
                 </div>
 
                 <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] font-extrabold leading-[1.08] text-white tracking-tight">
                   Complete POS &amp; ERP for{' '}
-                  <span className="bg-gradient-to-r from-sky-300 via-blue-400 to-cyan-300 bg-clip-text text-transparent">
+                  <span className="text-[#FFB067]">
                     Sri Lankan Businesses
                   </span>
                 </h1>
@@ -281,13 +281,13 @@ export default function HomeClient() {
                 <p className="mt-6 text-lg sm:text-xl text-zinc-200 leading-relaxed max-w-2xl">
                   Solve slow billing, stock theft, and messy accounts with one fast system.
                   Works on <strong className="text-white">Touchscreen POS, Laptops &amp; Android Phones</strong> with
-                  80mm thermal printers, barcode scanners, and <strong className="text-sky-300">LKR / Sinhala / English</strong> support.
+                  80mm thermal printers, barcode scanners, and <strong className="text-[#FFB067]">LKR / Sinhala / English</strong> support.
                 </p>
 
                 <div className="mt-8 flex flex-wrap items-center gap-4">
                   <Link
                     href="/contact"
-                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-bold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-lg transition-all shadow-lg shadow-[#0050c0]/35 hover:-translate-y-0.5"
+                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-bold text-white bg-linear-to-r from-[#F87000] to-[#e06200] hover:from-[#e06200] hover:to-[#c95500] rounded-lg transition-all shadow-lg shadow-[#F87000]/30 hover:-translate-y-0.5"
                   >
                     Book Free Demo
                     <ArrowRight className="w-5 h-5" />
@@ -296,7 +296,7 @@ export default function HomeClient() {
                     href="https://wa.me/94741228682?text=Hi%20skyERPOS%2C%20I%20would%20like%20a%20free%20demo%20and%20LKR%20pricing"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-semibold text-white bg-emerald-600/90 hover:bg-emerald-600 rounded-lg transition-all shadow-lg shadow-emerald-600/20 hover:-translate-y-0.5"
+                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-semibold text-white bg-[#0050c0] hover:bg-[#00419e] rounded-lg transition-all shadow-lg shadow-[#0050c0]/35 hover:-translate-y-0.5"
                   >
                     <MessageCircle className="w-5 h-5" />
                     WhatsApp +94 74 122 8682
@@ -342,7 +342,7 @@ export default function HomeClient() {
                       className="object-cover"
                       sizes="(max-width: 1024px) 100vw, 42vw"
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent" />
+                    <div className="absolute inset-0 bg-linear-to-t from-zinc-950 via-transparent to-transparent" />
                     <span className="absolute top-3 left-3 px-3 py-1 rounded-full text-xs font-bold bg-[#0050c0] text-white shadow">
                       Hardware + Cloud Ready
                     </span>
@@ -354,19 +354,19 @@ export default function HomeClient() {
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs text-zinc-300">
                       <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
-                        <Monitor className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                        <Monitor className="w-4 h-4 text-sky-400 shrink-0" />
                         <span>Touchscreen POS</span>
                       </div>
                       <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
-                        <Printer className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                        <Printer className="w-4 h-4 text-sky-400 shrink-0" />
                         <span>80mm Thermal Print</span>
                       </div>
                       <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
-                        <ScanBarcode className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                        <ScanBarcode className="w-4 h-4 text-sky-400 shrink-0" />
                         <span>2D Barcode Scan</span>
                       </div>
                       <div className="flex items-center gap-2 bg-white/5 rounded-lg px-3 py-2 border border-white/10">
-                        <Smartphone className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                        <Smartphone className="w-4 h-4 text-sky-400 shrink-0" />
                         <span>Android POS App</span>
                       </div>
                     </div>
@@ -427,7 +427,7 @@ export default function HomeClient() {
           <StaggerContainer staggerDelay={0.08} className="grid md:grid-cols-2 gap-7">
             {businessSolutions.map((biz) => (
               <StaggerItem key={biz.title} className={biz.wide ? 'md:col-span-2' : ''}>
-                <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/90 shadow-xl flex flex-col justify-between min-h-[430px]">
+                <div className="group relative overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/90 shadow-xl flex flex-col justify-between min-h-107.5">
                   {/* Background image */}
                   <div className="relative h-52 sm:h-56 w-full overflow-hidden">
                     <Image
@@ -437,7 +437,7 @@ export default function HomeClient() {
                       className="object-cover transition-transform duration-500 group-hover:scale-105"
                       sizes={biz.wide ? '100vw' : '(max-width: 768px) 100vw, 50vw'}
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/45 to-transparent" />
+                    <div className="absolute inset-0 bg-linear-to-t from-zinc-950 via-zinc-950/45 to-transparent" />
                     <div className="absolute bottom-4 left-6 right-6 flex items-center justify-between">
                       <div className="flex items-center gap-2.5">
                         <span className={`p-2 rounded-lg border ${biz.badgeBg} text-white backdrop-blur-sm`}>
@@ -512,7 +512,7 @@ export default function HomeClient() {
             {supportedDevices.map((device) => (
               <StaggerItem key={device.title}>
                 <div className="h-full rounded-2xl border border-white/10 bg-white/5 p-6 hover:border-[#0050c0]/50 transition-colors">
-                  <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-[#0050c0] to-[#2563eb] text-white flex items-center justify-center mb-4 shadow-lg shadow-[#0050c0]/25">
+                  <div className="w-11 h-11 rounded-xl bg-linear-to-br from-[#0050c0] to-[#2563eb] text-white flex items-center justify-center mb-4 shadow-lg shadow-[#0050c0]/25">
                     <device.icon className="w-5 h-5" />
                   </div>
                   <h3 className="text-lg font-bold text-white mb-2">{device.title}</h3>
@@ -594,7 +594,7 @@ export default function HomeClient() {
                   <ul className="space-y-1.5">
                     {group.items.map((item) => (
                       <li key={item} className="flex items-center gap-2 text-sm text-zinc-300">
-                        <Check className="w-3.5 h-3.5 text-sky-400 flex-shrink-0" />
+                        <Check className="w-3.5 h-3.5 text-sky-400 shrink-0" />
                         {item}
                       </li>
                     ))}
@@ -643,7 +643,7 @@ export default function HomeClient() {
           />
           <div className="max-w-3xl mx-auto">
             <StaggerContainer staggerDelay={0.15} className="relative">
-              <div className="absolute left-6 top-12 bottom-12 w-0.5 bg-gradient-to-b from-[#0050c0] to-sky-400 hidden sm:block" />
+              <div className="absolute left-6 top-12 bottom-12 w-0.5 bg-linear-to-b from-[#0050c0] to-sky-400 hidden sm:block" />
               <div className="space-y-12">
                 {[
                   {
@@ -667,7 +667,7 @@ export default function HomeClient() {
                 ].map((step) => (
                   <StaggerItem key={step.number}>
                     <div className="flex gap-6 items-start">
-                      <div className="relative z-10 flex-shrink-0 w-12 h-12 rounded-full bg-gradient-to-br from-[#0050c0] to-[#2563eb] text-white flex items-center justify-center font-bold text-lg shadow-lg shadow-[#0050c0]/30">
+                      <div className="relative z-10 shrink-0 w-12 h-12 rounded-full bg-linear-to-br from-[#0050c0] to-[#2563eb] text-white flex items-center justify-center font-bold text-lg shadow-lg shadow-[#0050c0]/30">
                         {step.number}
                       </div>
                       <div className="pt-1">
@@ -732,7 +732,7 @@ export default function HomeClient() {
                 }`}
               >
                 Annual
-                <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                <span className="px-2 py-0.5 text-[11px] font-bold rounded-full bg-[#F87000]/25 text-[#FFB067] border border-[#F87000]/45">
                   SAVE 25%
                 </span>
               </button>

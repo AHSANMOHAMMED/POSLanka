@@ -59,13 +59,15 @@ export default function LandingFooter() {
   return (
     <footer className="footer-gradient text-gray-300">
       {/* Gradient separator */}
-      <div className="h-px bg-gradient-to-r from-transparent via-[rgba(0,80,192,0.35)] to-transparent" />
+      <div className="h-px bg-linear-to-r from-transparent via-[rgba(0,80,192,0.35)] to-transparent" />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 lg:py-20">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-10 lg:gap-8">
           {/* Brand */}
           <div className="sm:col-span-2 lg:col-span-1">
-            <Logo variant="full" size={28} />
+            <div className="inline-flex rounded-xl bg-white px-3 py-1.5 shadow-sm">
+              <Logo variant="full" size={26} />
+            </div>
             <p className="mt-4 text-sm text-gray-400 max-w-xs leading-relaxed">
               Cloud POS & ERP with AI features for retail, restaurants, supermarkets, auto service centers, and vehicle dealerships. Unlimited users on every plan.
             </p>
@@ -120,19 +122,19 @@ export default function LandingFooter() {
             <ul className="space-y-3">
               <li>
                 <a href={`mailto:${contact.email}`} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors">
-                  <Mail size={14} className="flex-shrink-0" />
+                  <Mail size={14} className="shrink-0" />
                   {contact.email}
                 </a>
               </li>
               <li>
                 <a href={telHref} className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition-colors">
-                  <Phone size={14} className="flex-shrink-0" />
+                  <Phone size={14} className="shrink-0" />
                   {contact.phone}
                 </a>
               </li>
               <li>
                 <div className="flex items-start gap-2 text-sm text-gray-400">
-                  <MapPin size={14} className="flex-shrink-0 mt-0.5" />
+                  <MapPin size={14} className="shrink-0 mt-0.5" />
                   {contact.address}
                 </div>
               </li>

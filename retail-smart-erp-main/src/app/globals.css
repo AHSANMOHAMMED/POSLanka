@@ -2553,11 +2553,11 @@ html {
   .landing-orb { opacity: 0.3; }
 }
 
-/* ===== LANDING REDESIGN V4 — Emerald/Gold/Slate ===== */
+/* ===== LANDING THEME — skyERPOS Brand Blue (#0050C0) & Orange (#F87000) ===== */
 
 /* Animated gradient text */
 .gradient-text-animate {
-  background: linear-gradient(135deg, #059669, #f59e0b, #f43f5e, #059669);
+  background: linear-gradient(135deg, #6aa5ff, #FFB067, #F87000, #6aa5ff);
   background-size: 300% 300%;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -2565,10 +2565,10 @@ html {
   animation: gradient-text-shift 8s ease infinite;
 }
 
-/* skyERPOS brand blue (#0050C0) + warm accent — used across landing CTAs */
+/* skyERPOS brand blue (#0050C0) + orange (#F87000) accent — used across landing CTAs */
 .gradient-text-emerald-gold,
 .gradient-text-brand {
-  background: linear-gradient(135deg, #0050c0, #3b82f6 45%, #f59e0b);
+  background: linear-gradient(135deg, #1666e0, #6aa5ff 45%, #F87000);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -2777,10 +2777,10 @@ html {
   50% { background-position: 100% 50%; }
 }
 
-/* Dark CTA gradient mesh */
+/* Dark CTA gradient mesh (skyERPOS Brand Blue + Orange) */
 .cta-mesh-dark {
   position: relative;
-  background: linear-gradient(135deg, #1c1917, #064e3b, #1c1917);
+  background: linear-gradient(135deg, #06142e 0%, #0050c0 52%, #062f73 100%);
   overflow: hidden;
 }
 
@@ -2789,30 +2789,30 @@ html {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(at 20% 50%, rgba(5,150,105,0.2) 0%, transparent 50%),
-    radial-gradient(at 80% 20%, rgba(245,158,11,0.15) 0%, transparent 50%),
-    radial-gradient(at 50% 80%, rgba(244,63,94,0.1) 0%, transparent 50%);
+    radial-gradient(at 18% 45%, rgba(22,102,224,0.32) 0%, transparent 52%),
+    radial-gradient(at 82% 20%, rgba(248,112,0,0.2) 0%, transparent 50%),
+    radial-gradient(at 50% 85%, rgba(106,165,255,0.16) 0%, transparent 50%);
   animation: cta-mesh-drift 15s ease-in-out infinite;
 }
 
 @keyframes cta-mesh-drift {
   0%, 100% {
     background:
-      radial-gradient(at 20% 50%, rgba(5,150,105,0.2) 0%, transparent 50%),
-      radial-gradient(at 80% 20%, rgba(245,158,11,0.15) 0%, transparent 50%),
-      radial-gradient(at 50% 80%, rgba(244,63,94,0.1) 0%, transparent 50%);
+      radial-gradient(at 18% 45%, rgba(22,102,224,0.32) 0%, transparent 52%),
+      radial-gradient(at 82% 20%, rgba(248,112,0,0.2) 0%, transparent 50%),
+      radial-gradient(at 50% 85%, rgba(106,165,255,0.16) 0%, transparent 50%);
   }
   50% {
     background:
-      radial-gradient(at 40% 30%, rgba(5,150,105,0.2) 0%, transparent 50%),
-      radial-gradient(at 60% 60%, rgba(245,158,11,0.15) 0%, transparent 50%),
-      radial-gradient(at 30% 70%, rgba(244,63,94,0.1) 0%, transparent 50%);
+      radial-gradient(at 38% 30%, rgba(22,102,224,0.28) 0%, transparent 52%),
+      radial-gradient(at 65% 60%, rgba(248,112,0,0.22) 0%, transparent 50%),
+      radial-gradient(at 30% 70%, rgba(106,165,255,0.18) 0%, transparent 50%);
   }
 }
 
 /* Footer gradient */
 .footer-gradient {
-  background: linear-gradient(180deg, #1c1917 0%, #064e3b 100%);
+  background: linear-gradient(180deg, #071124 0%, #062f73 100%);
 }
 
 /* Auth page animated mesh */
@@ -2865,43 +2865,42 @@ html {
 .sparkle-2 { animation: sparkle 2s ease-in-out infinite 0.5s; }
 .sparkle-3 { animation: sparkle 2s ease-in-out infinite 1s; }
 
-/* Section gradient backgrounds (dark theme) */
+/* Section gradient backgrounds (skyERPOS deep navy theme) */
 .section-bg-subtle {
-  background: linear-gradient(180deg, #09090b 0%, #0a0f0d 100%);
+  background: linear-gradient(180deg, #071124 0%, #0b1933 100%);
 }
 
 .section-bg-white {
-  background: #09090b;
+  background: #071124;
 }
 
 .section-bg-warm {
-  background: #09090b;
+  background: #071124;
 }
 
-/* ── Force dark mode on landing & auth pages ── */
-/* Override ALL shadcn CSS variables for dark theme */
+/* ── Force dark brand navy on landing & auth pages ── */
 .landing-root,
 .auth-root {
-  --background: 240 10% 3.9%;
+  --background: 219 67% 8%;
   --foreground: 0 0% 98%;
-  --card: 240 6% 10%;
+  --card: 218 48% 12%;
   --card-foreground: 0 0% 98%;
-  --popover: 240 6% 10%;
+  --popover: 218 48% 12%;
   --popover-foreground: 0 0% 98%;
-  --primary-hsl: 160 84% 39%;
+  --primary-hsl: 215 100% 38%;
   --primary-foreground: 0 0% 98%;
-  --secondary: 240 4% 16%;
+  --secondary: 218 35% 18%;
   --secondary-foreground: 0 0% 98%;
-  --muted: 240 4% 16%;
-  --muted-foreground: 240 5% 65%;
-  --accent: 240 4% 16%;
+  --muted: 218 35% 18%;
+  --muted-foreground: 215 20% 70%;
+  --accent: 218 35% 18%;
   --accent-foreground: 0 0% 98%;
   --destructive: 0 63% 31%;
   --destructive-foreground: 0 0% 98%;
-  --border: 0 0% 100% / 0.1;
-  --input: 0 0% 100% / 0.1;
-  --ring: 160 84% 39%;
-  background-color: #09090b;
+  --border: 215 45% 28% / 0.35;
+  --input: 215 45% 28% / 0.35;
+  --ring: 215 100% 38%;
+  background-color: #071124;
   color: hsl(var(--foreground));
   min-height: 100vh;
   color-scheme: dark;

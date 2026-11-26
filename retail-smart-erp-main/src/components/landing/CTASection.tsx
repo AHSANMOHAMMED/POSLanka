@@ -41,7 +41,7 @@ export default function CTASection({
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
             <Link
               href={ctaHref}
-              className="inline-flex items-center gap-2 px-8 py-4 text-base font-semibold text-white bg-gradient-to-r from-[#0050c0] to-[#2563eb] hover:from-[#00419e] hover:to-[#1d4ed8] rounded-md transition-all shadow-lg shadow-[rgba(0,80,192,0.35)] hover:shadow-[rgba(0,80,192,0.5)] hover:-translate-y-0.5"
+              className="inline-flex items-center gap-2 px-8 py-4 text-base font-bold text-white bg-linear-to-r from-[#F87000] to-[#e06200] hover:from-[#e06200] hover:to-[#c95500] rounded-md transition-all shadow-lg shadow-[#F87000]/30 hover:-translate-y-0.5"
             >
               {ctaText}
               <ArrowRight className="w-5 h-5" />
