@@ -86,7 +86,7 @@ jobs:
           NEXTAUTH_URL: http://localhost:3000
           DATABASE_URL: postgresql://build:build@localhost:5432/build
           NEXT_PUBLIC_APP_NAME: ${{ vars.NEXT_PUBLIC_APP_NAME || 'skyERPOS' }}
-          NEXT_PUBLIC_BASE_DOMAIN: ${{ vars.NEXT_PUBLIC_BASE_DOMAIN || 'localhost' }}
-          NEXT_PUBLIC_APP_DOMAIN: ${{ vars.NEXT_PUBLIC_APP_DOMAIN || 'localhost:3000' }}
-          NEXT_PUBLIC_LANDING_DOMAIN: ${{ vars.NEXT_PUBLIC_LANDING_DOMAIN || 'localhost:3000' }}
+          NEXT_PUBLIC_BASE_DOMAIN: ${{ vars.NEXT_PUBLIC_BASE_DOMAIN || 'skyerpos.com' }}
+          NEXT_PUBLIC_APP_DOMAIN: ${{ vars.NEXT_PUBLIC_APP_DOMAIN || 'app.skyerpos.com' }}
+          NEXT_PUBLIC_LANDING_DOMAIN: ${{ vars.NEXT_PUBLIC_LANDING_DOMAIN || 'www.skyerpos.com' }}
         run: ./deploy/digitalocean/deploy-droplet.sh

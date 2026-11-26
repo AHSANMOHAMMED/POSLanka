@@ -37,7 +37,7 @@ https:// {
 http://168.144.216.104 {
 	import iclock_http
 	handle {
-		redir https://168-144-216-104.sslip.io{uri} permanent
+		redir https://app.skyerpos.com{uri} permanent
 	}
 }
 

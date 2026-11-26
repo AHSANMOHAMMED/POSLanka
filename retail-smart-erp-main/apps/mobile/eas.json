@@ -14,16 +14,16 @@
       "distribution": "internal",
       "android": { "buildType": "apk" },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://168-144-216-104.sslip.io",
-        "EXPO_PUBLIC_WEB_URL": "https://168-144-216-104.sslip.io"
+        "EXPO_PUBLIC_API_URL": "https://app.skyerpos.com",
+        "EXPO_PUBLIC_WEB_URL": "https://app.skyerpos.com"
       }
     },
     "production": {
       "autoIncrement": true,
       "android": { "buildType": "app-bundle" },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://168-144-216-104.sslip.io",
-        "EXPO_PUBLIC_WEB_URL": "https://168-144-216-104.sslip.io"
+        "EXPO_PUBLIC_API_URL": "https://app.skyerpos.com",
+        "EXPO_PUBLIC_WEB_URL": "https://app.skyerpos.com"
       }
     }
   },

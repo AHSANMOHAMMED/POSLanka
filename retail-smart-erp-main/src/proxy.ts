@@ -8,10 +8,19 @@ import { edgeDb } from '@/lib/edge-db'
 import { isTrustedOrigin } from '@/lib/security/origin'
 import { FEATURE_FLAG_LABELS, featuresForApiPath, type FeatureFlag } from '@/lib/features/flags'
 
-// Domain configuration from environment
-const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'retailsmarterp.com'
-const LANDING_DOMAIN = process.env.NEXT_PUBLIC_LANDING_DOMAIN || 'www.retailsmarterp.com'
-const APP_DOMAIN = process.env.NEXT_PUBLIC_APP_DOMAIN || 'app.retailsmarterp.com'
+// Domain configuration from environment.
+// Read runtime env vars (BASE_DOMAIN, LANDING_DOMAIN, APP_DOMAIN) first so Next.js does not
+// bake local .env.local `localhost:3000` values into the production bundle.
+const runtimeOrPublic = (runtimeVal: string | undefined, publicVal: string | undefined, fallback: string) => {
+  if (runtimeVal && runtimeVal.trim()) return runtimeVal.trim()
+  if (publicVal && publicVal.trim() && (process.env.NODE_ENV !== 'production' || !publicVal.includes('localhost'))) {
+    return publicVal.trim()
+  }
+  return fallback
+}
+const BASE_DOMAIN = runtimeOrPublic(process.env.BASE_DOMAIN, process.env.NEXT_PUBLIC_BASE_DOMAIN, 'skyerpos.com')
+const LANDING_DOMAIN = runtimeOrPublic(process.env.LANDING_DOMAIN, process.env.NEXT_PUBLIC_LANDING_DOMAIN, 'www.skyerpos.com')
+const APP_DOMAIN = runtimeOrPublic(process.env.APP_DOMAIN, process.env.NEXT_PUBLIC_APP_DOMAIN, 'app.skyerpos.com')
 
 // Sensitive parameters that should never appear in URLs
 const SENSITIVE_PARAMS = ['password', 'pwd', 'pass', 'secret', 'token', 'apikey', 'api_key']
@@ -184,11 +193,9 @@ export async function proxy(request: NextRequest) {
   const hostOnly = candidateHost.split(':')[0].toLowerCase()
   const proto = request.headers.get('x-forwarded-proto') || request.nextUrl.protocol.replace(':', '')
 
-  if (proto === 'http' && (hostOnly === '168.144.216.104' || hostOnly.endsWith('.sslip.io'))) {
-    const targetUrl = new URL(request.url)
-    targetUrl.protocol = 'https:'
-    targetUrl.hostname = '168-144-216-104.sslip.io'
-    targetUrl.port = ''
+  if (hostOnly === '168.144.216.104' || hostOnly.endsWith('.sslip.io')) {
+    const targetHost = pathname === '/' ? LANDING_DOMAIN : APP_DOMAIN
+    const targetUrl = new URL(pathname + request.nextUrl.search, `https://${targetHost}`)
     return NextResponse.redirect(targetUrl.toString(), 301)
   }
 
@@ -366,6 +373,7 @@ export async function proxy(request: NextRequest) {
     const allowedPaths = [
       '/account', '/login', '/register', '/reset-password', '/forgot-password',
       '/verify-email', '/setup', '/billing', '/plans', '/team', '/settings',
+      '/sys-control',
       '/v', // public receipt verification (receipt QR)
     ]
 

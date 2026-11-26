@@ -19,7 +19,7 @@ if [ -z "${ANDROID_HOME:-}" ] && [ -d "$HOME/Library/Android/sdk" ]; then
 fi
 export PATH="${JAVA_HOME:+$JAVA_HOME/bin:}${ANDROID_HOME:+$ANDROID_HOME/platform-tools:}$PATH"
 
-API_URL="${API_URL:-https://www.skyerpos.com}"
+API_URL="${API_URL:-https://app.skyerpos.com}"
 APP_VARIANT="${APP_VARIANT:-vendor}"
 export APP_VARIANT EXPO_PUBLIC_API_URL="$API_URL"
 KEY_DIR="${POSLANKA_KEY_DIR:-$HOME/.poslanka-keys}"
