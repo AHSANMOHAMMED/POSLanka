@@ -88,16 +88,16 @@ export default function LandingNav() {
       } ${
         scrolled
           ? 'bg-white/95 backdrop-blur-xl border-b border-[#e2e6ec] shadow-sm'
-          : 'bg-white/92 backdrop-blur-md border-b border-[#e2e6ec]/70'
+          : 'bg-white border-b border-[#e2e6ec]'
       }`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
           {/* Logo */}
           <Link href="/" className="shrink-0">
-            <Logo variant="full" size={26} />
+            <Logo variant="full" size={24} />
           </Link>
 
           {/* Desktop Nav */}
-          <div className="hidden lg:flex items-center gap-1">
+          <div className="hidden lg:flex items-center gap-2">
             {/* Solutions Dropdown */}
             <div className="relative"
               onMouseEnter={() => setSolutionsOpen(true)}

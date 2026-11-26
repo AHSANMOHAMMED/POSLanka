@@ -248,80 +248,96 @@ export default function HomeClient() {
   return (
     <PageWrapper>
       {/* ══════════════════════════════════════════════
-          Section 1 — Bright White & Brand Blue Hero (visible on all screens)
+          Section 1 — Full-Bleed Brand Blue Hero with Hardware Photo
          ══════════════════════════════════════════════ */}
-      <section className="relative overflow-hidden pt-28 pb-16 sm:pt-32 sm:pb-24 bg-linear-to-br from-[#f5f8ff] via-white to-[#e8effb] border-b border-[#e2e6ec]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+      <section className="relative overflow-hidden pt-28 pb-16 sm:pt-36 sm:pb-24">
+        <Image
+          src="/images/landing/hero-pos-devices.jpg"
+          alt="skyERPOS touchscreen terminal, thermal receipt printer, barcode scanner and mobile POS"
+          fill
+          priority
+          unoptimized
+          quality={90}
+          className="object-cover object-center"
+          sizes="100vw"
+        />
+        <div
+          className="absolute inset-0"
+          style={{
+            background: 'linear-gradient(108deg, rgba(6,47,115,0.93) 0%, rgba(0,80,192,0.85) 52%, rgba(22,102,224,0.72) 100%)',
+          }}
+        />
+        <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
           <div className="grid lg:grid-cols-12 gap-10 lg:gap-12 items-center">
             {/* Left column */}
             <BlurFadeIn className="lg:col-span-7">
               <div>
-                <div className="flex flex-wrap items-center gap-3 mb-6">
+                <div className="flex flex-wrap items-center gap-2.5 mb-5">
                   <HeroBadge
                     text="skyERPOS · By Skyloom Techno"
                     icon={<span className="h-2 w-2 rounded-full bg-[#F87000]" />}
-                    className="bg-[#e8effb]! border-[#0050c0]/25! text-[#0050c0]! mb-0!"
+                    className="bg-white/15! border-white/25! text-white! backdrop-blur-sm mb-0!"
                   />
-                  <span className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-bold rounded-full bg-[#fff3e6] border border-[#F87000]/35 text-[#c2410c]">
-                    <Tag className="w-3.5 h-3.5 text-[#F87000]" />
-                    25% Off Annual Plans · Affordable LKR
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-full bg-[#F87000] text-white shadow-sm">
+                    <Tag className="w-3.5 h-3.5" />
+                    25% Off Annual Plans · LKR
                   </span>
                 </div>
 
-                <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] font-extrabold leading-[1.08] text-[#0f172a] tracking-tight">
+                <h1 className="text-3xl sm:text-5xl lg:text-[3.25rem] font-extrabold leading-[1.1] text-white tracking-tight">
                   Complete POS &amp; ERP for{' '}
-                  <span className="text-[#0050c0]">
+                  <span className="text-[#FFB067]">
                     Every Sri Lankan Business
                   </span>
                 </h1>
 
-                <p className="mt-6 text-lg sm:text-xl text-[#556070] leading-relaxed max-w-2xl">
+                <p className="mt-5 text-base sm:text-lg text-white/90 leading-relaxed max-w-2xl">
                   Stop losing money to slow billing, stock theft, and manual books.
-                  Run <strong className="text-[#0f172a]">12+ business types</strong> across{' '}
-                  <strong className="text-[#0050c0]">Windows, Mac, Linux, Android &amp; iOS</strong> with
-                  thermal printers, barcode scanners, and <strong className="text-[#F87000]">LKR / Sinhala / English</strong> receipts.
+                  Run <strong className="text-white">12+ business types</strong> across{' '}
+                  <strong className="text-[#FFB067]">Windows, Mac, Linux, Android &amp; iOS</strong> with
+                  thermal printers, barcode scanners, and <strong className="text-white">LKR / Sinhala / English</strong> receipts.
                 </p>
 
-                <div className="mt-8 flex flex-wrap items-center gap-3.5">
+                <div className="mt-7 flex flex-wrap items-center gap-3">
                   <Link
                     href="/contact"
-                    className="inline-flex items-center gap-2 px-7 py-4 text-base font-bold text-white bg-linear-to-r from-[#F87000] to-[#e06200] hover:from-[#e06200] hover:to-[#c95500] rounded-lg transition-all shadow-lg shadow-[#F87000]/25 hover:-translate-y-0.5"
+                    className="inline-flex items-center gap-2 h-12 px-6 text-sm sm:text-base font-bold text-white bg-linear-to-r from-[#F87000] to-[#e06200] hover:from-[#e06200] hover:to-[#c95500] rounded-lg transition-all shadow-lg shadow-[#F87000]/30 hover:-translate-y-0.5"
                   >
                     Book Free Demo
-                    <ArrowRight className="w-5 h-5" />
+                    <ArrowRight className="w-4 h-4" />
                   </Link>
                   <a
                     href="https://wa.me/94741228682?text=Hi%20skyERPOS%2C%20I%20would%20like%20a%20free%20demo%20and%20LKR%20pricing"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 px-6 py-4 text-base font-semibold text-white bg-[#0050c0] hover:bg-[#00419e] rounded-lg transition-all shadow-md shadow-[#0050c0]/25 hover:-translate-y-0.5"
+                    className="inline-flex items-center gap-2 h-12 px-6 text-sm sm:text-base font-semibold text-[#0050c0] bg-white hover:bg-[#e8effb] rounded-lg transition-all shadow-md hover:-translate-y-0.5"
                   >
-                    <MessageCircle className="w-5 h-5" />
+                    <MessageCircle className="w-4 h-4" />
                     WhatsApp +94 74 122 8682
                   </a>
                   <a
                     href={appLoginUrl}
-                    className="inline-flex items-center gap-2 px-6 py-4 text-base font-semibold border-2 border-[#0050c0] text-[#0050c0] bg-white hover:bg-[#e8effb] rounded-lg transition-all"
+                    className="inline-flex items-center gap-2 h-12 px-5 text-sm sm:text-base font-semibold border border-white/40 text-white hover:bg-white/15 rounded-lg transition-all"
                   >
                     Sign In to Store
                   </a>
                 </div>
 
-                <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm font-medium text-[#556070]">
+                <div className="mt-7 flex flex-wrap items-center gap-x-5 gap-y-2.5 text-xs sm:text-sm font-medium text-white/85">
                   <div className="flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-[#0050c0]" />
+                    <CheckCircle2 className="w-4 h-4 text-[#FFB067]" />
                     Plans from Rs. 1,490/mo
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Users className="w-4 h-4 text-[#0050c0]" />
+                    <Users className="w-4 h-4 text-[#FFB067]" />
                     Unlimited Staff Users
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Smartphone className="w-4 h-4 text-[#0050c0]" />
+                    <Smartphone className="w-4 h-4 text-[#FFB067]" />
                     Works on Any OS &amp; Offline
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <MapPin className="w-4 h-4 text-[#F87000]" />
+                    <MapPin className="w-4 h-4 text-[#FFB067]" />
                     Kalpitiya, Puttalam · Islandwide Support
                   </div>
                 </div>

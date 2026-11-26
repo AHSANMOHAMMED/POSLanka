@@ -32,13 +32,13 @@ export default function SectionHeading({
   }
 
   return (
-    <FadeIn className={`max-w-3xl ${align === 'center' ? 'mx-auto text-center' : ''} mb-14 ${className}`}>
+    <FadeIn className={`max-w-3xl ${align === 'center' ? 'mx-auto text-center' : ''} mb-12 ${className}`}>
       {badge && (
-        <span className="inline-block px-4 py-1.5 text-xs font-bold uppercase tracking-widest rounded-full bg-[#e8effb] text-[#0050c0] border border-[#0050c0]/20 mb-5">
+        <span className="inline-block px-3.5 py-1 text-[11px] font-bold uppercase tracking-widest rounded-full bg-[#e8effb] text-[#0050c0] border border-[#0050c0]/20 mb-4">
           {badge}
         </span>
       )}
-      <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold leading-tight text-[#0f172a] tracking-tight">
+      <h2 className="text-3xl sm:text-4xl font-extrabold leading-tight text-[#0f172a] tracking-tight">
         {titleParts ? (
           <>
             {titleParts.before}
@@ -50,7 +50,7 @@ export default function SectionHeading({
         ) : title}
       </h2>
       {subtitle && (
-        <p className="mt-4 text-lg text-[#556070] leading-relaxed max-w-2xl mx-auto">
+        <p className="mt-3.5 text-base sm:text-lg text-[#556070] leading-relaxed max-w-2xl mx-auto">
           {subtitle}
         </p>
       )}

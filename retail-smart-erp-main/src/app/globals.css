@@ -2879,8 +2879,9 @@ html {
   background: #f5f6f8;
 }
 
-/* ── Light brand theme on landing pages (matches skyERPOS login page) ── */
-.landing-root {
+/* ── Light brand theme on landing pages (immune to OS/app .dark mode) ── */
+.landing-root,
+.dark .landing-root {
   --background: 0 0% 100%;
   --foreground: 222 47% 11%;
   --card: 0 0% 100%;
@@ -2900,10 +2901,27 @@ html {
   --border: 216 20% 91%;
   --input: 216 20% 91%;
   --ring: 215 100% 38%;
-  background-color: #ffffff;
-  color: #0f172a;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
   min-height: 100vh;
   color-scheme: light;
+}
+
+.dark .landing-root .bg-white,
+.dark .landing-root .bg-white\/95,
+.dark .landing-root .bg-white\/92 {
+  background-color: #ffffff !important;
+}
+
+.dark .landing-root .text-gray-900,
+.dark .landing-root .text-gray-800 {
+  color: #0f172a !important;
+}
+
+.dark .landing-root .text-gray-700,
+.dark .landing-root .text-gray-600,
+.dark .landing-root .text-gray-500 {
+  color: #556070 !important;
 }
 
 .auth-root {
