@@ -337,11 +337,6 @@ export async function proxy(request: NextRequest) {
       return NextResponse.redirect(`${protocol}://${LANDING_DOMAIN}${pathname}`)
     }
 
-    // The site root opens the sign-in page on the app domain
-    if (pathname === '/') {
-      return NextResponse.redirect(`${protocol}://${APP_DOMAIN}/login`)
-    }
-
     // Block access to app/tenant routes
     const blockedPaths = ['/c/', '/account', '/login', '/register', '/dashboard', '/pos']
     if (blockedPaths.some(blocked => pathname.startsWith(blocked))) {
@@ -511,6 +506,6 @@ export const config = {
     // API routes: request id + CSRF origin check only (see handleApi)
     '/api/:path*',
     // Match all paths except static files, API routes, SSE endpoint, etc.
-    '/((?!api|ws|_events|_internal|_next/static|_next/image|favicon.ico|uploads|images|downloads|public|icons|sw\\.js|manifest\\.webmanifest).*)',
+    '/((?!api|ws|_events|_internal|_next/static|_next/image|favicon.ico|uploads|images|downloads|public|icons|brand|og|sw\\.js|manifest\\.webmanifest).*)',
   ],
 }
